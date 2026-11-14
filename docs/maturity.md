@@ -35,7 +35,7 @@ Legend for the coverage column — test types actually executed against the feat
 | ReadIndex and lease reads | U · I | Leader-lease expiry and stepping down |
 | Snapshots: take, frame, install, compact | U · I · R · E | 30-byte envelope, CRC32, position, cross-shard rejection |
 | Restart from a snapshot, single node | R · E | The engine, not the log, is the recovery source |
-| Restart from a snapshot, **whole cluster** | R only | A full-cluster restart after log compaction does not yet accept writes again; tracked as a P0 defect, see the gap table |
+| Restart from a snapshot, **whole cluster** | R · E | Three processes, snapshots every 15 entries, all killed and restarted: every key returns and the cluster accepts writes again |
 | Log compaction and retention limits | U · I · B | Enforced bounds, no unbounded growth |
 | Point-in-time recovery | U · I | Records are positioned by Raft index |
 | Session and watch APIs | U · I · E | Reads-your-writes, change notification |
@@ -65,12 +65,12 @@ Legend for the coverage column — test types actually executed against the feat
 
 | Capability | Verification | Notes |
 |---|---|---|
-| `IStorageEngine` contract | C | 22 checks, run against two structurally different engines |
+| `IStorageEngine` contract | C | 23 checks, run against two structurally different engines |
 | Idempotent replay across restarts | C · R · E | Duplicate indexes never reach the engine |
-| Gap rejection | C | `1, 2, 4` fails instead of diverging |
+| Forward jumps, no replays | C · R · E | Raft skips non-command entries; a jump is applied, a duplicate index is dropped |
 | Apply failure propagates to Raft | C · U | Fail-stop rather than silent divergence |
 | Serializable applies | C · B | Concurrent submission stays ordered |
-| Snapshot framing, CRC, shard binding | C · U · R | Truncated / corrupt / foreign snapshots rejected |
+| Snapshot framing, CRC, shard binding | C · U · R · E | Truncated / corrupt / foreign snapshots rejected; the frame carries Raft's boundary index |
 | Reference engine (`MemoryStorageEngine`) | C · U · E | Shipped as the adapter template |
 
 ---
@@ -124,12 +124,20 @@ so it works with any engine that registers the providers it needs.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
+The gate covers four packages, not three: the end-to-end harness is measured as well,
+because a harness bug produces confident, meaningless acceptance passes.
 
 | Package | Lines | Statements | Functions | Branches |
 |---|---|---|---|---|
-| `cluster` | 98.7 % | 98.7 % | 99.1 % | 97.9 % |
+| `cluster` | 98.4 % | 98.4 % | 98.8 % | 97.3 % |
 | `federation` | 99.3 % | 99.3 % | 99.8 % | 97.8 % |
 | `operations` | 98.2 % | 98.2 % | 98.9 % | 95.9 % |
+| `e2e` (harness) | 100 % | 100 % | 100 % | 95.4 % |
+
+The `e2e` row covers `e2e/harness/support.ts` — process supervision, IPC, port allocation,
+log capture. The two `.mjs` programs it spawns (`raft-node.mjs`, `federation-gateway.mjs`)
+run in child processes and are therefore *not* instrumented by the in-process v8 collector;
+they are exercised for real by every acceptance test, but no percentage is claimed for them.
 
 Coverage is a *floor*, not an achievement: a line can be executed by a test that asserts
 nothing. The suites above are written to fail when behaviour changes, and bug-hunting is an
@@ -141,18 +149,18 @@ explicit goal of each iteration (see the audit reports in the companion reposito
 
 | Area | Status | Why it matters to you |
 |---|---|---|
-| **Test-tree type checking** | Not gated | `src/**/__tests__` is excluded from `tsc`; a test can compile in `vitest` (esbuild strips types) while a type error sits in it. Measured: several hundred errors per package, all in test code. Production code is fully typed and gated. |
+| **Test-tree type checking** | Partially gated | The e2e package (suites and process harness) is now type-checked. Package test trees under `src/**/__tests__` are still excluded from `tsc`: a test can compile in `vitest` (esbuild strips types) while a type error sits in it. Measured: several hundred errors per package, all in test code. Production code is fully typed and gated. |
 | **Per-file coverage floor** | Partially gated | The gate enforces the package total plus a weakest-files report. Around a dozen files (mostly test harnesses and error-only paths) sit below 95 % individually. |
 | **Federation cross-DC fault injection at the TLS layer** | Not covered | Federation faults are injected at the transport interface, not by breaking real sockets mid-stream. |
 | **Operations process-level acceptance** | Not covered | Operations packages are verified in-process; there is no run that kills a process mid-backup. |
 | **Mutation testing (cluster, federation)** | Not covered | Operations has a mutation report; the other two packages do not. A surviving mutant means a test that cannot fail. |
 | **TLA+ model checking** | Manual | The specs exist and run locally; they are not part of CI. |
-| **Full-cluster restart after log compaction** | Known defect | With snapshots every 15 entries, a cluster restarted in full never accepts a write again (no commit in 180 s, measured). A single-node restart recovers correctly, so the fault is in re-advertising a compacted log after a full restart, not in the engine seam. Reproduced by `e2e/tests/cluster-engine-durability.test.ts` history; written up in the audit report. |
 | **Cross-version upgrade path** | Not covered | The wire and snapshot formats are versioned, but no test exercises an N-1 → N upgrade. |
 | **Sustained soak beyond CI limits** | Scheduled only | Multi-hour runs exist (`test:soak`) but do not gate a pull request. |
+| **Harness `.mjs` child programs** | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
 
 Each row is tracked in the roadmap in
-[`db-stack-docs`](https://github.com/AgentiX-E/db-stack-docs/blob/master/plan/ROADMAP.md) with
+[`db-stack-docs`](https://github.com/AgentiX-E/db-stack-docs/blob/main/plan/ROADMAP.md) with
 an owner and an exit criterion; none of them is hidden behind a passing badge.
 
 ---
@@ -165,7 +173,10 @@ pnpm typecheck && pnpm lint && pnpm format:check     # static gates
 (cd cluster && pnpm coverage)                        # unit + integration + conformance
 (cd federation && pnpm coverage)
 (cd operations && pnpm coverage)
-pnpm e2e                                             # 15 real-process TLS acceptance tests
+pnpm coverage:e2e                                    # e2e harness, same 95 % thresholds
+pnpm coverage:gate                                   # all four packages, every dimension
+pnpm e2e                                             # 29 real-process TLS acceptance tests
+pnpm verify                                          # all of the above, in order
 ```
 
 The benchmark suite runs on GitHub runners from `.github/workflows/benchmark.yml`; results

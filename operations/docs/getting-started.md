@@ -87,5 +87,5 @@ class MyDatabaseBackupAdapter implements IBackupManager {
 ## Next Steps
 
 - See each package's README for specific API docs
-- Read the [architecture doc](./docs/architecture.md) for design details
-- Check the [testing strategy](./docs/testing.md) to understand test coverage
+- Read the [architecture doc](../../docs/architecture.md) for design details
+- Read the [operations guide](../../docs/user-guide/operations.md) for the 21 packages

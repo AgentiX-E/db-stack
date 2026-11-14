@@ -140,9 +140,9 @@ npm test    # 363 tests, 29 test files
 
 See:
 
-- [ADR: Outbox-before-send pattern](https://github.com/AgentiX-E/db-stack-docs/blob/master/adr/federation-001-outbox-before-send.md)
-- [ADR: Exactly-once via DedupRing](https://github.com/AgentiX-E/db-stack-docs/blob/master/adr/federation-002-exactly-once-dedup.md)
-- [Architecture](https://github.com/AgentiX-E/db-stack-docs/blob/master/design/FEDERATION-DESIGN.md)
+- [ADR: Outbox-before-send pattern](https://github.com/AgentiX-E/db-stack-docs/blob/main/adr/federation-001-outbox-before-send.md)
+- [ADR: Exactly-once via DedupRing](https://github.com/AgentiX-E/db-stack-docs/blob/main/adr/federation-002-exactly-once-dedup.md)
+- [Architecture](https://github.com/AgentiX-E/db-stack-docs/blob/main/design/FEDERATION-DESIGN.md)
 
 ---
 

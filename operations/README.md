@@ -2,7 +2,7 @@
 
 **A production-grade, engine-agnostic operations abstraction layer — 20 packages, 866 tests.**
 
-**Mutation Score:** 85.2% weighted average across audited packages ([full report →](https://github.com/AgentiX-E/db-stack-docs/blob/master/archive/OPERATIONS-MUTATION-QUALITY-REPORT.md))
+**Mutation Score:** 85.2% weighted average across audited packages ([full report →](https://github.com/AgentiX-E/db-stack-docs/blob/main/archive/OPERATIONS-MUTATION-QUALITY-REPORT.md))
 
 Replace ad-hoc `ops/` directories with a canonical interface suite that every database
 engine implements via adapters.

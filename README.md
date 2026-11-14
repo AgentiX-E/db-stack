@@ -32,6 +32,7 @@ pnpm test           # unit + integration suites (turbo)
 pnpm coverage       # v8 coverage per package
 pnpm coverage:gate  # fails unless EVERY dimension is ≥ 95% in EVERY package
 pnpm e2e            # real multi-process clusters over mutual TLS
+pnpm verify         # the whole local gate: lint → format → typecheck → coverage → e2e
 pnpm bench:real     # YCSB workloads against a real 3-node cluster
 ```
 

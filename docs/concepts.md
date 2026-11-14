@@ -151,7 +151,7 @@ Every layer talks to "a database" through an interface, never a concrete engine:
 
 | Layer | Interface | Your engine implements |
 |---|---|---|
-| Cluster (state machine) | `IShardReplica` — `apply`, `snapshot`, `restore`, `dataSize` | How a committed command mutates and serialises your data |
+| Cluster (state machine) | `IShardReplica` — `apply`, `snapshot(boundaryIndex)`, `restore`, `dataSize` | How a committed command mutates and serialises your data |
 | Cluster (storage) | `IWalStorage` — append, truncate, read ranges | Optional: replace SQLite as the Raft log store |
 | Federation (change capture) | `ICDCEngine` — `watchTable`, `onChange` | How to read your engine's change stream |
 | Federation (delivery) | `IOutboxStore`, `ITransport` | Durable queue and wire transport |
@@ -171,7 +171,8 @@ not a fork. See [engine adapters](user-guide/engine-adapters.md).
 | Majority lost | No new commits; existing data readable if a node survives | Availability |
 | Network partition heals | Followers converge to the leader's log | Anything about the *minority* side's uncommitted writes |
 | Cross-DC link fails | Both DCs keep accepting local writes; outbox grows | Cross-DC consistency until the link returns |
-| Node restarts after crash | Log replays from the last snapshot; state machine rebuilds | Nothing — this is the designed recovery path |
+| Node restarts after crash | The snapshot restores the state machine, then the log tail replays | Nothing — this is the designed recovery path |
+| Whole cluster restarts after compaction | Every committed key returns and the cluster accepts writes again (three-process acceptance test) | Nothing beyond the snapshot interval of in-flight, uncommitted work |
 | Clock jumps | HLC advances monotonically; Raft ignores wall clocks | Applications that use `Date.now()` for ordering |
 
 ---

@@ -60,7 +60,7 @@ export interface IStorageEngine {
 
 export interface EngineApplyContext {
   readonly shardId: number;   // which shard this entry belongs to
-  readonly index: number;     // exact Raft index: contiguous, gap-free, from 1
+  readonly index: number;     // exact Raft log index: strictly increasing, from 1
   readonly applyTerm: number; // term at apply time (diagnostic, not a correctness input)
   readonly operation?: string;
   readonly msgId?: string;
@@ -88,9 +88,9 @@ That is the entire integration. `EngineBackedReplica` then guarantees, on your b
 | Guarantee | Why it cannot be left to the engine |
 |---|---|
 | **Exactly-once replay** | After a restart Raft replays every entry above the snapshot. The adapter drops indexes the engine already applied, so `SET balance = balance + 10` never becomes `+20`. |
-| **Gap rejection** | `1, 2, 4` is a broken log. Applying `4` would produce state no peer can reproduce, so the adapter refuses instead of diverging silently. |
+| **Monotonic position** | Indexes increase but are *not* consecutive: Raft applies CONFIG and NOOP entries itself and never calls your engine for them, so a forward jump is normal. Going backwards is what the adapter refuses. |
 | **Serialization** | Applies run one at a time even when callers forget to await. |
-| **Positioned snapshots** | Raw engine bytes carry no position, so a restarted replica could not tell Raft where to resume. The adapter frames every snapshot with `(shardId, index, term)` and a CRC32. |
+| **Positioned snapshots** | Raw engine bytes carry no position, so a restarted replica could not tell Raft where to resume. The adapter frames every snapshot with `(shardId, index, term)` and a CRC32 — where `index` is the boundary Raft declares, which is exactly the position a restore must resume from. |
 | **Corruption is loud** | A truncated, bit-flipped or cross-shard snapshot is rejected before the engine is touched, leaving a healthy replica intact. |
 | **Snapshot is a consistent cut** | The adapter waits for in-flight applies, so the payload and the recorded index describe the same state. |
 
@@ -125,7 +125,7 @@ runEngineConformance({
 });
 ```
 
-The suite is 22 checks across four groups — apply/query semantics, snapshot and restore,
+The suite is 23 checks across four groups — apply/query semantics, snapshot and restore,
 replica positioning (replay, gaps, failures, concurrency), and lifecycle. It runs against
 the two engines this repository ships (`MemoryStorageEngine` and a SQLite-backed engine) with
 no special-casing, which is how the contract stays engine-agnostic instead of drifting into

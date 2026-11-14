@@ -53,13 +53,36 @@ applications and never imported by the other two at runtime.
 |---|---|---|
 | Consensus core | `RaftAdapter`, `RaftGroup`, `RaftGroupManager`, `ShardStateMachine` | One log per shard; leader election; commit + apply; multi-shard orchestration |
 | Membership | `RaftJointConsensusEngine` | Two-phase, rollback-safe membership change |
-| Extensions | `InstallSnapshotHandler`, `LeaderTransferHandler`, `ReadIndexManager`, `LeaseReadManager`, `SessionManager`, `WatchApi` | Snapshot streaming, graceful handoff, linearizable reads, idempotent sessions, change notification |
+| Extensions | `LeaderTransferHandler`, `ReadIndexManager`, `LeaseReadManager`, `SessionManager`, `WatchApi` | Graceful handoff, linearizable reads, idempotent sessions, change notification. Snapshot transfer is not here: raft-core owns it (§2.1.1) |
 | Transport | `RaftTcpTransport`, `BatchedRaftTransport`, `SharedBatchedTransport`, `NodeTransport`, `RaftTransportAdapter`, `ConnectionPool`, `MessageCodec`, `MessageCompressor` | TLS 1.3 + mTLS framing, batching, compression, reconnection with backoff, per-peer circuit breaking |
 | Storage | `SqliteStorage`, `SqliteNodeStorage` (+ meta/log/snapshot/config splits), `WAL` streaming, `PITRManager` | Durable log, compaction, snapshot persistence, point-in-time recovery |
 | Sharding | `ShardManager`, `ReshardPlanner`, `OnlineShardMigration`, `HashShardStrategy`, `RangeShardStrategy`, `ConsistentHashStrategy` | Key→shard routing, online migration |
 | High availability | `HAFailoverDetector`, `HAFailoverCoordinator`, `HAClientManager`, `HAConsistencyVerifier`, `FencingManager`, `ClockCompensator` | Failure detection, automated failover, fencing, post-failover verification |
 | Observability | `RaftMetricsCollector`, `HealthProbe`, `LoggingAdapter`, `EventBus` | Metrics, probes, structured logs, typed event stream |
 | Testing surface | `TestCluster`, certificate factory, `LinearizabilityChecker` | Published harness so downstream packages test against a real cluster instead of mocks |
+
+#### 2.1.1 One snapshot authority
+
+A snapshot has to answer three questions at once — *what is the state*, *up to which log
+index*, and *what may now be discarded* — so only one component may answer them. That
+component is raft-core:
+
+```
+apply(entry)  ──▶ state machine ──▶ replica.apply(entry)          engine state
+                       │
+                       ├─ applied - snapshot ≥ threshold
+                       ▼
+             replica.snapshot(boundaryIndex)  ──▶ envelope(shard, boundary, term, CRC32)
+                       ▼
+             snapshot stored + log truncated      (one step, one writer)
+```
+
+`RaftGroup` schedules nothing and truncates nothing; it exposes `trySnapshot()` as an
+explicit request and reports the boundary raft-core holds. An earlier design had a second
+loop in the group that wrote a metadata-only file and then truncated the log itself; the
+two boundaries could disagree, and when they did the difference was data loss. The
+end-to-end suite (`AC-C7`) now restarts a compacted three-process cluster and asserts both
+halves of the outcome: every key is back, and the cluster accepts writes.
 
 ### 2.2 `@agentix-e/db-federation`
 

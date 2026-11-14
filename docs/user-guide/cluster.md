@@ -108,17 +108,29 @@ log: [1 .. 10000][101 .. 10250]          snapshot@10000
 
 | Setting | Meaning |
 |---|---|
-| `snapshotInterval: N` | Take a snapshot every N committed entries |
+| `snapshotInterval: N` | Take a snapshot every N applied entries (raft-core checks after every apply) |
 | `maxLogEntries: M` | Compact when the retained log exceeds M entries |
-| `compactLogs(lastIncludedIndex)` | Explicit compaction (used by PITR and tests) |
+| `group.trySnapshot()` | Force one now — idempotent, and a no-op if nothing was applied since the last one |
 
-Snapshots are written through the state machine's `takeSnapshot()` and installed through
-`installSnapshot()`. `InstallSnapshotHandler` streams large snapshots in chunks so a
-lagging follower never has to hold a whole snapshot in memory.
+**There is exactly one snapshot mechanism.** raft-core captures it: it calls your
+replica's `snapshot(boundaryIndex)` for the bytes, stores it with its term and the
+committed configuration, and truncates the log it covers — in that order, in one step.
+Nothing else truncates the log, which is why "the log was compacted past a snapshot that
+does not contain the data" cannot happen.
 
-**Failure mode to know:** if `takeSnapshot()` returns inconsistent bytes (for example
-because the engine read while writes were in flight), a follower that installs that
-snapshot diverges permanently. Take the snapshot under the same lock that applies entries.
+The boundary index handed to `snapshot()` is Raft's, not the engine's. They differ by the
+CONFIG and NOOP entries Raft applies without calling your engine (a bootstrap entry, a
+leader's election no-op), so an engine that stamped its own watermark would come back
+from a restore a few indexes short — and then refuse the next entry as a gap.
+
+Installation is raft-core's too: it pulls the snapshot in chunks from the leader,
+verifies it and hands the bytes to `installSnapshot()`. A lagging follower therefore never
+holds a whole snapshot in memory, and the leader needs no help from the application.
+
+**Failure mode to know:** if `snapshot()` returns inconsistent bytes (for example because
+the engine read while writes were in flight), a follower that installs that snapshot
+diverges permanently. `EngineBackedReplica` waits for in-flight applies before capturing;
+a hand-written replica must do the same.
 
 ---
 
