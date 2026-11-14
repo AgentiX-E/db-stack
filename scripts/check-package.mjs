@@ -12,8 +12,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -75,19 +76,39 @@ let failures = 0;
 
 for (const target of TARGETS) {
   const pkgDir = resolve(root, target.dir);
-  const specifier = target.entry === '.' ? pkgDir : `${pkgDir}/${target.entry.slice(2)}`;
+  const label = `${target.dir}${target.entry === '.' ? '' : `/${target.entry.slice(2)}`}`;
 
-  // Prefer resolving through the package name, which is what consumers do.
   const packageJsonPath = `${pkgDir}/package.json`;
   if (!existsSync(packageJsonPath)) {
-    console.error(`✗ ${target.dir}${target.entry}: package.json missing`);
+    console.error(`\u2717 ${label}: package.json missing`);
+    failures += 1;
+    continue;
+  }
+
+  const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  const subpath = manifest.exports?.[target.entry];
+  if (!subpath) {
+    console.error(`\u2717 ${label}: no "exports" entry for "${target.entry}"`);
+    failures += 1;
+    continue;
+  }
+
+  // Resolve the file the package *publishes* for this subpath. Importing the
+  // package name would additionally require a node_modules link that only
+  // exists in a consumer install, so the check is anchored to the declared
+  // target instead: it still fails when the path is not emitted, when an ESM
+  // specifier lost its extension, or when an export is missing.
+  const entry = subpath.import ?? subpath.default ?? subpath;
+  const entryFile = resolve(pkgDir, entry);
+  if (!existsSync(entryFile)) {
+    console.error(`\u2717 ${label}: declared entry not emitted (${entry})`);
     failures += 1;
     continue;
   }
 
   const script = `
     const expected = ${JSON.stringify(target.expect)};
-    const url = ${JSON.stringify(specifier)};
+    const url = ${JSON.stringify(pathToFileURL(entryFile).href)};
     const loaded = await import(url);
     const missing = expected.filter((name) => !(name in loaded));
     if (missing.length > 0) {
@@ -102,12 +123,11 @@ for (const target of TARGETS) {
     encoding: 'utf8',
   });
 
-  const label = `${target.dir}${target.entry === '.' ? '' : `/${target.entry.slice(2)}`}`;
   if (result.status !== 0) {
-    console.error(`✗ ${label}: ${(result.stderr || result.stdout).split('\n').slice(0, 3).join(' ')}`);
+    console.error(`\u2717 ${label}: ${(result.stderr || result.stdout).split('\n').slice(0, 3).join(' ')}`);
     failures += 1;
   } else {
-    console.log(`✓ ${label} ${result.stdout.trim()}`);
+    console.log(`\u2713 ${label} ${result.stdout.trim()}`);
   }
 }
 

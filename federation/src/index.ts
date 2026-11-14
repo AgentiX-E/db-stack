@@ -76,6 +76,17 @@ export { CDCEngine } from "./replication/CDCEngine";
 export type { CDCEngineConfig } from "./replication/CDCEngine";
 export { CDCManager } from "./replication/CDCManager";
 export type { CDCManagerConfig } from "./replication/CDCManager";
+// The exactly-once pipeline was implemented and tested but never re-exported,
+// so consumers could not reach it from the package root.
+export { ExactlyOnceCDCPipeline } from "./replication/ExactlyOnceCDCPipeline";
+export type {
+  ExactlyOnceCDCPipelineConfig,
+  CDCCheckpoint,
+  CDCPipelineMetrics,
+  CDCPipelineEvent,
+  CDCPipelineEventType,
+  CDCPipelineEventHandler,
+} from "./replication/ExactlyOnceCDCPipeline";
 
 // AntiEntropy
 export { AntiEntropy } from "./replication/AntiEntropy";

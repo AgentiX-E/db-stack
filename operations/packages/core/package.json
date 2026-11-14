@@ -1,0 +1,42 @@
+{
+  "name": "@agentix-e/db-operations-core",
+  "version": "1.1.0",
+  "description": "Core types, provider registry, and base interfaces for db-operations",
+  "type": "module",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js",
+      "default": "./dist/types.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../../scripts/fix-esm-extensions.mjs dist",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {},
+  "engines": {
+    "node": ">=20.11"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgentiX-E/db-stack.git",
+    "directory": "operations/packages/core"
+  }
+}
