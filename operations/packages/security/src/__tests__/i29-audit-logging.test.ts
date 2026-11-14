@@ -317,7 +317,13 @@ describe("AUD5: Hash chain integrity", () => {
     // Tamper with event B by directly modifying internal state
     // We need to reach into the internal events array
     const internalEvents = (logger as any).events as AuditEvent[];
-    internalEvents[1]!.hash = "0" + internalEvents[1]!.hash!.slice(1);
+    // Flip the first nibble rather than hard-coding "0": a hash that already
+    // starts with 0 left the value — and the chain — untouched, so the
+    // assertion failed roughly once in sixteen runs.
+    const original = internalEvents[1]!.hash!;
+    const flipped = (original[0] === "0" ? "1" : "0") + original.slice(1);
+    internalEvents[1]!.hash = flipped;
+    expect(flipped).not.toBe(original);
 
     const result = await logger.verifyIntegrity();
     expect(result.valid).toBe(false);
