@@ -16,6 +16,9 @@
       "default": "./dist/index.js"
     }
   },
+  "dependencies": {
+    "@agentix-e/db-operations-core": "workspace:*"
+  },
   "files": [
     "dist"
   ],
@@ -23,7 +26,6 @@
     "build": "tsc -p tsconfig.json && node ../../../scripts/fix-esm-extensions.mjs dist",
     "clean": "rm -rf dist"
   },
-  "peerDependencies": {},
   "engines": {
     "node": ">=20.11"
   },

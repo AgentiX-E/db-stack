@@ -295,7 +295,11 @@ importers:
 
   operations/packages/core: {}
 
-  operations/packages/federation: {}
+  operations/packages/federation:
+    dependencies:
+      '@agentix-e/db-operations-core':
+        specifier: workspace:*
+        version: link:../core
 
   operations/packages/health:
     dependencies:
