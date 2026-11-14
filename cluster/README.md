@@ -170,10 +170,11 @@ class RaftAdapter {
   transferLeadership(targetNodeId: string): Promise<void>;
   setForceLeader(enabled: boolean): void;
   
-  // Snapshots
-  shouldTakeSnapshot(): boolean;
-  takeSnapshot(index: number): void;
-  compactLogs(lastIncludedIndex: number): Promise<void>;
+  // Snapshots — scheduling belongs to raft-core, which snapshots on the
+  // configured threshold after an apply. These are the explicit surfaces.
+  requestSnapshot(): Promise<SnapshotMeta | null>;   // force one now; idempotent
+  getSnapshotMeta(): SnapshotMeta | null;            // the boundary raft holds
+  refreshSnapshotMeta(): Promise<SnapshotMeta | null>; // re-read from storage
 }
 ```
 
@@ -271,11 +272,11 @@ npm run tla-check          # TLA+ model checking
 
 ## Design Decisions
 
-See the [architecture decision records](https://github.com/AgentiX-E/db-stack-docs/tree/master/adr) for the reasoning behind each major choice, including:
+See the [architecture decision records](https://github.com/AgentiX-E/db-stack-docs/tree/main/adr) for the reasoning behind each major choice, including:
 
-- [ADR-001: Why @maboke123/raft-core as the consensus engine](https://github.com/AgentiX-E/db-stack-docs/blob/master/adr/cluster-001-raft-core.md)
-- [ADR-002: Transport layer — TCP, mTLS, Batched, Shared](https://github.com/AgentiX-E/db-stack-docs/blob/master/adr/cluster-002-transport.md)
-- [ADR-003: Snapshot and log compaction strategy](https://github.com/AgentiX-E/db-stack-docs/blob/master/adr/cluster-003-snapshots.md)
+- [ADR-001: Why @maboke123/raft-core as the consensus engine](https://github.com/AgentiX-E/db-stack-docs/blob/main/adr/cluster-001-raft-core.md)
+- [ADR-002: Transport layer — TCP, mTLS, Batched, Shared](https://github.com/AgentiX-E/db-stack-docs/blob/main/adr/cluster-002-transport.md)
+- [ADR-003: Snapshot and log compaction strategy](https://github.com/AgentiX-E/db-stack-docs/blob/main/adr/cluster-003-snapshots.md)
 
 ---
 

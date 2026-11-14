@@ -283,11 +283,17 @@ export function runEngineConformance(options: EngineConformanceOptions): void {
       });
     });
 
-    it('rejects a gap in the log', async () => {
+    it('accepts a forward jump (raft skips non-command entries) and records it', async () => {
+      // raft-core applies CONFIG and NOOP entries itself and never calls the
+      // application for them, so the index sequence an engine observes is
+      // increasing but not consecutive. Refusing a jump — as this adapter did
+      // before the rule was written down — kills the apply loop on the first write
+      // after a restart, which is exactly what happened in AC-C7.
       await withReplica(async ({ replica }) => {
         await applyAt(replica, 1, codec.put('a', '1'));
-        await assert.rejects(() => applyAt(replica, 3, codec.put('a', '3')), /gap/i);
-        assert.equal(await replica.getAppliedIndex(), 1);
+        await applyAt(replica, 4, codec.put('a', '4'));
+        assert.equal(await replica.getAppliedIndex(), 4);
+        assert.equal(replica.forwardJumps, 1, 'the jump must be counted, not swallowed');
       });
     });
 
@@ -331,6 +337,31 @@ export function runEngineConformance(options: EngineConformanceOptions): void {
           assert.equal(restored.skippedReplays, 1);
           await applyAt(restored, 3, codec.put('c', '3'));
           assert.equal(codec.decodeGet(await engine.query(codec.get('c'))), '3');
+        } finally {
+          await engine.close();
+        }
+      });
+    });
+
+    it('stamps the boundary index raft declares, not the local watermark', async () => {
+      // The engine's watermark can sit below the snapshot boundary — the entries in
+      // between were CONFIG or NOOP, applied by raft without reaching the
+      // application. A snapshot framed below its own boundary makes the first
+      // post-restore apply look like a skip and, before this rule was enforced,
+      // wedged the apply loop after a restart.
+      await withReplica(async ({ replica }) => {
+        await applyAt(replica, 1, codec.put('a', '1'));
+        const bytes = await replica.snapshot(3);
+
+        const engine = new InstrumentedEngine(await create());
+        const restored = new EngineBackedReplica({ shardId: 1, engine });
+        try {
+          await restored.restore(bytes);
+          assert.equal(await restored.getAppliedIndex(), 3, 'the framed index must be the boundary raft passed');
+          assert.equal(codec.decodeGet(await engine.query(codec.get('a'))), '1', 'state must still be complete');
+          // The next real entry is accepted, not treated as a gap.
+          await applyAt(restored, 4, codec.put('b', '2'));
+          assert.equal(codec.decodeGet(await engine.query(codec.get('b'))), '2');
         } finally {
           await engine.close();
         }

@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
 
 const mockRaftAdapter: any = {
   init: vi.fn().mockResolvedValue(undefined),
@@ -21,10 +22,8 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
-  shouldTakeSnapshot: vi.fn().mockReturnValue(false),
-  takeSnapshot: vi.fn(),
-  resetCommittedCount: vi.fn(),
-  compactLogs: vi.fn().mockResolvedValue(undefined),
+  getSnapshotMeta: vi.fn().mockReturnValue(null),
+  requestSnapshot: vi.fn().mockResolvedValue(null),
   stop: vi.fn(),
   setForceLeader: vi.fn(),
   campaign: vi.fn().mockResolvedValue(undefined),
@@ -51,10 +50,8 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
-    shouldTakeSnapshot = mockRaftAdapter.shouldTakeSnapshot;
-    takeSnapshot = mockRaftAdapter.takeSnapshot;
-    resetCommittedCount = mockRaftAdapter.resetCommittedCount;
-    compactLogs = mockRaftAdapter.compactLogs;
+    getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
+    requestSnapshot = mockRaftAdapter.requestSnapshot;
     stop = mockRaftAdapter.stop;
     setForceLeader = mockRaftAdapter.setForceLeader;
     campaign = mockRaftAdapter.campaign;
@@ -75,7 +72,7 @@ const MOCK_CONFIG = {
   maxLogEntries: 0,
 };
 
-const MOCK_REPLICA = { apply: vi.fn() };
+const MOCK_REPLICA = { apply: vi.fn(), snapshot: vi.fn().mockResolvedValue(Buffer.from('state')), restore: vi.fn() };
 const MOCK_OUTBOX = { append: vi.fn() };
 
 describe('RaftGroup — constructor/fallback/membership-timeout branches', () => {
@@ -95,19 +92,12 @@ describe('RaftGroup — constructor/fallback/membership-timeout branches', () =>
   });
 
   describe('constructor fallbacks', () => {
-    it('defaults snapshotInterval to 100 when config omits it', () => {
-      const g = new RaftGroup(0, { ...MOCK_CONFIG, snapshotInterval: 0 }, MOCK_REPLICA, MOCK_OUTBOX);
-      expect(g.snapshotInterval).toBe(100);
-    });
-
-    it('retains an explicit snapshotInterval', () => {
-      const g = new RaftGroup(0, { ...MOCK_CONFIG, snapshotInterval: 250 }, MOCK_REPLICA, MOCK_OUTBOX);
-      expect(g.snapshotInterval).toBe(250);
-    });
-
-    it('defaults snapshotDir to ./data when omitted', () => {
+    it('always creates the snapshot directory, defaulting to ./data', async () => {
+      // The directory is kept for engine-level artefacts and for deployments that
+      // mount it; the authoritative snapshot now lives in the Raft storage.
       const g = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, undefined);
-      expect(g.getSnapshotFilePath()).toContain('data');
+      await g.init();
+      expect(fs.existsSync('./data')).toBe(true);
     });
   });
 
@@ -209,7 +199,11 @@ describe('RaftGroup — constructor/fallback/membership-timeout branches', () =>
       expect(group.readSnapshotMeta()).toBeNull();
     });
 
-    it('trySnapshot flush hook is awaited', async () => {
+    it('flushes the PITR WAL inside the snapshot capture, before the log is truncated', async () => {
+      // The flush used to sit in the group's own snapshot loop. It now runs inside
+      // the capture callback, which is the last moment before raft-core discards the
+      // entries the WAL duplicates — so it cannot be skipped by a snapshot that
+      // raft-core triggers on its own threshold.
       const flushHook = vi.fn().mockResolvedValue(undefined);
       const g = new RaftGroup(
         0,
@@ -222,11 +216,12 @@ describe('RaftGroup — constructor/fallback/membership-timeout branches', () =>
         undefined,
         flushHook,
       );
-      mockRaftAdapter.shouldTakeSnapshot.mockReturnValue(true);
-      mockRaftAdapter.getAppliedIndex.mockResolvedValue(5);
-      mockRaftAdapter.getStatus.mockResolvedValue({ term: '3', lead: '1' });
-      await g.trySnapshot();
+      await g.init();
+      const handlers = mockRaftAdapter.setApplicationSnapshotHandlers.mock.calls.at(-1)![0];
+      await handlers.takeSnapshot(7);
       expect(flushHook).toHaveBeenCalled();
+      expect(MOCK_REPLICA.snapshot).toHaveBeenCalledWith(7);
+      expect(flushHook.mock.invocationCallOrder[0]!).toBeLessThan(MOCK_REPLICA.snapshot.mock.invocationCallOrder[0]!);
     });
   });
 

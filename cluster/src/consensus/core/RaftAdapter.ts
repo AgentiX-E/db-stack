@@ -116,9 +116,6 @@ export interface SnapshotMeta {
 export class RaftAdapter {
   private node: RaftNode | null = null;
   private config: RaftConfig;
-  /** How often the term is re-read from the node, in applied entries. */
-  private static readonly TERM_PROBE_INTERVAL = 64;
-
   private applyHandler: ((data: string, index?: number, term?: number) => void | Promise<void>) | null = null;
 
   /**
@@ -131,26 +128,31 @@ export class RaftAdapter {
    * `start()`. See {@link setApplicationSnapshotHandlers}.
    */
   private applicationSnapshotHandlers: {
-    takeSnapshot?: () => Buffer | Promise<Buffer>;
+    takeSnapshot?: (boundaryIndex: number) => Buffer | Promise<Buffer>;
     installSnapshot?: (data: Buffer) => void | Promise<void>;
   } = {};
 
-  /** Highest index this adapter has successfully applied. */
+  /**
+   * Last index this adapter has handed to the application.
+   *
+   * Kept for the force-leader path, which bypasses raft and therefore has no
+   * position to read; the normal path derives the index from raft itself.
+   */
   private _appliedIndex = 0;
-
-  /** Last observed term, refreshed at most every {@link TERM_PROBE_INTERVAL} entries. */
-  private _termCache = 0;
-
-  /** Counts apply-context lookups so the term probe can be throttled. */
-  private _contextProbe = 0;
 
   private nodeStorage: NodeStorage | null = null;
   private transport: Transport | null = null;
   private originalTcpTransport: OriginalRaftTcpTransport | null = null;
 
-  // Snapshot tracking
-  private committedCount: number = 0;
-  private lastSnapshotIndex: number = 0;
+  /**
+   * The snapshot raft-core currently holds, as last observed.
+   *
+   * There is exactly one snapshot in this system: the one raft-core writes
+   * together with the log truncation it justifies. Keeping a second, parallel
+   * notion of "the snapshot" — a metadata file written by the group — is what
+   * made compaction able to discard entries no snapshot covered.
+   */
+  private _snapshotMeta: { lastIncludedIndex: number; lastIncludedTerm: number; observedAt: number } | null = null;
 
   /** Forced leader flag — set by HA failover when 2-node cluster is stuck */
   private _forceLeader: boolean = false;
@@ -291,36 +293,34 @@ export class RaftAdapter {
 
       // ── Step 3: Build ShardStateMachine ──────────────────────
       const stateMachine = new ShardStateMachine({
-        // raft-core's apply loop is serialized by an exclusive lock and advances
-        // `lastApplied` only after this callback resolves, so the entry being
-        // applied is exactly `lastApplied + 1`. Deriving the index here (instead of
-        // counting locally) keeps it correct across snapshot installs, which move
-        // `lastApplied` without going through apply.
+        // The position of the entry being applied is exactly
+        // `getLastApplied() + 1`: raft-core's apply loop is serialized by an
+        // exclusive lock and advances `lastApplied` only after this callback
+        // resolves, so nothing can move it in between. Deriving it from raft
+        // (instead of counting locally) is what keeps an engine's index equal to
+        // the *log* index — a local counter drifts by one for every CONFIG or
+        // NOOP entry raft applies without telling the application, and the
+        // engine's own strict ordering then rejects the first entry after a
+        // restart. Both getters are in-memory field reads.
         applyHandler: async (data: string, index?: number, term?: number) => {
-          if (index === undefined) {
-            // raft-core's Command carries no position, so the adapter supplies it:
-            // the applied counter is exact (synchronised with raft at init and on
-            // snapshot install, then advanced once per applied entry), and the term
-            // is probed at a rate that keeps a durable node off the disk path.
-            this._contextProbe += 1;
-            if (this._contextProbe % RaftAdapter.TERM_PROBE_INTERVAL === 1) {
-              this._termCache = this.node?.getCurrentTerm() ?? this._termCache;
-            }
-            index = this._appliedIndex + 1;
-            term = this._termCache;
-          }
+          const appliedIndex = index ?? (this.node ? this.node.getLastApplied() + 1 : 0);
+          const appliedTerm = term ?? this.node?.getCurrentTerm() ?? 0;
           if (this.applyHandler) {
             // Rethrow: an unapplied command that raft-core marks as applied is
             // silent divergence. Fail-stopping the apply loop lets the node replay
             // the entry after a restart instead.
-            await this.applyHandler(data, index, term);
+            await this.applyHandler(data, appliedIndex, appliedTerm);
           }
-          if (index !== undefined) this._appliedIndex = index;
-          this.committedCount++;
+          this._appliedIndex = appliedIndex;
         },
+        // raft-core computes the snapshot boundary before asking for the bytes, so
+        // the engine's state must be stamped with *its* index, not the engine's own
+        // watermark: the difference is every non-command entry applied above the
+        // last command, and a restore that lands short of the boundary makes the
+        // next apply look like a gap.
         takeSnapshotCallback: () =>
           this.applicationSnapshotHandlers.takeSnapshot
-            ? this.applicationSnapshotHandlers.takeSnapshot()
+            ? this.applicationSnapshotHandlers.takeSnapshot(this.node?.getLastApplied() ?? 0)
             : Buffer.alloc(0),
         installSnapshotCallback: async (data: Buffer) => {
           if (this.applicationSnapshotHandlers.installSnapshot) {
@@ -329,6 +329,8 @@ export class RaftAdapter {
           // The snapshot moves raft's lastApplied without going through apply, so
           // the counter has to follow or the next entry would look like a replay.
           this._appliedIndex = this.node?.getLastApplied() ?? this._appliedIndex;
+          // An installed snapshot replaces the one we were advertising.
+          await this.refreshSnapshotMeta();
         },
       });
 
@@ -390,7 +392,8 @@ export class RaftAdapter {
       // A restart may begin above index 1 (raft loads a snapshot during start), and
       // the entry counter must reflect that before the first apply arrives.
       this._appliedIndex = raftNode.getLastApplied();
-      this._termCache = raftNode.getCurrentTerm();
+      // A restarted node already owns a snapshot; read it before anyone asks.
+      await this.refreshSnapshotMeta();
 
       logger.info({ nodeId: this.config.id }, '[RaftAdapter] Initialized with @maboke123/raft-core');
     } catch (err: unknown) {
@@ -423,7 +426,16 @@ export class RaftAdapter {
    * @param handlers Serializer and restorer for the engine's applied state.
    */
   setApplicationSnapshotHandlers(handlers: {
-    takeSnapshot?: () => Buffer | Promise<Buffer>;
+    /**
+     * Serialize the engine's applied state.
+     *
+     * @param boundaryIndex The Raft log index the snapshot will cover. The
+     *        envelope must record *this* index: the engine's own watermark can be
+     *        lower, because raft-core applies CONFIG and NOOP entries without
+     *        calling the application, and a state stamped below the boundary would
+     *        make the first post-restore apply look like a gap.
+     */
+    takeSnapshot?: (boundaryIndex: number) => Buffer | Promise<Buffer>;
     installSnapshot?: (data: Buffer) => void | Promise<void>;
   }): void {
     this.applicationSnapshotHandlers = handlers;
@@ -716,10 +728,15 @@ export class RaftAdapter {
 
   /**
    * Get full Raft status.
+   *
+   * Also refreshes the cached snapshot view: this is the call monitoring makes,
+   * and a status that reports a snapshot index the node no longer holds (or omits
+   * one raft-core took on its own threshold) is worse than no field at all.
    */
   async getStatus(): Promise<any> {
     if (!this.node) return null;
     try {
+      const snapshot = await this.refreshSnapshotMeta();
       return {
         role: this.node.getState(),
         term: this.node.getCurrentTerm(),
@@ -727,6 +744,9 @@ export class RaftAdapter {
         lastApplied: this.node.getLastApplied(),
         lastLogIndex: this.node.getLastLogIndex(),
         leader: this.node.getLeaderId(),
+        snapshot: snapshot
+          ? { lastIncludedIndex: snapshot.lastIncludedIndex, lastIncludedTerm: snapshot.lastIncludedTerm }
+          : null,
       };
     } catch {
       return null;
@@ -797,29 +817,85 @@ export class RaftAdapter {
   // ──────────────────────────────────────────
 
   /**
-   * Check if a snapshot should be taken based on committed count.
+   * The snapshot raft-core currently holds, or `null` when it holds none.
+   *
+   * Synchronous on purpose: it reads a cache refreshed at init, after every
+   * snapshot this adapter requests and after every snapshot raft-core installs,
+   * so callers on a hot path (learner catch-up, status reporting) do not have to
+   * await a storage read.
    */
-  shouldTakeSnapshot(): boolean {
-    // Use `??` so that an explicit `snapshotInterval: 0` (which disables
-    // snapshotting per the config contract) is preserved rather than being
-    // silently replaced by the default of 100 via `||`.
-    const interval = this.config.snapshotInterval ?? 100;
-    if (interval <= 0) return false;
-    return this.committedCount > 0 && this.committedCount % interval === 0;
+  getSnapshotMeta(): { lastIncludedIndex: number; lastIncludedTerm: number; observedAt: number } | null {
+    return this._snapshotMeta;
   }
 
   /**
-   * Record that a snapshot was taken at the given index.
+   * Re-read raft-core's snapshot metadata into the cache.
+   *
+   * The stored snapshot is the only authority: it is written by raft-core in the
+   * same step that truncates the log, so its index is exactly the boundary below
+   * which no log entry exists.
    */
-  takeSnapshot(index: number): void {
-    this.lastSnapshotIndex = index;
+  async refreshSnapshotMeta(): Promise<{
+    lastIncludedIndex: number;
+    lastIncludedTerm: number;
+    observedAt: number;
+  } | null> {
+    try {
+      const meta = await this.nodeStorage?.snapshot.readMetadata();
+      this._snapshotMeta =
+        meta && meta.lastIncludedIndex > 0
+          ? {
+              lastIncludedIndex: meta.lastIncludedIndex,
+              lastIncludedTerm: meta.lastIncludedTerm ?? 0,
+              observedAt: Date.now(),
+            }
+          : null;
+    } catch (err: unknown) {
+      logger.warn({ err }, '[RaftAdapter] Failed to read snapshot metadata');
+      this._snapshotMeta = null;
+    }
+    return this._snapshotMeta;
   }
 
   /**
-   * Reset the committed count after taking a snapshot.
+   * Take a snapshot now and let raft-core compact the log it covers.
+   *
+   * This is the *only* way this package produces a snapshot. Scheduling belongs
+   * to raft-core (`snapshotInterval` → its threshold, checked after every apply);
+   * this method is the explicit path — operator request, log-size pressure, or a
+   * PITR flush boundary — and is idempotent: asking twice for the same applied
+   * index returns the existing snapshot without writing or compacting again.
+   *
+   * @returns The snapshot metadata after the call, or `null` when nothing could
+   *          be snapshotted (not started, or nothing applied yet).
    */
-  resetCommittedCount(): void {
-    this.committedCount = 0;
+  async requestSnapshot(): Promise<{ lastIncludedIndex: number; lastIncludedTerm: number; observedAt: number } | null> {
+    if (!this.node) return null;
+
+    const applied = this.node.getLastApplied();
+    const current = this._snapshotMeta;
+    if (applied <= 0) return current;
+    if (current && applied <= current.lastIncludedIndex) return current;
+
+    // raft-core publishes no "snapshot now" trigger: `takeSnapshot` is its own
+    // capture-and-compact routine, declared private in the typings but the only
+    // way to snapshot outside its threshold. The cast is narrow and defensive —
+    // if the library ever renames it, this degrades to "cannot force" (logged)
+    // instead of throwing on a path that must never fail an apply.
+    // `src/__tests__/unit/RaftAdapter.snapshot.test.ts` fails if it disappears.
+    const node = this.node as unknown as { takeSnapshot?: () => Promise<unknown> };
+    if (typeof node.takeSnapshot !== 'function') {
+      logger.warn('[RaftAdapter] raft-core exposes no snapshot trigger — request ignored');
+      return current;
+    }
+
+    try {
+      await node.takeSnapshot.call(this.node);
+    } catch (err: unknown) {
+      logger.warn({ err }, `[RaftAdapter] Snapshot request failed at index ${applied}`);
+      return current;
+    }
+    return await this.refreshSnapshotMeta();
   }
 
   /**

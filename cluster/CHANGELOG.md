@@ -5,6 +5,59 @@ All notable changes to @agentix-e/db-cluster will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-11-15
+
+### Added
+
+- **Engine SPI** — `IStorageEngine` + `EngineBackedReplica` let any storage engine back a
+  Raft group without knowing Raft exists: `apply`, `query`, `snapshot`, `restore`,
+  `sizeInBytes`, `close`. `MemoryStorageEngine` is the reference implementation and the
+  adapter template.
+- **Published conformance suite** — `@agentix-e/db-cluster/testing` exports
+  `runEngineConformance`, 23 framework-neutral checks (apply/query semantics, snapshot and
+  restore, replica positioning, lifecycle). CI runs one matrix leg per engine.
+- **`RaftAdapter.requestSnapshot()`** — force a snapshot now; idempotent for an index that
+  is already covered. `getSnapshotMeta()` / `refreshSnapshotMeta()` report the boundary
+  raft-core holds.
+- **`EngineBackedReplica.forwardJumps`** — diagnostic counter for indexes that arrived
+  above the expected one (normal: raft skips non-command entries).
+
+### Changed
+
+- **`IShardReplica.snapshot(boundaryIndex?)`** — the snapshot now records the Raft boundary
+  it will be declared to cover, rather than the replica's own watermark. The two differ by
+  every CONFIG/NOOP entry raft applied without calling the application.
+- **Snapshot scheduling is raft-core's alone.** The group no longer runs a second
+  snapshot/compaction loop; `snapshotInterval` reaches raft-core's threshold directly and
+  `trySnapshot()` is an explicit request.
+- **The PITR WAL is flushed inside the snapshot capture**, i.e. immediately before raft
+  truncates the log the WAL duplicates, instead of in a scheduler that might never run.
+
+### Fixed
+
+- **A full-cluster restart after log compaction never became writable again.** Two causes:
+  the group truncated the log on the strength of a metadata-only snapshot (16 of 60 writes
+  lost in the reproduction), and the engine's log position was derived from a local counter
+  that drifted by one per CONFIG/NOOP entry, so the first post-restart apply looked like a
+  gap and killed the apply loop. Both fixed; `e2e` AC-C7 restarts three real processes and
+  asserts the data is back and writes are accepted.
+- **An enabled `enableInstallSnapshot` discarded snapshots.** The group's chunked-snapshot
+  handler forwarded reassembled bytes to `RaftAdapter.step()`, which is a no-op under
+  raft-core, so the message was swallowed. The handler is no longer wired: raft-core
+  installs snapshots itself, in chunks, with its own sessions.
+- **`handleRaftMessage` now reports peer activity**, which is what its documentation always
+  said it did; split-brain detection was reading an always-empty set.
+
+### Removed
+
+- `RaftGroup.deleteSnapshot()` and `RaftGroup.getSnapshotFilePath()` — there is no second
+  snapshot file to delete or locate.
+- `RaftAdapter.shouldTakeSnapshot()`, `takeSnapshot(index)`, `resetCommittedCount()` and the
+  `committedCount`/`lastSnapshotIndex` counters — the remains of the second loop.
+  `RaftAdapter.compactLogs()` stays as an explicit operator/test hook for *simulating* a
+  compacted log (the boundary suites use it); nothing on a runtime path calls it, so it
+  cannot truncate ahead of the snapshot raft-core holds.
+
 ## [1.1.0] — 2026-08-05
 
 ### Added

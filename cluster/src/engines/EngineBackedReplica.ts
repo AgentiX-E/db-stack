@@ -9,9 +9,12 @@
  *   writes, replaying them again would double-count counters, re-fire triggers and
  *   turn `UPDATE balance = balance + 10` into `+20`. The adapter therefore drops
  *   any index it has already applied.
- * - **Gap detection.** Raft never skips an index; an engine that receives
- *   `1, 2, 4` is talking to a broken log, and silently applying `4` would corrupt
- *   state invisibly. The gap is rejected.
+ * - **Monotonic position.** A forward jump is legitimate: raft-core applies
+ *   CONFIG and NOOP entries itself and never calls the application for them, so
+ *   the indexes an engine sees are increasing but not necessarily consecutive.
+ *   Rejecting a jump — which this adapter used to do, on the assumption that Raft
+ *   never skips an index — killed the apply loop on the first entry after a
+ *   restart and left the cluster readable but no longer writable.
  * - **Serialization.** Committed entries are applied one at a time even if a
  *   caller submits several without awaiting.
  * - **Snapshot framing.** A raw engine snapshot carries no position, so a
@@ -139,6 +142,8 @@ export class EngineBackedReplica implements IShardReplica {
   private tail: Promise<void> = Promise.resolve();
   /** Replayed indexes dropped because the engine had already applied them. */
   private _skippedReplays = 0;
+  /** Forward jumps accepted because raft skipped non-command entries. */
+  private _forwardJumps = 0;
   /** Non-zero while an apply is running, so `snapshot()` can detect re-entrancy. */
   private _applyDepth = 0;
 
@@ -151,6 +156,16 @@ export class EngineBackedReplica implements IShardReplica {
   /** Exposed for diagnostics: how many duplicate indexes the adapter suppressed. */
   get skippedReplays(): number {
     return this._skippedReplays;
+  }
+
+  /**
+   * Exposed for diagnostics: how many indexes arrived above the expected one.
+   *
+   * Non-zero is normal on any cluster that elected a leader (raft appends a NOOP)
+   * or was bootstrapped (a CONFIG entry); it is not an error signal.
+   */
+  get forwardJumps(): number {
+    return this._forwardJumps;
   }
 
   async apply(entry: ApplyEntry): Promise<void> {
@@ -176,15 +191,12 @@ export class EngineBackedReplica implements IShardReplica {
       this._skippedReplays += 1;
       return;
     }
-    // A gap means the log lost an entry. Applying past it would produce state no
-    // peer can reproduce, so refuse rather than diverge silently. The first apply
-    // of a recovered engine may legitimately start above 1.
-    if (this._appliedIndex !== 0 && index !== this._appliedIndex + 1) {
-      throw new SqlVecError(
-        `Log gap on shard ${this._shardId}: applied ${this._appliedIndex}, next entry is ${index}`,
-        SqlVecErrorCode.FAILED_PRECONDITION,
-      );
-    }
+    // A forward jump is expected, not a fault: raft-core applies CONFIG and NOOP
+    // entries without calling the application, so the application's index sequence
+    // has holes exactly where those entries were. Applying across a jump is
+    // correct — the skipped entries carry no application state — while *going
+    // backwards* is the case that must be refused, and it is handled above.
+    if (index > this._appliedIndex + 1) this._forwardJumps += 1;
     const payload = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data, 'utf8');
     const context = {
       shardId: this._shardId,
@@ -220,7 +232,7 @@ export class EngineBackedReplica implements IShardReplica {
     return this._shardId;
   }
 
-  async snapshot(): Promise<Buffer> {
+  async snapshot(boundaryIndex?: number): Promise<Buffer> {
     // Wait for queued applies so the payload and the recorded index describe the
     // same state: framing index N around state that also contains N+1 would make a
     // restore replay N+1 a second time. When the snapshot is requested *from* an
@@ -229,9 +241,17 @@ export class EngineBackedReplica implements IShardReplica {
     // other apply can start until the current one returns.
     if (this._applyDepth === 0) await this.tail;
     const payload = await this.engine.snapshot();
+    // The boundary raft declares wins over the local watermark. They differ by the
+    // non-command entries raft applied without calling the application, and a
+    // snapshot stamped *below* its own boundary makes the first post-restore apply
+    // look like a skipped entry.
+    const index = boundaryIndex ?? this._appliedIndex;
+    if (boundaryIndex !== undefined && boundaryIndex > this._appliedIndex) {
+      this._appliedIndex = boundaryIndex;
+    }
     return encodeSnapshotEnvelope({
       shardId: this._shardId,
-      index: this._appliedIndex,
+      index,
       term: this._appliedTerm,
       payload,
     });

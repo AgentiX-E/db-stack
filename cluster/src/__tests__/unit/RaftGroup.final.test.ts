@@ -21,10 +21,8 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
-  shouldTakeSnapshot: vi.fn().mockReturnValue(false),
-  takeSnapshot: vi.fn(),
-  resetCommittedCount: vi.fn(),
-  compactLogs: vi.fn().mockResolvedValue(undefined),
+  getSnapshotMeta: vi.fn().mockReturnValue(null),
+  requestSnapshot: vi.fn().mockResolvedValue(null),
   stop: vi.fn(),
   setForceLeader: vi.fn(),
   campaign: vi.fn().mockResolvedValue(undefined),
@@ -51,10 +49,8 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
-    shouldTakeSnapshot = mockRaftAdapter.shouldTakeSnapshot;
-    takeSnapshot = mockRaftAdapter.takeSnapshot;
-    resetCommittedCount = mockRaftAdapter.resetCommittedCount;
-    compactLogs = mockRaftAdapter.compactLogs;
+    getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
+    requestSnapshot = mockRaftAdapter.requestSnapshot;
     stop = mockRaftAdapter.stop;
     setForceLeader = mockRaftAdapter.setForceLeader;
     campaign = mockRaftAdapter.campaign;
@@ -125,113 +121,72 @@ describe('RaftGroup — final branch completion', () => {
     });
   });
 
-  describe('snapshot file error paths', () => {
-    it('readSnapshotMeta returns null on JSON parse failure', () => {
-      // Corrupt the real snapshot file instead of spying on node:fs — ESM
-      // namespace spying does not intercept the module's own `fs` binding,
-      // which made the original test assert against a different code path.
-      const fsMod = require('fs');
-      const snapshotPath = group.getSnapshotFilePath();
-      fsMod.mkdirSync(require('path').dirname(snapshotPath), { recursive: true });
-      fsMod.writeFileSync(snapshotPath, 'not-json');
-      try {
-        expect(group.snapshotExists()).toBe(true);
-        expect(group.readSnapshotMeta()).toBeNull();
-      } finally {
-        fsMod.rmSync(snapshotPath, { force: true });
-      }
+  describe('snapshot metadata contract', () => {
+    it('reports no snapshot when raft holds none', () => {
+      mockRaftAdapter.getSnapshotMeta.mockReturnValue(null);
+      expect(group.snapshotExists()).toBe(false);
+      expect(group.readSnapshotMeta()).toBeNull();
     });
 
-    it('deleteSnapshot unlinks and swallows errors', () => {
-      const fsMod = require('fs');
-      const realUnlink = fsMod.unlinkSync;
-      vi.spyOn(fsMod, 'existsSync').mockReturnValue(true);
-      vi.spyOn(fsMod, 'unlinkSync').mockImplementation(() => {
-        throw new Error('unlink failed');
+    it("maps raft's snapshot into the group's public shape", () => {
+      mockRaftAdapter.getSnapshotMeta.mockReturnValue({
+        lastIncludedIndex: 42,
+        lastIncludedTerm: 7,
+        observedAt: 1234,
       });
-      expect(() => group.deleteSnapshot()).not.toThrow();
-      vi.restoreAllMocks();
+      expect(group.snapshotExists()).toBe(true);
+      expect(group.readSnapshotMeta()).toEqual({
+        lastIncludedIndex: 42,
+        lastIncludedTerm: 7,
+        nodeId: MOCK_CONFIG.id,
+        shardId: 0,
+        timestamp: 1234,
+      });
+    });
+
+    it('forwards a snapshot request to raft and logs the boundary', async () => {
+      mockRaftAdapter.requestSnapshot.mockResolvedValue({
+        lastIncludedIndex: 9,
+        lastIncludedTerm: 1,
+        observedAt: 1,
+      });
+      await expect(group.trySnapshot()).resolves.toBeUndefined();
+      expect(mockRaftAdapter.requestSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('swallows a snapshot failure instead of failing the caller', async () => {
+      mockRaftAdapter.requestSnapshot.mockRejectedValue(new Error('disk full'));
+      await expect(group.trySnapshot()).resolves.toBeUndefined();
     });
   });
 
-  describe('install-snapshot no-field guard', () => {
-    it('logs and returns when snapshot field is absent', async () => {
-      (group.raft as any).config = { enableInstallSnapshot: true };
+  describe('legacy inbound hook', () => {
+    it('never intercepts MsgInstallSnapshot: raft-core installs it itself', async () => {
+      // The group used to reassemble chunked InstallSnapshot messages here and push
+      // the bytes into `RaftAdapter.step()`, which is a no-op under raft-core — so
+      // the enabled path *discarded* snapshots. It is gone; the only thing this hook
+      // still does is note that a peer was heard from.
       await group.init();
-      // msgType 14 but no snapshot field
-      await expect(group.handleRaftMessage({ msgType: 14 })).toBeUndefined();
-    });
-  });
-
-  describe('_transitionToCNew propose path', () => {
-    it('proposes C_NEW and finalizes the transition', async () => {
-      group._transitionalConfig = { newEntryIndex: 0, changeId: 'c1' };
-      mockRaftAdapter.propose.mockResolvedValue({ index: '50', term: '2' });
-      await (group as any)._transitionToCNew({ changeId: 'c1', type: 'join', nodeId: '2', newPeers: [1, 2] }, 10);
-      expect(group._transitionalConfig).toBeNull();
+      const reportPeerActivity = vi.spyOn(group, 'reportPeerActivity');
+      group.handleRaftMessage({ msgType: 14, from: 3, snapshot: { done: true } });
+      expect(reportPeerActivity).toHaveBeenCalledWith('3');
     });
 
-    it('keeps transitional config when C_NEW propose fails', async () => {
-      group._transitionalConfig = { newEntryIndex: 0, changeId: 'c1' };
-      mockRaftAdapter.propose.mockRejectedValueOnce(new Error('propose failed'));
-      await (group as any)._transitionToCNew({ changeId: 'c1', type: 'join', nodeId: '2', newPeers: [1, 2] }, 10);
-      expect(group._transitionalConfig).not.toBeNull();
-    });
-  });
-
-  describe('leader-monitor exception handling', () => {
-    it('logs and continues when getStatus throws', async () => {
-      const campaign = vi.fn();
-      (group.raft as any).node = { campaign };
-      mockRaftAdapter.getStatus.mockRejectedValue(new Error('status boom'));
-      group.startLeaderMonitor(50);
-      await new Promise((r) => setTimeout(r, 80));
-      expect(group._leaderMonitorTimer).toBeTruthy();
-      group.stopLeaderMonitor();
-    });
-  });
-
-  describe('install-snapshot error + guard paths', () => {
-    it('catches a rejected install-snapshot handler', async () => {
-      (group.raft as any).config = { enableInstallSnapshot: true };
+    it('ignores a message with no sender', async () => {
       await group.init();
-      // installSnapshotHandler.handleChunk rejects → _handleInstallSnapshot rejects
-      group.installSnapshotHandler = {
-        handleChunk: vi.fn().mockRejectedValue(new Error('chunk failure')),
-      };
-      await expect(
-        group.handleRaftMessage({ msgType: 14, snapshot: { done: false, leaderId: '2', term: 1 } }),
-      ).toBeUndefined();
-      // The rejection is swallowed by the .catch (logged, not thrown).
-    });
-
-    it('returns early when snapshot field is missing (private guard)', async () => {
-      (group.raft as any).config = { enableInstallSnapshot: true };
-      await group.init();
-      group.installSnapshotHandler = {
-        handleChunk: vi.fn(),
-      };
-      await expect((group as any)._handleInstallSnapshot({})).resolves.toBeUndefined();
-      expect(group.installSnapshotHandler.handleChunk).not.toHaveBeenCalled();
+      const reportPeerActivity = vi.spyOn(group, 'reportPeerActivity');
+      expect(() => group.handleRaftMessage({ msgType: 3 })).not.toThrow();
+      expect(reportPeerActivity).not.toHaveBeenCalled();
     });
   });
 
-  describe('deleteSnapshot unlink failure swallow', () => {
-    it('swallows an unlink error via a read-only snapshot dir', () => {
-      const os = require('os');
-      const path = require('path');
-      const fs = require('fs');
-      const dir = path.join(os.tmpdir(), `raft-snapro-${Date.now()}-${Math.random()}`);
-      fs.mkdirSync(dir, { recursive: true });
-      const g = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, dir);
-      fs.writeFileSync(g.getSnapshotFilePath(), 'data');
-      // Make the directory read-only so unlinkSync throws (EACCES/EPERM).
-      fs.chmodSync(dir, 0o555);
-      try {
-        expect(() => g.deleteSnapshot()).not.toThrow();
-      } finally {
-        fs.chmodSync(dir, 0o755);
-      }
+  describe('removed snapshot-file API', () => {
+    it('exposes no way to delete or locate a second snapshot file', () => {
+      // `deleteSnapshot` and `getSnapshotFilePath` went with the metadata-only file
+      // that could compact the log without covering it. Keeping either would invite
+      // a caller to reintroduce the divergence this iteration removed.
+      expect((group as any).deleteSnapshot).toBeUndefined();
+      expect((group as any).getSnapshotFilePath).toBeUndefined();
     });
   });
 

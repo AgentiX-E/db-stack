@@ -328,19 +328,21 @@ describe('RaftAdapter.init — storage & transport construction', () => {
     await adapter.stop();
   });
 
-  // AC 34.46b: the state machine apply delegates into the applyHandler and
-  // increments committedCount.
-  it('state machine apply delegates into applyHandler and commits', async () => {
+  // AC 34.46b: the state machine apply delegates into the applyHandler and moves
+  // the adapter's recorded position to the index raft reports. A local counter used
+  // to stand in for that index and drifted by one for every CONFIG or NOOP entry.
+  it('state machine apply delegates into applyHandler and records raft position', async () => {
     const transport = new MockTransport(String(1));
     const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport }));
     const applied: string[] = [];
     await adapter.init((data) => applied.push(data));
 
-    const before = (adapter as any).committedCount;
+    const node = (adapter as any).node;
+    const expectedIndex = node.getLastApplied() + 1;
     await capturedApplyHandler!('hello-state');
 
     expect(applied).toContain('hello-state');
-    expect((adapter as any).committedCount).toBe(before + 1);
+    expect((adapter as any)._appliedIndex).toBe(expectedIndex);
     await adapter.stop();
   });
 
@@ -373,9 +375,9 @@ describe('RaftAdapter.init — storage & transport construction', () => {
       throw new Error('apply-boom');
     });
 
-    const before = (adapter as any).committedCount;
+    const before = (adapter as any)._appliedIndex;
     await expect(capturedApplyHandler!('x')).rejects.toThrow('apply-boom');
-    expect((adapter as any).committedCount).toBe(before);
+    expect((adapter as any)._appliedIndex).toBe(before);
     await adapter.stop();
   });
 

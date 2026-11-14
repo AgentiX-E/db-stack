@@ -21,10 +21,8 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
-  shouldTakeSnapshot: vi.fn().mockReturnValue(false),
-  takeSnapshot: vi.fn(),
-  resetCommittedCount: vi.fn(),
-  compactLogs: vi.fn().mockResolvedValue(undefined),
+  getSnapshotMeta: vi.fn().mockReturnValue(null),
+  requestSnapshot: vi.fn().mockResolvedValue(null),
   stop: vi.fn(),
   setForceLeader: vi.fn(),
   campaign: vi.fn().mockResolvedValue(undefined),
@@ -51,10 +49,8 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
-    shouldTakeSnapshot = mockRaftAdapter.shouldTakeSnapshot;
-    takeSnapshot = mockRaftAdapter.takeSnapshot;
-    resetCommittedCount = mockRaftAdapter.resetCommittedCount;
-    compactLogs = mockRaftAdapter.compactLogs;
+    getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
+    requestSnapshot = mockRaftAdapter.requestSnapshot;
     stop = mockRaftAdapter.stop;
     setForceLeader = mockRaftAdapter.setForceLeader;
     campaign = mockRaftAdapter.campaign;
@@ -115,19 +111,11 @@ describe('RaftGroup — nullish fallback completion', () => {
     });
   });
 
-  describe('trySnapshot term fallback', () => {
-    it('defaults term to 0 when getStatus omits term', async () => {
-      const os = await import('os');
-      const pathMod = await import('path');
-      const fsMod = await import('fs');
-      const dir = pathMod.join(os.tmpdir(), `raft-snapterm-${Date.now()}-${Math.random()}`);
-      fsMod.mkdirSync(dir, { recursive: true });
-      const g = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, dir);
-      mockRaftAdapter.shouldTakeSnapshot.mockReturnValue(true);
-      mockRaftAdapter.getAppliedIndex.mockResolvedValue(7);
-      mockRaftAdapter.getStatus.mockResolvedValue({ term: undefined, lead: '1' });
-      await expect(g.trySnapshot()).resolves.toBeUndefined();
-      expect(mockRaftAdapter.takeSnapshot).toHaveBeenCalled();
+  describe('trySnapshot with no snapshot taken', () => {
+    it('resolves quietly when raft reports nothing to snapshot', async () => {
+      mockRaftAdapter.requestSnapshot.mockResolvedValue(null);
+      await expect(group.trySnapshot()).resolves.toBeUndefined();
+      expect(mockRaftAdapter.requestSnapshot).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -177,56 +165,19 @@ describe('RaftGroup — nullish fallback completion', () => {
     });
   });
 
-  describe('snapshot write/read error paths', () => {
-    it('trySnapshot catches a snapshot write failure', async () => {
-      const os = await import('os');
-      const pathMod = await import('path');
-      const fsMod = await import('fs');
-      const dir = pathMod.join(os.tmpdir(), `raft-snapfail-${Date.now()}-${Math.random()}`);
-      fsMod.mkdirSync(dir, { recursive: true });
-      // Force the flush hook (awaited inside trySnapshot) to reject, which
-      // drives the try/catch exactly like a real persistence failure would.
-      const flushHook = vi.fn().mockRejectedValue(new Error('flush failure'));
-      const g = new RaftGroup(
-        0,
-        MOCK_CONFIG,
-        MOCK_REPLICA,
-        MOCK_OUTBOX,
-        dir,
-        undefined,
-        undefined,
-        undefined,
-        flushHook,
-      );
-      mockRaftAdapter.shouldTakeSnapshot.mockReturnValue(true);
-      mockRaftAdapter.getAppliedIndex.mockResolvedValue(5);
-      mockRaftAdapter.getStatus.mockResolvedValue({ term: '3', lead: '1' });
-      await expect(g.trySnapshot()).resolves.toBeUndefined();
-      expect(flushHook).toHaveBeenCalled();
+  describe('snapshot request failure', () => {
+    it('swallows a rejected snapshot request and keeps the group serving', async () => {
+      // A failing snapshot must never take down the apply path: the group reports it
+      // and carries on, because the log is still intact and the next threshold (or
+      // operator request) will try again.
+      mockRaftAdapter.requestSnapshot.mockRejectedValue(new Error('flush failure'));
+      await expect(group.trySnapshot()).resolves.toBeUndefined();
     });
 
-    it('readSnapshotMeta returns null on a corrupt snapshot file', async () => {
-      const os = await import('os');
-      const pathMod = await import('path');
-      const fsMod = await import('fs');
-      const dir = pathMod.join(os.tmpdir(), `raft-snapcorrupt-${Date.now()}-${Math.random()}`);
-      fsMod.mkdirSync(dir, { recursive: true });
-      const g = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, dir);
-      // Write a corrupt (non-JSON) snapshot file directly.
-      fsMod.writeFileSync(g.getSnapshotFilePath(), 'not-json');
-      expect(g.readSnapshotMeta()).toBeNull();
-    });
-
-    it('deleteSnapshot removes an existing snapshot', async () => {
-      const os = await import('os');
-      const pathMod = await import('path');
-      const fsMod = await import('fs');
-      const dir = pathMod.join(os.tmpdir(), `raft-snapdel-${Date.now()}-${Math.random()}`);
-      fsMod.mkdirSync(dir, { recursive: true });
-      const g = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, dir);
-      fsMod.writeFileSync(g.getSnapshotFilePath(), 'data');
-      expect(() => g.deleteSnapshot()).not.toThrow();
-      expect(fsMod.existsSync(g.getSnapshotFilePath())).toBe(false);
+    it('reports no metadata while raft holds no snapshot', () => {
+      mockRaftAdapter.getSnapshotMeta.mockReturnValue(null);
+      expect(group.snapshotExists()).toBe(false);
+      expect(group.readSnapshotMeta()).toBeNull();
     });
   });
 });

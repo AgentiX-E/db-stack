@@ -32,11 +32,8 @@ import {
   resolveFlexibleQuorumConfig,
   type majorityQuorum,
   SharedTransport,
-  InstallSnapshotRequest,
 } from '../../interfaces/types';
-import { InstallSnapshotHandler, type InstallSnapshotHandlerConfig } from '../extensions/InstallSnapshotHandler';
 import * as fs from 'fs';
-import * as path from 'path';
 import * as crypto from 'crypto';
 
 import pino from 'pino';
@@ -68,11 +65,8 @@ export class RaftGroup {
   private replica: IShardReplica;
   private outboxManager: IOutboxWriter;
   private snapshotDir: string;
-  private snapshotInterval: number;
   private maxLogEntries: number;
   private nodeId: number;
-  private snapshotFileName: string;
-  private tmpDir: string;
 
   // ── C2: Joint Consensus ──────────────────────────────────
   /** Current joint consensus transitional config. null when not in a transition. */
@@ -80,7 +74,6 @@ export class RaftGroup {
 
   // ── C3: Learner / Read Replica ──────────────────────────
   private learners: Map<string, LearnerInfo> = new Map();
-  private snapshotDirForLearners: string;
 
   // ── C4: Leader Transfer ─────────────────────────────────
   private leaderTransferInProgress: boolean = false;
@@ -132,10 +125,6 @@ export class RaftGroup {
   /** Optional health check callback invoked on severe failures. */
   private _onHealthCheck: ((message: string) => void) | null = null;
 
-  // ── G17: InstallSnapshot RPC ────────────────────────────
-  /** InstallSnapshot handler for chunked snapshot streaming; only set when enableInstallSnapshot is true. */
-  private installSnapshotHandler?: InstallSnapshotHandler;
-
   constructor(
     shardId: number,
     raftConfig: RaftConfig,
@@ -152,12 +141,12 @@ export class RaftGroup {
     this.replica = replica;
     this.outboxManager = outboxManager as any;
     this.nodeId = raftConfig.id;
-    this.snapshotInterval = raftConfig.snapshotInterval || 100;
     this.maxLogEntries = raftConfig.maxLogEntries || 0;
+    // The authoritative snapshot lives in the Raft storage engine, next to the
+    // log it justifies. This directory is kept because deployments mount it and
+    // engine adapters may export backups there; this package no longer writes a
+    // second, competing snapshot file into it.
     this.snapshotDir = snapshotDir || './data';
-    this.snapshotFileName = path.join(this.snapshotDir, `raft-snapshot-${this.nodeId}.dat`);
-    this.tmpDir = path.dirname(this.snapshotFileName);
-    this.snapshotDirForLearners = this.snapshotDir;
     this.pipelineConfig = pipelineConfig || { ...DEFAULT_PIPELINE_CONFIG };
     this.flexQuorum = resolveFlexibleQuorumConfig(flexQuorumConfig, raftConfig.peers.length);
     this.pitrHook = pitrHook;
@@ -242,20 +231,23 @@ export class RaftGroup {
       // stops advancing lastApplied and replays the entry, instead of the group
       // reporting a committed write it never persisted.
       await this.replica.apply(entry);
-
-      // Snapshot scheduling is deliberately not awaited: compaction must never sit
-      // in the replication hot path, and its failure must not fail an apply that
-      // already succeeded. The check itself is a cheap counter test; the work only
-      // happens once per interval.
-      void this.trySnapshot().catch(() => undefined);
     };
 
     // The engine's state, not just the log, is what a restart has to recover. These
     // hooks are registered before init because raft-core loads the persisted
     // snapshot during start(). Without them a node restarts with an empty engine
     // while its log claims everything up to the snapshot index is applied.
+    //
+    // The PITR WAL is flushed *here*, inside the capture, because this callback is
+    // the last moment before raft-core truncates the log the WAL duplicates: the
+    // flush has to happen in the same step that freezes the engine's state, not in
+    // a scheduler that might run later — or never, if raft-core snapshots on its
+    // own threshold.
     this.raft.setApplicationSnapshotHandlers({
-      takeSnapshot: () => this.replica.snapshot(),
+      takeSnapshot: async (boundaryIndex: number) => {
+        await this.pitrFlushHook?.();
+        return this.replica.snapshot(boundaryIndex);
+      },
       installSnapshot: (data: Buffer) => this.replica.restore(data),
     });
 
@@ -277,16 +269,6 @@ export class RaftGroup {
 
     // Start pipeline flush timer
     this.startPipelineFlushTimer();
-
-    // Initialize InstallSnapshotHandler if enabled in config
-    if ((this.raft as any).config?.enableInstallSnapshot) {
-      this.installSnapshotHandler = new InstallSnapshotHandler(this.snapshotDir, this.nodeId, {
-        chunkSize: 8 * 1024 * 1024,
-        enableChecksum: true,
-        assemblyTimeoutMs: 300_000,
-      });
-      logger.info(`[RaftGroup] InstallSnapshotHandler enabled for shard ${this.shardId}`);
-    }
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1028,49 +1010,32 @@ export class RaftGroup {
   }
 
   // ════════════════════════════════════════════════════════════
-  //  Snapshot Lifecycle (unchanged from original)
+  //  Snapshot lifecycle
+  //
+  //  There is one snapshot mechanism: raft-core's. It captures the engine's
+  //  state (through the hooks registered in `init`), persists it together with
+  //  its term and the committed configuration, and truncates the log it covers.
+  //  This group schedules nothing on its own — raft-core snapshots on the
+  //  configured threshold after an apply — and no longer writes a metadata-only
+  //  file that could compact the log ahead of the state it claimed to cover.
   // ════════════════════════════════════════════════════════════
 
+  /**
+   * Force a snapshot now.
+   *
+   * Scheduled snapshots are raft-core's job; this is the explicit path, used when
+   * the log has grown past `maxLogEntries` or an operator asks for a durable
+   * boundary. It is idempotent: if nothing has been applied since the last
+   * snapshot, no snapshot is written and no log is truncated.
+   */
   async trySnapshot(): Promise<void> {
-    if (!this.raft.shouldTakeSnapshot()) return;
-
     try {
-      const appliedIndex = await this.raft.getAppliedIndex();
-      if (appliedIndex <= 0) return;
-
-      const st = await this.raft.getStatus();
-      const term = Number(st?.term || 0);
-      const meta: SnapshotMeta = {
-        lastIncludedIndex: appliedIndex,
-        lastIncludedTerm: term,
-        nodeId: this.nodeId,
-        shardId: this.shardId,
-        timestamp: Date.now(),
-      };
-
-      // Flush PITR WAL before snapshot to ensure all entries up to
-      // the snapshot index are safely archived
-      await this.pitrFlushHook?.();
-
-      this.raft.takeSnapshot(appliedIndex);
-
-      const snapshotData = RaftAdapter.encodeSnapshotData(meta);
-      const tmpFile = path.join(this.tmpDir, `.raft-snapshot-${this.nodeId}.tmp`);
-      fs.writeFileSync(tmpFile, snapshotData);
-      fs.renameSync(tmpFile, this.snapshotFileName);
-
-      this.raft.resetCommittedCount();
-
-      // ── Compact Raft log ───────────────────────────────────────
-      // After the snapshot is durably persisted, truncate all WASM log
-      // entries whose index <= lastIncludedIndex. Without this call the
-      // SqliteStorage log grows unboundedly — snapshots only update the
-      // application-level metadata file, not the raft-log storage.
-      // Errors are handled inside RaftAdapter.compactLogs (logged as
-      // warning, not thrown), so this is safe in the outer catch block.
-      await this.raft.compactLogs(meta.lastIncludedIndex);
-
-      logger.info(`[RaftGroup] Snapshot taken at index ${appliedIndex} (term ${term}, shard ${this.shardId})`);
+      const meta = await this.raft.requestSnapshot();
+      if (meta) {
+        logger.info(
+          `[RaftGroup] Snapshot at index ${meta.lastIncludedIndex} (term ${meta.lastIncludedTerm}, shard ${this.shardId})`,
+        );
+      }
     } catch (err: unknown) {
       logger.error(`[RaftGroup] Snapshot failed (shard ${this.shardId}): ${getErrorMessage(err)}`);
     }
@@ -1083,35 +1048,31 @@ export class RaftGroup {
     const logSize = progress.lastLog! - progress.applied!;
     if (logSize > this.maxLogEntries) {
       logger.warn(`[RaftGroup] Log size ${logSize} exceeds limit ${this.maxLogEntries}, forcing snapshot`);
-      this.raft.resetCommittedCount();
       await this.trySnapshot();
     }
   }
 
-  getSnapshotFilePath(): string {
-    return this.snapshotFileName;
-  }
-
+  /** Whether raft-core holds a snapshot for this shard. */
   snapshotExists(): boolean {
-    return fs.existsSync(this.snapshotFileName);
+    return this.raft.getSnapshotMeta() !== null;
   }
 
+  /**
+   * Metadata of the snapshot raft-core holds, in this group's public shape.
+   *
+   * `timestamp` is when this node observed the snapshot, not a wall-clock stamp
+   * written at capture time: the snapshot's own index and term are the facts.
+   */
   readSnapshotMeta(): SnapshotMeta | null {
-    if (!this.snapshotExists()) return null;
-    try {
-      const raw = fs.readFileSync(this.snapshotFileName);
-      return JSON.parse(new TextDecoder().decode(raw));
-    } catch {
-      return null;
-    }
-  }
-
-  deleteSnapshot(): void {
-    if (this.snapshotExists()) {
-      try {
-        fs.unlinkSync(this.snapshotFileName);
-      } catch {}
-    }
+    const meta = this.raft.getSnapshotMeta();
+    if (!meta) return null;
+    return {
+      lastIncludedIndex: meta.lastIncludedIndex,
+      lastIncludedTerm: meta.lastIncludedTerm,
+      nodeId: this.nodeId,
+      shardId: this.shardId,
+      timestamp: meta.observedAt,
+    };
   }
 
   // ──────────────────────────────────────────
@@ -1242,89 +1203,24 @@ export class RaftGroup {
   // ──────────────────────────────────────────
 
   /**
-   * Handle incoming Raft messages.
+   * Legacy inbound hook for applications that wire `NodeTransport.onMessage`
+   * themselves.
    *
-   * Under @maboke123/raft-core, Transport automatically routes messages,
-   * so most messages are handled directly by the RaftNode internals and
-   * do not need manual forwarding. Only MsgInstallSnapshot (type 14)
-   * requires interception for chunk reassembly via InstallSnapshotHandler.
+   * @maboke123/raft-core owns message routing: its transport hands every inbound
+   * message to `RPCHandler`, notably `InstallSnapshot`, which it reassembles in
+   * chunks and installs atomically. This method therefore does not forward
+   * anything — an earlier version intercepted `InstallSnapshot` here and pushed
+   * the reassembled bytes into `RaftAdapter.step()`, which is a no-op under
+   * raft-core, so enabling that path *lost* snapshots instead of installing them.
+   *
+   * What it still does is the one thing only the application boundary can do:
+   * note that a peer was heard from, which split-brain detection needs to tell a
+   * partitioned node from a quiet one.
    */
   handleRaftMessage(msg: any): void {
-    // ── G17: Intercept MsgInstallSnapshot (type 14) ──
-    // Route incoming InstallSnapshot chunks to the handler for reassembly
-    // instead of forwarding to the RaftNode. The handler
-    // assembles chunks, verifies checksums, persists the snapshot,
-    // and calls back when the full snapshot is ready.
-    if (msg && msg.msgType === 14 && msg.snapshot && this.installSnapshotHandler) {
-      this._handleInstallSnapshot(msg).catch((err: unknown) => {
-        logger.error(`[RaftGroup] InstallSnapshot error (shard ${this.shardId}): ${getErrorMessage(err)}`);
-      });
-      return;
-    }
-
-    // Other messages are handled via Transport auto-routing — no-op here.
-  }
-
-  /**
-   * Handle an incoming InstallSnapshot message (MsgInstallSnapshot, type 14).
-   *
-   * Routes the chunk to InstallSnapshotHandler for assembly. When the final
-   * chunk arrives, the handler assembles, checksums, and persists the snapshot,
-   * then calls the callback which forwards a response back through the RaftNode.
-   */
-  private async _handleInstallSnapshot(msg: any): Promise<void> {
-    const req: InstallSnapshotRequest = msg.snapshot;
-    if (!req) {
-      logger.warn(`[RaftGroup] InstallSnapshot msg has no snapshot field`);
-      return;
-    }
-
-    const handler = this.installSnapshotHandler!;
-
-    const response = await handler.handleChunk(req, this.raft, async (snapshotData: Buffer, meta: SnapshotMeta) => {
-      logger.info(
-        `[RaftGroup] Snapshot assembled at index ${meta.lastIncludedIndex} ` +
-          `(term ${meta.lastIncludedTerm}, ${snapshotData.length} bytes)`,
-      );
-
-      // Forward the assembled snapshot to the RaftNode so it can
-      // update its log compaction state (last applied, committed, etc.)
-      await this.raft.step({
-        msgType: 14,
-        from: req.leaderId,
-        to: String(this.nodeId),
-        term: req.term,
-        snapshot: {
-          term: req.term,
-          leaderId: req.leaderId,
-          lastIncludedIndex: String(meta.lastIncludedIndex),
-          lastIncludedTerm: String(meta.lastIncludedTerm),
-          offset: req.offset,
-          data: new Uint8Array(snapshotData),
-          done: true,
-        },
-      });
-    });
-
-    // Send response back to leader if this is NOT the final chunk
-    // (final chunk response is handled inside the callback via raft.step)
-    if (!req.done && response) {
-      await this.raft.step({
-        msgType: 14,
-        from: String(this.nodeId),
-        to: req.leaderId,
-        term: response.term,
-        snapshot: {
-          term: response.term,
-          leaderId: req.leaderId,
-          lastIncludedIndex: req.lastIncludedIndex,
-          lastIncludedTerm: req.lastIncludedTerm,
-          offset: req.offset,
-          data: new Uint8Array(0),
-          done: false,
-        },
-      });
-    }
+    const from = msg?.from;
+    if (from === undefined || from === null) return;
+    this.reportPeerActivity(String(from));
   }
 
   // ──────────────────────────────────────────

@@ -21,10 +21,8 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
-  shouldTakeSnapshot: vi.fn().mockReturnValue(false),
-  takeSnapshot: vi.fn(),
-  resetCommittedCount: vi.fn(),
-  compactLogs: vi.fn().mockResolvedValue(undefined),
+  getSnapshotMeta: vi.fn().mockReturnValue(null),
+  requestSnapshot: vi.fn().mockResolvedValue(null),
   stop: vi.fn(),
   setForceLeader: vi.fn(),
   campaign: vi.fn().mockResolvedValue(undefined),
@@ -48,10 +46,8 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
-    shouldTakeSnapshot = mockRaftAdapter.shouldTakeSnapshot;
-    takeSnapshot = mockRaftAdapter.takeSnapshot;
-    resetCommittedCount = mockRaftAdapter.resetCommittedCount;
-    compactLogs = mockRaftAdapter.compactLogs;
+    getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
+    requestSnapshot = mockRaftAdapter.requestSnapshot;
     stop = mockRaftAdapter.stop;
     setForceLeader = mockRaftAdapter.setForceLeader;
     campaign = mockRaftAdapter.campaign;

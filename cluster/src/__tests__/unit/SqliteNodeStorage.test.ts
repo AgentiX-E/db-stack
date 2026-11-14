@@ -27,9 +27,21 @@ import * as os from 'os';
 // surfaced as `Cannot open database because the directory does not exist`.
 fs.mkdirSync(os.tmpdir(), { recursive: true });
 const RUN_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-nodestorage-'));
+/**
+ * Monotonic suffix for per-test databases.
+ *
+ * These paths used to be built from `Date.now()`, which is millisecond-resolution:
+ * two `beforeEach` calls in the same tick produced the same directory, the second
+ * test opened the first test's database and read state it had just written. It
+ * showed up as an unrelated-looking failure ("should return null when no data
+ * stored") and only under coverage, where the timing shifts. A counter cannot
+ * collide, by construction.
+ */
+let dbSeq = 0;
 
 function tempDbPath(name: string): string {
-  const dir = path.join(RUN_DIR, name);
+  dbSeq += 1;
+  const dir = path.join(RUN_DIR, `${name}-${dbSeq}`);
   fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, 'raft.db');
 }
@@ -40,7 +52,7 @@ describe('SqliteMetaStorage', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = tempDbPath(`meta-${Date.now()}`);
+    dbPath = tempDbPath('meta');
     sqlite = new SqliteStorage({ file: dbPath, maxLogSize: 0 });
     sqlite.open();
     meta = new SqliteMetaStorage(sqlite);
@@ -96,7 +108,7 @@ describe('SqliteLogStorage', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = tempDbPath(`log-${Date.now()}`);
+    dbPath = tempDbPath('log');
     sqlite = new SqliteStorage({ file: dbPath, maxLogSize: 0 });
     sqlite.open();
     log = new SqliteLogStorage(sqlite);
@@ -279,7 +291,7 @@ describe('SqliteSnapshotStorage', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = tempDbPath(`snap-${Date.now()}`);
+    dbPath = tempDbPath('snap');
     sqlite = new SqliteStorage({ file: dbPath, maxLogSize: 0 });
     sqlite.open();
     snap = new SqliteSnapshotStorage(sqlite);
@@ -356,7 +368,7 @@ describe('SqliteConfigStorage', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = tempDbPath(`config-${Date.now()}`);
+    dbPath = tempDbPath('config');
     sqlite = new SqliteStorage({ file: dbPath, maxLogSize: 0 });
     sqlite.open();
     config = new SqliteConfigStorage(sqlite);
@@ -409,7 +421,7 @@ describe('SqliteNodeStorage (aggregate)', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = tempDbPath(`node-${Date.now()}`);
+    dbPath = tempDbPath('node');
     sqlite = new SqliteStorage({ file: dbPath, maxLogSize: 0 });
     sqlite.open();
     nodeStorage = new SqliteNodeStorage(sqlite);
@@ -480,7 +492,7 @@ describe('SqliteNodeStorage — delegated open/close + defensive branches', () =
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = tempDbPath(`deleg-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    dbPath = tempDbPath('deleg');
     sqlite = new SqliteStorage({ file: dbPath, maxLogSize: 0 });
     sqlite.open();
   });
@@ -603,7 +615,7 @@ describe('SqliteNodeStorage — nullish/fallback branches', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = tempDbPath(`nullish-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    dbPath = tempDbPath('nullish');
     sqlite = new SqliteStorage({ file: dbPath, maxLogSize: 0 });
     sqlite.open();
   });

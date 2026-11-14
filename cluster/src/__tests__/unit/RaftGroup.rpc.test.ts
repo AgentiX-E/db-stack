@@ -22,10 +22,8 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
-  shouldTakeSnapshot: vi.fn().mockReturnValue(false),
-  takeSnapshot: vi.fn(),
-  resetCommittedCount: vi.fn(),
-  compactLogs: vi.fn().mockResolvedValue(undefined),
+  getSnapshotMeta: vi.fn().mockReturnValue(null),
+  requestSnapshot: vi.fn().mockResolvedValue(null),
   stop: vi.fn(),
   setForceLeader: vi.fn(),
   campaign: vi.fn().mockResolvedValue(undefined),
@@ -52,10 +50,8 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
-    shouldTakeSnapshot = mockRaftAdapter.shouldTakeSnapshot;
-    takeSnapshot = mockRaftAdapter.takeSnapshot;
-    resetCommittedCount = mockRaftAdapter.resetCommittedCount;
-    compactLogs = mockRaftAdapter.compactLogs;
+    getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
+    requestSnapshot = mockRaftAdapter.requestSnapshot;
     stop = mockRaftAdapter.stop;
     setForceLeader = mockRaftAdapter.setForceLeader;
     campaign = mockRaftAdapter.campaign;
@@ -96,68 +92,31 @@ describe('RaftGroup — RPC, install-snapshot, cleanup, factory', () => {
     if (group && typeof group.stop === 'function') group.stop();
   });
 
-  describe('handleRaftMessage routing', () => {
-    it('no-ops for non-install-snapshot messages', () => {
+  describe('legacy inbound hook', () => {
+    it('records the sender so split-brain detection can see the peer', () => {
+      const reportPeerActivity = vi.spyOn(group, 'reportPeerActivity');
+      group.handleRaftMessage({ msgType: 3, from: 2 });
+      expect(reportPeerActivity).toHaveBeenCalledWith('2');
+      expect(group.getActivePeers()).toContain('2');
+    });
+
+    it('ignores messages with no sender, including null', () => {
+      const reportPeerActivity = vi.spyOn(group, 'reportPeerActivity');
       expect(() => group.handleRaftMessage({ msgType: 1 })).not.toThrow();
       expect(() => group.handleRaftMessage(null)).not.toThrow();
+      expect(reportPeerActivity).not.toHaveBeenCalled();
     });
 
-    it('no-ops when install-snapshot handler is absent', () => {
-      expect(() =>
-        group.handleRaftMessage({ msgType: 14, snapshot: { data: new Uint8Array(0), done: false } }),
-      ).not.toThrow();
+    it('does not forward anything to raft: routing belongs to raft-core', () => {
+      // Regression guard for the dead chunked-snapshot path: it pushed reassembled
+      // bytes into `RaftAdapter.step()`, which is a no-op under raft-core. Enabling
+      // it therefore *discarded* snapshots; nothing may call `step` any more.
+      group.handleRaftMessage({
+        msgType: 14,
+        from: 2,
+        snapshot: { data: new Uint8Array([1]), done: true },
+      });
       expect(mockRaftAdapter.step).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('_handleInstallSnapshot (via handleRaftMessage)', () => {
-    async function enableInstallSnapshotHandler(g: any) {
-      // RaftAdapter is mocked; expose config so init() constructs the handler.
-      (g.raft as any).config = { enableInstallSnapshot: true };
-      await g.init();
-    }
-
-    it('warns and returns when snapshot field is missing', async () => {
-      await enableInstallSnapshotHandler(group);
-      await group.handleRaftMessage({ msgType: 14 });
-      await Promise.resolve();
-      expect(mockRaftAdapter.step).not.toHaveBeenCalled();
-    });
-
-    it('routes a non-final chunk and replies via raft.step', async () => {
-      await enableInstallSnapshotHandler(group);
-      const req = {
-        leaderId: '2',
-        lastIncludedIndex: '5',
-        lastIncludedTerm: '1',
-        offset: 0,
-        term: '2',
-        data: new Uint8Array([1, 2, 3]),
-        done: false,
-      };
-      group.handleRaftMessage({ msgType: 14, snapshot: req });
-      await vi.waitFor(() => expect(mockRaftAdapter.step).toHaveBeenCalled());
-      const stepArg = mockRaftAdapter.step.mock.calls[0][0];
-      expect(stepArg.msgType).toBe(14);
-      expect(stepArg.snapshot.done).toBe(false);
-    });
-
-    it('assembles the final chunk and forwards via raft.step', async () => {
-      await enableInstallSnapshotHandler(group);
-      const req = {
-        leaderId: '2',
-        lastIncludedIndex: '5',
-        lastIncludedTerm: '1',
-        offset: 0,
-        term: '2',
-        data: new Uint8Array([9, 9, 9]),
-        done: true,
-      };
-      group.handleRaftMessage({ msgType: 14, snapshot: req });
-      await vi.waitFor(() => expect(mockRaftAdapter.step).toHaveBeenCalled());
-      // The callback forwards an assembled snapshot with done=true.
-      const doneStep = mockRaftAdapter.step.mock.calls.find((c: any) => c[0].snapshot && c[0].snapshot.done === true);
-      expect(doneStep).toBeTruthy();
     });
   });
 

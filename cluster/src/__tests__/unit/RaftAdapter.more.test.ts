@@ -355,37 +355,95 @@ describe('RaftAdapter — getter try/catch isolation', () => {
 });
 
 describe('RaftAdapter — snapshot API & resource teardown', () => {
-  // AC 34.31
-  it('shouldTakeSnapshot honours interval and committed count', () => {
-    const adapter = new RaftAdapter(minimalConfig({ snapshotInterval: 100 }));
-    (adapter as any).committedCount = 0;
-    expect(adapter.shouldTakeSnapshot()).toBe(false);
+  // Scheduling belongs to raft-core (it checks its threshold after every apply);
+  // this package only owns the explicit request. The three unit tests that used to
+  // live here exercised `shouldTakeSnapshot`, `takeSnapshot(index)` and
+  // `resetCommittedCount` — the counters of a second, competing snapshot loop. They
+  // were replaced by the decision tests below plus a real-cluster integration test
+  // (`raft-snapshot-authority.test.ts`) that proves the snapshot happens.
 
-    (adapter as any).committedCount = 100;
-    expect(adapter.shouldTakeSnapshot()).toBe(true);
-  });
-
-  it('shouldTakeSnapshot returns false when interval <= 0', () => {
-    const adapter = new RaftAdapter(minimalConfig({ snapshotInterval: 0 }));
-    (adapter as any).committedCount = 1000;
-    expect(adapter.shouldTakeSnapshot()).toBe(false);
-  });
-
-  it('shouldTakeSnapshot uses default interval 100 when unset', () => {
+  it('requestSnapshot returns null before the node exists', async () => {
     const adapter = new RaftAdapter(minimalConfig());
-    (adapter as any).committedCount = 300;
-    expect(adapter.shouldTakeSnapshot()).toBe(true);
+    await expect(adapter.requestSnapshot()).resolves.toBeNull();
   });
 
-  // AC 34.32
-  it('takeSnapshot records index and resetCommittedCount zeroes it', () => {
+  it('requestSnapshot returns null when nothing has been applied', async () => {
     const adapter = new RaftAdapter(minimalConfig());
-    adapter.takeSnapshot(42);
-    expect((adapter as any).lastSnapshotIndex).toBe(42);
+    (adapter as any).node = { getLastApplied: () => 0 };
+    await expect(adapter.requestSnapshot()).resolves.toBeNull();
+  });
 
-    (adapter as any).committedCount = 77;
-    adapter.resetCommittedCount();
-    expect((adapter as any).committedCount).toBe(0);
+  it('requestSnapshot is idempotent for an index already snapshotted', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    let calls = 0;
+    (adapter as any).node = {
+      getLastApplied: () => 42,
+      takeSnapshot: async () => {
+        calls += 1;
+      },
+    };
+    (adapter as any)._snapshotMeta = { lastIncludedIndex: 42, lastIncludedTerm: 3, observedAt: 1 };
+
+    const meta = await adapter.requestSnapshot();
+    expect(meta?.lastIncludedIndex).toBe(42);
+    expect(calls).toBe(0);
+  });
+
+  it('requestSnapshot asks raft-core and re-reads the stored boundary', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    let calls = 0;
+    (adapter as any).node = {
+      getLastApplied: () => 10,
+      takeSnapshot: async () => {
+        calls += 1;
+      },
+    };
+    (adapter as any).nodeStorage = {
+      snapshot: { readMetadata: async () => ({ lastIncludedIndex: 10, lastIncludedTerm: 2 }) },
+    };
+
+    const meta = await adapter.requestSnapshot();
+    expect(calls).toBe(1);
+    expect(meta).toMatchObject({ lastIncludedIndex: 10, lastIncludedTerm: 2 });
+    expect(adapter.getSnapshotMeta()).toMatchObject({ lastIncludedIndex: 10 });
+  });
+
+  it('requestSnapshot survives a raft-core without the trigger, and says so', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).node = { getLastApplied: () => 5 };
+    await expect(adapter.requestSnapshot()).resolves.toBeNull();
+  });
+
+  it('requestSnapshot swallows a failing snapshot instead of failing the caller', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).node = {
+      getLastApplied: () => 5,
+      takeSnapshot: async () => {
+        throw new Error('disk full');
+      },
+    };
+    await expect(adapter.requestSnapshot()).resolves.toBeNull();
+  });
+
+  it('refreshSnapshotMeta reports null when the store holds no snapshot', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).nodeStorage = {
+      snapshot: { readMetadata: async () => ({ lastIncludedIndex: 0, lastIncludedTerm: 0 }) },
+    };
+    await expect(adapter.refreshSnapshotMeta()).resolves.toBeNull();
+    expect(adapter.getSnapshotMeta()).toBeNull();
+  });
+
+  it('refreshSnapshotMeta survives a storage read failure', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).nodeStorage = {
+      snapshot: {
+        readMetadata: async () => {
+          throw new Error('io');
+        },
+      },
+    };
+    await expect(adapter.refreshSnapshotMeta()).resolves.toBeNull();
   });
 
   // AC 34.33

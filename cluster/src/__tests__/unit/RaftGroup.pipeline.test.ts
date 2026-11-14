@@ -21,10 +21,13 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
-  shouldTakeSnapshot: vi.fn().mockReturnValue(false),
-  takeSnapshot: vi.fn(),
-  resetCommittedCount: vi.fn(),
+  getSnapshotMeta: vi.fn().mockReturnValue(null),
+  requestSnapshot: vi.fn().mockResolvedValue(null),
+  // Present so the regression guard below can prove it is never called; the
+  // group must not compact on its own authority.
   compactLogs: vi.fn().mockResolvedValue(undefined),
+  resetCommittedCount: vi.fn(),
+  shouldTakeSnapshot: vi.fn().mockReturnValue(false),
   stop: vi.fn(),
   setForceLeader: vi.fn(),
   campaign: vi.fn().mockResolvedValue(undefined),
@@ -51,10 +54,11 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
-    shouldTakeSnapshot = mockRaftAdapter.shouldTakeSnapshot;
-    takeSnapshot = mockRaftAdapter.takeSnapshot;
-    resetCommittedCount = mockRaftAdapter.resetCommittedCount;
+    getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
+    requestSnapshot = mockRaftAdapter.requestSnapshot;
     compactLogs = mockRaftAdapter.compactLogs;
+    resetCommittedCount = mockRaftAdapter.resetCommittedCount;
+    shouldTakeSnapshot = mockRaftAdapter.shouldTakeSnapshot;
     stop = mockRaftAdapter.stop;
     setForceLeader = mockRaftAdapter.setForceLeader;
     campaign = mockRaftAdapter.campaign;
@@ -105,8 +109,13 @@ describe('RaftGroup — pipeline, snapshot, transfer, quorum', () => {
       expect(group.getRaftAdapter()).toBe(group.raft);
     });
 
-    it('getSnapshotFilePath returns the snapshot path', () => {
-      expect(group.getSnapshotFilePath()).toContain('raft-snapshot-');
+    it('readSnapshotMeta exposes the boundary raft holds', () => {
+      mockRaftAdapter.getSnapshotMeta.mockReturnValue({
+        lastIncludedIndex: 12,
+        lastIncludedTerm: 3,
+        observedAt: 99,
+      });
+      expect(group.readSnapshotMeta()).toMatchObject({ lastIncludedIndex: 12, lastIncludedTerm: 3 });
     });
 
     it('applyFromEventBus delegates to replica', () => {
@@ -276,47 +285,35 @@ describe('RaftGroup — pipeline, snapshot, transfer, quorum', () => {
   });
 
   describe('snapshot lifecycle', () => {
-    it('readSnapshotMeta returns null when no snapshot', () => {
-      // Real precondition: a previous test in this file may have written a
-      // snapshot for the same node id. Remove it instead of trusting state.
-      group.deleteSnapshot();
+    it('reports no snapshot when raft holds none', () => {
+      mockRaftAdapter.getSnapshotMeta.mockReturnValue(null);
       expect(group.snapshotExists()).toBe(false);
       expect(group.readSnapshotMeta()).toBeNull();
     });
 
-    it('deleteSnapshot is a no-op when no snapshot', () => {
-      expect(() => group.deleteSnapshot()).not.toThrow();
-    });
-
-    it('trySnapshot is a no-op when shouldTakeSnapshot is false', async () => {
-      mockRaftAdapter.shouldTakeSnapshot.mockReturnValue(false);
+    it('trySnapshot asks raft for a snapshot and takes exactly one', async () => {
+      mockRaftAdapter.requestSnapshot.mockResolvedValue({
+        lastIncludedIndex: 5,
+        lastIncludedTerm: 1,
+        observedAt: 1,
+      });
       await group.trySnapshot();
-      expect(mockRaftAdapter.takeSnapshot).not.toHaveBeenCalled();
+      expect(mockRaftAdapter.requestSnapshot).toHaveBeenCalledTimes(1);
     });
 
-    it('trySnapshot takes a snapshot when required', async () => {
-      // Use an isolated snapshot directory so the real file write does not
-      // pollute ./data (which other snapshot tests assert is empty).
-      const os = await import('os');
-      const pathMod = await import('path');
-      const fsMod = await import('fs');
-      const tmpDir = pathMod.join(os.tmpdir(), `raft-group-snap-${Date.now()}-${Math.random()}`);
-      fsMod.mkdirSync(tmpDir, { recursive: true });
-      const isolated = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, tmpDir);
-
-      mockRaftAdapter.shouldTakeSnapshot.mockReturnValue(true);
-      mockRaftAdapter.getAppliedIndex.mockResolvedValue(5);
-      mockRaftAdapter.getStatus.mockResolvedValue({ term: '3', lead: '1' });
-      await isolated.trySnapshot();
-      expect(mockRaftAdapter.takeSnapshot).toHaveBeenCalledWith(5);
-      expect(mockRaftAdapter.compactLogs).toHaveBeenCalledWith(5);
-    });
-
-    it('trySnapshot skips when appliedIndex <= 0', async () => {
-      mockRaftAdapter.shouldTakeSnapshot.mockReturnValue(true);
-      mockRaftAdapter.getAppliedIndex.mockResolvedValue(0);
+    it('does not keep a second compaction path of its own', async () => {
+      // Regression guard: the group used to call `compactLogs` itself, on the
+      // strength of a metadata file that contained no state. That pair of calls is
+      // what discarded 16 of 60 writes in AC-C7.
+      //
+      // The assertion is made against a spy that *exists*, not against `undefined`:
+      // the previous version read `(group.raft as any).compactLogs` off a mock that
+      // never defined it, so it passed no matter what the group called.
       await group.trySnapshot();
-      expect(mockRaftAdapter.takeSnapshot).not.toHaveBeenCalled();
+      await group.enforceLogLimit();
+      expect(mockRaftAdapter.compactLogs).not.toHaveBeenCalled();
+      expect(mockRaftAdapter.resetCommittedCount).not.toHaveBeenCalled();
+      expect(mockRaftAdapter.shouldTakeSnapshot).not.toHaveBeenCalled();
     });
 
     it('enforceLogLimit is a no-op when maxLogEntries <= 0', async () => {
@@ -324,20 +321,18 @@ describe('RaftGroup — pipeline, snapshot, transfer, quorum', () => {
       expect(mockRaftAdapter.getProgress).not.toHaveBeenCalled();
     });
 
-    it('enforceLogLimit forces snapshot when log exceeds limit', async () => {
-      const os = await import('os');
-      const pathMod = await import('path');
-      const fsMod = await import('fs');
-      const tmpDir = pathMod.join(os.tmpdir(), `raft-group-snap-${Date.now()}-${Math.random()}`);
-      fsMod.mkdirSync(tmpDir, { recursive: true });
-      const isolated = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, tmpDir);
-
-      isolated.maxLogEntries = 10;
+    it('enforceLogLimit forces a snapshot when the log exceeds the limit', async () => {
+      group.maxLogEntries = 10;
       mockRaftAdapter.getProgress.mockResolvedValue({ lastLog: 100, applied: 80 });
-      mockRaftAdapter.shouldTakeSnapshot.mockReturnValue(true);
-      mockRaftAdapter.getAppliedIndex.mockResolvedValue(100);
-      await isolated.enforceLogLimit();
-      expect(mockRaftAdapter.resetCommittedCount).toHaveBeenCalled();
+      await group.enforceLogLimit();
+      expect(mockRaftAdapter.requestSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('enforceLogLimit leaves a log inside the limit alone', async () => {
+      group.maxLogEntries = 100;
+      mockRaftAdapter.getProgress.mockResolvedValue({ lastLog: 100, applied: 80 });
+      await group.enforceLogLimit();
+      expect(mockRaftAdapter.requestSnapshot).not.toHaveBeenCalled();
     });
   });
 

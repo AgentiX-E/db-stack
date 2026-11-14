@@ -17,7 +17,17 @@ export interface IShardReplica {
   getAppliedIndex(): Promise<number>;
   lastAppliedIndex(): number;
   shardId(): number;
-  snapshot(): Promise<Buffer>;
+  /**
+   * Serialize the applied state.
+   *
+   * @param boundaryIndex The Raft log index this snapshot will be declared to
+   *        cover. An implementation that frames its snapshots should record this
+   *        value rather than its own watermark: raft-core applies CONFIG and NOOP
+   *        entries without calling the application, so the state can legitimately
+   *        sit a few indexes behind the boundary it is complete *as of*. Defaults
+   *        to the replica's own watermark when omitted.
+   */
+  snapshot(boundaryIndex?: number): Promise<Buffer>;
   restore(snapshot: Buffer): Promise<void>;
   dataSize(): Promise<number>;
 }
