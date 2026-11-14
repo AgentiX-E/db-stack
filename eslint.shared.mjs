@@ -102,6 +102,26 @@ export function createConfig(options = {}) {
       languageOptions: {
         ecmaVersion: 2023,
         sourceType: 'module',
+        // Node globals. Without them every `process`/`Buffer`/timer in a `.mjs`
+        // harness or config file is reported as undefined — which is either noise
+        // to be suppressed with a disable comment or, worse, a reason to leave the
+        // file out of the lint run entirely. Enumerated rather than pulled from a
+        // package so the list is visible in review.
+        globals: {
+          process: 'readonly',
+          Buffer: 'readonly',
+          console: 'readonly',
+          setTimeout: 'readonly',
+          clearTimeout: 'readonly',
+          setInterval: 'readonly',
+          clearInterval: 'readonly',
+          setImmediate: 'readonly',
+          URL: 'readonly',
+          TextEncoder: 'readonly',
+          TextDecoder: 'readonly',
+          __dirname: 'readonly',
+          __filename: 'readonly',
+        },
       },
       rules: {
         ...sharedStrictness,

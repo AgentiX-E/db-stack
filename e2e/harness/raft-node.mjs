@@ -13,17 +13,13 @@
  *   node → parent : { type: 'ready' | 'applied' | 'status' | 'error' | 'leader', ... }
  */
 
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import {
-  RaftAdapter,
-  MemoryStorageEngine,
-  EngineBackedReplica,
-} from "@agentix-e/db-cluster";
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { RaftAdapter, MemoryStorageEngine, EngineBackedReplica } from '@agentix-e/db-cluster';
 
 const RAW = process.env.RAFT_NODE_CONFIG;
 if (!RAW) {
-  process.stderr.write("[raft-node] RAFT_NODE_CONFIG missing\n");
+  process.stderr.write('[raft-node] RAFT_NODE_CONFIG missing\n');
   process.exit(2);
 }
 
@@ -48,37 +44,28 @@ const replica = new EngineBackedReplica({ shardId: 0, engine });
 function encodeCommand(data) {
   try {
     const parsed = JSON.parse(data);
-    if (
-      parsed &&
-      typeof parsed.key === "string" &&
-      typeof parsed.value === "string"
-    ) {
-      return Buffer.from(
-        JSON.stringify({ op: "put", key: parsed.key, value: parsed.value }),
-        "utf8",
-      );
+    if (parsed && typeof parsed.key === 'string' && typeof parsed.value === 'string') {
+      return Buffer.from(JSON.stringify({ op: 'put', key: parsed.key, value: parsed.value }), 'utf8');
     }
   } catch {
     // Not JSON: an opaque entry.
   }
-  return Buffer.from(JSON.stringify({ op: "nop" }), "utf8");
+  return Buffer.from(JSON.stringify({ op: 'nop' }), 'utf8');
 }
 
 /** Encode a key/value read for the reference engine. */
 function readRequest(key) {
-  return Buffer.from(JSON.stringify({ op: "get", key }), "utf8");
+  return Buffer.from(JSON.stringify({ op: 'get', key }), 'utf8');
 }
 
 async function readValue(key) {
   const response = await replica.query(readRequest(key));
-  return JSON.parse(response.toString("utf8")).value ?? null;
+  return JSON.parse(response.toString('utf8')).value ?? null;
 }
 
 async function countKeys() {
-  const response = await replica.query(
-    Buffer.from(JSON.stringify({ op: "keys" }), "utf8"),
-  );
-  return JSON.parse(response.toString("utf8")).keys.length;
+  const response = await replica.query(Buffer.from(JSON.stringify({ op: 'keys' }), 'utf8'));
+  return JSON.parse(response.toString('utf8')).keys.length;
 }
 
 let adapter;
@@ -100,7 +87,7 @@ async function main() {
     tickIntervalMs: cfg.tickIntervalMs ?? 50,
     storagePath: `${cfg.dataDir}/raft.db`,
     snapshotInterval: cfg.snapshotInterval ?? 1000,
-    environment: "development",
+    environment: 'development',
     preVote: true,
     checkQuorum: true,
     enableInstallSnapshot: cfg.enableInstallSnapshot ?? false,
@@ -119,8 +106,8 @@ async function main() {
       // payload is a bug, not a write — so interpreting the application's command
       // format is this process's job, not the middleware's.
       const command = encodeCommand(data);
-      await replica.apply({ index, term, command: "kv", data: command });
-      send({ type: "applied", nodeId: cfg.id, data });
+      await replica.apply({ index, term, command: 'kv', data: command });
+      send({ type: 'applied', nodeId: cfg.id, data });
     },
     {
       node: { id: cfg.id, host: cfg.host, port: cfg.port },
@@ -132,38 +119,45 @@ async function main() {
     },
   );
 
-  send({ type: "ready", nodeId: cfg.id, data: { port: cfg.port } });
+  send({ type: 'ready', nodeId: cfg.id, data: { port: cfg.port } });
 
-  process.on("message", async (msg) => {
+  process.on('message', async (msg) => {
     if (!msg || !msg.cmd) return;
     try {
-      if (msg.cmd === "propose") {
+      if (msg.cmd === 'propose') {
         if (!(await adapter.isLeader())) {
-          send({ type: "error", nodeId: cfg.id, data: "not leader" });
+          send({ type: 'error', nodeId: cfg.id, data: 'not leader' });
           return;
         }
         const result = await adapter.propose(msg.data);
-        send({ type: "proposed", nodeId: cfg.id, data: result });
-      } else if (msg.cmd === "read") {
+        send({ type: 'proposed', nodeId: cfg.id, data: result });
+      } else if (msg.cmd === 'read') {
         send({
-          type: "read",
+          type: 'read',
           nodeId: cfg.id,
           data: { key: msg.key, value: await readValue(msg.key) },
         });
-      } else if (msg.cmd === "status") {
-        const [isLeader, term, commitIndex] = await Promise.all([
+      } else if (msg.cmd === 'status') {
+        // `getStatus` refreshes the snapshot view along the way; `getSnapshotMeta`
+        // alone is a cache.
+        const [isLeader, term, commitIndex, progress, raftStatus] = await Promise.all([
           adapter.isLeader(),
           adapter.getTerm(),
           adapter.getCommitIndex(),
+          adapter.getProgress(),
+          adapter.getStatus(),
         ]);
         send({
-          type: "status",
+          type: 'status',
           nodeId: cfg.id,
           data: {
             id: cfg.id,
             isLeader,
             term,
             commitIndex,
+            lastLogIndex: progress.lastLog ?? 0,
+            raftApplied: progress.applied ?? 0,
+            snapshot: raftStatus?.snapshot ?? null,
             appliedCount: applied.length,
             applied: applied.slice(),
             stateSize: await countKeys(),
@@ -171,15 +165,15 @@ async function main() {
             engineName: engine.name,
           },
         });
-      } else if (msg.cmd === "stop") {
+      } else if (msg.cmd === 'stop') {
         stopped = true;
         adapter.stop();
-        send({ type: "stopped", nodeId: cfg.id });
+        send({ type: 'stopped', nodeId: cfg.id });
         setTimeout(() => process.exit(0), 50);
       }
     } catch (err) {
       send({
-        type: "error",
+        type: 'error',
         nodeId: cfg.id,
         data: err instanceof Error ? err.message : String(err),
       });
@@ -187,7 +181,7 @@ async function main() {
   });
 }
 
-process.on("SIGTERM", () => {
+process.on('SIGTERM', () => {
   if (!stopped) {
     try {
       adapter?.stop();
@@ -201,7 +195,7 @@ process.on("SIGTERM", () => {
 main().catch((err) => {
   process.stderr.write(`[raft-node] fatal: ${err?.stack ?? err}\n`);
   send({
-    type: "error",
+    type: 'error',
     nodeId: cfg.id,
     data: String(err?.message ?? err),
     fatal: true,

@@ -21,6 +21,12 @@ const PACKAGES = [
   { name: '@agentix-e/db-cluster', dir: 'cluster' },
   { name: '@agentix-e/db-federation', dir: 'federation' },
   { name: '@agentix-e/db-operations', dir: 'operations' },
+  // The end-to-end harness is production code by any useful definition: it
+  // starts real processes, mints certificates and drives the TLS handshakes the
+  // acceptance results depend on. Leaving it out of the gate meant its coverage
+  // could rot silently; it is measured over `harness/**` only, because the
+  // suites themselves are the instrument, not the subject.
+  { name: '@agentix-e/db-stack-e2e (harness/**/*.ts)', dir: 'e2e' },
 ];
 
 const root = resolve(import.meta.dirname, '..');

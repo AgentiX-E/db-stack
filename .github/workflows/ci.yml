@@ -185,7 +185,7 @@ jobs:
 
   coverage-gate:
     name: Coverage gate (all packages)
-    needs: [coverage]
+    needs: [coverage, coverage-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -199,11 +199,13 @@ jobs:
           path: .
       - name: Restore per-package report layout
         run: |
-          for pkg in cluster federation operations; do
-            if [ -d "coverage-$pkg" ]; then
-              mkdir -p "$pkg/coverage"
-              cp -r "coverage-$pkg/." "$pkg/coverage/"
-            fi
+          # `coverage-<dir>` artifacts are restored verbatim into `<dir>/coverage`,
+          # so the gate reads exactly the same paths locally and in CI.
+          for artifact in coverage-*; do
+            [ -d "$artifact" ] || continue
+            pkg="${artifact#coverage-}"
+            mkdir -p "$pkg/coverage"
+            cp -r "$artifact/." "$pkg/coverage/"
           done
       - run: node scripts/coverage-gate.mjs 95
 
@@ -228,6 +230,11 @@ jobs:
         run: pnpm build
       - name: Verify published entry points are importable
         run: node scripts/check-package.mjs
+      # The harness is what every acceptance result below depends on, so its own
+      # contract is checked first: a harness that resolves a promise too early or
+      # stops reading a child's stdout produces confident, meaningless passes.
+      - name: Harness contract (no cluster, seconds)
+        run: pnpm --filter @agentix-e/db-stack-e2e run test:harness
       - name: Raft cluster over mTLS (AC-C1..C6)
         run: pnpm --filter @agentix-e/db-stack-e2e run test:cluster
       # Own invocation, not a third file in the same vitest process: this suite
@@ -266,6 +273,42 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-federation-logs
+          path: e2e/**/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ── E2E harness coverage ──────────────────────────────────────────
+  #
+  # The harness is production code: it mints certificates, supervises child
+  # processes and parses their IPC. It is excluded from the `coverage` matrix
+  # because a full coverage run of every acceptance suite costs ~20 minutes on
+  # its own, and included here so that it is still gated on all four dimensions
+  # rather than trusted.
+  coverage-e2e:
+    name: Coverage (e2e harness)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build workspace packages (the harness loads the published dist)
+        run: pnpm build
+      - run: pnpm --filter @agentix-e/db-stack-e2e run coverage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-e2e
+          path: e2e/coverage/
+          retention-days: 14
+      - name: Upload E2E logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-coverage-logs
           path: e2e/**/*.log
           retention-days: 7
           if-no-files-found: ignore
@@ -320,7 +363,7 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [typecheck, quality, unit, engine-conformance, integration, coverage, coverage-gate, e2e-cluster, e2e-federation, load, security]
+    needs: [typecheck, quality, unit, engine-conformance, integration, coverage, coverage-e2e, coverage-gate, e2e-cluster, e2e-federation, load, security]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -334,6 +377,7 @@ jobs:
           echo "| engine-conformance | ${{ needs.engine-conformance.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| integration | ${{ needs.integration.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| coverage | ${{ needs.coverage.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| coverage-e2e | ${{ needs.coverage-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| coverage-gate | ${{ needs.coverage-gate.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| e2e-cluster | ${{ needs.e2e-cluster.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| e2e-federation | ${{ needs.e2e-federation.result }} |" >> $GITHUB_STEP_SUMMARY
@@ -341,7 +385,8 @@ jobs:
           echo "| security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
           for r in "${{ needs.typecheck.result }}" "${{ needs.quality.result }}" "${{ needs.unit.result }}" \
                    "${{ needs.engine-conformance.result }}" "${{ needs.integration.result }}" \
-                   "${{ needs.coverage.result }}" "${{ needs.coverage-gate.result }}" \
+                   "${{ needs.coverage.result }}" "${{ needs.coverage-e2e.result }}" \
+                   "${{ needs.coverage-gate.result }}" \
                    "${{ needs.e2e-cluster.result }}" "${{ needs.e2e-federation.result }}" "${{ needs.load.result }}" \
                    "${{ needs.security.result }}"; do
             if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then exit 1; fi

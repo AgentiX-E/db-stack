@@ -84,9 +84,7 @@ beforeAll(async () => {
     heartbeatTick: 3,
   }));
   for (const spec of specs) {
-    spec.peers = specs
-      .filter((p) => p.id !== spec.id)
-      .map((p) => ({ id: p.id, host: p.host, port: p.port }));
+    spec.peers = specs.filter((p) => p.id !== spec.id).map((p) => ({ id: p.id, host: p.host, port: p.port }));
   }
 
   for (const spec of specs) nodes.push(spawnRaftNode(spec));
@@ -113,29 +111,31 @@ describe('Raft cluster over mTLS (real processes)', () => {
     const target = specs[1]!;
     const identity = certs.nodes[1]!;
 
-    const result = await new Promise<{ protocol: string | null; authorized: boolean; error?: string }>(
-      (resolve) => {
-        const socket = tls.connect(
-          {
-            host: target.host,
-            port: target.port,
-            servername: `raft-node-${target.id}`,
-            cert: identity.cert,
-            key: identity.key,
-            ca: certs.caPem,
-            rejectUnauthorized: true,
-            minVersion: 'TLSv1.3',
-          },
-          () => {
-            const protocol = socket.getProtocol();
-            const authorized = socket.authorized;
-            socket.end();
-            resolve({ protocol, authorized });
-          },
-        );
-        socket.on('error', (err) => resolve({ protocol: null, authorized: false, error: err.message }));
-      },
-    );
+    const result = await new Promise<{
+      protocol: string | null;
+      authorized: boolean;
+      error?: string;
+    }>((resolve) => {
+      const socket = tls.connect(
+        {
+          host: target.host,
+          port: target.port,
+          servername: `raft-node-${target.id}`,
+          cert: identity.cert,
+          key: identity.key,
+          ca: certs.caPem,
+          rejectUnauthorized: true,
+          minVersion: 'TLSv1.3',
+        },
+        () => {
+          const protocol = socket.getProtocol();
+          const authorized = socket.authorized;
+          socket.end();
+          resolve({ protocol, authorized });
+        },
+      );
+      socket.on('error', (err) => resolve({ protocol: null, authorized: false, error: err.message }));
+    });
 
     expect(result.error).toBeUndefined();
     expect(result.authorized).toBe(true);
@@ -260,7 +260,7 @@ describe('Raft cluster over mTLS (real processes)', () => {
 
   it('AC-C6: refuses new commits when the remaining node is a minority', async () => {
     const survivors = activeNodes();
-    let lastLeader = await findLeader(survivors);
+    const lastLeader = await findLeader(survivors);
 
     // Kill one more node: 1 of 3 left → no quorum.
     const victim = survivors.find((n) => n !== lastLeader)!;

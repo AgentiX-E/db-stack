@@ -47,7 +47,11 @@ interface GatewayStatus {
   localStore: number;
   pending: Record<string, number>;
   connectedPeers: string[];
-  transport: { messagesSent: number; messagesReceived: number; peersConnected: number };
+  transport: {
+    messagesSent: number;
+    messagesReceived: number;
+    peersConnected: number;
+  };
 }
 
 interface GatewayOptions {
@@ -55,7 +59,13 @@ interface GatewayOptions {
   dc: string;
   transportNodeId: number;
   certIndex: number;
-  peer: { nodeId: string; dc: string; host: string; port: number; transportNodeId: number };
+  peer: {
+    nodeId: string;
+    dc: string;
+    host: string;
+    port: number;
+    transportNodeId: number;
+  };
   nodes: ClusterNodeSpec[];
 }
 
@@ -87,11 +97,7 @@ function gatewayConfig(opts: GatewayOptions, listenPort: number): Record<string,
   };
 }
 
-function buildCluster(
-  prefix: string,
-  baseDir: string,
-  ports: number[],
-): ClusterNodeSpec[] {
+function buildCluster(prefix: string, baseDir: string, ports: number[]): ClusterNodeSpec[] {
   const specs: ClusterNodeSpec[] = [1, 2, 3].map((id, index) => ({
     id,
     host: '127.0.0.1',
@@ -105,9 +111,7 @@ function buildCluster(
     heartbeatTick: index === 0 ? 2 : 10,
   }));
   for (const spec of specs) {
-    spec.peers = specs
-      .filter((p) => p.id !== spec.id)
-      .map((p) => ({ id: p.id, host: p.host, port: p.port }));
+    spec.peers = specs.filter((p) => p.id !== spec.id).map((p) => ({ id: p.id, host: p.host, port: p.port }));
   }
   return specs;
 }
@@ -161,10 +165,7 @@ async function startCluster(
       return node;
     });
 
-  await Promise.all([
-    gateway.waitForType('ready', 90_000),
-    ...followers.map((f) => f.waitForType('ready', 60_000)),
-  ]);
+  await Promise.all([gateway.waitForType('ready', 90_000), ...followers.map((f) => f.waitForType('ready', 60_000))]);
 
   await waitUntil(
     async () => {
@@ -268,29 +269,31 @@ describe('Cross-cluster sync over mTLS (two real clusters)', () => {
     // certificate signed by the cluster CA.
     const westListenPort = (westConfig.listen as { port: number }).port;
 
-    const good = await new Promise<{ protocol: string | null; authorized: boolean; error?: string }>(
-      (resolve) => {
-        const socket = tls.connect(
-          {
-            host: '127.0.0.1',
-            port: westListenPort,
-            servername: 'raft-node-5',
-            cert: certs.nodes[3]!.cert,
-            key: certs.nodes[3]!.key,
-            ca: certs.caPem,
-            rejectUnauthorized: true,
-            minVersion: 'TLSv1.3',
-          },
-          () => {
-            const protocol = socket.getProtocol();
-            const authorized = socket.authorized;
-            socket.end();
-            resolve({ protocol, authorized });
-          },
-        );
-        socket.on('error', (err) => resolve({ protocol: null, authorized: false, error: err.message }));
-      },
-    );
+    const good = await new Promise<{
+      protocol: string | null;
+      authorized: boolean;
+      error?: string;
+    }>((resolve) => {
+      const socket = tls.connect(
+        {
+          host: '127.0.0.1',
+          port: westListenPort,
+          servername: 'raft-node-5',
+          cert: certs.nodes[3]!.cert,
+          key: certs.nodes[3]!.key,
+          ca: certs.caPem,
+          rejectUnauthorized: true,
+          minVersion: 'TLSv1.3',
+        },
+        () => {
+          const protocol = socket.getProtocol();
+          const authorized = socket.authorized;
+          socket.end();
+          resolve({ protocol, authorized });
+        },
+      );
+      socket.on('error', (err) => resolve({ protocol: null, authorized: false, error: err.message }));
+    });
     expect(good.error).toBeUndefined();
     expect(good.authorized).toBe(true);
     expect(good.protocol).toBe('TLSv1.3');
@@ -332,7 +335,12 @@ describe('Cross-cluster sync over mTLS (two real clusters)', () => {
   }, 120_000);
 
   it('AC-F1: a write in DC-East becomes committed state in DC-West', async () => {
-    eastGateway.send({ cmd: 'replicate', key: 'user:1', value: 'alice', type: 'insert' });
+    eastGateway.send({
+      cmd: 'replicate',
+      key: 'user:1',
+      value: 'alice',
+      type: 'insert',
+    });
     await eastGateway.waitFor((m) => m.type === 'replicated', 20_000, 'east replication ack');
 
     const west = await waitForValue('west', 'user:1', 'alice');
@@ -341,7 +349,9 @@ describe('Cross-cluster sync over mTLS (two real clusters)', () => {
     // The value must be committed by the west *cluster*, i.e. all replicas applied it.
     const appliedEverywhere = await waitUntil(
       async () => {
-        const statuses = await Promise.all(westNodes.map((n) => n.status<{ applied: string[]; commitIndex: number }>()));
+        const statuses = await Promise.all(
+          westNodes.map((n) => n.status<{ applied: string[]; commitIndex: number }>()),
+        );
         return statuses.every((s) => s.commitIndex > 0) ? statuses : undefined;
       },
       45_000,
@@ -355,7 +365,12 @@ describe('Cross-cluster sync over mTLS (two real clusters)', () => {
     const keys = Array.from({ length: 50 }, (_, i) => `burst:${i}`);
 
     for (const key of keys) {
-      eastGateway.send({ cmd: 'replicate', key, value: `v-${key}`, type: 'insert' });
+      eastGateway.send({
+        cmd: 'replicate',
+        key,
+        value: `v-${key}`,
+        type: 'insert',
+      });
     }
 
     const west = await waitUntil(
@@ -389,8 +404,18 @@ describe('Cross-cluster sync over mTLS (two real clusters)', () => {
   }, 180_000);
 
   it('AC-F4: concurrent writes to the same key converge to one value', async () => {
-    eastGateway.send({ cmd: 'replicate', key: 'conflict', value: 'east-wins?', type: 'update' });
-    westGateway.send({ cmd: 'replicate', key: 'conflict', value: 'west-wins?', type: 'update' });
+    eastGateway.send({
+      cmd: 'replicate',
+      key: 'conflict',
+      value: 'east-wins?',
+      type: 'update',
+    });
+    westGateway.send({
+      cmd: 'replicate',
+      key: 'conflict',
+      value: 'west-wins?',
+      type: 'update',
+    });
 
     const converged = await waitUntil(
       async () => {
@@ -424,7 +449,12 @@ describe('Cross-cluster sync over mTLS (two real clusters)', () => {
     }
 
     const before = await gatewayStatus(eastGateway);
-    eastGateway.send({ cmd: 'replicate', key: 'during-outage', value: 'stored-offline', type: 'insert' });
+    eastGateway.send({
+      cmd: 'replicate',
+      key: 'during-outage',
+      value: 'stored-offline',
+      type: 'insert',
+    });
     await eastGateway.waitFor((m) => m.type === 'replicated', 20_000, 'east replication during outage');
 
     // The outbox must retain the entry while the peer is unreachable.

@@ -11,7 +11,11 @@
     "coverage": "vitest run --coverage",
     "bench": "tsx bench/real-ycsb.ts",
     "bench:all": "tsx bench/real-ycsb.ts --workload A,B,C,D,E,F --records 300 --ops 900 --threads 4",
-    "test:engine": "vitest run tests/cluster-engine-durability.test.ts"
+    "test:engine": "vitest run tests/cluster-engine-durability.test.ts",
+    "test:harness": "vitest run tests/harness-contract.test.ts",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"harness/**/*.{ts,mjs}\" \"tests/**/*.ts\" \"bench/**/*.ts\" \"*.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@agentix-e/db-cluster": "workspace:*",

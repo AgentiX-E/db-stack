@@ -19,12 +19,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { RaftAdapter } from '@agentix-e/db-cluster';
-import {
-  FederationManager,
-  MultiLeaderReplication,
-  OutboxStore,
-  TcpSecureTransport,
-} from '@agentix-e/db-federation';
+import { FederationManager, MultiLeaderReplication, OutboxStore, TcpSecureTransport } from '@agentix-e/db-federation';
 
 const RAW = process.env.FEDERATION_GATEWAY_CONFIG;
 if (!RAW) {
@@ -88,7 +83,11 @@ function requireKey(key) {
 const consumer = {
   async proposeReplicated(entry) {
     if (!(await adapter.isLeader())) {
-      send({ type: 'error', nodeId: cfg.nodeId, data: 'not leader, cannot apply replicated entry' });
+      send({
+        type: 'error',
+        nodeId: cfg.nodeId,
+        data: 'not leader, cannot apply replicated entry',
+      });
       return;
     }
     const key = entry.key ?? entry.data?.key;
@@ -130,7 +129,11 @@ async function main() {
         if (parsed && typeof parsed.key === 'string') {
           state.set(parsed.key, parsed.value);
           persistState();
-          send({ type: 'applied', nodeId: cfg.nodeId, data: { key: parsed.key, value: parsed.value } });
+          send({
+            type: 'applied',
+            nodeId: cfg.nodeId,
+            data: { key: parsed.key, value: parsed.value },
+          });
         }
       } catch {
         // Non-JSON payloads are still applied by consensus; they simply carry
@@ -140,7 +143,11 @@ async function main() {
     {
       node: cfg.raft.node,
       peers: cfg.raft.peers,
-      tls: { cert: cfg.raft.cert.cert, key: cfg.raft.cert.key, ca: cfg.raft.cert.ca },
+      tls: {
+        cert: cfg.raft.cert.cert,
+        key: cfg.raft.cert.key,
+        ca: cfg.raft.cert.ca,
+      },
       connectTimeoutMs: 5000,
       initialRetryMs: 100,
       maxRetryMs: 5000,
@@ -161,7 +168,11 @@ async function main() {
         transportNodeId: cfg.peer.transportNodeId,
       },
     ],
-    tls: { cert: cfg.federationCert.cert, key: cfg.federationCert.key, ca: cfg.federationCert.ca },
+    tls: {
+      cert: cfg.federationCert.cert,
+      key: cfg.federationCert.key,
+      ca: cfg.federationCert.ca,
+    },
     connectTimeoutMs: 5000,
     initialRetryMs: 100,
     maxRetryMs: 5000,
@@ -197,7 +208,11 @@ async function main() {
   };
 
   stage('outbox-ready');
-  const replication = new MultiLeaderReplication({ transport, outbox, config: replicationConfig });
+  const replication = new MultiLeaderReplication({
+    transport,
+    outbox,
+    config: replicationConfig,
+  });
 
   federation = new FederationManager(replication, {
     nodeId: cfg.nodeId,
@@ -224,7 +239,11 @@ async function main() {
       if (msg.cmd === 'replicate') {
         const key = requireKey(msg.key);
         const result = await federation.replicate(key, String(msg.value), msg.type ?? 'insert');
-        send({ type: 'replicated', nodeId: cfg.nodeId, data: { key, msgId: result.msgId } });
+        send({
+          type: 'replicated',
+          nodeId: cfg.nodeId,
+          data: { key, msgId: result.msgId },
+        });
       } else if (msg.cmd === 'status') {
         const [isLeader, term, commitIndex] = await Promise.all([
           adapter.isLeader(),
@@ -261,7 +280,11 @@ async function main() {
         setTimeout(() => process.exit(0), 50);
       }
     } catch (err) {
-      send({ type: 'error', nodeId: cfg.nodeId, data: err instanceof Error ? err.message : String(err) });
+      send({
+        type: 'error',
+        nodeId: cfg.nodeId,
+        data: err instanceof Error ? err.message : String(err),
+      });
     }
   });
 }
@@ -278,6 +301,11 @@ process.on('SIGTERM', () => {
 
 main().catch((err) => {
   process.stderr.write(`[gateway] fatal: ${err?.stack ?? err}\n`);
-  send({ type: 'error', nodeId: cfg.nodeId, data: String(err?.message ?? err), fatal: true });
+  send({
+    type: 'error',
+    nodeId: cfg.nodeId,
+    data: String(err?.message ?? err),
+    fatal: true,
+  });
   process.exit(1);
 });

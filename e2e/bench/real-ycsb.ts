@@ -105,7 +105,11 @@ interface Options {
   nodes: number;
 }
 
-async function startCluster(nodes: number): Promise<{ leader: () => ChildNode; all: ChildNode[]; cleanup: () => Promise<void> }> {
+async function startCluster(nodes: number): Promise<{
+  leader: () => ChildNode;
+  all: ChildNode[];
+  cleanup: () => Promise<void>;
+}> {
   const certs = makeCertificates(nodes);
   const ports = await getFreePorts(nodes);
   const baseDir = makeTempDir('ycsb');
