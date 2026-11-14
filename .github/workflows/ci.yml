@@ -43,9 +43,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Build prerequisite workspace packages
-        run: pnpm --filter "@agentix-e/db-operations-*" --filter @agentix-e/db-cluster run build
-      - run: pnpm --filter "./${{ matrix.package }}" run typecheck
+      # Turbo builds the workspace dependencies of the target package first.
+      # A plain `pnpm --filter ... run build` runs the dependencies in parallel
+      # and the operations packages then typecheck against half-written dist
+      # output (TS2307 on the `core/types` subpath).
+      - name: Typecheck (builds workspace dependencies first)
+        run: pnpm turbo run typecheck --filter=./${{ matrix.package }}
 
   # ── Unit tests (fast, isolated) ────────────────────────────────────
   unit:

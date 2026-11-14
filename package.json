@@ -2,7 +2,7 @@
   "name": "db-stack",
   "version": "1.1.0",
   "private": true,
-  "description": "AgentiX-E database stack — cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
+  "description": "AgentiX-E database stack \u2014 cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
   "license": "MIT",
   "packageManager": "pnpm@10.28.2",
   "engines": {
@@ -47,7 +47,8 @@
       "@vitest/spy": "3.2.6",
       "@vitest/utils": "3.2.6",
       "@vitest/mocker": "3.2.6",
-      "@vitest/pretty-format": "3.2.6"
+      "@vitest/pretty-format": "3.2.6",
+      "tinypool": "2.2.0"
     }
   }
 }

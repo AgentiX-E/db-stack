@@ -260,51 +260,32 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   // The invariant that still matters operationally is "no write-path
   // regression": batching must not be catastrophically slower than serial
   // insertion, and the per-entry cost must stay bounded.
-  it('BM6a: addBatch should not regress vs serial add for N=100', () => {
+  it('BM6a: a 100-entry batch commits inside a fixed budget', async () => {
     const dirBatch = tmpDir('bm6-batch');
-    const dirSerial = tmpDir('bm6-serial');
     const storeBatch = new OutboxStore({
       dataDir: dirBatch, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
-    });
-    const storeSerial = new OutboxStore({
-      dataDir: dirSerial, ttlMs: 60_000, maxRetries: 3,
       deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
     });
     const hlc = new HLC();
     const N = 100;
 
     try {
-      // Benchmark: addBatch
       const batchEntries = Array.from({ length: N }, () => makeEntry(hlc));
       const batchStart = performance.now();
       const created = storeBatch.addBatch(batchEntries);
       const batchElapsed = performance.now() - batchStart;
+
+      // Correctness first: every entry must be durably queued.
       expect(created.length).toBe(N);
+      expect(await storeBatch.getPendingCount()).toBe(N);
 
-      // Benchmark: serial add
-      const serialStart = performance.now();
-      for (let i = 0; i < N; i++) {
-        storeSerial.add(makeEntry(hlc));
-      }
-      const serialElapsed = performance.now() - serialStart;
-
-      const ratio = serialElapsed / batchElapsed;
-      console.table({
-        'N=100': '',
-        'addBatch (ms)': batchElapsed.toFixed(2),
-        'serial add x N (ms)': serialElapsed.toFixed(2),
-        'speedup ratio': ratio.toFixed(2) + 'x',
-      });
-
-      // Both paths commit one transaction, so the ratio hovers around 1 on
-      // tmpfs and can dip on a shared vCPU. Only a catastrophic regression
-      // (> 5x slower than serial) indicates a broken batch path.
-      expect(ratio).toBeGreaterThan(0.2);
-      expect(batchElapsed).toBeLessThan(2000);
+      // Performance: an absolute budget instead of a ratio against serial add.
+      // A relative comparison between two single-transaction paths measures
+      // scheduler noise, not throughput; the budget catches a real regression
+      // (a return to per-entry fsyncs costs ~19ms x N on a real volume).
+      expect(batchElapsed).toBeLessThan(500);
     } finally {
       storeBatch.close();
-      storeSerial.close();
     }
   }, 15000);
 
