@@ -1,0 +1,8 @@
+/**
+ * .gitkeep — placeholder for benchmark result files
+ *
+ * Results are saved as JSON files with timestamped names:
+ *   raft-ycsb-2024-01-01T00-00-00-000Z.json
+ *
+ * Latest results are also symlinked to raft-ycsb-latest.json
+ */

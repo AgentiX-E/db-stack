@@ -1,0 +1,37 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "paths": {
+      "@agentix-e/db-operations-core": ["./packages/core/src/index.ts"],
+      "@agentix-e/db-operations-core/*": ["./packages/core/src/*"],
+      "@agentix-e/db-operations-audit": ["./packages/audit/src/index.ts"],
+      "@agentix-e/db-operations-auth": ["./packages/auth/src/index.ts"],
+      "@agentix-e/db-operations-autoscaler": ["./packages/autoscaler/src/index.ts"],
+      "@agentix-e/db-operations-autotuner": ["./packages/autotuner/src/index.ts"],
+      "@agentix-e/db-operations-backup": ["./packages/backup/src/index.ts"],
+      "@agentix-e/db-operations-chaosengine": ["./packages/chaosengine/src/index.ts"],
+      "@agentix-e/db-operations-circuitbreaker": ["./packages/circuitbreaker/src/index.ts"],
+      "@agentix-e/db-operations-configwatcher": ["./packages/configwatcher/src/index.ts"],
+      "@agentix-e/db-operations-federation": ["./packages/federation/src/index.ts"],
+      "@agentix-e/db-operations-health": ["./packages/health/src/index.ts"],
+      "@agentix-e/db-operations-logger": ["./packages/logger/src/index.ts"],
+      "@agentix-e/db-operations-maintenance": ["./packages/maintenance/src/index.ts"],
+      "@agentix-e/db-operations-memoryguard": ["./packages/memoryguard/src/index.ts"],
+      "@agentix-e/db-operations-metrics": ["./packages/metrics/src/index.ts"],
+      "@agentix-e/db-operations-monitor": ["./packages/monitor/src/index.ts"],
+      "@agentix-e/db-operations-observability": ["./packages/observability/src/index.ts"],
+      "@agentix-e/db-operations-otel": ["./packages/otel/src/index.ts"],
+      "@agentix-e/db-operations-rollingupgrade": ["./packages/rollingupgrade/src/index.ts"],
+      "@agentix-e/db-operations-security": ["./packages/security/src/index.ts"],
+      "@agentix-e/db-operations-slacollector": ["./packages/slacollector/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "**/dist"]
+}

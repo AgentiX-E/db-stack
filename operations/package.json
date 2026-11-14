@@ -1,0 +1,90 @@
+{
+  "name": "@agentix-e/db-operations",
+  "version": "1.1.0",
+  "private": false,
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.umbrella.json && node ../scripts/fix-esm-extensions.mjs dist",
+    "typecheck": "tsc -p tsconfig.umbrella.json --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run --exclude \"packages/*/src/__tests__/e2e/**\" --exclude \"packages/*/src/__tests__/mutation/**\"",
+    "test:integration": "vitest run packages/core/src/__tests__/e2e",
+    "coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"packages/*/src/**/*.ts\"",
+    "clean": "rm -rf dist packages/*/dist coverage",
+    "bench": "tsx bench/run-all.ts",
+    "bench:ycsb": "tsx bench/ycsb/run-ycsb.ts",
+    "docs": "typedoc",
+    "test:mutation": "MUTATION=1 vitest run packages/core/src/__tests__/mutation"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@vitest/coverage-v8": "3.2.6",
+    "tsx": "^4.23.0",
+    "typescript": "^5.7.3",
+    "vitest": "3.2.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgentiX-E/db-stack.git",
+    "directory": "operations"
+  },
+  "description": "Unified, engine-agnostic database operations framework — 21 packages",
+  "keywords": [
+    "database",
+    "operations",
+    "backup",
+    "monitoring",
+    "security",
+    "audit",
+    "metrics",
+    "observability"
+  ],
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@agentix-e/db-operations-core": "workspace:*",
+    "@agentix-e/db-operations-health": "workspace:*",
+    "@agentix-e/db-operations-logger": "workspace:*",
+    "@agentix-e/db-operations-metrics": "workspace:*",
+    "@agentix-e/db-operations-monitor": "workspace:*",
+    "@agentix-e/db-operations-backup": "workspace:*",
+    "@agentix-e/db-operations-maintenance": "workspace:*",
+    "@agentix-e/db-operations-auth": "workspace:*",
+    "@agentix-e/db-operations-security": "workspace:*",
+    "@agentix-e/db-operations-audit": "workspace:*",
+    "@agentix-e/db-operations-observability": "workspace:*",
+    "@agentix-e/db-operations-otel": "workspace:*",
+    "@agentix-e/db-operations-autotuner": "workspace:*",
+    "@agentix-e/db-operations-autoscaler": "workspace:*",
+    "@agentix-e/db-operations-chaosengine": "workspace:*",
+    "@agentix-e/db-operations-circuitbreaker": "workspace:*",
+    "@agentix-e/db-operations-configwatcher": "workspace:*",
+    "@agentix-e/db-operations-memoryguard": "workspace:*",
+    "@agentix-e/db-operations-rollingupgrade": "workspace:*",
+    "@agentix-e/db-operations-slacollector": "workspace:*",
+    "@agentix-e/db-operations-federation": "workspace:*"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "packages/*/dist"
+  ]
+}

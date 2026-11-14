@@ -1,0 +1,53 @@
+{
+  "name": "db-stack",
+  "version": "1.1.0",
+  "private": true,
+  "description": "AgentiX-E database stack — cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
+  "license": "MIT",
+  "packageManager": "pnpm@10.28.2",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "format:check": "turbo run format:check",
+    "test": "turbo run test",
+    "test:unit": "turbo run test:unit",
+    "test:integration": "turbo run test:integration",
+    "coverage": "turbo run coverage",
+    "coverage:merge": "node scripts/merge-coverage.mjs",
+    "coverage:gate": "node scripts/coverage-gate.mjs",
+    "e2e": "pnpm --filter @agentix-e/db-stack-e2e run test",
+    "bench": "turbo run bench",
+    "verify": "node scripts/verify.mjs",
+    "bench:real": "pnpm --filter @agentix-e/db-stack-e2e run bench",
+    "check:package": "node scripts/check-package.mjs",
+    "test:soak": "pnpm --filter @agentix-e/db-cluster run test:soak",
+    "test:load": "pnpm --filter @agentix-e/db-cluster run test:load && pnpm --filter @agentix-e/db-federation run test:perf",
+    "test:mutation": "pnpm --filter ./operations run test:mutation",
+    "test:perf": "pnpm --filter @agentix-e/db-cluster run test:perf && pnpm --filter @agentix-e/db-stack-e2e run bench"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "3.2.6",
+    "prettier": "^3.9.5",
+    "tsx": "^4.23.0",
+    "turbo": "^2.10.7",
+    "typescript": "^5.7.3",
+    "vitest": "3.2.6"
+  },
+  "pnpm": {
+    "overrides": {
+      "vitest": "3.2.6",
+      "@vitest/coverage-v8": "3.2.6",
+      "@vitest/expect": "3.2.6",
+      "@vitest/runner": "3.2.6",
+      "@vitest/snapshot": "3.2.6",
+      "@vitest/spy": "3.2.6",
+      "@vitest/utils": "3.2.6",
+      "@vitest/mocker": "3.2.6",
+      "@vitest/pretty-format": "3.2.6"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@agentix-e/db-federation": ["./src/index.ts"],
+      "@agentix-e/db-federation/*": ["./src/*"],
+      "@agentix-e/db-cluster": ["../cluster/src/index.ts"],
+      "@agentix-e/db-cluster/testing": ["../cluster/src/testing/index.ts"],
+      "@agentix-e/db-cluster/*": ["../cluster/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "bench/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

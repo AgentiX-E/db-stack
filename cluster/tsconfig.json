@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@agentix-e/db-cluster": ["./src/index.ts"],
+      "@agentix-e/db-cluster/*": ["./src/*"],
+      "@agentix-e/db-operations-chaosengine": ["../operations/packages/chaosengine/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "bench/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

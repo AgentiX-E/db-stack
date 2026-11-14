@@ -1,0 +1,108 @@
+name: Benchmarks
+
+# Performance is measured on a GitHub-hosted runner so the numbers are
+# reproducible across runs and comparable between commits. The runner executes
+# the YCSB core workloads against a real 3-node Raft cluster (3 OS processes,
+# mutual TLS), not against an in-memory model of Raft.
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # nightly, 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      workloads:
+        description: 'Comma separated YCSB workloads (A,B,C,D,E,F)'
+        required: false
+        default: 'A,B,C,F'
+      records:
+        description: 'Records to load'
+        required: false
+        default: '300'
+      ops:
+        description: 'Operations to execute'
+        required: false
+        default: '900'
+      threads:
+        description: 'Concurrent clients'
+        required: false
+        default: '4'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10'
+  TMPDIR: ${{ github.workspace }}/.tmp
+
+jobs:
+  raft-ycsb:
+    name: YCSB (real 3-node Raft cluster, mTLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run YCSB workloads
+        working-directory: e2e
+        env:
+          WORKLOADS: ${{ inputs.workloads || 'A,B,C,F' }}
+          RECORDS: ${{ inputs.records || '300' }}
+          OPS: ${{ inputs.ops || '900' }}
+          THREADS: ${{ inputs.threads || '4' }}
+        run: |
+          set -o pipefail
+          npx tsx bench/real-ycsb.ts \
+            --workload "$WORKLOADS" \
+            --records "$RECORDS" \
+            --ops "$OPS" \
+            --threads "$THREADS" | tee ycsb-report.md
+
+      - name: Publish benchmark summary
+        if: always()
+        run: |
+          if [ -f e2e/ycsb-report.md ]; then
+            cat e2e/ycsb-report.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No benchmark report produced." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ycsb-results
+          path: |
+            e2e/bench-results/
+            e2e/ycsb-report.md
+          retention-days: 30
+          if-no-files-found: warn
+
+  soak:
+    name: Soak / stability
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Long-term stability (memory / commit-index monotonicity)
+        run: pnpm --filter @agentix-e/db-cluster run test:soak

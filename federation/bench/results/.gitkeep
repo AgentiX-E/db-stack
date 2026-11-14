@@ -1,0 +1,6 @@
+/**
+ * .gitkeep — placeholder for benchmark result files
+ *
+ * Results are saved as JSON files with timestamped names:
+ *   federation-ycsb-2024-01-01T00-00-00-000Z.json
+ */

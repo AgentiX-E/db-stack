@@ -1,0 +1,291 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10'
+  # The suites route their scratch data to /dev/shm (tmpfs) when it is
+  # available, because a durable commit costs ~19ms on the workspace volume
+  # versus ~0.03ms on tmpfs — the difference between a 30s and a 30min load
+  # test. `DBSTACK_TEST_TMPDIR` pins the location if the default must change.
+  DBSTACK_TEST_TMPDIR: '' 
+
+jobs:
+  # ── Static analysis ────────────────────────────────────────────────
+  typecheck:
+    name: Typecheck (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: cluster
+          - package: operations
+          - package: federation # needs the cluster build for its types
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build prerequisite workspace packages
+        run: pnpm --filter "@agentix-e/db-operations-*" --filter @agentix-e/db-cluster run build
+      - run: pnpm --filter "./${{ matrix.package }}" run typecheck
+
+  # ── Unit tests (fast, isolated) ────────────────────────────────────
+  unit:
+    name: Unit (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [cluster, federation, operations]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "./${{ matrix.package }}" run test:unit
+
+  # ── Integration tests (Raft groups, CDC pipelines, chaos) ─────────
+  integration:
+    name: Integration (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [cluster, federation, operations]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "./${{ matrix.package }}" run test:integration
+
+  # ── Coverage: one job per package, gated on every dimension ──────
+  coverage:
+    name: Coverage (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [cluster, federation, operations]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "./${{ matrix.package }}" run coverage
+      - name: Enforce per-dimension threshold (95%)
+        run: |
+          node -e "
+            const s = require('./${{ matrix.package }}/coverage/coverage-summary.json').total;
+            const dims = ['lines','statements','functions','branches'];
+            const bad = dims.filter(d => s[d].pct < 95);
+            for (const d of dims) console.log(d.padEnd(11), s[d].pct + '%');
+            if (bad.length) { console.error('FAILED dimensions: ' + bad.join(', ')); process.exit(1); }
+          "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.package }}
+          path: ${{ matrix.package }}/coverage/
+          retention-days: 14
+
+  coverage-gate:
+    name: Coverage gate (all packages)
+    needs: [coverage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: .
+      - name: Restore per-package report layout
+        run: |
+          for pkg in cluster federation operations; do
+            if [ -d "coverage-$pkg" ]; then
+              mkdir -p "$pkg/coverage"
+              cp -r "coverage-$pkg/." "$pkg/coverage/"
+            fi
+          done
+      - run: node scripts/coverage-gate.mjs 95
+
+  # ── End-to-end: real multi-process clusters over mTLS ────────────
+  #
+  # These are the acceptance suites the migration is judged by: real OS
+  # processes, real TLS 1.3 handshakes, real mTLS peer verification. Nothing is
+  # mocked and nothing runs in-process.
+  e2e-cluster:
+    name: E2E — Raft cluster over mTLS (real processes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build workspace packages (E2E loads the published dist)
+        run: pnpm build
+      - name: Verify published entry points are importable
+        run: node scripts/check-package.mjs
+      - name: Raft cluster over mTLS (AC-C1..C6)
+        run: pnpm --filter @agentix-e/db-stack-e2e run test:cluster
+      - name: Upload E2E logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-cluster-logs
+          path: e2e/**/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  e2e-federation:
+    name: E2E — cross-cluster sync over mTLS (two real DCs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build workspace packages (E2E loads the published dist)
+        run: pnpm build
+      - name: Cross-cluster sync over mTLS (AC-F1..F5)
+        run: pnpm --filter @agentix-e/db-stack-e2e run test:federation
+      - name: Upload E2E logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-federation-logs
+          path: e2e/**/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ── Load / fault-injection tier ───────────────────────────────────
+  #
+  # Throughput and fault-boundary suites (connection storms, log compaction
+  # under load, backoff under mass proposal, federation pipeline throughput).
+  # They assert wall-clock budgets and are therefore separated from the PR
+  # gate, but still run on every push so a throughput regression is caught.
+  load:
+    name: Load & fault boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @agentix-e/db-cluster run test:load
+      - run: pnpm --filter @agentix-e/db-federation run test:perf
+
+  # ── Supply chain ──────────────────────────────────────────────────
+  security:
+    name: Security (SCA + secret scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Dependency audit (high and above)
+        run: pnpm audit --audit-level high
+      - name: Secret scan — credentials must never be committed
+        run: |
+          set -euo pipefail
+          PATTERN='github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC )?PRIVATE KEY-----'
+          if git grep -nEI "$PATTERN" -- . ':!*.md' ':!pnpm-lock.yaml'; then
+            echo "::error::potential credential committed"
+            exit 1
+          fi
+          echo "No credentials found in tracked files."
+
+  # ── Required-check summary ────────────────────────────────────────
+  ci-summary:
+    name: CI summary
+    if: always()
+    needs: [typecheck, unit, integration, coverage, coverage-gate, e2e-cluster, e2e-federation, load, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report
+        run: |
+          echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| typecheck | ${{ needs.typecheck.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| unit | ${{ needs.unit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| integration | ${{ needs.integration.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| coverage | ${{ needs.coverage.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| coverage-gate | ${{ needs.coverage-gate.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| e2e-cluster | ${{ needs.e2e-cluster.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| e2e-federation | ${{ needs.e2e-federation.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| load | ${{ needs.load.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
+          for r in "${{ needs.typecheck.result }}" "${{ needs.unit.result }}" "${{ needs.integration.result }}" \
+                   "${{ needs.coverage.result }}" "${{ needs.coverage-gate.result }}" \
+                   "${{ needs.e2e-cluster.result }}" "${{ needs.e2e-federation.result }}" "${{ needs.load.result }}" \
+                   "${{ needs.security.result }}"; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then exit 1; fi
+          done

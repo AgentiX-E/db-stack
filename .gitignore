@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.tmp/
+*.log
+.DS_Store
+
+# Crash artefacts. A killed child Raft node (SIGKILL during the chaos/e2e
+# suites) leaves a multi-hundred-megabyte core dump next to the package; they
+# must never reach the repository.
+core
+core.*
+*.core
+*.heapsnapshot

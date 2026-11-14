@@ -1,0 +1,27 @@
+{
+  "name": "@agentix-e/db-stack-e2e",
+  "version": "1.1.0",
+  "private": true,
+  "description": "End-to-end acceptance tests: real multi-process Raft clusters over mTLS and cross-cluster federation over mTLS",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:cluster": "vitest run tests/cluster-tls.test.ts",
+    "test:federation": "vitest run tests/cross-cluster-sync.test.ts",
+    "coverage": "vitest run --coverage",
+    "bench": "tsx bench/real-ycsb.ts",
+    "bench:all": "tsx bench/real-ycsb.ts --workload A,B,C,D,E,F --records 300 --ops 900 --threads 4"
+  },
+  "dependencies": {
+    "@agentix-e/db-cluster": "workspace:*",
+    "@agentix-e/db-federation": "workspace:*",
+    "@agentix-e/db-operations-audit": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@vitest/coverage-v8": "3.2.6",
+    "typescript": "^5.7.3",
+    "vitest": "3.2.6",
+    "tsx": "^4.23.0"
+  }
+}

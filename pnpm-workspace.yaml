@@ -1,0 +1,17 @@
+packages:
+  - cluster
+  - federation
+  - operations
+  - operations/packages/*
+  - e2e
+
+# @mongodb-js/zstd ships a native prebuilt binary fetched at install time.
+# It is an *optional* acceleration path for transport compression: when the
+# binary is unavailable the stack falls back to the built-in node:zlib codec.
+# Keeping it out of the dependency graph makes `pnpm install` hermetic.
+onlyBuiltDependencies:
+  - better-sqlite3
+  - lmdb
+  - zeromq
+  - esbuild
+  - '@mongodb-js/zstd'

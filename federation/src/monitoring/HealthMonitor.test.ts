@@ -1,0 +1,301 @@
+/**
+ * HealthMonitor Tests — DC-level health and lag tracking.
+ *
+ * Coverage:
+ *   - Target health classification (healthy / warning / critical / unknown)
+ *   - Periodic health checks
+ *   - High-lag event emission
+ *   - Health change event emission
+ *   - Stop/start lifecycle
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { HealthMonitor, type HealthMonitorConfig } from "./HealthMonitor";
+import type { IMultiLeaderReplication, ReplicationStatus } from "../interfaces/replication/IMultiLeaderReplication";
+
+function mockStatus(overrides: Partial<ReplicationStatus> = {}): ReplicationStatus {
+  return {
+    nodeId: "node-a",
+    dc: "dc-east",
+    targets: [
+      {
+        targetNodeId: "node-b",
+        connected: true,
+        lagMs: 1000,
+        pendingCount: 5,
+        lastSuccessAt: Date.now() - 1000,
+        lastErrorAt: null,
+        lastErrorMessage: null,
+      },
+      {
+        targetNodeId: "node-c",
+        connected: true,
+        lagMs: 120_000, // 2 minutes
+        pendingCount: 50,
+        lastSuccessAt: Date.now() - 120_000,
+        lastErrorAt: null,
+        lastErrorMessage: null,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function createMockReplication(status: ReplicationStatus = mockStatus()): IMultiLeaderReplication {
+  return {
+    start: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
+    replicate: vi.fn().mockResolvedValue({ msgId: "test" }),
+    getStatus: vi.fn().mockResolvedValue(status),
+    retryFailed: vi.fn().mockResolvedValue(0),
+    getPendingCounts: vi.fn().mockResolvedValue({}),
+    onTargetConnected: vi.fn().mockReturnValue(vi.fn()),
+    onTargetDisconnected: vi.fn().mockReturnValue(vi.fn()),
+    onHighLag: vi.fn().mockReturnValue(vi.fn()),
+  };
+}
+
+describe("HealthMonitor — Classification", () => {
+  it("should classify targets with low lag as healthy", async () => {
+    const repl = createMockReplication(mockStatus({
+      targets: [
+        {
+          targetNodeId: "node-b",
+          connected: true,
+          lagMs: 100,
+          pendingCount: 0,
+          lastSuccessAt: Date.now(),
+          lastErrorAt: null,
+          lastErrorMessage: null,
+        },
+      ],
+    }));
+
+    const monitor = new HealthMonitor(repl, { highLagThresholdMs: 60_000, criticalLagThresholdMs: 300_000 });
+    const health = await monitor.check();
+    expect(health.healthyTargets).toBe(1);
+    expect(health.targets[0].status).toBe("healthy");
+  });
+
+  it("should classify targets with moderate lag as warning", async () => {
+    const repl = createMockReplication(mockStatus({
+      targets: [
+        {
+          targetNodeId: "node-b",
+          connected: true,
+          lagMs: 100_000, // 100s, above 60s threshold
+          pendingCount: 10,
+          lastSuccessAt: Date.now() - 100_000,
+          lastErrorAt: null,
+          lastErrorMessage: null,
+        },
+      ],
+    }));
+
+    const monitor = new HealthMonitor(repl, { highLagThresholdMs: 60_000, criticalLagThresholdMs: 300_000 });
+    const health = await monitor.check();
+    expect(health.warningTargets).toBe(1);
+    expect(health.targets[0].status).toBe("warning");
+  });
+
+  it("should classify targets with high lag as critical", async () => {
+    const repl = createMockReplication(mockStatus({
+      targets: [
+        {
+          targetNodeId: "node-b",
+          connected: true,
+          lagMs: 600_000, // 10 minutes, above 5 min threshold
+          pendingCount: 100,
+          lastSuccessAt: Date.now() - 600_000,
+          lastErrorAt: null,
+          lastErrorMessage: null,
+        },
+      ],
+    }));
+
+    const monitor = new HealthMonitor(repl, { highLagThresholdMs: 60_000, criticalLagThresholdMs: 300_000 });
+    const health = await monitor.check();
+    expect(health.criticalTargets).toBe(1);
+    expect(health.targets[0].status).toBe("critical");
+  });
+
+  it("should classify disconnected targets as unknown", async () => {
+    const repl = createMockReplication(mockStatus({
+      targets: [
+        {
+          targetNodeId: "node-b",
+          connected: false,
+          lagMs: 0,
+          pendingCount: 0,
+          lastSuccessAt: null,
+          lastErrorAt: null,
+          lastErrorMessage: null,
+        },
+      ],
+    }));
+
+    const monitor = new HealthMonitor(repl);
+    const health = await monitor.check();
+    expect(health.targets[0].status).toBe("unknown");
+  });
+
+  it("should handle zero-lag as healthy", async () => {
+    const repl = createMockReplication(mockStatus({
+      targets: [
+        {
+          targetNodeId: "node-b",
+          connected: true,
+          lagMs: 0,
+          pendingCount: 0,
+          lastSuccessAt: Date.now(),
+          lastErrorAt: null,
+          lastErrorMessage: null,
+        },
+      ],
+    }));
+
+    const monitor = new HealthMonitor(repl);
+    const health = await monitor.check();
+    expect(health.targets[0].status).toBe("healthy");
+  });
+});
+
+describe("HealthMonitor — Health Check Results", () => {
+  it("should aggregate DC info from replication status", async () => {
+    const repl = createMockReplication();
+    const monitor = new HealthMonitor(repl);
+    const health = await monitor.check();
+
+    expect(health.nodeId).toBe("node-a");
+    expect(health.dc).toBe("dc-east");
+    expect(health.totalTargets).toBe(2);
+    expect(health.uptimeMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("should handle missing replication gracefully", async () => {
+    const errorRepl = createMockReplication();
+    vi.spyOn(errorRepl, "getStatus").mockRejectedValue(new Error("Not started"));
+
+    const monitor = new HealthMonitor(errorRepl);
+    const health = await monitor.check();
+
+    expect(health.nodeId).toBe("unknown");
+    expect(health.totalTargets).toBe(0);
+  });
+});
+
+describe("HealthMonitor — High-Lag Events", () => {
+  it("should fire onHighLag for warning targets", async () => {
+    const repl = createMockReplication();
+    const monitor = new HealthMonitor(repl, { highLagThresholdMs: 10_000, checkIntervalMs: 50_000 });
+    monitor.start();
+
+    const highLagTargets: string[] = [];
+    monitor.onHighLag((targetNodeId, _lagMs) => {
+      highLagTargets.push(targetNodeId);
+    });
+
+    await monitor.check();
+
+    // node-c has 120s lag > 10s threshold
+    expect(highLagTargets).toContain("node-c");
+
+    monitor.stop();
+  });
+
+  it("should not fire onHighLag for healthy targets", async () => {
+    const repl = createMockReplication(mockStatus({
+      targets: [
+        {
+          targetNodeId: "node-b",
+          connected: true,
+          lagMs: 100,
+          pendingCount: 0,
+          lastSuccessAt: Date.now(),
+          lastErrorAt: null,
+          lastErrorMessage: null,
+        },
+      ],
+    }));
+    const monitor = new HealthMonitor(repl, { highLagThresholdMs: 60_000 });
+
+    const highLagTargets: string[] = [];
+    monitor.onHighLag((targetNodeId, _lagMs) => {
+      highLagTargets.push(targetNodeId);
+    });
+
+    await monitor.check();
+    expect(highLagTargets).toHaveLength(0);
+  });
+});
+
+describe("HealthMonitor — Health Change Events", () => {
+  it("should fire onHealthChange on each check", async () => {
+    const repl = createMockReplication();
+    const monitor = new HealthMonitor(repl);
+
+    let healthEventCount = 0;
+    let lastHealth: any = null;
+    monitor.onHealthChange((health) => {
+      healthEventCount++;
+      lastHealth = health;
+    });
+
+    await monitor.check();
+
+    expect(healthEventCount).toBe(1);
+    expect(lastHealth).not.toBeNull();
+    expect(lastHealth.totalTargets).toBe(2);
+  });
+});
+
+describe("HealthMonitor — Lifecycle", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("should run periodic checks when started", async () => {
+    const repl = createMockReplication();
+    const getStatusSpy = vi.spyOn(repl, "getStatus");
+
+    const monitor = new HealthMonitor(repl, {
+      checkIntervalMs: 1000,
+      highLagThresholdMs: 60_000,
+    });
+
+    monitor.start();
+
+    // First check fires immediately
+    expect(getStatusSpy).toHaveBeenCalledTimes(1);
+
+    // Advance time past interval
+    vi.advanceTimersByTime(5000);
+
+    // Should have fired ~5-6 times (first + 5 more)
+    expect(getStatusSpy.mock.calls.length).toBeGreaterThanOrEqual(5);
+
+    monitor.stop();
+  });
+
+  it("should stop periodic checks when stopped", () => {
+    const repl = createMockReplication();
+    const getStatusSpy = vi.spyOn(repl, "getStatus");
+
+    const monitor = new HealthMonitor(repl, { checkIntervalMs: 1000 });
+    monitor.start();
+
+    vi.advanceTimersByTime(2000);
+    const callsAfterStart = getStatusSpy.mock.calls.length;
+
+    monitor.stop();
+
+    // Advance more time — should not increase call count
+    getStatusSpy.mockClear();
+    vi.advanceTimersByTime(5000);
+    expect(getStatusSpy).not.toHaveBeenCalled();
+  });
+});
