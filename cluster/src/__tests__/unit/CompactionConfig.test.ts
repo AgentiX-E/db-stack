@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+fs.mkdirSync(os.tmpdir(), { recursive: true });
 const COMPACTION_RUN_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'compaction-config-'));
 
 function tempDbPath(name: string): string {

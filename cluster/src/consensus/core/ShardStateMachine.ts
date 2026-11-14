@@ -16,8 +16,21 @@ import { resolveLogLevel } from '../../observability/logLevel';
 const logger = pino({ level: resolveLogLevel() });
 
 export interface ShardStateMachineCallbacks {
-  /** Called for every committed entry. Parameters: data, (optional) index, (optional) term. */
-  applyHandler?: (data: string, index?: number, term?: number) => void;
+  /**
+   * Called for every committed entry with the payload and, when the caller can
+   * supply it, the entry's position in the log.
+   *
+   * The position is not decoration: an engine that persists state needs it to make
+   * replay idempotent after a restart, and point-in-time recovery needs it to
+   * record where in the log each write happened. raft-core hands `apply()` only the
+   * command payload, so the caller supplies the position through
+   * {@link ShardStateMachineCallbacks.getEntryContext}.
+   *
+   * Returning a promise is supported and awaited, so an apply failure reaches the
+   * consensus layer instead of being logged and forgotten.
+   */
+  applyHandler?: (data: string, index?: number, term?: number) => void | Promise<void>;
+
   /** Called to serialize current state for snapshot. Should return serialized state bytes. */
   takeSnapshotCallback?: () => Buffer | Promise<Buffer>;
   /** Called to restore state from snapshot bytes. */
@@ -44,9 +57,7 @@ export class ShardStateMachine implements ApplicationStateMachine {
 
     if (this.callbacks.applyHandler) {
       try {
-        // We don't have index/term in the Command type directly,
-        // but the raft-core applies entries in order and calls this synchronously.
-        this.callbacks.applyHandler(data);
+        await this.callbacks.applyHandler(data);
       } catch (err: any) {
         logger.error({ err }, `[ShardStateMachine] applyHandler error: ${err.message}`);
         throw err;

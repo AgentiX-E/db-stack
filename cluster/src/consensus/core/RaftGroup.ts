@@ -223,7 +223,7 @@ export class RaftGroup {
 
     // The apply callback is set during init so every committed entry
     // is automatically applied to the state machine.
-    const applyHandler = (data: string, raftIndex?: number, raftTerm?: number) => {
+    const applyHandler = async (data: string, raftIndex?: number, raftTerm?: number): Promise<void> => {
       let entry: ApplyEntry;
       try {
         entry = JSON.parse(data);
@@ -238,11 +238,26 @@ export class RaftGroup {
       const term = raftTerm ?? 0;
       this.pitrHook?.onApply(String(this.shardId), idx, term, data);
 
-      this.replica.apply(entry);
+      // Awaited on purpose: an apply that fails must reach raft-core, which then
+      // stops advancing lastApplied and replays the entry, instead of the group
+      // reporting a committed write it never persisted.
+      await this.replica.apply(entry);
 
-      // After each apply, check if we should take a snapshot
-      this.trySnapshot();
+      // Snapshot scheduling is deliberately not awaited: compaction must never sit
+      // in the replication hot path, and its failure must not fail an apply that
+      // already succeeded. The check itself is a cheap counter test; the work only
+      // happens once per interval.
+      void this.trySnapshot().catch(() => undefined);
     };
+
+    // The engine's state, not just the log, is what a restart has to recover. These
+    // hooks are registered before init because raft-core loads the persisted
+    // snapshot during start(). Without them a node restarts with an empty engine
+    // while its log claims everything up to the snapshot index is applied.
+    this.raft.setApplicationSnapshotHandlers({
+      takeSnapshot: () => this.replica.snapshot(),
+      installSnapshot: (data: Buffer) => this.replica.restore(data),
+    });
 
     // If shared transport is provided, create a per-shard wrapper that tags
     // outgoing messages with this.shardId for routing at the receiver.

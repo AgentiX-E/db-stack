@@ -25,7 +25,15 @@ export interface TestClusterOptions {
   tickIntervalMs?: number; // default: 50
   leaderTimeoutMs?: number; // default: 30_000
   pollIntervalMs?: number; // default: 200
-  snapshotInterval?: number; // default: 100_000
+  /**
+   * Entries between snapshots. Left unset by default so raft-core keeps its own
+   * threshold: the harness used to carry a 100 000 default written when this option
+   * only drove the group-level metadata loop, and forwarding that number to the
+   * library switches snapshotting off for the whole run — which makes the
+   * high-concurrency suites grow a 10 000-entry log and slow down by an order of
+   * magnitude. Tests that want snapshots pass a small value.
+   */
+  snapshotInterval?: number;
   preVote?: boolean; // default: true
   checkQuorum?: boolean; // default: true
   enableInstallSnapshot?: boolean; // default: false
@@ -42,14 +50,15 @@ export interface TestNode {
 
 // ── Defaults ──────────────────────────────────────────────────────
 
-const DEFAULTS: Required<TestClusterOptions> = {
+type ResolvedOptions = Required<Omit<TestClusterOptions, 'snapshotInterval'>> & { snapshotInterval?: number };
+
+const DEFAULTS: ResolvedOptions = {
   nodeCount: 3,
   electionTick: 15,
   heartbeatTick: 3,
   tickIntervalMs: 50,
   leaderTimeoutMs: 30_000,
   pollIntervalMs: 200,
-  snapshotInterval: 100_000,
   preVote: true,
   checkQuorum: true,
   enableInstallSnapshot: false,
@@ -58,7 +67,7 @@ const DEFAULTS: Required<TestClusterOptions> = {
 // ── Cluster class ─────────────────────────────────────────────────
 
 export class TestCluster {
-  private opts: Required<TestClusterOptions>;
+  private opts: ResolvedOptions;
   private certs!: TestClusterCerts;
   private ports: number[] = [];
   private baseDir: string = '';

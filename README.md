@@ -65,6 +65,7 @@ packages can build real clusters in their own tests instead of copying internals
 | [docs/user-guide/operations.md](docs/user-guide/operations.md) | The 21 engine-agnostic operations packages |
 | [docs/user-guide/engine-adapters.md](docs/user-guide/engine-adapters.md) | Plugging **your** database engine into the middleware |
 | [docs/user-guide/production-runbook.md](docs/user-guide/production-runbook.md) | Certificates, capacity, monitoring, failure handling, DR |
+| [docs/maturity.md](docs/maturity.md) | Feature-by-feature verification matrix, measured coverage, and the gaps |
 | [docs/glossary.md](docs/glossary.md) | Every term, defined as this project uses it |
 
 Internal artefacts — product whitepaper, detailed technical design, ADRs, roadmap, audit

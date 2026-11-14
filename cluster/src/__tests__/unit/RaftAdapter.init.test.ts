@@ -90,7 +90,7 @@ vi.mock('../../consensus/core/ShardStateMachine', () => {
         capturedApplyHandler = callbacks.applyHandler;
       }
       async apply(cmd: any) {
-        if (this.callbacks.applyHandler) this.callbacks.applyHandler(String(cmd.payload));
+        if (this.callbacks.applyHandler) await this.callbacks.applyHandler(String(cmd.payload));
       }
       getState() {
         return null;
@@ -337,15 +337,36 @@ describe('RaftAdapter.init — storage & transport construction', () => {
     await adapter.init((data) => applied.push(data));
 
     const before = (adapter as any).committedCount;
-    capturedApplyHandler!('hello-state');
+    await capturedApplyHandler!('hello-state');
 
     expect(applied).toContain('hello-state');
     expect((adapter as any).committedCount).toBe(before + 1);
     await adapter.stop();
   });
 
-  // AC 34.46c: a throwing applyHandler is logged without crashing commit.
-  it('a throwing applyHandler is logged and commit still advances', async () => {
+  // The position of the entry is not decoration: engines key idempotent replay on
+  // it and point-in-time recovery records it per write. raft-core hands `apply()`
+  // only the payload, so the adapter has to supply the index and term itself.
+  it('forwards the entry index and term to the apply handler', async () => {
+    const transport = new MockTransport(String(1));
+    const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport }));
+    const calls: Array<[string, number | undefined, number | undefined]> = [];
+    await adapter.init((data, index, term) => {
+      calls.push([data, index, term]);
+    });
+
+    await capturedApplyHandler!('positioned');
+    expect(calls).toEqual([['positioned', 1, 0]]);
+    await adapter.stop();
+  });
+
+  // AC 34.46c (revised): a failing apply must NOT be recorded as applied.
+  //
+  // Swallowing the error and counting the commit anyway meant the node reported
+  // writes it never persisted — silent divergence, the one failure mode a
+  // replicated store must never have. The error now propagates so raft-core stops
+  // advancing lastApplied and replays the entry.
+  it('propagates an apply failure and does not count it as applied', async () => {
     const transport = new MockTransport(String(1));
     const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport }));
     await adapter.init(() => {
@@ -353,8 +374,8 @@ describe('RaftAdapter.init — storage & transport construction', () => {
     });
 
     const before = (adapter as any).committedCount;
-    expect(() => capturedApplyHandler!('x')).not.toThrow();
-    expect((adapter as any).committedCount).toBe(before + 1);
+    await expect(capturedApplyHandler!('x')).rejects.toThrow('apply-boom');
+    expect((adapter as any).committedCount).toBe(before);
     await adapter.stop();
   });
 

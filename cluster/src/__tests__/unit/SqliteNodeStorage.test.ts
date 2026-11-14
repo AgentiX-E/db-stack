@@ -25,6 +25,7 @@ import * as os from 'os';
 // A directory unique to this file and this run. Fixed, name-derived paths under a
 // shared tmp root let concurrent suites delete each other's databases, which
 // surfaced as `Cannot open database because the directory does not exist`.
+fs.mkdirSync(os.tmpdir(), { recursive: true });
 const RUN_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-nodestorage-'));
 
 function tempDbPath(name: string): string {

@@ -17,6 +17,7 @@ Pick the path that matches what you are doing.
 | Operate the database (health, backup, metrics, security) | [Operations guide](user-guide/operations.md) |
 | Plug in **your own** database engine | [Engine adapters](user-guide/engine-adapters.md) |
 | Run it in production | [Production runbook](user-guide/production-runbook.md) |
+| Decide whether it is mature enough for my use case | [Maturity and coverage](maturity.md) |
 | Look up a term | [Glossary](glossary.md) |
 
 ## The three layers in one picture
@@ -55,6 +56,7 @@ Dependencies point one way only: `operations ← federation ← cluster`.
 | [user-guide/operations.md](user-guide/operations.md) | SRE / platform | Health, backup, metrics, security, maintenance, upgrades |
 | [user-guide/engine-adapters.md](user-guide/engine-adapters.md) | database vendor, platform | Which contract must my engine implement? |
 | [user-guide/production-runbook.md](user-guide/production-runbook.md) | on-call | Certificates, capacity, monitoring, failure handling, upgrades |
+| [maturity.md](maturity.md) | evaluator, architect | What is verified, how, with which numbers — and what is **not** |
 
 Each published package also ships its own `README.md` and `CHANGELOG.md`; those are the
 closest thing to per-symbol API reference. The cluster package additionally documents
@@ -67,6 +69,13 @@ its public surface in [`cluster/docs/api-reference.md`](../cluster/docs/api-refe
 | `@agentix-e/db-cluster` | 1.1.0 | ≥ 20.11 | ESM (NodeNext) |
 | `@agentix-e/db-federation` | 1.1.0 | ≥ 20.11 | ESM (NodeNext) |
 | `@agentix-e/db-operations` (+ 21 sub-packages) | 1.1.0 | ≥ 20.11 | ESM (NodeNext) |
+
+The cluster package publishes a **conformance suite** in its `/testing` entry point
+(`runEngineConformance`). It is the executable form of the storage-engine contract: an engine
+author runs it against a candidate adapter instead of inferring the requirements from the
+middleware's behaviour. Federation's capture, outbox and transport contracts are documented
+in [engine adapters](user-guide/engine-adapters.md) and exercised by the federation suites,
+but are not yet published as a reusable suite — that gap is tracked in the roadmap.
 
 All packages are MIT licensed. The stack has no runtime dependency on any specific
 database engine: SQLite is the default *reference* storage for the Raft log, and every

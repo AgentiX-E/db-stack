@@ -121,6 +121,18 @@ export { HealthProbe } from './observability/HealthProbe';
 export { LoggingAdapter } from './observability/LoggingAdapter';
 export { RaftMetricsCollector } from './observability/RaftMetricsCollector';
 
+// ── Storage engines (engine-agnostic SPI) ─────────────────
+export { MemoryStorageEngine } from './engines/MemoryStorageEngine';
+export {
+  EngineBackedReplica,
+  encodeSnapshotEnvelope,
+  decodeSnapshotEnvelope,
+  SNAPSHOT_ENVELOPE_VERSION,
+} from './engines/EngineBackedReplica';
+export type { EngineBackedReplicaOptions, SnapshotEnvelope } from './engines/EngineBackedReplica';
+export type { IStorageEngine, EngineApplyContext } from './interfaces/IStorageEngine';
+export type { IShardReplica, ApplyEntry } from './interfaces/IShardReplica';
+
 // ── Interfaces & shared types ─────────────────────────────
 export { IConsensusLayer, TopologyChange, IClusterTopology, IOutboxWriter } from './consensus/interfaces/interfaces';
 export { IWalStorage } from './interfaces/wal/IWalStorage';

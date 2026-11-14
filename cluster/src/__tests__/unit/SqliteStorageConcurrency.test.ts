@@ -33,6 +33,7 @@ import * as os from 'os';
 // `os.tmpdir()/sqlite-concurrency-test` path, so two suites (or two CI jobs on
 // the same machine) could delete each other's database files mid-write, which
 // surfaced as a sporadic SQLite "disk I/O error" on CREATE TABLE.
+fs.mkdirSync(os.tmpdir(), { recursive: true });
 const RUN_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'raft-conc-'));
 
 function tempDbPath(): string {

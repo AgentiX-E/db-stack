@@ -19,89 +19,139 @@ your engine
 
 ---
 
-## 1. The state machine contract (required)
+## 1. The storage engine contract (required)
 
-A committed entry is only useful if it changes your engine's state. Implement
-`IShardReplica`:
+There are two interfaces, and you implement one of them.
+
+```
+Raft ──apply(entry)──▶ IShardReplica ──▶ EngineBackedReplica ──▶ IStorageEngine ──▶ your database
+        snapshot()                        (positioning, replay,          (apply / query /
+        restore()                          framing, checksums)           snapshot / restore)
+```
+
+`IShardReplica` is what the consensus layer calls. `EngineBackedReplica` implements it once,
+correctly, for every engine; you supply `IStorageEngine`, which is only about your data:
 
 ```ts
-export interface ApplyEntry {
-  index: number;
-  term: number;
-  command: string;
-  data: Buffer | string;
-  msgId?: string;
-  type?: string;
-}
+import type { EngineApplyContext, IStorageEngine } from '@agentix-e/db-cluster';
 
-export interface IShardReplica {
-  /** Apply one committed entry, in index order, exactly once. */
-  apply(entry: ApplyEntry): Promise<void>;
-  /** Highest index this replica has applied (used by the cluster for lag). */
-  getAppliedIndex(): Promise<number>;
-  lastAppliedIndex(): number;
-  shardId(): number;
-  /** Serialise the whole state for a snapshot. Must be consistent. */
+export interface IStorageEngine {
+  /** Stable identifier for logs, metrics and conformance reports. */
+  readonly name: string;
+
+  /** Apply one committed command. Called exactly once per index, in order. */
+  apply(context: EngineApplyContext, payload: Buffer): Promise<void>;
+
+  /** Evaluate a read against applied state. Side-effect free. */
+  query(request: Buffer): Promise<Buffer>;
+
+  /** Serialize the entire applied state. */
   snapshot(): Promise<Buffer>;
-  /** Replace the whole state from snapshot bytes. */
+
+  /** Replace the entire state. Validate before mutating. */
   restore(snapshot: Buffer): Promise<void>;
-  /** Approximate on-disk state size (drives compaction decisions). */
-  dataSize(): Promise<number>;
+
+  /** Live state size in bytes; 0 means empty, never "unknown". */
+  sizeInBytes(): Promise<number>;
+
+  /** Release resources. Idempotent. */
+  close(): Promise<void>;
+}
+
+export interface EngineApplyContext {
+  readonly shardId: number;   // which shard this entry belongs to
+  readonly index: number;     // exact Raft index: contiguous, gap-free, from 1
+  readonly applyTerm: number; // term at apply time (diagnostic, not a correctness input)
+  readonly operation?: string;
+  readonly msgId?: string;
 }
 ```
 
-### The four rules that make an adapter correct
+The payload is **opaque bytes that your own encoder produced**. A SQL engine puts a
+statement there; a KV engine puts an opcode; a columnar engine puts a write batch. The
+middleware never parses it, so there is no schema and no data model to conform to.
 
-1. **Apply must be idempotent at the index level.** After a crash the cluster replays from
-   the last snapshot; a duplicate apply must not double-count a counter or re-insert a row.
-   Either key your writes by `index` or apply inside a transaction guarded by
-   `getAppliedIndex()`.
-2. **Apply must be synchronous with respect to ordering.** The cluster calls `apply()`
-   sequentially; if you fan out internally, you must not resolve before the write is
-   durable *and* visible to the next apply.
-3. **`snapshot()` must be a consistent cut.** Take it under the same lock/cursor as
-   `apply()`. A snapshot that spans a partially applied entry produces a replica that can
-   never converge.
-4. **`restore()` must replace, not merge.** Installing a snapshot means "my state is now
-   exactly this".
-
-### Example: a key-value engine in 30 lines
+### Wiring it up
 
 ```ts
-import type { IShardReplica, ApplyEntry } from '@agentix-e/db-cluster';
+import { RaftGroup, EngineBackedReplica, MemoryStorageEngine } from '@agentix-e/db-cluster';
 
-export class KvReplica implements IShardReplica {
-  private readonly data = new Map<string, string>();
-  private applied = 0;
+const engine = new MemoryStorageEngine();          // ← your engine goes here
+const replica = new EngineBackedReplica({ shardId: 0, engine });
 
-  constructor(private readonly id: number) {}
-
-  async apply(entry: ApplyEntry): Promise<void> {
-    if (entry.index <= this.applied) return;                 // rule 1: idempotent
-    const { key, value, expect } = JSON.parse(entry.data.toString());
-    if (expect !== undefined && this.data.get(key) !== expect) {
-      throw new Error(`compare-and-set failed at index ${entry.index}`);
-    }
-    if (value === null) this.data.delete(key); else this.data.set(key, value);
-    this.applied = entry.index;                              // committed before resolving
-  }
-
-  async getAppliedIndex(): Promise<number> { return this.applied; }
-  lastAppliedIndex(): number { return this.applied; }
-  shardId(): number { return this.id; }
-  async snapshot(): Promise<Buffer> { return Buffer.from(JSON.stringify([...this.data])); }
-  async restore(buf: Buffer): Promise<void> {
-    this.data.clear();
-    for (const [k, v] of JSON.parse(buf.toString())) this.data.set(k, v);
-  }
-  async dataSize(): Promise<number> { return this.data.size; }
-}
+const group = new RaftGroup({ /* config */ }, replica);
+await group.init();
 ```
 
-Wire it in via `RaftGroup`/`ShardManager` and every cluster feature — snapshots, learners,
-resharding, PITR — applies to your engine with no further work.
+That is the entire integration. `EngineBackedReplica` then guarantees, on your behalf:
 
----
+| Guarantee | Why it cannot be left to the engine |
+|---|---|
+| **Exactly-once replay** | After a restart Raft replays every entry above the snapshot. The adapter drops indexes the engine already applied, so `SET balance = balance + 10` never becomes `+20`. |
+| **Gap rejection** | `1, 2, 4` is a broken log. Applying `4` would produce state no peer can reproduce, so the adapter refuses instead of diverging silently. |
+| **Serialization** | Applies run one at a time even when callers forget to await. |
+| **Positioned snapshots** | Raw engine bytes carry no position, so a restarted replica could not tell Raft where to resume. The adapter frames every snapshot with `(shardId, index, term)` and a CRC32. |
+| **Corruption is loud** | A truncated, bit-flipped or cross-shard snapshot is rejected before the engine is touched, leaving a healthy replica intact. |
+| **Snapshot is a consistent cut** | The adapter waits for in-flight applies, so the payload and the recorded index describe the same state. |
+
+The frame is 30 bytes, big-endian, so the bytes mean the same thing on every platform:
+
+```
+0  magic 'DBSE' | 4 version u16 | 6 shardId u32 | 10 index u64 | 18 term u64 | 26 CRC32 u32 | 30 payload
+```
+
+### Prove it: the published conformance suite
+
+Do not take the table above on trust, and do not re-derive the contract from the
+middleware's behaviour — run it:
+
+```ts
+import { describe, it } from 'vitest';
+import { runEngineConformance } from '@agentix-e/db-cluster/testing';
+import { MyEngine } from './my-engine';
+
+runEngineConformance({
+  label: 'my-engine',
+  framework: { describe, it },          // vitest, jest, mocha or node:test
+  create: () => new MyEngine(),
+  codec: {
+    put: (key, value) => myEncode({ op: 'put', key, value }),
+    del: (key) => myEncode({ op: 'del', key }),
+    get: (key) => myEncode({ op: 'get', key }),
+    keys: () => myEncode({ op: 'keys' }),
+    decodeGet: (response) => myDecodeGet(response),   // null means "absent"
+    decodeKeys: (response) => myDecodeKeys(response),
+  },
+});
+```
+
+The suite is 22 checks across four groups — apply/query semantics, snapshot and restore,
+replica positioning (replay, gaps, failures, concurrency), and lifecycle. It runs against
+the two engines this repository ships (`MemoryStorageEngine` and a SQLite-backed engine) with
+no special-casing, which is how the contract stays engine-agnostic instead of drifting into
+"whatever the reference implementation happens to do".
+
+### Where the applied index comes from
+
+`EngineApplyContext.index` is exact, and the middleware has to work for it: raft-core hands
+its state machine only the command payload, so db-cluster derives the position from the
+apply loop itself and forwards it. Before this was wired, every engine saw index `0` and
+term `0`, which made idempotent replay impossible to implement and left point-in-time
+recovery records unpositioned.
+
+### The five rules your engine must still honour
+
+1. **A rejecting `apply` writes nothing.** A partial write is replayed on restart and will
+   be applied twice.
+2. **`snapshot()` is self-contained.** No pointers, no host byte order, no references to
+   files that will not exist on the next node.
+3. **`restore()` replaces.** Not merge, not append.
+4. **`sizeInBytes()` is monotone until you compact.** It drives compaction decisions.
+5. **`close()` is idempotent.** Shutdown races with initialisation failure.
+
+Rules 1–5 plus the six adapter guarantees are what the suite encodes. Two engines in this
+repository pass it; an engine that fails it will corrupt data under failover, and no amount
+of cluster-side testing will catch that for you.
 
 ## 2. The log store contract (optional)
 
@@ -235,6 +285,7 @@ will do to you, and something it will not forgive.
 | 12 | Probes never throw; they return status | A resolved probe crashes the health orchestrator |
 | 13 | No secrets in logs | Audit failure and credential leakage |
 
-If your adapter satisfies 1–13, the conformance suites in `cluster/src/__tests__` and
-`federation/src/__tests__` can be pointed at it unchanged: they exercise the engine only
-through these interfaces.
+Items 1–6 are executable: `runEngineConformance()` from `@agentix-e/db-cluster/testing`
+checks them against your engine, with no access to cluster internals. Items 7–13 are checked
+by the federation and operations suites in this repository; they exercise the adapters only
+through the interfaces listed above.

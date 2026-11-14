@@ -20,3 +20,6 @@ export type {
   RegisterState,
   FuzzyCheckResult,
 } from './LinearizabilityChecker';
+
+export { runEngineConformance } from './engine-conformance';
+export type { ConformanceFramework, EngineConformanceOptions, KeyValueConformanceCodec } from './engine-conformance';

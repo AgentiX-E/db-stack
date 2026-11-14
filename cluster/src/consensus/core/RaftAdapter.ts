@@ -116,7 +116,33 @@ export interface SnapshotMeta {
 export class RaftAdapter {
   private node: RaftNode | null = null;
   private config: RaftConfig;
-  private applyHandler: ((data: string, index?: number, term?: number) => void) | null = null;
+  /** How often the term is re-read from the node, in applied entries. */
+  private static readonly TERM_PROBE_INTERVAL = 64;
+
+  private applyHandler: ((data: string, index?: number, term?: number) => void | Promise<void>) | null = null;
+
+  /**
+   * Application snapshot hooks. Without them every snapshot raft-core takes is
+   * empty and every snapshot it installs is discarded, which silently loses all
+   * state older than the log: the node restarts believing it has applied up to
+   * `snapshot.lastIncludedIndex` while the engine is blank.
+   *
+   * Registered before `init()`, because raft-core restores its snapshot during
+   * `start()`. See {@link setApplicationSnapshotHandlers}.
+   */
+  private applicationSnapshotHandlers: {
+    takeSnapshot?: () => Buffer | Promise<Buffer>;
+    installSnapshot?: (data: Buffer) => void | Promise<void>;
+  } = {};
+
+  /** Highest index this adapter has successfully applied. */
+  private _appliedIndex = 0;
+
+  /** Last observed term, refreshed at most every {@link TERM_PROBE_INTERVAL} entries. */
+  private _termCache = 0;
+
+  /** Counts apply-context lookups so the term probe can be throttled. */
+  private _contextProbe = 0;
 
   private nodeStorage: NodeStorage | null = null;
   private transport: Transport | null = null;
@@ -164,7 +190,7 @@ export class RaftAdapter {
    *                           per-shard message routing in single-process multi-RaftGroup mode.
    */
   async init(
-    applyHandler?: (data: string, index?: number, term?: number) => void,
+    applyHandler?: (data: string, index?: number, term?: number) => void | Promise<void>,
     tcpConfig?: RaftTcpTransportConfig,
     sharedTransport?: SharedTransport | { transport: SharedTransport; shardId: number },
   ): Promise<void> {
@@ -265,15 +291,44 @@ export class RaftAdapter {
 
       // ── Step 3: Build ShardStateMachine ──────────────────────
       const stateMachine = new ShardStateMachine({
-        applyHandler: (data: string) => {
-          if (this.applyHandler) {
-            try {
-              this.applyHandler(data);
-            } catch (err: unknown) {
-              logger.error({ err }, `[RaftAdapter] applyHandler error: ${getErrorMessage(err)}`);
+        // raft-core's apply loop is serialized by an exclusive lock and advances
+        // `lastApplied` only after this callback resolves, so the entry being
+        // applied is exactly `lastApplied + 1`. Deriving the index here (instead of
+        // counting locally) keeps it correct across snapshot installs, which move
+        // `lastApplied` without going through apply.
+        applyHandler: async (data: string, index?: number, term?: number) => {
+          if (index === undefined) {
+            // raft-core's Command carries no position, so the adapter supplies it:
+            // the applied counter is exact (synchronised with raft at init and on
+            // snapshot install, then advanced once per applied entry), and the term
+            // is probed at a rate that keeps a durable node off the disk path.
+            this._contextProbe += 1;
+            if (this._contextProbe % RaftAdapter.TERM_PROBE_INTERVAL === 1) {
+              this._termCache = this.node?.getCurrentTerm() ?? this._termCache;
             }
+            index = this._appliedIndex + 1;
+            term = this._termCache;
           }
+          if (this.applyHandler) {
+            // Rethrow: an unapplied command that raft-core marks as applied is
+            // silent divergence. Fail-stopping the apply loop lets the node replay
+            // the entry after a restart instead.
+            await this.applyHandler(data, index, term);
+          }
+          if (index !== undefined) this._appliedIndex = index;
           this.committedCount++;
+        },
+        takeSnapshotCallback: () =>
+          this.applicationSnapshotHandlers.takeSnapshot
+            ? this.applicationSnapshotHandlers.takeSnapshot()
+            : Buffer.alloc(0),
+        installSnapshotCallback: async (data: Buffer) => {
+          if (this.applicationSnapshotHandlers.installSnapshot) {
+            await this.applicationSnapshotHandlers.installSnapshot(data);
+          }
+          // The snapshot moves raft's lastApplied without going through apply, so
+          // the counter has to follow or the next entry would look like a replay.
+          this._appliedIndex = this.node?.getLastApplied() ?? this._appliedIndex;
         },
       });
 
@@ -307,6 +362,13 @@ export class RaftAdapter {
         electionTimeoutMinMs,
         electionTimeoutMaxMs,
         heartbeatIntervalMs: Math.max(10, this.config.heartbeatTick * tickIntervalMs),
+        // `snapshotInterval` was documented as "entries between snapshots" but never
+        // reached raft-core, so an operator asking for a snapshot every 15 entries
+        // silently got the library default and the log grew to match. It is now
+        // forwarded — but only when the operator set it: applying this package's own
+        // default here would silently change snapshot frequency (and the cost that
+        // goes with it) for every existing deployment.
+        ...(this.config.snapshotInterval === undefined ? {} : { snapshotThreshold: this.config.snapshotInterval }),
       };
 
       // ── Step 5: Create RaftNode ──────────────────────────────
@@ -325,6 +387,10 @@ export class RaftAdapter {
 
       await raftNode.start();
       this.node = raftNode;
+      // A restart may begin above index 1 (raft loads a snapshot during start), and
+      // the entry counter must reflect that before the first apply arrives.
+      this._appliedIndex = raftNode.getLastApplied();
+      this._termCache = raftNode.getCurrentTerm();
 
       logger.info({ nodeId: this.config.id }, '[RaftAdapter] Initialized with @maboke123/raft-core');
     } catch (err: unknown) {
@@ -346,6 +412,22 @@ export class RaftAdapter {
    */
   // Removed: buildSharedTransportBridge — replaced by SharedBatchedTransport above.
   // private async buildSharedTransportBridge(...): Promise<BatchedRaftTransport> { ... }
+
+  /**
+   * Register the application-state snapshot hooks.
+   *
+   * Must be called before {@link RaftAdapter.init}: raft-core loads the persisted
+   * snapshot during `start()` and hands it to the application state machine, so a
+   * handler registered afterwards would miss the restore.
+   *
+   * @param handlers Serializer and restorer for the engine's applied state.
+   */
+  setApplicationSnapshotHandlers(handlers: {
+    takeSnapshot?: () => Buffer | Promise<Buffer>;
+    installSnapshot?: (data: Buffer) => void | Promise<void>;
+  }): void {
+    this.applicationSnapshotHandlers = handlers;
+  }
 
   /**
    * Propose an entry through Raft consensus.
@@ -388,7 +470,8 @@ export class RaftAdapter {
     if (this._forceLeader) {
       try {
         if (this.applyHandler) {
-          this.applyHandler(data);
+          await this.applyHandler(data, this._appliedIndex + 1, this.node.getCurrentTerm());
+          this._appliedIndex += 1;
         }
         return { index: '0', term: '0' };
       } catch (applyErr: unknown) {

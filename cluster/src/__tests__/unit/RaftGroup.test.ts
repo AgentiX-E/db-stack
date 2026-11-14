@@ -48,6 +48,7 @@ const mockRaftAdapter: any = {
   step: vi.fn().mockResolvedValue(undefined),
   read: vi.fn().mockResolvedValue([]),
   addLearner: vi.fn().mockResolvedValue(true),
+  setApplicationSnapshotHandlers: vi.fn(),
 };
 
 vi.mock('../../consensus/core/RaftAdapter', () => ({
@@ -66,6 +67,7 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     step = mockRaftAdapter.step;
     read = mockRaftAdapter.read;
     addLearner = mockRaftAdapter.addLearner;
+    setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
   },
 }));
 

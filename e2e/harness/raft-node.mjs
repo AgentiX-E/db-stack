@@ -13,20 +13,74 @@
  *   node → parent : { type: 'ready' | 'applied' | 'status' | 'error' | 'leader', ... }
  */
 
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { RaftAdapter } from '@agentix-e/db-cluster';
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import {
+  RaftAdapter,
+  MemoryStorageEngine,
+  EngineBackedReplica,
+} from "@agentix-e/db-cluster";
 
 const RAW = process.env.RAFT_NODE_CONFIG;
 if (!RAW) {
-  process.stderr.write('[raft-node] RAFT_NODE_CONFIG missing\n');
+  process.stderr.write("[raft-node] RAFT_NODE_CONFIG missing\n");
   process.exit(2);
 }
 
 const cfg = JSON.parse(RAW);
 const applied = [];
-/** Committed key/value view of this node's state machine. */
-const state = new Map();
+
+/**
+ * The node's data lives in an engine behind the published SPI, not in a map owned
+ * by this script. Everything the acceptance suite asserts about state therefore
+ * goes through the same apply/query/snapshot/restore path a real database engine
+ * would implement — an in-process map would have hidden a broken SPI.
+ */
+const engine = new MemoryStorageEngine();
+const replica = new EngineBackedReplica({ shardId: 0, engine });
+
+/**
+ * Translate this node's command format into the engine's.
+ *
+ * A payload that is not a `{key, value}` object is replicated but not interpreted;
+ * it still consumes an index (`nop`) so the applied index stays contiguous.
+ */
+function encodeCommand(data) {
+  try {
+    const parsed = JSON.parse(data);
+    if (
+      parsed &&
+      typeof parsed.key === "string" &&
+      typeof parsed.value === "string"
+    ) {
+      return Buffer.from(
+        JSON.stringify({ op: "put", key: parsed.key, value: parsed.value }),
+        "utf8",
+      );
+    }
+  } catch {
+    // Not JSON: an opaque entry.
+  }
+  return Buffer.from(JSON.stringify({ op: "nop" }), "utf8");
+}
+
+/** Encode a key/value read for the reference engine. */
+function readRequest(key) {
+  return Buffer.from(JSON.stringify({ op: "get", key }), "utf8");
+}
+
+async function readValue(key) {
+  const response = await replica.query(readRequest(key));
+  return JSON.parse(response.toString("utf8")).value ?? null;
+}
+
+async function countKeys() {
+  const response = await replica.query(
+    Buffer.from(JSON.stringify({ op: "keys" }), "utf8"),
+  );
+  return JSON.parse(response.toString("utf8")).keys.length;
+}
+
 let adapter;
 let stopped = false;
 
@@ -46,22 +100,27 @@ async function main() {
     tickIntervalMs: cfg.tickIntervalMs ?? 50,
     storagePath: `${cfg.dataDir}/raft.db`,
     snapshotInterval: cfg.snapshotInterval ?? 1000,
-    environment: 'development',
+    environment: "development",
     preVote: true,
     checkQuorum: true,
-    enableInstallSnapshot: false,
+    enableInstallSnapshot: cfg.enableInstallSnapshot ?? false,
+  });
+
+  // The engine's applied state, not the log, is what has to survive a restart.
+  adapter.setApplicationSnapshotHandlers({
+    takeSnapshot: () => replica.snapshot(),
+    installSnapshot: (data) => replica.restore(data),
   });
 
   await adapter.init(
-    (data) => {
+    async (data, index, term) => {
       applied.push(data);
-      try {
-        const parsed = JSON.parse(data);
-        if (parsed && typeof parsed.key === 'string') state.set(parsed.key, parsed.value);
-      } catch {
-        // Opaque payload: consensus still applied it, but it has no key.
-      }
-      send({ type: 'applied', nodeId: cfg.id, data });
+      // The node's encoder. The engine is deliberately strict — an unparseable
+      // payload is a bug, not a write — so interpreting the application's command
+      // format is this process's job, not the middleware's.
+      const command = encodeCommand(data);
+      await replica.apply({ index, term, command: "kv", data: command });
+      send({ type: "applied", nodeId: cfg.id, data });
     },
     {
       node: { id: cfg.id, host: cfg.host, port: cfg.port },
@@ -73,28 +132,32 @@ async function main() {
     },
   );
 
-  send({ type: 'ready', nodeId: cfg.id, data: { port: cfg.port } });
+  send({ type: "ready", nodeId: cfg.id, data: { port: cfg.port } });
 
-  process.on('message', async (msg) => {
+  process.on("message", async (msg) => {
     if (!msg || !msg.cmd) return;
     try {
-      if (msg.cmd === 'propose') {
+      if (msg.cmd === "propose") {
         if (!(await adapter.isLeader())) {
-          send({ type: 'error', nodeId: cfg.id, data: 'not leader' });
+          send({ type: "error", nodeId: cfg.id, data: "not leader" });
           return;
         }
         const result = await adapter.propose(msg.data);
-        send({ type: 'proposed', nodeId: cfg.id, data: result });
-      } else if (msg.cmd === 'read') {
-        send({ type: 'read', nodeId: cfg.id, data: { key: msg.key, value: state.get(msg.key) ?? null } });
-      } else if (msg.cmd === 'status') {
+        send({ type: "proposed", nodeId: cfg.id, data: result });
+      } else if (msg.cmd === "read") {
+        send({
+          type: "read",
+          nodeId: cfg.id,
+          data: { key: msg.key, value: await readValue(msg.key) },
+        });
+      } else if (msg.cmd === "status") {
         const [isLeader, term, commitIndex] = await Promise.all([
           adapter.isLeader(),
           adapter.getTerm(),
           adapter.getCommitIndex(),
         ]);
         send({
-          type: 'status',
+          type: "status",
           nodeId: cfg.id,
           data: {
             id: cfg.id,
@@ -103,22 +166,28 @@ async function main() {
             commitIndex,
             appliedCount: applied.length,
             applied: applied.slice(),
-            stateSize: state.size,
+            stateSize: await countKeys(),
+            appliedIndex: replica.lastAppliedIndex(),
+            engineName: engine.name,
           },
         });
-      } else if (msg.cmd === 'stop') {
+      } else if (msg.cmd === "stop") {
         stopped = true;
         adapter.stop();
-        send({ type: 'stopped', nodeId: cfg.id });
+        send({ type: "stopped", nodeId: cfg.id });
         setTimeout(() => process.exit(0), 50);
       }
     } catch (err) {
-      send({ type: 'error', nodeId: cfg.id, data: err instanceof Error ? err.message : String(err) });
+      send({
+        type: "error",
+        nodeId: cfg.id,
+        data: err instanceof Error ? err.message : String(err),
+      });
     }
   });
 }
 
-process.on('SIGTERM', () => {
+process.on("SIGTERM", () => {
   if (!stopped) {
     try {
       adapter?.stop();
@@ -131,6 +200,11 @@ process.on('SIGTERM', () => {
 
 main().catch((err) => {
   process.stderr.write(`[raft-node] fatal: ${err?.stack ?? err}\n`);
-  send({ type: 'error', nodeId: cfg.id, data: String(err?.message ?? err), fatal: true });
+  send({
+    type: "error",
+    nodeId: cfg.id,
+    data: String(err?.message ?? err),
+    fatal: true,
+  });
   process.exit(1);
 });

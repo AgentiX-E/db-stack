@@ -18,6 +18,7 @@ const mockRaftAdapter: any = {
   getTerm: vi.fn().mockResolvedValue(1),
   getProgress: vi.fn().mockResolvedValue({ commit: 5, applied: 5, lastLog: 5 }),
   getAppliedIndex: vi.fn().mockResolvedValue(5),
+  setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
   shouldTakeSnapshot: vi.fn().mockReturnValue(false),
@@ -47,6 +48,7 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     getTerm = mockRaftAdapter.getTerm;
     getProgress = mockRaftAdapter.getProgress;
     getAppliedIndex = mockRaftAdapter.getAppliedIndex;
+    setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
     shouldTakeSnapshot = mockRaftAdapter.shouldTakeSnapshot;

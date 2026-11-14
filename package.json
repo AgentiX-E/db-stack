@@ -19,7 +19,7 @@
     "coverage": "turbo run coverage",
     "coverage:merge": "node scripts/merge-coverage.mjs",
     "coverage:gate": "node scripts/coverage-gate.mjs",
-    "e2e": "pnpm --filter @agentix-e/db-stack-e2e run test:cluster && pnpm --filter @agentix-e/db-stack-e2e run test:federation",
+    "e2e": "pnpm --filter @agentix-e/db-stack-e2e run test:cluster && pnpm --filter @agentix-e/db-stack-e2e run test:engine && pnpm --filter @agentix-e/db-stack-e2e run test:federation",
     "bench": "turbo run bench",
     "verify": "node scripts/verify.mjs",
     "bench:real": "pnpm --filter @agentix-e/db-stack-e2e run bench",
