@@ -13,11 +13,11 @@
  *   - Event-driven: onCreated, onPruned callbacks
  */
 
-import * as fs from "fs";
-import * as fsp from "fs/promises";
-import * as path from "path";
-import * as crypto from "crypto";
-import type { SnapshotMeta } from "../interfaces/types.js";
+import * as fs from 'fs';
+import * as fsp from 'fs/promises';
+import * as path from 'path';
+import * as crypto from 'crypto';
+import type { SnapshotMeta } from '../interfaces/types.js';
 import {
   type ISnapshotManager,
   type SnapshotDescriptor,
@@ -25,16 +25,16 @@ import {
   type CompactOptions,
   type SnapshotManagerConfig,
   type VerificationResult,
-} from "./ISnapshotManager.js";
+} from './ISnapshotManager.js';
 
 // ── Constants ────────────────────────────────────────────────
 
-const META_DIR = ".meta";
-const META_EXT = ".meta.json";
-const SNAP_EXT = ".snap";
+const META_DIR = '.meta';
+const META_EXT = '.meta.json';
+const SNAP_EXT = '.snap';
 
 const DEFAULT_CONFIG: SnapshotManagerConfig = {
-  storageDir: "./data/snapshots",
+  storageDir: './data/snapshots',
   retention: {
     maxSnapshots: 10,
     maxAgeMs: 0,
@@ -42,7 +42,7 @@ const DEFAULT_CONFIG: SnapshotManagerConfig = {
     intervalMs: 0,
   },
   compact: {
-    strategy: "none",
+    strategy: 'none',
     maxMergeCount: 3,
     minAgeMs: 0,
     keepUncompacted: 3,
@@ -121,16 +121,17 @@ export class SnapshotManager implements ISnapshotManager {
 
     // Auto-prune if threshold reached
     this.createCount++;
-    if (
-      this.config.autoPruneEvery > 0 &&
-      this.createCount % this.config.autoPruneEvery === 0
-    ) {
+    if (this.config.autoPruneEvery > 0 && this.createCount % this.config.autoPruneEvery === 0) {
       await this.prune();
     }
 
     // Notify listeners
     for (const listener of this.createdListeners) {
-      try { listener(descriptor); } catch { /* noop */ }
+      try {
+        listener(descriptor);
+      } catch {
+        /* noop */
+      }
     }
 
     return descriptor;
@@ -186,7 +187,7 @@ export class SnapshotManager implements ISnapshotManager {
 
     const record = this.records.get(snapshotId);
     if (!record) {
-      return { snapshotId, valid: false, checksum: "", sizeBytes: 0, errors: ["not found"] };
+      return { snapshotId, valid: false, checksum: '', sizeBytes: 0, errors: ['not found'] };
     }
 
     try {
@@ -199,9 +200,7 @@ export class SnapshotManager implements ISnapshotManager {
           valid: false,
           checksum,
           sizeBytes: data.length,
-          errors: [
-            `checksum mismatch: expected ${record.descriptor.checksum}, got ${checksum}`,
-          ],
+          errors: [`checksum mismatch: expected ${record.descriptor.checksum}, got ${checksum}`],
         };
       }
 
@@ -210,7 +209,7 @@ export class SnapshotManager implements ISnapshotManager {
       return {
         snapshotId,
         valid: false,
-        checksum: "",
+        checksum: '',
         sizeBytes: 0,
         errors: [String(error)],
       };
@@ -246,7 +245,11 @@ export class SnapshotManager implements ISnapshotManager {
 
     if (removed.length > 0) {
       for (const listener of this.prunedListeners) {
-        try { listener(removed); } catch { /* noop */ }
+        try {
+          listener(removed);
+        } catch {
+          /* noop */
+        }
       }
     }
 
@@ -259,7 +262,7 @@ export class SnapshotManager implements ISnapshotManager {
     this._ensureInitialized();
 
     const options = this.config.compact;
-    if (options.strategy === "none") return null;
+    if (options.strategy === 'none') return null;
 
     const candidates = this._selectCompactCandidates(options);
     if (candidates.length < 2) return null;
@@ -294,10 +297,7 @@ export class SnapshotManager implements ISnapshotManager {
 
   // ── Queries ─────────────────────────────────────────────────
 
-  async findNearest(
-    index: number,
-    groupId?: string,
-  ): Promise<SnapshotDescriptor | null> {
+  async findNearest(index: number, groupId?: string): Promise<SnapshotDescriptor | null> {
     const candidates = await this.listSnapshots(groupId);
     if (candidates.length === 0) return null;
 
@@ -318,9 +318,7 @@ export class SnapshotManager implements ISnapshotManager {
     const candidates = await this.listSnapshots(groupId);
     if (candidates.length === 0) return null;
 
-    return candidates.reduce((best, snap) =>
-      snap.meta.lastIncludedIndex > best.meta.lastIncludedIndex ? snap : best,
-    );
+    return candidates.reduce((best, snap) => (snap.meta.lastIncludedIndex > best.meta.lastIncludedIndex ? snap : best));
   }
 
   async count(groupId?: string): Promise<number> {
@@ -336,12 +334,16 @@ export class SnapshotManager implements ISnapshotManager {
 
   onCreated(callback: (descriptor: SnapshotDescriptor) => void): () => void {
     this.createdListeners.add(callback);
-    return () => { this.createdListeners.delete(callback); };
+    return () => {
+      this.createdListeners.delete(callback);
+    };
   }
 
   onPruned(callback: (ids: string[]) => void): () => void {
     this.prunedListeners.add(callback);
-    return () => { this.prunedListeners.delete(callback); };
+    return () => {
+      this.prunedListeners.delete(callback);
+    };
   }
 
   // ── Internal: ID generation ────────────────────────────────
@@ -355,7 +357,7 @@ export class SnapshotManager implements ISnapshotManager {
   // ── Internal: Checksums ────────────────────────────────────
 
   private _checksum(data: Buffer | Uint8Array): string {
-    return crypto.createHash("sha256").update(data).digest("hex");
+    return crypto.createHash('sha256').update(data).digest('hex');
   }
 
   // ── Internal: Paths ────────────────────────────────────────
@@ -370,12 +372,9 @@ export class SnapshotManager implements ISnapshotManager {
 
   // ── Internal: Persistence ──────────────────────────────────
 
-  private async _writeMetadata(
-    id: string,
-    descriptor: SnapshotDescriptor,
-  ): Promise<void> {
+  private async _writeMetadata(id: string, descriptor: SnapshotDescriptor): Promise<void> {
     const metaPath = this._metadataPath(id);
-    await fsp.writeFile(metaPath, JSON.stringify(descriptor, null, 2), "utf-8");
+    await fsp.writeFile(metaPath, JSON.stringify(descriptor, null, 2), 'utf-8');
   }
 
   private async _scanExisting(): Promise<void> {
@@ -392,7 +391,7 @@ export class SnapshotManager implements ISnapshotManager {
         const metaPath = this._metadataPath(id);
 
         try {
-          const metaJson = await fsp.readFile(metaPath, "utf-8");
+          const metaJson = await fsp.readFile(metaPath, 'utf-8');
           const descriptor: SnapshotDescriptor = JSON.parse(metaJson);
 
           // Validate checksum if the snapshot was previously verified
@@ -411,17 +410,12 @@ export class SnapshotManager implements ISnapshotManager {
 
   // ── Internal: Pruning logic ────────────────────────────────
 
-  private _selectPruneCandidates(
-    all: SnapshotDescriptor[],
-    policy: SnapshotRetentionPolicy,
-  ): string[] {
+  private _selectPruneCandidates(all: SnapshotDescriptor[], policy: SnapshotRetentionPolicy): string[] {
     const candidates = new Set<string>();
     const now = Date.now();
 
     // Sort by index ascending (oldest first = smallest index)
-    const sorted = [...all].sort(
-      (a, b) => a.meta.lastIncludedIndex - b.meta.lastIncludedIndex,
-    );
+    const sorted = [...all].sort((a, b) => a.meta.lastIncludedIndex - b.meta.lastIncludedIndex);
 
     // Age-based pruning
     if (policy.maxAgeMs > 0) {
@@ -461,9 +455,7 @@ export class SnapshotManager implements ISnapshotManager {
       if (policy.intervalMs > 0) {
         let lastIntervalStart = 0;
         for (let i = remaining.length - 1; i >= 0; i--) {
-          const intervalStart =
-            Math.floor(remaining[i]!.createdAt / policy.intervalMs) *
-            policy.intervalMs;
+          const intervalStart = Math.floor(remaining[i]!.createdAt / policy.intervalMs) * policy.intervalMs;
           if (intervalStart !== lastIntervalStart) {
             keepSet.add(remaining[i]!.id);
             lastIntervalStart = intervalStart;
@@ -472,9 +464,7 @@ export class SnapshotManager implements ISnapshotManager {
       }
 
       // Always keep the most recent effectiveMinRetain
-      for (let i = remaining.length - 1;
-        i >= Math.max(0, remaining.length - effectiveMinRetain);
-        i--) {
+      for (let i = remaining.length - 1; i >= Math.max(0, remaining.length - effectiveMinRetain); i--) {
         keepSet.add(remaining[i]!.id);
       }
 
@@ -501,9 +491,7 @@ export class SnapshotManager implements ISnapshotManager {
 
   // ── Internal: Compaction logic ──────────────────────────────
 
-  private _selectCompactCandidates(
-    options: CompactOptions,
-  ): SnapshotDescriptor[] {
+  private _selectCompactCandidates(options: CompactOptions): SnapshotDescriptor[] {
     const all = [...this.records.values()]
       .map((r) => r.descriptor)
       .sort((a, b) => a.meta.lastIncludedIndex - b.meta.lastIncludedIndex);
@@ -521,12 +509,9 @@ export class SnapshotManager implements ISnapshotManager {
 
     if (eligible.length <= options.keepUncompacted) return [];
 
-    if (options.strategy === "selective") {
+    if (options.strategy === 'selective') {
       // Select the oldest eligible snapshots — but keep `keepUncompacted` most recent
-      const cutoff = Math.min(
-        eligible.length - options.keepUncompacted,
-        options.maxMergeCount,
-      );
+      const cutoff = Math.min(eligible.length - options.keepUncompacted, options.maxMergeCount);
       return eligible.slice(0, cutoff);
     }
 
@@ -534,9 +519,7 @@ export class SnapshotManager implements ISnapshotManager {
     return eligible.slice(0, Math.min(options.maxMergeCount, eligible.length));
   }
 
-  private async _mergeSnapshots(
-    candidates: SnapshotDescriptor[],
-  ): Promise<Buffer> {
+  private async _mergeSnapshots(candidates: SnapshotDescriptor[]): Promise<Buffer> {
     const buffers: Buffer[] = [];
     for (const candidate of candidates) {
       const record = this.records.get(candidate.id);
@@ -556,7 +539,7 @@ export class SnapshotManager implements ISnapshotManager {
 
   private _ensureInitialized(): void {
     if (!this.initialized) {
-      throw new Error("SnapshotManager: not initialized. Call init() first.");
+      throw new Error('SnapshotManager: not initialized. Call init() first.');
     }
   }
 }

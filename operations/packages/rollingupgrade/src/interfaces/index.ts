@@ -14,7 +14,7 @@ import type {
   NodeUpgradeState,
   CanaryConfig,
   DrainConfig,
-} from "./types.js";
+} from './types.js';
 
 export type {
   RollingUpgradePlan,

@@ -29,7 +29,9 @@ const mockSend = vi.fn();
 const mockGetStatus = vi.fn(() => ({ connectedPeers: [], totalPeers: 0, started: true }));
 const mockGetCircuitBreakerMetrics = vi.fn(() => []);
 let mockStartResolved = true;
-const mockStart = vi.fn(async () => { if (!mockStartResolved) throw new Error('start failed'); });
+const mockStart = vi.fn(async () => {
+  if (!mockStartResolved) throw new Error('start failed');
+});
 const mockStop = vi.fn(async () => {});
 let messageHandler: ((msg: any) => void) | null = null;
 
@@ -181,7 +183,9 @@ describe('NodeTransport', () => {
 
   it('AC 37.13: stop with handler errors is non-fatal', async () => {
     const nt = new NodeTransport(validConfig);
-    nt.onMessage(() => { throw new Error('handler error'); });
+    nt.onMessage(() => {
+      throw new Error('handler error');
+    });
     // Incoming message with failing handler should not throw
     expect(() => {
       if (messageHandler) messageHandler({ type: 'AppendEntries', _shardId: 1 });

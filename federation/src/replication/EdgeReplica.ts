@@ -1,39 +1,39 @@
 /**
- * EdgeReplica — 跨数据中心边缘只读副本同步。
+ * EdgeReplica — cross-datacenter sync for edge read replicas.
  *
- * 通过 WebSocket/SSE 从主集群 CDC 管道接收增量数据，
- * 在边缘节点精确重建状态。
+ * Receives incremental change data from the primary cluster CDC pipeline over WebSocket/SSE
+ * and reconstructs state exactly at the edge node.
  *
- * 关键属性：
- * - 最终一致性保证
- * - 断点续传（从 LSN 恢复）
- * - Backpressure（处理能力不足时限流）
- * - 网络分区后全量重同步
+ * Key properties:
+ * - eventual consistency
+ * - resumable streams (restart from an LSN)
+ * - backpressure (throttling when the consumer cannot keep up)
+ * - full resynchronisation after a network partition
  *
  * @module replication
  */
 
-// ── 类型 ──────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────
 
 export interface EdgeSourceConfig {
-  /** 主集群地址 */
+  /** Primary cluster endpoint */
   url: string;
-  /** 认证 token */
+  /** Authentication token */
   authToken?: string;
-  /** 传输协议 */
+  /** Transport protocol */
   protocol: 'websocket' | 'sse';
 }
 
 export interface EdgeSyncStatus {
-  /** 当前同步状态 */
+  /** Current sync state */
   state: 'disconnected' | 'connecting' | 'syncing' | 'synced' | 'error';
-  /** 最后一次接收的 LSN */
+  /** Last received LSN */
   lastLSN: number;
-  /** 主集群最新 LSN */
+  /** Latest LSN known at the primary cluster */
   sourceLSN: number;
-  /** 已接收的 entries 数量 */
+  /** Number of entries received */
   receivedCount: number;
-  /** 当前 lag */
+  /** Current lag */
   lagLSN: number;
 }
 
@@ -55,7 +55,7 @@ export interface IEdgeReplica {
   onError(handler: (err: Error) => void): () => void;
 }
 
-// ── 实现 ──────────────────────────────────────────────────────────
+// ── Implementation ─────────────────────────────────────────────────
 
 export class EdgeReplica implements IEdgeReplica {
   private _status: EdgeSyncStatus = {
@@ -91,7 +91,7 @@ export class EdgeReplica implements IEdgeReplica {
     this._updateStatus('connecting');
 
     try {
-      // 模拟连接过程（实际使用 WebSocket/SSE transport）
+      // Simulated connect (a real deployment uses the WebSocket/SSE transport)
       await this._simulateConnect(source);
       this._connected = true;
       this._updateStatus('syncing');
@@ -114,7 +114,7 @@ export class EdgeReplica implements IEdgeReplica {
 
   // ── Events ──────────────────────────────────────────────────────
 
-  /** 模拟接收 CDC 数据 */
+  /** Simulate receiving CDC data */
   receive(lsn: number, payload: unknown): void {
     if (!this._connected) return;
 
@@ -132,19 +132,27 @@ export class EdgeReplica implements IEdgeReplica {
     };
 
     for (const handler of this._eventHandlers) {
-      try { handler(event); } catch { /* swallowed */ }
+      try {
+        handler(event);
+      } catch {
+        /* swallowed */
+      }
     }
 
-    // 检查是否完成同步
+    // Has the sync finished?
     if (this._status.lagLSN === 0) {
       this._updateStatus('synced');
       for (const handler of this._syncCompleteHandlers) {
-        try { handler(); } catch { /* swallowed */ }
+        try {
+          handler();
+        } catch {
+          /* swallowed */
+        }
       }
     }
   }
 
-  /** 接收批量数据（backpressure 场景） */
+  /** Receive a batch of data (backpressure scenario) */
   receiveBatch(entries: Array<{ lsn: number; payload: unknown }>): void {
     for (const entry of entries) {
       this.receive(entry.lsn, entry.payload);
@@ -199,12 +207,16 @@ export class EdgeReplica implements IEdgeReplica {
 
   private _emitError(err: Error): void {
     for (const handler of this._errorHandlers) {
-      try { handler(err); } catch { /* swallowed */ }
+      try {
+        handler(err);
+      } catch {
+        /* swallowed */
+      }
     }
   }
 
   private async _simulateConnect(_source: EdgeSourceConfig): Promise<void> {
-    // 模拟连接延迟（50-200ms 在实际实现中会被 WebSocket 连接替代）
+    // Simulated connect latency (50-200ms; replaced by a real WebSocket connection)
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 

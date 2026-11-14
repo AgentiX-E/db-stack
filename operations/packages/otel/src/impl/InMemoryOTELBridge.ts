@@ -45,7 +45,12 @@ export class InMemoryOTELBridge implements IOTELBridge {
   }
 
   recordMetric(name: string, value: number, labels?: Record<string, string>): void {
-    this.metrics.push({ name, value, labels: labels ?? {}, timestamp: Date.now() });
+    this.metrics.push({
+      name,
+      value,
+      labels: labels ?? {},
+      timestamp: Date.now(),
+    });
   }
 
   exportLog(log: Omit<OTLog, 'timestamp'>): void {

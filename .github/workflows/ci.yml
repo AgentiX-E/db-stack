@@ -50,6 +50,28 @@ jobs:
       - name: Typecheck (builds workspace dependencies first)
         run: pnpm turbo run typecheck --filter=./${{ matrix.package }}
 
+  # ── Style gates ────────────────────────────────────────────────────
+  #
+  # These were previously absent, which is how `lint` silently decayed into a
+  # two-rule stub without a TypeScript parser in two of the three packages. A
+  # gate that is not executed is not a gate.
+  quality:
+    name: Quality (lint + format)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: ESLint (one shared config for the whole workspace)
+        run: pnpm lint
+      - name: Prettier
+        run: pnpm format:check
+
   # ── Unit tests (fast, isolated) ────────────────────────────────────
   unit:
     name: Unit (${{ matrix.package }})
@@ -109,10 +131,20 @@ jobs:
       - name: Enforce per-dimension threshold (95%)
         run: |
           node -e "
-            const s = require('./${{ matrix.package }}/coverage/coverage-summary.json').total;
+            const summary = require('./${{ matrix.package }}/coverage/coverage-summary.json');
             const dims = ['lines','statements','functions','branches'];
-            const bad = dims.filter(d => s[d].pct < 95);
-            for (const d of dims) console.log(d.padEnd(11), s[d].pct + '%');
+            const bad = dims.filter(d => summary.total[d].pct < 95);
+            for (const d of dims) console.log('TOTAL'.padEnd(11), d.padEnd(11), summary.total[d].pct + '%');
+
+            // Report the weakest files explicitly: a package total can hide a module
+            // that no test touches, which is exactly the failure mode a gate exists to catch.
+            const rows = Object.entries(summary)
+              .filter(([file]) => file !== 'total')
+              .map(([file, v]) => ({ file, pct: Math.min(...dims.map(d => v[d].pct)) }))
+              .sort((a, b) => a.pct - b.pct)
+              .slice(0, 10);
+            for (const r of rows) console.log('weakest'.padEnd(11), String(r.pct).padEnd(11), r.file.replace(process.cwd(), '.'));
+
             if (bad.length) { console.error('FAILED dimensions: ' + bad.join(', ')); process.exit(1); }
           "
       - uses: actions/upload-artifact@v4
@@ -252,7 +284,7 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [typecheck, unit, integration, coverage, coverage-gate, e2e-cluster, e2e-federation, load, security]
+    needs: [typecheck, quality, unit, integration, coverage, coverage-gate, e2e-cluster, e2e-federation, load, security]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -261,6 +293,7 @@ jobs:
           echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| typecheck | ${{ needs.typecheck.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| quality | ${{ needs.quality.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| unit | ${{ needs.unit.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| integration | ${{ needs.integration.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| coverage | ${{ needs.coverage.result }} |" >> $GITHUB_STEP_SUMMARY
@@ -269,7 +302,7 @@ jobs:
           echo "| e2e-federation | ${{ needs.e2e-federation.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| load | ${{ needs.load.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
-          for r in "${{ needs.typecheck.result }}" "${{ needs.unit.result }}" "${{ needs.integration.result }}" \
+          for r in "${{ needs.typecheck.result }}" "${{ needs.quality.result }}" "${{ needs.unit.result }}" "${{ needs.integration.result }}" \
                    "${{ needs.coverage.result }}" "${{ needs.coverage-gate.result }}" \
                    "${{ needs.e2e-cluster.result }}" "${{ needs.e2e-federation.result }}" "${{ needs.load.result }}" \
                    "${{ needs.security.result }}"; do

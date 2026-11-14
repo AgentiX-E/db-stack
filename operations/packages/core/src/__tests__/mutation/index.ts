@@ -2,7 +2,8 @@
  * Mutation Test Engine — AST-based mutant generation and test execution.
  *
  * Architecture:
- *   1. Source Scanner — discovers all .ts source files in packages/*/src/impl/
+ *   1. Source Scanner — discovers every .ts source file under a package's
+ *      `src/impl` directory
  *   2. Mutant Generator — applies mutation operators to AST nodes
  *   3. Test Runner — executes vitest programmatically for each mutant
  *   4. Score Reporter — computes killed/survived/noCoverage matrix per package
@@ -63,7 +64,12 @@ interface PackageScore {
   noCoverage: number;
   mutationScore: number; // killed / executed * 100
   durationMs: number;
-  topSurvivors: Array<{ id: string; operator: string; line: number; original: string }>;
+  topSurvivors: Array<{
+    id: string;
+    operator: string;
+    line: number;
+    original: string;
+  }>;
 }
 
 interface MutationReport {
@@ -127,12 +133,7 @@ class MutantGenerator {
   private sourceFile: ts.SourceFile;
 
   constructor(filePath: string) {
-    this.sourceFile = ts.createSourceFile(
-      filePath,
-      readFileSync(filePath, 'utf-8'),
-      ts.ScriptTarget.Latest,
-      true
-    );
+    this.sourceFile = ts.createSourceFile(filePath, readFileSync(filePath, 'utf-8'), ts.ScriptTarget.Latest, true);
   }
 
   getMutants(): Mutant[] {
@@ -216,7 +217,12 @@ class MutantGenerator {
     }
 
     if (replacement !== undefined) {
-      this.add('Arithmetic', node.operatorToken.getText(this.sourceFile), ts.tokenToString(replacement as ts.SyntaxKind)!, node.operatorToken);
+      this.add(
+        'Arithmetic',
+        node.operatorToken.getText(this.sourceFile),
+        ts.tokenToString(replacement as ts.SyntaxKind)!,
+        node.operatorToken,
+      );
     }
   }
 
@@ -363,7 +369,9 @@ function runTests(root: string): TestRunResult {
             durationMs,
           };
         }
-      } catch { /* skip non-JSON lines */ }
+      } catch {
+        /* skip non-JSON lines */
+      }
     }
 
     // Fallback: check for failure indicators
@@ -414,13 +422,30 @@ export async function runMutationTests(root: string): Promise<MutationReport> {
 
   // Phase 2: Execute each mutant
   const startTime = Date.now();
-  const packageResults = new Map<string, {
-    generated: number; executed: number;
-    killed: number; survived: number; timeout: number; compileError: number; noCoverage: number;
-    topSurvivors: Array<{ id: string; operator: string; line: number; original: string }>;
-  }>();
+  const packageResults = new Map<
+    string,
+    {
+      generated: number;
+      executed: number;
+      killed: number;
+      survived: number;
+      timeout: number;
+      compileError: number;
+      noCoverage: number;
+      topSurvivors: Array<{
+        id: string;
+        operator: string;
+        line: number;
+        original: string;
+      }>;
+    }
+  >();
 
-  const slowestMutants: Array<{ id: string; file: string; durationMs: number }> = [];
+  const slowestMutants: Array<{
+    id: string;
+    file: string;
+    durationMs: number;
+  }> = [];
   const mutantResults: MutantResult[] = [];
 
   // Initialize package tracking
@@ -428,8 +453,13 @@ export async function runMutationTests(root: string): Promise<MutationReport> {
     const pkg = extractPackageName(m.location.file, root);
     if (!packageResults.has(pkg)) {
       packageResults.set(pkg, {
-        generated: 0, executed: 0,
-        killed: 0, survived: 0, timeout: 0, compileError: 0, noCoverage: 0,
+        generated: 0,
+        executed: 0,
+        killed: 0,
+        survived: 0,
+        timeout: 0,
+        compileError: 0,
+        noCoverage: 0,
         topSurvivors: [],
       });
     }
@@ -446,7 +476,7 @@ export async function runMutationTests(root: string): Promise<MutationReport> {
     const mutatedSource = applyMutant(originalSource, mutant);
 
     const start = Date.now();
-    let result: MutantResult = {
+    const result: MutantResult = {
       mutant,
       status: 'killed',
       durationMs: 0,
@@ -483,7 +513,11 @@ export async function runMutationTests(root: string): Promise<MutationReport> {
     (pkgResult as any)[result.status]++;
 
     if (result.durationMs > 5000) {
-      slowestMutants.push({ id: mutant.id, file: relative(root, filePath), durationMs: result.durationMs });
+      slowestMutants.push({
+        id: mutant.id,
+        file: relative(root, filePath),
+        durationMs: result.durationMs,
+      });
     }
 
     if (result.status === 'survived') {
@@ -500,7 +534,9 @@ export async function runMutationTests(root: string): Promise<MutationReport> {
 
     if (completed % 10 === 0 || completed === total) {
       const pct = ((completed / total) * 100).toFixed(1);
-      console.error(`   [${completed}/${total}] ${pct}% — killed: ${mutantResults.filter(r => r.status === 'killed').length}, survived: ${mutantResults.filter(r => r.status === 'survived').length}`);
+      console.error(
+        `   [${completed}/${total}] ${pct}% — killed: ${mutantResults.filter((r) => r.status === 'killed').length}, survived: ${mutantResults.filter((r) => r.status === 'survived').length}`,
+      );
     }
   }
 
@@ -508,7 +544,11 @@ export async function runMutationTests(root: string): Promise<MutationReport> {
 
   // Phase 3: Build report
   const packageScores: PackageScore[] = [];
-  let totalsKilled = 0, totalsSurvived = 0, totalsTimeout = 0, totalsCompileError = 0, totalsNoCoverage = 0;
+  let totalsKilled = 0,
+    totalsSurvived = 0,
+    totalsTimeout = 0,
+    totalsCompileError = 0,
+    totalsNoCoverage = 0;
 
   for (const [pkgName, p] of packageResults) {
     totalsKilled += p.killed;
@@ -601,7 +641,7 @@ function writeMarkdownReport(filePath: string, report: MutationReport): void {
   for (const pkg of report.packages) {
     const status = pkg.mutationScore >= 95 ? '🟢' : pkg.mutationScore >= 80 ? '🟡' : '🔴';
     lines.push(
-      `| ${status} ${pkg.packageName} | ${pkg.mutantsGenerated} | ${pkg.mutantsExecuted} | ${pkg.killed} | ${pkg.survived} | ${pkg.timeout} | ${pkg.compileError} | ${pkg.noCoverage} | **${pkg.mutationScore.toFixed(1)}%** |`
+      `| ${status} ${pkg.packageName} | ${pkg.mutantsGenerated} | ${pkg.mutantsExecuted} | ${pkg.killed} | ${pkg.survived} | ${pkg.timeout} | ${pkg.compileError} | ${pkg.noCoverage} | **${pkg.mutationScore.toFixed(1)}%** |`,
     );
   }
 
@@ -612,7 +652,7 @@ function writeMarkdownReport(filePath: string, report: MutationReport): void {
     'These mutations did NOT cause any test to fail — indicating potential test gaps.',
     '',
     `| Mutant ID | Package | Operator | Line | Original |`,
-    `|-----------|---------|----------|------|----------|`
+    `|-----------|---------|----------|------|----------|`,
   );
 
   for (const pkg of report.packages) {
@@ -627,7 +667,7 @@ function writeMarkdownReport(filePath: string, report: MutationReport): void {
       '## Slowest Mutants (>5s)',
       '',
       `| Mutant ID | File | Duration |`,
-      `|-----------|------|----------|`
+      `|-----------|------|----------|`,
     );
     for (const s of report.slowestMutants) {
       lines.push(`| ${s.id} | ${s.file} | ${(s.durationMs / 1000).toFixed(1)}s |`);
@@ -641,13 +681,15 @@ function writeMarkdownReport(filePath: string, report: MutationReport): void {
 
 if (process.argv[1]?.endsWith('index.ts') || process.argv[1]?.endsWith('index.js')) {
   const root = resolve(process.argv[2] || process.cwd());
-  runMutationTests(root).then((report) => {
-    console.error(`\n✅ Mutation testing complete.`);
-    console.error(`   Score: ${report.totals.mutationScore.toFixed(2)}%`);
-    console.error(`   Killed: ${report.totals.killed}/${report.totals.mutantsExecuted}`);
-    console.error(`   Report: .mutation-report/MUTATION_REPORT.md`);
-  }).catch((err) => {
-    console.error('Mutation test failed:', err);
-    process.exit(1);
-  });
+  runMutationTests(root)
+    .then((report) => {
+      console.error(`\n✅ Mutation testing complete.`);
+      console.error(`   Score: ${report.totals.mutationScore.toFixed(2)}%`);
+      console.error(`   Killed: ${report.totals.killed}/${report.totals.mutantsExecuted}`);
+      console.error(`   Report: .mutation-report/MUTATION_REPORT.md`);
+    })
+    .catch((err) => {
+      console.error('Mutation test failed:', err);
+      process.exit(1);
+    });
 }

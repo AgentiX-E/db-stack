@@ -95,7 +95,7 @@ export class InMemoryAlertRuleManager {
    * Get all rules.
    */
   getRules(): AlertRule[] {
-    return Array.from(this._rules.values()).map(e => ({ ...e.rule }));
+    return Array.from(this._rules.values()).map((e) => ({ ...e.rule }));
   }
 
   /**
@@ -130,12 +130,23 @@ export class InMemoryAlertRuleManager {
 
       let isTriggered: boolean;
       switch (rule.condition) {
-        case 'gt': isTriggered = currentValue > rule.threshold; break;
-        case 'lt': isTriggered = currentValue < rule.threshold; break;
-        case 'eq': isTriggered = currentValue === rule.threshold; break;
-        case 'gte': isTriggered = currentValue >= rule.threshold; break;
-        case 'lte': isTriggered = currentValue <= rule.threshold; break;
-        default: isTriggered = currentValue >= rule.threshold;
+        case 'gt':
+          isTriggered = currentValue > rule.threshold;
+          break;
+        case 'lt':
+          isTriggered = currentValue < rule.threshold;
+          break;
+        case 'eq':
+          isTriggered = currentValue === rule.threshold;
+          break;
+        case 'gte':
+          isTriggered = currentValue >= rule.threshold;
+          break;
+        case 'lte':
+          isTriggered = currentValue <= rule.threshold;
+          break;
+        default:
+          isTriggered = currentValue >= rule.threshold;
       }
 
       if (isTriggered) {

@@ -16,7 +16,10 @@ describe('getErrorMessage', () => {
 
   it('extracts the message from a subclassed Error', () => {
     class CustomError extends Error {
-      constructor(m: string) { super(m); this.name = 'CustomError'; }
+      constructor(m: string) {
+        super(m);
+        this.name = 'CustomError';
+      }
     }
     expect(getErrorMessage(new CustomError('custom'))).toBe('custom');
   });

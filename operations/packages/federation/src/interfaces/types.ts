@@ -32,19 +32,13 @@ export interface FederatedNode {
 }
 
 /** Role a node plays in the federation. */
-export type NodeRole = "primary" | "replica" | "coordinator" | "candidate";
+export type NodeRole = 'primary' | 'replica' | 'coordinator' | 'candidate';
 
 /** Health state of a federated node. */
-export type NodeHealth = "healthy" | "degraded" | "unhealthy" | "unknown";
+export type NodeHealth = 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
 
 /** Capabilities a node can advertise. */
-export type NodeCapability =
-  | "read"
-  | "write"
-  | "analytics"
-  | "fulltext"
-  | "vector"
-  | "graph";
+export type NodeCapability = 'read' | 'write' | 'analytics' | 'fulltext' | 'vector' | 'graph';
 
 /** Load snapshot for cost-based routing. */
 export interface NodeLoad {
@@ -63,10 +57,10 @@ export interface NodeLoad {
 // ── Query ───────────────────────────────────────────────────
 
 /** Intent of a federated query. */
-export type QueryIntent = "read" | "write" | "analytics";
+export type QueryIntent = 'read' | 'write' | 'analytics';
 
 /** Consistency level for cross-node reads. */
-export type ConsistencyLevel = "eventual" | "strong" | "read_your_writes";
+export type ConsistencyLevel = 'eventual' | 'strong' | 'read_your_writes';
 
 /** A federated query with routing metadata. */
 export interface FederatedQuery {
@@ -116,12 +110,7 @@ export interface QueryPlan {
 
 /** Routing strategy identifiers. */
 export type RoutingStrategy =
-  | "round_robin"
-  | "least_connections"
-  | "weighted"
-  | "geo_affinity"
-  | "cost_based"
-  | "leader_only";
+  'round_robin' | 'least_connections' | 'weighted' | 'geo_affinity' | 'cost_based' | 'leader_only';
 
 // ── Routing Policy ──────────────────────────────────────────
 
@@ -261,11 +250,7 @@ export interface IFederatedQueryRouter {
 }
 
 /** Node-level query executor (injected — connects to actual DB). */
-export type NodeExecutor = (
-  node: FederatedNode,
-  query: FederatedQuery,
-  shardIds: string[],
-) => Promise<NodeResult>;
+export type NodeExecutor = (node: FederatedNode, query: FederatedQuery, shardIds: string[]) => Promise<NodeResult>;
 
 /** Router statistics. */
 export interface RouterStats {

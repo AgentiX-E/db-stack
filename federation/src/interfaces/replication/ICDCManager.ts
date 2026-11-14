@@ -40,11 +40,7 @@ export interface ICDCPublication {
 export interface ICDCManager {
   createPublication(name: string, tables: string[]): Promise<ICDCPublication>;
   dropPublication(name: string): Promise<void>;
-  createSubscription(
-    name: string,
-    publicationName: string,
-    targetDsn: string,
-  ): Promise<CDCSubscription>;
+  createSubscription(name: string, publicationName: string, targetDsn: string): Promise<CDCSubscription>;
   dropSubscription(name: string): Promise<void>;
   getSubscriptions(): Promise<CDCSubscription[]>;
   getPublications(): Promise<ICDCPublication[]>;

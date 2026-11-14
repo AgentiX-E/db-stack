@@ -10,5 +10,5 @@ export type {
   StreamSubscription,
   StreamHandler,
   WalStreamConfig,
-} from "./IWalStreamer";
-export { WalStreamer } from "./WalStreamer";
+} from './IWalStreamer';
+export { WalStreamer } from './WalStreamer';

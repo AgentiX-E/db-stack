@@ -40,7 +40,7 @@ import { PeerCircuitBreakerWrapper, PeerCircuitBreakerOptions, CircuitBreakerMet
 
 import pino from 'pino';
 import { resolveLogLevel } from '../../observability/logLevel';
-const logger = pino({ level: process.env.VITEST === 'true' ? 'silent' : (resolveLogLevel()) });
+const logger = pino({ level: process.env.VITEST === 'true' ? 'silent' : resolveLogLevel() });
 
 // ──────────────────────────────────────────
 //  Types & Interfaces

@@ -14,10 +14,10 @@
  * AC 44.4 — Custom resolver registration and dispatch
  */
 
-import type { IHLCTimestamp } from "../interfaces/hlc/IHLCTimestamp";
-import { compareHLC } from "../hlc/HLC";
+import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
+import { compareHLC } from '../hlc/HLC';
 
-export type ConflictStrategy = "lww" | "crdt-counter" | "crdt-set" | "crdt-map" | "custom";
+export type ConflictStrategy = 'lww' | 'crdt-counter' | 'crdt-set' | 'crdt-map' | 'custom';
 
 export interface ConflictValue {
   key: string;
@@ -41,11 +41,7 @@ export type ConflictPredicate = {
 /**
  * Custom resolver function signature.
  */
-export type CustomResolver = (
-  key: string,
-  local: ConflictValue,
-  remote: ConflictValue,
-) => Promise<ConflictResult>;
+export type CustomResolver = (key: string, local: ConflictValue, remote: ConflictValue) => Promise<ConflictResult>;
 
 // ── CRDT Types ──
 
@@ -83,11 +79,8 @@ export class ConflictResolver {
    * Register a custom resolver for a specific table or key prefix.
    * AC 44.4
    */
-  registerCustomResolver(
-    predicate: ConflictPredicate,
-    resolver: CustomResolver,
-  ): void {
-    const key = predicate.tableName ?? predicate.keyPrefix ?? "__fallback__";
+  registerCustomResolver(predicate: ConflictPredicate, resolver: CustomResolver): void {
+    const key = predicate.tableName ?? predicate.keyPrefix ?? '__fallback__';
     this.customResolvers.set(key, { resolver, predicate });
   }
 
@@ -95,7 +88,7 @@ export class ConflictResolver {
    * Unregister a custom resolver.
    */
   unregisterCustomResolver(predicate: ConflictPredicate): void {
-    const key = predicate.tableName ?? predicate.keyPrefix ?? "__fallback__";
+    const key = predicate.tableName ?? predicate.keyPrefix ?? '__fallback__';
     this.customResolvers.delete(key);
   }
 
@@ -110,7 +103,7 @@ export class ConflictResolver {
     key: string,
     local: ConflictValue,
     remote: ConflictValue,
-    defaultStrategy: ConflictStrategy = "lww",
+    defaultStrategy: ConflictStrategy = 'lww',
   ): Promise<ConflictResult> {
     // Check for custom resolver first (AC 44.4)
     const custom = this.findCustomResolver(key);
@@ -120,13 +113,13 @@ export class ConflictResolver {
     }
 
     switch (defaultStrategy) {
-      case "lww":
+      case 'lww':
         return this.resolveLWW(key, local, remote);
-      case "crdt-counter":
+      case 'crdt-counter':
         return this.resolveCRDTCounter(key, local, remote);
-      case "crdt-set":
+      case 'crdt-set':
         return this.resolveCRDTSet(key, local, remote);
-      case "crdt-map":
+      case 'crdt-map':
         return this.resolveCRDTMap(key, local, remote);
       default:
         return this.resolveLWW(key, local, remote);
@@ -137,18 +130,14 @@ export class ConflictResolver {
    * LWW strategy: higher HLC wins. Tiebreak by nodeId.
    * AC 44.1, AC 44.2
    */
-  private resolveLWW(
-    key: string,
-    local: ConflictValue,
-    remote: ConflictValue,
-  ): ConflictResult {
+  private resolveLWW(key: string, local: ConflictValue, remote: ConflictValue): ConflictResult {
     const cmp = compareHLC(local.hlc, remote.hlc);
 
     if (cmp > 0) {
       // Local wins
       return {
         resolvedValue: local.value,
-        strategyUsed: "lww",
+        strategyUsed: 'lww',
         loserNodeIds: [remote.nodeId],
         merged: false,
       };
@@ -158,7 +147,7 @@ export class ConflictResolver {
       // Remote wins
       return {
         resolvedValue: remote.value,
-        strategyUsed: "lww",
+        strategyUsed: 'lww',
         loserNodeIds: [local.nodeId],
         merged: false,
       };
@@ -168,7 +157,7 @@ export class ConflictResolver {
     if (local.nodeId > remote.nodeId) {
       return {
         resolvedValue: local.value,
-        strategyUsed: "lww",
+        strategyUsed: 'lww',
         loserNodeIds: [remote.nodeId],
         merged: false,
       };
@@ -176,7 +165,7 @@ export class ConflictResolver {
 
     return {
       resolvedValue: remote.value,
-      strategyUsed: "lww",
+      strategyUsed: 'lww',
       loserNodeIds: [local.nodeId],
       merged: false,
     };
@@ -188,11 +177,7 @@ export class ConflictResolver {
    *
    * For counter merge, we assume the value is a JSON-encoded CRDTCounterState.
    */
-  private resolveCRDTCounter(
-    key: string,
-    local: ConflictValue,
-    remote: ConflictValue,
-  ): ConflictResult {
+  private resolveCRDTCounter(key: string, local: ConflictValue, remote: ConflictValue): ConflictResult {
     let localState: CRDTCounterState;
     let remoteState: CRDTCounterState;
 
@@ -224,7 +209,7 @@ export class ConflictResolver {
 
     return {
       resolvedValue,
-      strategyUsed: "crdt-counter",
+      strategyUsed: 'crdt-counter',
       loserNodeIds,
       merged: true,
     };
@@ -234,13 +219,15 @@ export class ConflictResolver {
    * CRDT Set merge (OR-Set semantics).
    * AC 44.3
    */
-  private resolveCRDTSet(
-    key: string,
-    local: ConflictValue,
-    remote: ConflictValue,
-  ): ConflictResult {
-    let localState: { elements: Record<string, string[]>; tombstones: Record<string, string[]> };
-    let remoteState: { elements: Record<string, string[]>; tombstones: Record<string, string[]> };
+  private resolveCRDTSet(key: string, local: ConflictValue, remote: ConflictValue): ConflictResult {
+    let localState: {
+      elements: Record<string, string[]>;
+      tombstones: Record<string, string[]>;
+    };
+    let remoteState: {
+      elements: Record<string, string[]>;
+      tombstones: Record<string, string[]>;
+    };
 
     try {
       localState = JSON.parse(local.value);
@@ -251,7 +238,9 @@ export class ConflictResolver {
 
     // Merge elements and tombstones
     const mergedElements: Record<string, string[]> = { ...localState.elements };
-    const mergedTombstones: Record<string, string[]> = { ...localState.tombstones };
+    const mergedTombstones: Record<string, string[]> = {
+      ...localState.tombstones,
+    };
 
     for (const [elem, tags] of Object.entries(remoteState.elements)) {
       const existing = mergedElements[elem] ?? [];
@@ -264,9 +253,7 @@ export class ConflictResolver {
 
     // Remove elements whose all tags are tombstoned
     for (const [elem, tags] of Object.entries(mergedTombstones)) {
-      const activeTags = (mergedElements[elem] ?? []).filter(
-        (t) => !tags.includes(t),
-      );
+      const activeTags = (mergedElements[elem] ?? []).filter((t) => !tags.includes(t));
       if (activeTags.length === 0) {
         delete mergedElements[elem];
       } else {
@@ -281,7 +268,7 @@ export class ConflictResolver {
 
     return {
       resolvedValue,
-      strategyUsed: "crdt-set",
+      strategyUsed: 'crdt-set',
       loserNodeIds: [local.nodeId, remote.nodeId],
       merged: true,
     };
@@ -291,13 +278,15 @@ export class ConflictResolver {
    * CRDT Map merge — merges sub-CRDTs (counters and sets) recursively.
    * AC 44.3
    */
-  private resolveCRDTMap(
-    key: string,
-    local: ConflictValue,
-    remote: ConflictValue,
-  ): ConflictResult {
-    let localState: { counters: Record<string, CRDTCounterState>; sets: Record<string, CRDTSetState> };
-    let remoteState: { counters: Record<string, CRDTCounterState>; sets: Record<string, CRDTSetState> };
+  private resolveCRDTMap(key: string, local: ConflictValue, remote: ConflictValue): ConflictResult {
+    let localState: {
+      counters: Record<string, CRDTCounterState>;
+      sets: Record<string, CRDTSetState>;
+    };
+    let remoteState: {
+      counters: Record<string, CRDTCounterState>;
+      sets: Record<string, CRDTSetState>;
+    };
 
     try {
       localState = JSON.parse(local.value);
@@ -307,7 +296,9 @@ export class ConflictResolver {
     }
 
     // Merge counters
-    const mergedCounters: Record<string, CRDTCounterState> = { ...localState.counters };
+    const mergedCounters: Record<string, CRDTCounterState> = {
+      ...localState.counters,
+    };
 
     for (const [mapKey, remoteC] of Object.entries(remoteState.counters)) {
       const localC = mergedCounters[mapKey];
@@ -337,7 +328,9 @@ export class ConflictResolver {
       }
       // OR-Set merge within each sub-key (use Record<string, string[]> for JSON serialization)
       const mergedElements: Record<string, string[]> = { ...localS.elements };
-      const mergedTombstones: Record<string, string[]> = { ...localS.tombstones };
+      const mergedTombstones: Record<string, string[]> = {
+        ...localS.tombstones,
+      };
 
       for (const [elem, tags] of Object.entries(remoteS.elements)) {
         const existing = mergedElements[elem] ?? [];
@@ -350,9 +343,7 @@ export class ConflictResolver {
 
       // Apply tombstone removal
       for (const [elem, tombTags] of Object.entries(mergedTombstones)) {
-        const activeTags = (mergedElements[elem] ?? []).filter(
-          (t) => !tombTags.includes(t),
-        );
+        const activeTags = (mergedElements[elem] ?? []).filter((t) => !tombTags.includes(t));
         if (activeTags.length === 0) {
           delete mergedElements[elem];
         } else {
@@ -373,7 +364,7 @@ export class ConflictResolver {
 
     return {
       resolvedValue,
-      strategyUsed: "crdt-map",
+      strategyUsed: 'crdt-map',
       loserNodeIds: [local.nodeId, remote.nodeId],
       merged: true,
     };

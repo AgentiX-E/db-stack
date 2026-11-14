@@ -4,14 +4,23 @@ import type { IMetricsRegistry } from '@agentix-e/db-operations-metrics';
 import type { IBackupManager, IStorageBackend, IBackupRetentionPolicy } from '@agentix-e/db-operations-backup';
 import type { IAuditStore } from '@agentix-e/db-operations-audit';
 import type { IDistributedTracer } from '@agentix-e/db-operations-observability';
-import type { IDeadlockDetector, IAlertRuleManager, ISlowQueryRecorder, IConnectionMonitor } from '@agentix-e/db-operations-monitor';
+import type {
+  IDeadlockDetector,
+  IAlertRuleManager,
+  ISlowQueryRecorder,
+  IConnectionMonitor,
+} from '@agentix-e/db-operations-monitor';
 import type { IMaintenanceExecutor } from '@agentix-e/db-operations-maintenance';
 import type { IAuthProvider } from '@agentix-e/db-operations-auth';
 import type { ILogger } from '@agentix-e/db-operations-logger';
 
 import { HealthOrchestrator, componentProbe } from '@agentix-e/db-operations-health';
 import { MetricsRegistry } from '@agentix-e/db-operations-metrics';
-import { InMemoryBackupManager, InMemoryStorageBackend, RetentionPolicyEvaluator } from '@agentix-e/db-operations-backup';
+import {
+  InMemoryBackupManager,
+  InMemoryStorageBackend,
+  RetentionPolicyEvaluator,
+} from '@agentix-e/db-operations-backup';
 import { InMemoryAuditStore } from '@agentix-e/db-operations-audit';
 import { InMemoryDistributedTracer } from '@agentix-e/db-operations-observability';
 import {
@@ -61,7 +70,10 @@ export class InMemoryEngineFactory implements EngineFactory {
   }
 
   createRetentionPolicy(): IBackupRetentionPolicy {
-    return new RetentionPolicyEvaluator({ maxFullSnapshots: 3, maxTotalBytes: 1_000_000_000 });
+    return new RetentionPolicyEvaluator({
+      maxFullSnapshots: 3,
+      maxTotalBytes: 1_000_000_000,
+    });
   }
 
   createAuditStore(): IAuditStore {
@@ -99,7 +111,10 @@ export class InMemoryEngineFactory implements EngineFactory {
         token: 'test-token',
         expiresAt: new Date(Date.now() + 3600000),
       }),
-      validateToken: async (_token: string) => ({ userId: 'test-user', roles: ['admin'] }),
+      validateToken: async (_token: string) => ({
+        userId: 'test-user',
+        roles: ['admin'],
+      }),
       revokeToken: async (_token: string) => {},
     };
   }

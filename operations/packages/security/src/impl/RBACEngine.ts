@@ -21,12 +21,12 @@ import {
   type RBACEvaluationContext,
   type RBACStats,
   type ConstraintType,
-} from "../interfaces/IRBACEngine.js";
+} from '../interfaces/IRBACEngine.js';
 
 // ── Constants ──────────────────────────────────────────────
 
 const CACHE_MAX_SIZE = 500;
-const DENY_PREFIX = "deny:";
+const DENY_PREFIX = 'deny:';
 
 // ── RBACEngine ──────────────────────────────────────────────
 
@@ -50,7 +50,7 @@ export class RBACEngine implements IRBACEngine {
   // ── Role Management ───────────────────────────────────────
 
   registerRole(role: RBACRole): void {
-    if (!role.name) throw new Error("Role must have a name");
+    if (!role.name) throw new Error('Role must have a name');
     if (role.parents.includes(role.name)) {
       throw new Error(`Role "${role.name}" cannot be its own parent`);
     }
@@ -115,32 +115,22 @@ export class RBACEngine implements IRBACEngine {
     const effective = this._resolveEffectivePermissions(identity);
 
     // 2. Check for explicit deny (action prefixed with "deny:")
-    const deniedPerm = effective.find(
-      (p) => p.action.startsWith(DENY_PREFIX),
-    );
+    const deniedPerm = effective.find((p) => p.action.startsWith(DENY_PREFIX));
 
     if (deniedPerm) {
       // Extract the denied action: "deny:DELETE" → "DELETE"
       const deniedAction = deniedPerm.action.slice(DENY_PREFIX.length);
-      if (
-        this._matchPermission(
-          { resource: deniedPerm.resource, action: deniedAction },
-          permission,
-        )
-      ) {
+      if (this._matchPermission({ resource: deniedPerm.resource, action: deniedAction }, permission)) {
         return {
           allowed: false,
           reason: `Explicit deny on ${permission.resource}:${permission.action}`,
-          deniedByConstraint: ["explicit_deny"],
+          deniedByConstraint: ['explicit_deny'],
         };
       }
     }
 
     // 3. Check for grant (direct or wildcard)
-    const granted = effective.some(
-      (p) =>
-        this._matchPermission(p, permission),
-    );
+    const granted = effective.some((p) => this._matchPermission(p, permission));
 
     if (!granted) {
       return {
@@ -169,7 +159,7 @@ export class RBACEngine implements IRBACEngine {
     const grantedBy = this._findGrantingRoles(identity, permission);
     return {
       allowed: true,
-      reason: "Permission granted",
+      reason: 'Permission granted',
       grantedBy,
       effectivePermissions: effective,
     };
@@ -200,9 +190,7 @@ export class RBACEngine implements IRBACEngine {
   }
 
   removeConstraint(resource: string, action: string, type: ConstraintType): boolean {
-    const idx = this.constraints.findIndex(
-      (c) => c.resource === resource && c.action === action && c.type === type,
-    );
+    const idx = this.constraints.findIndex((c) => c.resource === resource && c.action === action && c.type === type);
     if (idx < 0) return false;
     this.constraints.splice(idx, 1);
     return true;
@@ -249,10 +237,7 @@ export class RBACEngine implements IRBACEngine {
 
   getStats(): RBACStats {
     const hierarchyCheck = this.validateHierarchy();
-    const totalPermissions = Array.from(this.roles.values()).reduce(
-      (sum, r) => sum + r.permissions.length,
-      0,
-    );
+    const totalPermissions = Array.from(this.roles.values()).reduce((sum, r) => sum + r.permissions.length, 0);
 
     let maxDepth = 0;
     for (const [roleName] of this.roles) {
@@ -292,7 +277,7 @@ export class RBACEngine implements IRBACEngine {
   // ── Internal: Permission Resolution ───────────────────────
 
   private _resolveEffectivePermissions(identity: RBACIdentity): RBACPermission[] {
-    const cacheKey = `perm:${identity.id}:${identity.roles.sort().join(",")}`;
+    const cacheKey = `perm:${identity.id}:${identity.roles.sort().join(',')}`;
 
     const cached = this.resolutionCache.get(cacheKey);
     if (cached) return cached;
@@ -368,19 +353,16 @@ export class RBACEngine implements IRBACEngine {
 
   // ── Internal: Constraint Evaluation ───────────────────────
 
-  private _evaluateConstraints(
-    permission: RBACPermission,
-    context: RBACEvaluationContext,
-  ): RBACDecision {
+  private _evaluateConstraints(permission: RBACPermission, context: RBACEvaluationContext): RBACDecision {
     const applicable = this.constraints.filter(
       (c) =>
-        (c.resource === "*" || c.resource === permission.resource) &&
-        (c.action === "*" || c.action === permission.action),
+        (c.resource === '*' || c.resource === permission.resource) &&
+        (c.action === '*' || c.action === permission.action),
     );
 
     for (const constraint of applicable) {
       switch (constraint.type) {
-        case "time": {
+        case 'time': {
           const allowed = this._checkTimeConstraint(constraint.params, context);
           if (!allowed) {
             return {
@@ -391,7 +373,7 @@ export class RBACEngine implements IRBACEngine {
           }
           break;
         }
-        case "ip_range": {
+        case 'ip_range': {
           const allowed = this._checkIPConstraint(constraint.params, context);
           if (!allowed) {
             return {
@@ -402,24 +384,24 @@ export class RBACEngine implements IRBACEngine {
           }
           break;
         }
-        case "mfa_required": {
+        case 'mfa_required': {
           if (!context.mfaVerified) {
             return {
               allowed: false,
-              reason: "MFA required but not verified",
-              deniedByConstraint: ["mfa_required"],
+              reason: 'MFA required but not verified',
+              deniedByConstraint: ['mfa_required'],
             };
           }
           break;
         }
-        case "rate_limit":
-        case "audit":
+        case 'rate_limit':
+        case 'audit':
           // Audit and rate-limit constraints are non-blocking (pass-through)
           break;
       }
     }
 
-    return { allowed: true, reason: "Constraints satisfied" };
+    return { allowed: true, reason: 'Constraints satisfied' };
   }
 
   // ── Internal: ABAC Evaluation ─────────────────────────────
@@ -430,12 +412,12 @@ export class RBACEngine implements IRBACEngine {
     context?: RBACEvaluationContext,
   ): RBACDecision {
     const attrs = identity.attributes;
-    if (!attrs) return { allowed: true, reason: "No ABAC policies" };
+    if (!attrs) return { allowed: true, reason: 'No ABAC policies' };
 
     // Resource ownership: user can only access their own data
     if (attrs.resourceOwner === identity.id) {
       // Attribute says "this user owns resource X" — allow
-      return { allowed: true, reason: "ABAC: resource owner" };
+      return { allowed: true, reason: 'ABAC: resource owner' };
     }
 
     // Department-based access
@@ -445,7 +427,7 @@ export class RBACEngine implements IRBACEngine {
         return {
           allowed: false,
           reason: `ABAC: department "${attrs.department}" not in allowed list`,
-          deniedByConstraint: ["abac_department"],
+          deniedByConstraint: ['abac_department'],
         };
       }
     }
@@ -456,29 +438,26 @@ export class RBACEngine implements IRBACEngine {
       if (hour < 9 || hour >= 18) {
         return {
           allowed: false,
-          reason: "ABAC: access restricted to 9:00-18:00 working hours",
-          deniedByConstraint: ["abac_working_hours"],
+          reason: 'ABAC: access restricted to 9:00-18:00 working hours',
+          deniedByConstraint: ['abac_working_hours'],
         };
       }
     }
 
-    return { allowed: true, reason: "ABAC satisfied" };
+    return { allowed: true, reason: 'ABAC satisfied' };
   }
 
   // ── Internal: Permission Matching ─────────────────────────
 
-  private _matchPermission(
-    granted: RBACPermission,
-    requested: RBACPermission,
-  ): boolean {
+  private _matchPermission(granted: RBACPermission, requested: RBACPermission): boolean {
     // Wildcard match: "*:*" grants everything, "table:*" grants all actions on table
-    if (granted.resource === "*" && granted.action === "*") return true;
-    if (granted.resource === requested.resource && granted.action === "*") return true;
-    if (granted.resource === "*" && granted.action === requested.action) return true;
+    if (granted.resource === '*' && granted.action === '*') return true;
+    if (granted.resource === requested.resource && granted.action === '*') return true;
+    if (granted.resource === '*' && granted.action === requested.action) return true;
 
     // Scope match: "sales.*" matches "sales.orders" and "sales.customers"
     if (granted.scope) {
-      const scopePattern = granted.scope.replace("*", ".*");
+      const scopePattern = granted.scope.replace('*', '.*');
       try {
         const regex = new RegExp(`^${scopePattern}$`);
         if (regex.test(requested.resource) && granted.action === requested.action) {
@@ -495,10 +474,7 @@ export class RBACEngine implements IRBACEngine {
 
   // ── Internal: Granting Roles ──────────────────────────────
 
-  private _findGrantingRoles(
-    identity: RBACIdentity,
-    permission: RBACPermission,
-  ): string[] {
+  private _findGrantingRoles(identity: RBACIdentity, permission: RBACPermission): string[] {
     const granting: string[] = [];
     const visited = new Set<string>();
 
@@ -555,10 +531,7 @@ export class RBACEngine implements IRBACEngine {
 
   // ── Internal: Time Constraint ─────────────────────────────
 
-  private _checkTimeConstraint(
-    params: Record<string, unknown>,
-    context: RBACEvaluationContext,
-  ): boolean {
+  private _checkTimeConstraint(params: Record<string, unknown>, context: RBACEvaluationContext): boolean {
     const now = context.timestamp ?? Date.now();
     const date = new Date(now);
 
@@ -580,10 +553,7 @@ export class RBACEngine implements IRBACEngine {
 
   // ── Internal: IP Constraint ───────────────────────────────
 
-  private _checkIPConstraint(
-    params: Record<string, unknown>,
-    context: RBACEvaluationContext,
-  ): boolean {
+  private _checkIPConstraint(params: Record<string, unknown>, context: RBACEvaluationContext): boolean {
     if (!context.ip) return true; // No IP — cannot enforce, allow
     const allowedRanges = params.ranges as string[];
     if (!allowedRanges || allowedRanges.length === 0) return true;
@@ -597,15 +567,15 @@ export class RBACEngine implements IRBACEngine {
    */
   private _ipInRange(ip: string, range: string): boolean {
     // "0.0.0.0/0" matches any
-    if (range === "0.0.0.0/0") return true;
+    if (range === '0.0.0.0/0') return true;
 
     // Exact match
-    if (!range.includes("/")) {
+    if (!range.includes('/')) {
       return ip === range;
     }
 
     // CIDR match
-    const [network, bitsStr] = range.split("/");
+    const [network, bitsStr] = range.split('/');
     if (!network || !bitsStr) return false;
 
     const bits = parseInt(bitsStr, 10);
@@ -618,11 +588,11 @@ export class RBACEngine implements IRBACEngine {
     const mask = ~(2 ** (32 - bits) - 1);
 
     // Use unsigned 32-bit via >>> 0
-    return ((ipNum & mask) >>> 0) === ((netNum & mask) >>> 0);
+    return (ipNum & mask) >>> 0 === (netNum & mask) >>> 0;
   }
 
   private _ipToNumber(ip: string): number {
-    const parts = ip.split(".").map(Number);
+    const parts = ip.split('.').map(Number);
     if (parts.length !== 4 || parts.some(isNaN)) return 0;
     return ((parts[0]! * 256 + parts[1]!) * 256 + parts[2]!) * 256 + parts[3]!;
   }

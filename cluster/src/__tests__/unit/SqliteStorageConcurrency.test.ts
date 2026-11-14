@@ -21,20 +21,30 @@
  *   AC 27.10: Append + truncate round-trip (compaction simulation)
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, afterAll } from 'vitest';
 import { SqliteStorage } from '../../consensus/storage/SqliteStorage';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as crypto from 'crypto';
 
 // ── Test utilities ───────────────────────────────────────────
 
+// A directory unique to this run. The previous version reused a fixed
+// `os.tmpdir()/sqlite-concurrency-test` path, so two suites (or two CI jobs on
+// the same machine) could delete each other's database files mid-write, which
+// surfaced as a sporadic SQLite "disk I/O error" on CREATE TABLE.
+const RUN_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'raft-conc-'));
+
 function tempDbPath(): string {
-  const dir = path.join(os.tmpdir(), 'sqlite-concurrency-test');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, `raft-conc-${crypto.randomBytes(4).toString('hex')}.db`);
+  return path.join(RUN_DIR, `raft-conc-${cryptoRandom()}.db`);
 }
+
+/** Cheap collision-free suffix (crypto.randomUUID is not needed for a filename). */
+function cryptoRandom(): string {
+  return `${process.pid.toString(36)}-${(counter++).toString(36)}-${Date.now().toString(36)}`;
+}
+
+let counter = 0;
 
 function createStorage(dbPath: string): SqliteStorage {
   const storage = new SqliteStorage({
@@ -57,6 +67,14 @@ async function appendEntries(storage: SqliteStorage, count: number, startIndex: 
 
 describe('SqliteStorage Concurrency & Isolation', () => {
   const dbPaths: string[] = [];
+
+  afterAll(() => {
+    try {
+      fs.rmSync(RUN_DIR, { recursive: true, force: true });
+    } catch {
+      // best effort: the run directory lives under the test tmp root
+    }
+  });
 
   afterEach(() => {
     for (const p of dbPaths) {

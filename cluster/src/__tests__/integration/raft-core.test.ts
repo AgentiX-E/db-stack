@@ -246,7 +246,7 @@ describe('Raft Core Multi-Node Cluster', () => {
     await new Promise((r) => setTimeout(r, 1000));
 
     const statusMsgs = getMessages(newNodes, 'status');
-    const leaders = statusMsgs.map((m) => m.data?.leader).filter((l: any) => l != null && l > 0);
+    const leaders = statusMsgs.map((m) => m.data?.leader).filter((l: any) => l !== null && l !== undefined && l > 0);
 
     // At least some nodes agree on a leader
     if (leaders.length > 0) {

@@ -4,7 +4,14 @@
  * @module @agentix-e/db-operations-backup/impl
  */
 
-import type { IBackupManager, IStorageBackend, IBackupRetentionPolicy, CreateBackupOptions, ListBackupsOptions, RestoreOptions } from '../interfaces/index.js';
+import type {
+  IBackupManager,
+  IStorageBackend,
+  IBackupRetentionPolicy,
+  CreateBackupOptions,
+  ListBackupsOptions,
+  RestoreOptions,
+} from '../interfaces/index.js';
 import type { BackupMetadata, BackupResult, RestoreResult, PITRTarget } from '@agentix-e/db-operations-core/types';
 
 /** Simple counter for generating unique IDs. */
@@ -23,7 +30,7 @@ function generateSnapshotId(): string {
 /**
  * Simulate a delay for async backup operations.
  */
-const simulateWork = (ms = 5): Promise<void> => new Promise(r => setTimeout(r, ms));
+const simulateWork = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
  * In-memory implementation of IBackupManager.

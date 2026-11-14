@@ -368,9 +368,7 @@ describe('ConnectionPool constructor', () => {
     expect((pool as any).config.maxRetries).toBe(10);
     expect((pool as any).config.circuitResetTimeoutMs).toBe(60000);
     // cert/key/ca resolved to Buffer even when strings are passed
-    const cfg = new ConnectionPool(
-      makeConfig({ tls: { cert: 'cert-str', key: 'key-str', ca: 'ca-str' } }),
-    );
+    const cfg = new ConnectionPool(makeConfig({ tls: { cert: 'cert-str', key: 'key-str', ca: 'ca-str' } }));
     expect(Buffer.isBuffer((cfg as any)._tlsOptions.cert)).toBe(true);
     expect(Buffer.isBuffer((cfg as any)._tlsOptions.key)).toBe(true);
     expect(Buffer.isBuffer((cfg as any)._tlsOptions.ca)).toBe(true);
@@ -482,7 +480,10 @@ describe('ConnectionPool broadcast / sendTo / tryGetConnection', () => {
       (pool as any)._connections.set(id, conn);
     }
     await expect(
-      pool.broadcast(1, [{ type: 'Append', term: 5 }, { type: 'Vote', term: 5 }]),
+      pool.broadcast(1, [
+        { type: 'Append', term: 5 },
+        { type: 'Vote', term: 5 },
+      ]),
     ).resolves.toBeUndefined();
   });
 
@@ -1193,16 +1194,12 @@ describe('ConnectionPool checkServerIdentity (TLS identity verification)', () =>
   it('rejects when extKeyUsage lacks server/client auth', async () => {
     const id = await captureIdentity();
     expect(id('peer-2.local', cert({ ext_key_usage: ['clientAuth'] }))).toBeUndefined();
-    expect(
-      id('peer-2.local', cert({ ext_key_usage: ['codeSigning'] })),
-    ).toBeInstanceOf(Error);
+    expect(id('peer-2.local', cert({ ext_key_usage: ['codeSigning'] }))).toBeInstanceOf(Error);
   });
 
   it('accepts OID-based serverAuth (Node v24+)', async () => {
     const id = await captureIdentity();
-    expect(
-      id('peer-2.local', cert({ ext_key_usage: ['1.3.6.1.5.5.7.3.1'] })),
-    ).toBeUndefined();
+    expect(id('peer-2.local', cert({ ext_key_usage: ['1.3.6.1.5.5.7.3.1'] }))).toBeUndefined();
   });
 
   it('skips extKeyUsage when skipExtKeyUsageCheck is true', async () => {
@@ -1241,9 +1238,7 @@ describe('ConnectionPool checkServerIdentity (TLS identity verification)', () =>
 
 describe('ConnectionPool _createTLSSocket authorization failure', () => {
   it('rejects when the TLS socket reports unauthorized', async () => {
-    const pool = new ConnectionPool(
-      makeConfig({ peers: [{ id: 2, host: 'peer-2.local', port: 5002 }] }),
-    );
+    const pool = new ConnectionPool(makeConfig({ peers: [{ id: 2, host: 'peer-2.local', port: 5002 }] }));
     // Override tls.connect behavior so the connect callback sees
     // socket.authorized === false.
     tlsConnectBehavior = (opts, cb) => {
@@ -1260,9 +1255,7 @@ describe('ConnectionPool _createTLSSocket authorization failure', () => {
   });
 
   it('defaults the authorization error message to unknown when absent', async () => {
-    const pool = new ConnectionPool(
-      makeConfig({ peers: [{ id: 2, host: 'peer-2.local', port: 5002 }] }),
-    );
+    const pool = new ConnectionPool(makeConfig({ peers: [{ id: 2, host: 'peer-2.local', port: 5002 }] }));
     tlsConnectBehavior = (opts, cb) => {
       const socket = createMockSocket();
       socket.authorized = false;

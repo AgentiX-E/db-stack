@@ -10,8 +10,8 @@
  * Emits onHighLag events when lag exceeds configurable thresholds.
  */
 
-import type { IMultiLeaderReplication } from "../interfaces/replication/IMultiLeaderReplication";
-import type { ReplicationStatus } from "../interfaces/replication/IMultiLeaderReplication";
+import type { IMultiLeaderReplication } from '../interfaces/replication/IMultiLeaderReplication';
+import type { ReplicationStatus } from '../interfaces/replication/IMultiLeaderReplication';
 
 export interface HealthMonitorConfig {
   /** Interval between health checks (ms) — default 5000 */
@@ -30,7 +30,7 @@ export interface TargetHealth {
   lastSuccessAt: number | null;
   lastErrorAt: number | null;
   lastErrorMessage: string | null;
-  status: "healthy" | "warning" | "critical" | "unknown";
+  status: 'healthy' | 'warning' | 'critical' | 'unknown';
 }
 
 export interface FederationHealth {
@@ -103,7 +103,7 @@ export class HealthMonitor {
       status = await this.replication.getStatus();
     } catch {
       // Replication not started or unavailable
-      status = { nodeId: "unknown", dc: "unknown", targets: [] };
+      status = { nodeId: 'unknown', dc: 'unknown', targets: [] };
     }
 
     const targets: TargetHealth[] = status.targets.map((t) => {
@@ -126,15 +126,15 @@ export class HealthMonitor {
       uptimeMs: Date.now() - this.startedAt,
       startedAt: this.startedAt,
       totalTargets: targets.length,
-      healthyTargets: targets.filter((t) => t.status === "healthy").length,
-      warningTargets: targets.filter((t) => t.status === "warning").length,
-      criticalTargets: targets.filter((t) => t.status === "critical").length,
+      healthyTargets: targets.filter((t) => t.status === 'healthy').length,
+      warningTargets: targets.filter((t) => t.status === 'warning').length,
+      criticalTargets: targets.filter((t) => t.status === 'critical').length,
       targets,
     };
 
     // Fire high-lag callbacks
     for (const t of targets) {
-      if (t.status !== "healthy" && t.lagMs > 0) {
+      if (t.status !== 'healthy' && t.lagMs > 0) {
         for (const cb of this.highLagCallbacks) {
           cb(t.targetNodeId, t.lagMs);
         }
@@ -174,11 +174,11 @@ export class HealthMonitor {
   /**
    * Classify target health based on lag and connection status.
    */
-  private classifyHealth(lagMs: number, connected: boolean): TargetHealth["status"] {
-    if (!connected) return "unknown";
-    if (lagMs === 0) return "healthy";
-    if (lagMs < this.config.highLagThresholdMs) return "healthy";
-    if (lagMs < this.config.criticalLagThresholdMs) return "warning";
-    return "critical";
+  private classifyHealth(lagMs: number, connected: boolean): TargetHealth['status'] {
+    if (!connected) return 'unknown';
+    if (lagMs === 0) return 'healthy';
+    if (lagMs < this.config.highLagThresholdMs) return 'healthy';
+    if (lagMs < this.config.criticalLagThresholdMs) return 'warning';
+    return 'critical';
   }
 }

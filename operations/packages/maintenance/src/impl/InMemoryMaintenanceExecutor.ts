@@ -28,10 +28,30 @@ const DEFAULT_STORAGE: StorageStats = {
 };
 
 const DEFAULT_FRAGMENTATION: IndexFragmentation[] = [
-  { indexName: 'idx_users_email', tableName: 'users', pageCount: 1200, fragmentationRatio: 0.45 },
-  { indexName: 'idx_orders_user_id', tableName: 'orders', pageCount: 3400, fragmentationRatio: 0.33 },
-  { indexName: 'idx_orders_created_at', tableName: 'orders', pageCount: 2100, fragmentationRatio: 0.18 },
-  { indexName: 'idx_products_name', tableName: 'products', pageCount: 800, fragmentationRatio: 0.05 },
+  {
+    indexName: 'idx_users_email',
+    tableName: 'users',
+    pageCount: 1200,
+    fragmentationRatio: 0.45,
+  },
+  {
+    indexName: 'idx_orders_user_id',
+    tableName: 'orders',
+    pageCount: 3400,
+    fragmentationRatio: 0.33,
+  },
+  {
+    indexName: 'idx_orders_created_at',
+    tableName: 'orders',
+    pageCount: 2100,
+    fragmentationRatio: 0.18,
+  },
+  {
+    indexName: 'idx_products_name',
+    tableName: 'products',
+    pageCount: 800,
+    fragmentationRatio: 0.05,
+  },
 ];
 
 /**
@@ -104,9 +124,7 @@ export class InMemoryMaintenanceExecutor implements IMaintenanceExecutor {
       success: true,
       operation: 'VACUUM',
       target: options.target,
-      message: isFull
-        ? `Full VACUUM completed on ${options.target}`
-        : `VACUUM completed on ${options.target}`,
+      message: isFull ? `Full VACUUM completed on ${options.target}` : `VACUUM completed on ${options.target}`,
       durationMs,
       details: { dryRun: false, full: isFull },
     };
@@ -140,9 +158,7 @@ export class InMemoryMaintenanceExecutor implements IMaintenanceExecutor {
 
     // Reduce fragmentation for matching targets
     for (const frag of this._fragmentation) {
-      const matchesTarget =
-        frag.indexName === options.target ||
-        (options.isTable && frag.tableName === options.target);
+      const matchesTarget = frag.indexName === options.target || (options.isTable && frag.tableName === options.target);
       if (matchesTarget) {
         frag.fragmentationRatio = Math.max(0.02, frag.fragmentationRatio * 0.1);
         frag.fragmentationRatio = Math.round(frag.fragmentationRatio * 1000) / 1000;
@@ -161,7 +177,10 @@ export class InMemoryMaintenanceExecutor implements IMaintenanceExecutor {
         ? `REINDEX table ${options.target} completed`
         : `REINDEX index ${options.target} completed`,
       durationMs,
-      details: { dryRun: options.dryRun ?? false, isTable: options.isTable ?? false },
+      details: {
+        dryRun: options.dryRun ?? false,
+        isTable: options.isTable ?? false,
+      },
     };
     this._opsLog.push(result);
     return result;

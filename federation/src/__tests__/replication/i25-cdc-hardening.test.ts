@@ -8,12 +8,12 @@
  * CDC13-CDC15: Edge cases (zero events, rapid connect/disconnect, concurrent emits)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { CDCSinkResolver, type ResolverHealth, type FailureEvent } from "../../replication/CDCSinkResolver";
-import { CDCBenchRunner, type CDCBenchReport } from "../../replication/CDCBenchRunner";
-import { CDCFailureInjector, type FailureConfig } from "../../replication/CDCFailureInjector";
-import { InMemoryCDCSink } from "../../replication/InMemoryCDCSink";
-import type { ICDCSink, CDCEvent } from "../../interfaces/replication/ICDCSink";
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { CDCSinkResolver, type ResolverHealth, type FailureEvent } from '../../replication/CDCSinkResolver';
+import { CDCBenchRunner, type CDCBenchReport } from '../../replication/CDCBenchRunner';
+import { CDCFailureInjector, type FailureConfig } from '../../replication/CDCFailureInjector';
+import { InMemoryCDCSink } from '../../replication/InMemoryCDCSink';
+import type { ICDCSink, CDCEvent } from '../../interfaces/replication/ICDCSink';
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -24,8 +24,8 @@ function delay(ms: number): Promise<void> {
 function makeEvents(count: number, startIdx = 0): CDCEvent[] {
   return Array.from({ length: count }, (_, i) => ({
     id: `evt-${startIdx + i}`,
-    type: "insert" as const,
-    table: "test_table",
+    type: 'insert' as const,
+    table: 'test_table',
     key: `key-${startIdx + i}`,
     data: { idx: startIdx + i },
     timestamp: BigInt(Date.now()),
@@ -35,7 +35,7 @@ function makeEvents(count: number, startIdx = 0): CDCEvent[] {
 // ── FailingSink (for retry testing) ────────────────────────
 
 class FailingSink implements ICDCSink {
-  readonly name = "failing-sink";
+  readonly name = 'failing-sink';
   private _connected = false;
   private emitFails = 0;
   private failCount: number;
@@ -50,7 +50,7 @@ class FailingSink implements ICDCSink {
   async connect(): Promise<void> {
     if (this.connectFails < this.connectFailCount) {
       this.connectFails++;
-      throw new Error("simulated connect failure");
+      throw new Error('simulated connect failure');
     }
     this._connected = true;
   }
@@ -60,34 +60,39 @@ class FailingSink implements ICDCSink {
   }
 
   async emit(events: CDCEvent[]): Promise<void> {
-    if (!this._connected) throw new Error("not connected");
+    if (!this._connected) throw new Error('not connected');
     if (this.emitFails < this.failCount) {
       this.emitFails++;
-      throw new Error("simulated emit failure");
+      throw new Error('simulated emit failure');
     }
   }
 
-  get connected(): boolean { return this._connected; }
+  get connected(): boolean {
+    return this._connected;
+  }
 }
 
 // ── CDC1-CDC3: CDCSinkResolver ────────────────────────────
 
-describe("CDC1: CDCSinkResolver — connection retry", () => {
-  it("succeeds on first attempt when sink is healthy", async () => {
+describe('CDC1: CDCSinkResolver — connection retry', () => {
+  it('succeeds on first attempt when sink is healthy', async () => {
     const sink = new InMemoryCDCSink();
-    const resolver = new CDCSinkResolver(sink, { maxRetries: 3, retryBaseMs: 5 });
+    const resolver = new CDCSinkResolver(sink, {
+      maxRetries: 3,
+      retryBaseMs: 5,
+    });
     await resolver.connect();
     expect(resolver.connected).toBe(true);
     await resolver.disconnect();
   });
 
-  it("retries on connection failure and succeeds", async () => {
+  it('retries on connection failure and succeeds', async () => {
     // Fails first connect, succeeds second
     const sink = new FailingSink({ failConnects: 1 });
     const resolver = new CDCSinkResolver(sink, {
       maxRetries: 3,
       retryBaseMs: 5,
-      retryStrategy: "fixed",
+      retryStrategy: 'fixed',
     });
 
     await resolver.connect();
@@ -95,23 +100,23 @@ describe("CDC1: CDCSinkResolver — connection retry", () => {
     await resolver.disconnect();
   });
 
-  it("throws after exhausting all retries", async () => {
+  it('throws after exhausting all retries', async () => {
     const sink = new FailingSink({ failConnects: 10 });
     const resolver = new CDCSinkResolver(sink, {
       maxRetries: 3,
       retryBaseMs: 5,
-      retryStrategy: "fixed",
+      retryStrategy: 'fixed',
     });
 
-    await expect(resolver.connect()).rejects.toThrow("connection failed after");
+    await expect(resolver.connect()).rejects.toThrow('connection failed after');
   });
 
-  it("emits failure events on retry exhaustion", async () => {
+  it('emits failure events on retry exhaustion', async () => {
     const sink = new FailingSink({ failConnects: 10 });
     const resolver = new CDCSinkResolver(sink, {
       maxRetries: 2,
       retryBaseMs: 5,
-      retryStrategy: "fixed",
+      retryStrategy: 'fixed',
     });
 
     const failures: FailureEvent[] = [];
@@ -119,12 +124,12 @@ describe("CDC1: CDCSinkResolver — connection retry", () => {
 
     await expect(resolver.connect()).rejects.toThrow();
     expect(failures.length).toBe(1);
-    expect(failures[0]!.mode.type).toBe("retry_exhausted");
+    expect(failures[0]!.mode.type).toBe('retry_exhausted');
   });
 });
 
-describe("CDC2: CDCSinkResolver — batch splitting", () => {
-  it("emits a single batch when below maxBatchSize", async () => {
+describe('CDC2: CDCSinkResolver — batch splitting', () => {
+  it('emits a single batch when below maxBatchSize', async () => {
     const sink = new InMemoryCDCSink();
     const resolver = new CDCSinkResolver(sink, { maxBatchSize: 100 });
 
@@ -136,7 +141,7 @@ describe("CDC2: CDCSinkResolver — batch splitting", () => {
     await resolver.disconnect();
   });
 
-  it("splits large batch into multiple emits", async () => {
+  it('splits large batch into multiple emits', async () => {
     const sink = new InMemoryCDCSink();
     const resolver = new CDCSinkResolver(sink, { maxBatchSize: 100 });
 
@@ -148,7 +153,7 @@ describe("CDC2: CDCSinkResolver — batch splitting", () => {
     await resolver.disconnect();
   });
 
-  it("zero events emit is a no-op", async () => {
+  it('zero events emit is a no-op', async () => {
     const sink = new InMemoryCDCSink();
     const resolver = new CDCSinkResolver(sink);
 
@@ -159,8 +164,8 @@ describe("CDC2: CDCSinkResolver — batch splitting", () => {
   });
 });
 
-describe("CDC3: CDCSinkResolver — health checks", () => {
-  it("publishes health status on connect", async () => {
+describe('CDC3: CDCSinkResolver — health checks', () => {
+  it('publishes health status on connect', async () => {
     const sink = new InMemoryCDCSink();
     const resolver = new CDCSinkResolver(sink, { healthCheckIntervalMs: 0 });
 
@@ -175,7 +180,7 @@ describe("CDC3: CDCSinkResolver — health checks", () => {
     await resolver.disconnect();
   });
 
-  it("reports correct emit counters", async () => {
+  it('reports correct emit counters', async () => {
     const sink = new InMemoryCDCSink();
     const resolver = new CDCSinkResolver(sink, { healthCheckIntervalMs: 0 });
 
@@ -192,7 +197,7 @@ describe("CDC3: CDCSinkResolver — health checks", () => {
     await resolver.disconnect();
   });
 
-  it("unsubscribe removes listener", async () => {
+  it('unsubscribe removes listener', async () => {
     const sink = new InMemoryCDCSink();
     const resolver = new CDCSinkResolver(sink, { healthCheckIntervalMs: 0 });
 
@@ -211,8 +216,8 @@ describe("CDC3: CDCSinkResolver — health checks", () => {
 
 // ── CDC4-CDC6: CDCBenchRunner ─────────────────────────────
 
-describe("CDC4: CDCBenchRunner — basic benchmarks", () => {
-  it("runs a full benchmark suite", async () => {
+describe('CDC4: CDCBenchRunner — basic benchmarks', () => {
+  it('runs a full benchmark suite', async () => {
     const sink = new InMemoryCDCSink();
     const bench = new CDCBenchRunner({
       totalEvents: 100,
@@ -229,7 +234,7 @@ describe("CDC4: CDCBenchRunner — basic benchmarks", () => {
     expect(report.overallEps).toBeGreaterThan(0);
   });
 
-  it("single batch size benchmark returns correct metrics", async () => {
+  it('single batch size benchmark returns correct metrics', async () => {
     const sink = new InMemoryCDCSink();
     const bench = new CDCBenchRunner({
       totalEvents: 500,
@@ -244,8 +249,8 @@ describe("CDC4: CDCBenchRunner — basic benchmarks", () => {
   });
 });
 
-describe("CDC5: CDCBenchRunner — latency percentiles", () => {
-  it("computes correct percentile values", async () => {
+describe('CDC5: CDCBenchRunner — latency percentiles', () => {
+  it('computes correct percentile values', async () => {
     const sink = new InMemoryCDCSink();
     const bench = new CDCBenchRunner();
 
@@ -257,7 +262,7 @@ describe("CDC5: CDCBenchRunner — latency percentiles", () => {
     expect(latencies.mean).toBeGreaterThanOrEqual(0);
   });
 
-  it("different batch sizes produce different throughput", async () => {
+  it('different batch sizes produce different throughput', async () => {
     const sink = new InMemoryCDCSink();
     const bench = new CDCBenchRunner({
       totalEvents: 200,
@@ -275,8 +280,8 @@ describe("CDC5: CDCBenchRunner — latency percentiles", () => {
   });
 });
 
-describe("CDC6: CDCBenchRunner — edge cases", () => {
-  it("handles empty batch sizes gracefully", async () => {
+describe('CDC6: CDCBenchRunner — edge cases', () => {
+  it('handles empty batch sizes gracefully', async () => {
     const sink = new InMemoryCDCSink();
     const bench = new CDCBenchRunner({
       totalEvents: 100,
@@ -289,7 +294,7 @@ describe("CDC6: CDCBenchRunner — edge cases", () => {
     expect(report.totalEvents).toBe(0);
   });
 
-  it("latency bench with large sample size", async () => {
+  it('latency bench with large sample size', async () => {
     const sink = new InMemoryCDCSink();
     const bench = new CDCBenchRunner();
 
@@ -301,59 +306,51 @@ describe("CDC6: CDCBenchRunner — edge cases", () => {
 
 // ── CDC7-CDC9: CDCFailureInjector ─────────────────────────
 
-describe("CDC7: CDCFailureInjector — connection failures", () => {
-  it("injects connection drop on connect", async () => {
+describe('CDC7: CDCFailureInjector — connection failures', () => {
+  it('injects connection drop on connect', async () => {
     const sink = new InMemoryCDCSink();
-    const injector = new CDCFailureInjector(sink, [
-      { type: "connection_drop", probability: 1.0 },
-    ]);
+    const injector = new CDCFailureInjector(sink, [{ type: 'connection_drop', probability: 1.0 }]);
 
-    await expect(injector.connect()).rejects.toThrow("injected connection failure");
+    await expect(injector.connect()).rejects.toThrow('injected connection failure');
     expect(injector.connected).toBe(false);
   });
 
-  it("injects connection drop during emit", async () => {
+  it('injects connection drop during emit', async () => {
     const sink = new InMemoryCDCSink();
-    const injector = new CDCFailureInjector(sink, [
-      { type: "connection_drop", probability: 1.0 },
-    ]);
+    const injector = new CDCFailureInjector(sink, [{ type: 'connection_drop', probability: 1.0 }]);
 
     // Connect succeeds (no connect failure configured in this scenario)
     // But we need connect to work... use failEveryN with emit-based
     const injector2 = new CDCFailureInjector(new InMemoryCDCSink(), [
-      { type: "connection_drop", failEveryN: 1, maxFailures: 1 },
+      { type: 'connection_drop', failEveryN: 1, maxFailures: 1 },
     ]);
 
     await injector2.connect();
     const events = makeEvents(10);
 
     // First emit should trigger the connection drop
-    await expect(injector2.emit(events)).rejects.toThrow("injected connection drop");
+    await expect(injector2.emit(events)).rejects.toThrow('injected connection drop');
     expect(injector2.failureCount).toBe(1);
   });
 });
 
-describe("CDC8: CDCFailureInjector — emit failures", () => {
-  it("injects partial emit failure", async () => {
+describe('CDC8: CDCFailureInjector — emit failures', () => {
+  it('injects partial emit failure', async () => {
     const sink = new InMemoryCDCSink();
-    const injector = new CDCFailureInjector(sink, [
-      { type: "partial_emit", failEveryN: 1, maxFailures: 1 },
-    ]);
+    const injector = new CDCFailureInjector(sink, [{ type: 'partial_emit', failEveryN: 1, maxFailures: 1 }]);
 
     await injector.connect();
     const events = makeEvents(10);
 
-    await expect(injector.emit(events)).rejects.toThrow("partial emit");
+    await expect(injector.emit(events)).rejects.toThrow('partial emit');
     // First half should have been emitted
     expect(sink.getEvents()).toHaveLength(5);
     expect(injector.failureCount).toBe(1);
   });
 
-  it("injects duplicate events", async () => {
+  it('injects duplicate events', async () => {
     const sink = new InMemoryCDCSink();
-    const injector = new CDCFailureInjector(sink, [
-      { type: "duplicate_inject", failEveryN: 1, maxFailures: 1 },
-    ]);
+    const injector = new CDCFailureInjector(sink, [{ type: 'duplicate_inject', failEveryN: 1, maxFailures: 1 }]);
 
     await injector.connect();
     const events = makeEvents(5);
@@ -364,11 +361,9 @@ describe("CDC8: CDCFailureInjector — emit failures", () => {
     expect(injector.failureCount).toBe(1);
   });
 
-  it("injects reordered events", async () => {
+  it('injects reordered events', async () => {
     const sink = new InMemoryCDCSink();
-    const injector = new CDCFailureInjector(sink, [
-      { type: "reorder_inject", failEveryN: 1, maxFailures: 1 },
-    ]);
+    const injector = new CDCFailureInjector(sink, [{ type: 'reorder_inject', failEveryN: 1, maxFailures: 1 }]);
 
     await injector.connect();
     const events = makeEvents(5); // id: evt-0 .. evt-4
@@ -377,15 +372,20 @@ describe("CDC8: CDCFailureInjector — emit failures", () => {
     const emitted = sink.getEvents();
     expect(emitted).toHaveLength(5);
     // Check they're in reverse order
-    expect(emitted[0]!.id).toBe("evt-4");
-    expect(emitted[4]!.id).toBe("evt-0");
+    expect(emitted[0]!.id).toBe('evt-4');
+    expect(emitted[4]!.id).toBe('evt-0');
     expect(injector.failureCount).toBe(1);
   });
 
-  it("latency spike injection adds delay", async () => {
+  it('latency spike injection adds delay', async () => {
     const sink = new InMemoryCDCSink();
     const injector = new CDCFailureInjector(sink, [
-      { type: "latency_spike", probability: 1.0, latencyMs: 50, maxFailures: 1 },
+      {
+        type: 'latency_spike',
+        probability: 1.0,
+        latencyMs: 50,
+        maxFailures: 1,
+      },
     ]);
 
     await injector.connect();
@@ -400,16 +400,14 @@ describe("CDC8: CDCFailureInjector — emit failures", () => {
   });
 });
 
-describe("CDC9: CDCFailureInjector — probabilistic vs deterministic", () => {
-  it("probabilistic failures trigger stochastically", async () => {
+describe('CDC9: CDCFailureInjector — probabilistic vs deterministic', () => {
+  it('probabilistic failures trigger stochastically', async () => {
     const sink = new InMemoryCDCSink();
     // Use latency_spike (not connection_drop) so a single injected failure
     // does not disconnect the sink and cascade into N "not connected"
     // failures. Its probability branch calls Math.random exactly once per
     // emit, which we control deterministically below.
-    const injector = new CDCFailureInjector(sink, [
-      { type: "latency_spike", probability: 0.01, latencyMs: 1 },
-    ]);
+    const injector = new CDCFailureInjector(sink, [{ type: 'latency_spike', probability: 0.01, latencyMs: 1 }]);
 
     await injector.connect();
 
@@ -417,10 +415,8 @@ describe("CDC9: CDCFailureInjector — probabilistic vs deterministic", () => {
     // 0.01 threshold for most emits (no injection) and below it for a chosen
     // few (injection). This removes flakiness while still exercising the real
     // `Math.random() < probability` branch.
-    const sequence = Array.from({ length: 50 }, (_, i) =>
-      i === 7 || i === 29 ? 0.005 : 0.5,
-    );
-    const randomSpy = vi.spyOn(Math, "random").mockImplementation(() => {
+    const sequence = Array.from({ length: 50 }, (_, i) => (i === 7 || i === 29 ? 0.005 : 0.5));
+    const randomSpy = vi.spyOn(Math, 'random').mockImplementation(() => {
       return sequence.shift() ?? 0.5;
     });
 
@@ -435,31 +431,36 @@ describe("CDC9: CDCFailureInjector — probabilistic vs deterministic", () => {
     expect(injector.totalEmits).toBe(50);
   });
 
-  it("deterministic every-N failure fires predictably", async () => {
+  it('deterministic every-N failure fires predictably', async () => {
     const sink = new InMemoryCDCSink();
     // Use latency_spike instead of connection_drop — it doesn't disconnect,
     // so subsequent emits still work
     const injector = new CDCFailureInjector(sink, [
-      { type: "latency_spike", probability: 1.0, latencyMs: 1, failEveryN: 3, maxFailures: 2 },
+      {
+        type: 'latency_spike',
+        probability: 1.0,
+        latencyMs: 1,
+        failEveryN: 3,
+        maxFailures: 2,
+      },
     ]);
 
     await injector.connect();
 
-    let spikes = 0;
     const t0 = Date.now();
     // Emit 10 times — spikes at emit #3 and #6 (every 3, max 2)
     for (let i = 0; i < 10; i++) {
       await injector.emit(makeEvents(1));
     }
-    spikes = injector.failureCount;
+    const spikes = injector.failureCount;
 
     expect(spikes).toBe(2);
   });
 
-  it("maxFailures limits total fault injections", async () => {
+  it('maxFailures limits total fault injections', async () => {
     const sink = new InMemoryCDCSink();
     const injector = new CDCFailureInjector(sink, [
-      { type: "latency_spike", probability: 1.0, latencyMs: 1, maxFailures: 3 },
+      { type: 'latency_spike', probability: 1.0, latencyMs: 1, maxFailures: 3 },
     ]);
 
     await injector.connect();
@@ -474,14 +475,14 @@ describe("CDC9: CDCFailureInjector — probabilistic vs deterministic", () => {
 
 // ── CDC10-CDC12: Integrated Hardening ─────────────────────
 
-describe("CDC10: Integrated retry + failure injector", () => {
-  it("resolution handles transient connection failures", async () => {
+describe('CDC10: Integrated retry + failure injector', () => {
+  it('resolution handles transient connection failures', async () => {
     // FailingSink fails once then succeeds
     const sink = new FailingSink({ failConnects: 1 });
     const resolver = new CDCSinkResolver(sink, {
       maxRetries: 5,
       retryBaseMs: 5,
-      retryStrategy: "fixed",
+      retryStrategy: 'fixed',
     });
 
     await resolver.connect();
@@ -494,12 +495,10 @@ describe("CDC10: Integrated retry + failure injector", () => {
     await resolver.disconnect();
   });
 
-  it("resolution + injector verify exactly-once under fault", async () => {
+  it('resolution + injector verify exactly-once under fault', async () => {
     // Use InMemory sink + failure injector + resolver wrapping
     const sink = new InMemoryCDCSink();
-    const injector = new CDCFailureInjector(sink, [
-      { type: "duplicate_inject", failEveryN: 5, maxFailures: 2 },
-    ]);
+    const injector = new CDCFailureInjector(sink, [{ type: 'duplicate_inject', failEveryN: 5, maxFailures: 2 }]);
     const resolver = new CDCSinkResolver(injector, { maxBatchSize: 50 });
 
     await resolver.connect();
@@ -526,14 +525,14 @@ describe("CDC10: Integrated retry + failure injector", () => {
   });
 });
 
-describe("CDC11: Failure recovery patterns", () => {
-  it("resolver recovers after multiple emit failures", async () => {
+describe('CDC11: Failure recovery patterns', () => {
+  it('resolver recovers after multiple emit failures', async () => {
     // Sink that fails 3 times then works
     const sink = new FailingSink({ failEmits: 3 });
     const resolver = new CDCSinkResolver(sink, {
       maxRetries: 5,
       retryBaseMs: 5,
-      retryStrategy: "fixed",
+      retryStrategy: 'fixed',
     });
 
     await resolver.connect();
@@ -556,12 +555,12 @@ describe("CDC11: Failure recovery patterns", () => {
     await resolver.disconnect();
   });
 
-  it("reports accurate failure metrics", async () => {
+  it('reports accurate failure metrics', async () => {
     const sink = new FailingSink({ failEmits: 2 });
     const resolver = new CDCSinkResolver(sink, {
       maxRetries: 3,
       retryBaseMs: 5,
-      retryStrategy: "fixed",
+      retryStrategy: 'fixed',
     });
 
     const failures: FailureEvent[] = [];
@@ -573,7 +572,9 @@ describe("CDC11: Failure recovery patterns", () => {
     for (let i = 0; i < 5; i++) {
       try {
         await resolver.emit(makeEvents(1));
-      } catch { /* retry exhausted */ }
+      } catch {
+        /* retry exhausted */
+      }
     }
 
     const health = resolver.getHealth();
@@ -584,12 +585,10 @@ describe("CDC11: Failure recovery patterns", () => {
   });
 });
 
-describe("CDC12: Bench + Injector integration", () => {
-  it("benchmark works with failure-injected sink", async () => {
+describe('CDC12: Bench + Injector integration', () => {
+  it('benchmark works with failure-injected sink', async () => {
     const sink = new InMemoryCDCSink();
-    const injector = new CDCFailureInjector(sink, [
-      { type: "latency_spike", probability: 0.05, latencyMs: 1 },
-    ]);
+    const injector = new CDCFailureInjector(sink, [{ type: 'latency_spike', probability: 0.05, latencyMs: 1 }]);
     const bench = new CDCBenchRunner({
       totalEvents: 100,
       batchSizes: [50],
@@ -605,15 +604,15 @@ describe("CDC12: Bench + Injector integration", () => {
 
 // ── CDC13-CDC15: Edge Cases ───────────────────────────────
 
-describe("CDC13: Resolver edge cases", () => {
-  it("emit when disconnected throws", async () => {
+describe('CDC13: Resolver edge cases', () => {
+  it('emit when disconnected throws', async () => {
     const sink = new InMemoryCDCSink();
     const resolver = new CDCSinkResolver(sink, { maxBatchSize: 100 });
 
-    await expect(resolver.emit(makeEvents(10))).rejects.toThrow("disconnected");
+    await expect(resolver.emit(makeEvents(10))).rejects.toThrow('disconnected');
   });
 
-  it("double disconnect is safe", async () => {
+  it('double disconnect is safe', async () => {
     const sink = new InMemoryCDCSink();
     const resolver = new CDCSinkResolver(sink);
 
@@ -624,7 +623,7 @@ describe("CDC13: Resolver edge cases", () => {
     expect(resolver.connected).toBe(false);
   });
 
-  it("batch exactly at maxBatchSize boundary", async () => {
+  it('batch exactly at maxBatchSize boundary', async () => {
     const sink = new InMemoryCDCSink();
     const resolver = new CDCSinkResolver(sink, { maxBatchSize: 100 });
 
@@ -636,11 +635,11 @@ describe("CDC13: Resolver edge cases", () => {
   });
 });
 
-describe("CDC14: Failure injector edge cases", () => {
-  it("reset clears counters but preserves config", async () => {
+describe('CDC14: Failure injector edge cases', () => {
+  it('reset clears counters but preserves config', async () => {
     const sink = new InMemoryCDCSink();
     const injector = new CDCFailureInjector(sink, [
-      { type: "latency_spike", probability: 1.0, latencyMs: 1, maxFailures: 1 },
+      { type: 'latency_spike', probability: 1.0, latencyMs: 1, maxFailures: 1 },
     ]);
 
     await injector.connect();
@@ -658,7 +657,7 @@ describe("CDC14: Failure injector edge cases", () => {
     expect(injector.failureCount).toBe(1);
   });
 
-  it("no failures configured → pass-through", async () => {
+  it('no failures configured → pass-through', async () => {
     const sink = new InMemoryCDCSink();
     const injector = new CDCFailureInjector(sink, []);
 
@@ -670,8 +669,8 @@ describe("CDC14: Failure injector edge cases", () => {
   });
 });
 
-describe("CDC15: Bench runner edge cases", () => {
-  it("warmupEvents = 0 works correctly", async () => {
+describe('CDC15: Bench runner edge cases', () => {
+  it('warmupEvents = 0 works correctly', async () => {
     const sink = new InMemoryCDCSink();
     const bench = new CDCBenchRunner({
       totalEvents: 10,
@@ -683,7 +682,7 @@ describe("CDC15: Bench runner edge cases", () => {
     expect(report.batches[0]!.totalEvents).toBe(10);
   });
 
-  it("latency bench percentile ordering is monotonic", async () => {
+  it('latency bench percentile ordering is monotonic', async () => {
     const sink = new InMemoryCDCSink();
     const bench = new CDCBenchRunner();
 

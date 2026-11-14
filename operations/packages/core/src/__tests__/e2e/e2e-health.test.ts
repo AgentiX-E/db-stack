@@ -1,9 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryEngineFactory } from './InMemoryEngineFactory.js';
 
-describe.each([
-  { name: 'InMemory', factory: new InMemoryEngineFactory() },
-])('$name e2e: Health', ({ factory }) => {
+describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$name e2e: Health', ({ factory }) => {
   afterAll(async () => {
     await factory.cleanup();
   });

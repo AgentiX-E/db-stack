@@ -43,7 +43,7 @@ describe('BackupVerifier', () => {
     const start = performance.now();
     const checksum = verifier.calculateChecksum(data);
     const elapsed = performance.now() - start;
-    
+
     expect(checksum).toHaveLength(64);
     expect(elapsed).toBeLessThan(500); // 1MB 应在 500ms 内完成
   });
@@ -157,9 +157,10 @@ describe('BackupVerifier', () => {
   // ── Precise durationMs (kills the `-`→`+` elapsed-time mutant) ──
 
   it('verify reports the exact elapsed milliseconds', async () => {
-    const spy = vi.spyOn(Date, 'now')
-      .mockReturnValueOnce(1_000)   // start
-      .mockReturnValueOnce(1_234);  // end
+    const spy = vi
+      .spyOn(Date, 'now')
+      .mockReturnValueOnce(1_000) // start
+      .mockReturnValueOnce(1_234); // end
     const data = Buffer.from('x');
     const result = await verifier.verify('bp-dur', data);
     expect(result.durationMs).toBe(234);
@@ -167,10 +168,10 @@ describe('BackupVerifier', () => {
   });
 
   it('verifyStream reports the exact elapsed milliseconds', async () => {
-    const spy = vi.spyOn(Date, 'now')
-      .mockReturnValueOnce(5_000)
-      .mockReturnValueOnce(5_150);
-    async function* gen(): AsyncIterable<Buffer> { yield Buffer.from('a'); }
+    const spy = vi.spyOn(Date, 'now').mockReturnValueOnce(5_000).mockReturnValueOnce(5_150);
+    async function* gen(): AsyncIterable<Buffer> {
+      yield Buffer.from('a');
+    }
     const result = await verifier.verifyStream(gen());
     expect(result.durationMs).toBe(150);
     spy.mockRestore();

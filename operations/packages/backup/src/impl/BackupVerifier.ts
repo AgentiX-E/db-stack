@@ -1,41 +1,41 @@
 /**
- * BackupVerifier — 备份完整性验证器。
+ * BackupVerifier — backup integrity verifier.
  *
- * 提供 SHA-256 校验和计算 + 备份完整性验证：
- * - 计算备份 checksum
- * - 验证备份数据完整性（bit-exact）
- * - 增量校验（大文件分块验证）
+ * Computes SHA-256 checksums and verifies backup integrity:
+ * - computes the backup checksum
+ * - verifies integrity bit-exactly
+ * - incremental verification (chunked verification of large files)
  *
  * @module backup
  */
 
 import crypto from 'crypto';
 
-// ── 类型 ──────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────
 
 export interface VerifyOptions {
-  /** 期望的 SHA-256 hash（hex），传入时进行 bit-exact 比对 */
+  /** Expected SHA-256 hash (hex); compared bit-exactly when supplied */
   expectedChecksum?: string;
-  /** 分块大小（用于大文件增量校验，默认 64KB） */
+  /** Chunk size (incremental verification of large files; 64KB by default) */
   chunkSize?: number;
-  /** 是否验证后删除临时数据 */
+  /** Whether temporary data is deleted after verification */
   cleanup?: boolean;
 }
 
 export interface VerifyResult {
-  /** 是否通过验证 */
+  /** Whether verification passed */
   valid: boolean;
-  /** 计算的 SHA-256 */
+  /** Computed SHA-256 */
   computedChecksum: string;
-  /** 期望的 SHA-256（如果提供） */
+  /** Expected SHA-256 (when supplied) */
   expectedChecksum?: string;
-  /** 备份文件总大小（bytes） */
+  /** Total backup size (bytes) */
   totalSize: number;
-  /** 分块数（如果使用分块模式） */
+  /** Number of chunks (chunked mode only) */
   chunkCount: number;
-  /** 错误信息（如果验证失败） */
+  /** Error message (when verification failed) */
   error?: string;
-  /** 验证耗时 (ms) */
+  /** Verification duration (ms) */
   durationMs: number;
 }
 
@@ -45,19 +45,15 @@ export interface IBackupVerifier {
   calculateChecksum(data: Buffer): string;
 }
 
-// ── 实现 ──────────────────────────────────────────────────────────
+// ── Implementation ─────────────────────────────────────────────────
 
 export class BackupVerifier implements IBackupVerifier {
   private _checksums = new Map<string, string>();
 
   /**
-   * 验证备份完整性。
+   * Verify backup integrity.
    */
-  async verify(
-    backupId: string,
-    data: Buffer,
-    options: VerifyOptions = {},
-  ): Promise<VerifyResult> {
+  async verify(backupId: string, data: Buffer, options: VerifyOptions = {}): Promise<VerifyResult> {
     const start = Date.now();
     const computedChecksum = this.calculateChecksum(data);
     const durationMs = Date.now() - start;
@@ -68,7 +64,7 @@ export class BackupVerifier implements IBackupVerifier {
     let valid = true;
     let error: string | undefined;
 
-    // 与期望值比对
+    // Compare against the expected value
     if (options.expectedChecksum) {
       if (computedChecksum !== options.expectedChecksum) {
         valid = false;
@@ -76,7 +72,7 @@ export class BackupVerifier implements IBackupVerifier {
       }
     }
 
-    // 存储 checksum 用于后续比较
+    // Keep the checksum for later comparison
     this._checksums.set(backupId, computedChecksum);
 
     return {
@@ -91,12 +87,9 @@ export class BackupVerifier implements IBackupVerifier {
   }
 
   /**
-   * 从流中验证备份。
+   * Verify a backup from a stream.
    */
-  async verifyStream(
-    data: AsyncIterable<Buffer>,
-    options: VerifyOptions = {},
-  ): Promise<VerifyResult> {
+  async verifyStream(data: AsyncIterable<Buffer>, options: VerifyOptions = {}): Promise<VerifyResult> {
     const start = Date.now();
     const hash = crypto.createHash('sha256');
     let totalSize = 0;
@@ -122,21 +115,21 @@ export class BackupVerifier implements IBackupVerifier {
       computedChecksum,
       expectedChecksum: options.expectedChecksum,
       totalSize,
-      chunkCount: 0, // 流模式不计块数
+      chunkCount: 0, // streaming mode does not count chunks
       error,
       durationMs,
     };
   }
 
   /**
-   * 计算 buffer 的 SHA-256 hash。
+   * Compute the SHA-256 hash of a buffer.
    */
   calculateChecksum(data: Buffer): string {
     return crypto.createHash('sha256').update(data).digest('hex');
   }
 
   /**
-   * 获取之前验证的 checksum。
+   * Checksum computed by an earlier verification.
    */
   getStoredChecksum(backupId: string): string | undefined {
     return this._checksums.get(backupId);

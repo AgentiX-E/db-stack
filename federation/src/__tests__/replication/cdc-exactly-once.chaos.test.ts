@@ -63,7 +63,9 @@ function readCheckpoint(dir: string): number | null {
   if (!existsSync(p)) return null;
   try {
     return JSON.parse(readFileSync(p, 'utf-8')).lastLSN ?? null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 describe('CDC Exactly-Once Chaos (D2)', () => {

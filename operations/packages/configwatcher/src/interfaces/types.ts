@@ -10,13 +10,7 @@
 // ── Schema ──────────────────────────────────────────────────
 
 /** Primitive schema type. */
-export type SchemaType =
-  | "string"
-  | "number"
-  | "boolean"
-  | "integer"
-  | "array"
-  | "object";
+export type SchemaType = 'string' | 'number' | 'boolean' | 'integer' | 'array' | 'object';
 
 /** Schema definition for a single config key. */
 export interface SchemaField {
@@ -73,7 +67,7 @@ export interface ValidationWarning {
 // ── File Watcher ────────────────────────────────────────────
 
 /** Watch mode. */
-export type WatchMode = "poll" | "inotify" | "none";
+export type WatchMode = 'poll' | 'inotify' | 'none';
 
 /** Options for file-system watching. */
 export interface FileWatchOptions {
@@ -92,7 +86,7 @@ export interface FileWatchOptions {
 }
 
 /** Supported file formats. */
-export type FileFormat = "json" | "yaml" | "toml" | "env";
+export type FileFormat = 'json' | 'yaml' | 'toml' | 'env';
 
 // ── Change Event ────────────────────────────────────────────
 
@@ -115,13 +109,7 @@ export interface ConfigChangeEvent {
 }
 
 /** Origin of the change. */
-export type ChangeSource =
-  | "file_watch"
-  | "programmatic"
-  | "reload"
-  | "rollback"
-  | "initial_load"
-  | "set";
+export type ChangeSource = 'file_watch' | 'programmatic' | 'reload' | 'rollback' | 'initial_load' | 'set';
 
 // ── Diff ────────────────────────────────────────────────────
 
@@ -129,7 +117,7 @@ export type ChangeSource =
 export interface KeyDiff {
   key: string;
   /** Type of change. */
-  op: "added" | "removed" | "changed" | "unchanged";
+  op: 'added' | 'removed' | 'changed' | 'unchanged';
   /** For changed: list of nested path changes. */
   changes?: FieldChange[];
   /** For objects: old and new snapshots. */
@@ -162,7 +150,7 @@ export interface NotificationFilter {
 }
 
 /** Severity of a config change. */
-export type ChangeSeverity = "info" | "warning" | "critical";
+export type ChangeSeverity = 'info' | 'warning' | 'critical';
 
 // ── Reload Config ───────────────────────────────────────────
 
@@ -255,11 +243,7 @@ export interface IConfigWatcherV2 {
 }
 
 /** Core change handler: key plus the previous and new value. */
-export type ConfigChangeHandler = (
-  key: string,
-  oldValue: unknown,
-  newValue: unknown,
-) => void;
+export type ConfigChangeHandler = (key: string, oldValue: unknown, newValue: unknown) => void;
 
 /** Core (V1) config-watcher contract: watch / unwatch / set / get / snapshot. */
 export interface IConfigWatcher {

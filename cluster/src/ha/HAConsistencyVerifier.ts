@@ -233,7 +233,9 @@ export class HAConsistencyVerifier {
           passed: false,
           detail: `Failed to query commit index: ${getErrorMessage(err)}`,
         });
-        throw new Error(`[HAConsistencyVerifier] Cannot query commit index for shard ${shardId}: ${getErrorMessage(err)}`);
+        throw new Error(
+          `[HAConsistencyVerifier] Cannot query commit index for shard ${shardId}: ${getErrorMessage(err)}`,
+        );
       }
 
       const hasCommits = commitIndex >= 0;

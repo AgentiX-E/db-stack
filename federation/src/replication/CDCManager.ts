@@ -12,7 +12,13 @@
  * change events to the appropriate subscriptions.
  */
 
-import type { ICDCManager, ICDCPublication, CDCSubscription, ICDCEngine, CDCChangeEvent } from "../interfaces/replication/ICDCManager";
+import type {
+  ICDCManager,
+  ICDCPublication,
+  CDCSubscription,
+  ICDCEngine,
+  CDCChangeEvent,
+} from '../interfaces/replication/ICDCManager';
 
 export type CDCManagerConfig = {
   nodeId: string;
@@ -76,11 +82,7 @@ export class CDCManager implements ICDCManager {
     this.publications.delete(name);
   }
 
-  async createSubscription(
-    name: string,
-    publicationName: string,
-    targetDsn: string,
-  ): Promise<CDCSubscription> {
+  async createSubscription(name: string, publicationName: string, targetDsn: string): Promise<CDCSubscription> {
     if (this.subscriptions.has(name)) {
       throw new Error(`Subscription "${name}" already exists`);
     }
@@ -93,8 +95,8 @@ export class CDCManager implements ICDCManager {
     const sub: CDCSubscription = {
       subscriptionId: name,
       tables: [...pub.tables],
-      operations: ["insert", "update", "delete"],
-      webhookUrl: targetDsn.startsWith("http") ? targetDsn : undefined,
+      operations: ['insert', 'update', 'delete'],
+      webhookUrl: targetDsn.startsWith('http') ? targetDsn : undefined,
       createdAt: Date.now(),
     };
 

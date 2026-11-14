@@ -1,65 +1,65 @@
 /**
- * @fileoverview IClusterMembershipTransition — Joint Consensus 安全成员变更接口
+ * @fileoverview IClusterMembershipTransition — interface for safe membership changes via joint consensus
  *
- * 实现 Raft 论文 §6 描述的 Joint Consensus 两阶段成员变更：
+ * Implements the two-phase joint consensus membership change described in Raft §6:
  *   C_old → C_old_new (Joint) → C_new
  *
- * 核心安全保证：
- *   1. 任何时候至多一个活跃配置（C_old / C_old_new / C_new）
- *   2. Joint 阶段需要 C_old 和 C_new 双 majority 才能 commit
- *   3. C_new 阶段只需要 C_new 的 majority
- *   4. 不支持从 C_old 直接切换到 C_new（防止脑裂）
+ * Core safety guarantees:
+ *   1. At most one active configuration at any time (C_old / C_old_new / C_new)
+ *   2. The joint phase requires majorities of both C_old and C_new to commit
+ *   3. The C_new phase only requires a majority of C_new
+ *   4. Switching directly from C_old to C_new is rejected (prevents split brain)
  *
- * 与 RaftGroup.proposeMembershipChange 的关系：
- *   - RaftGroup 提供底层日志条目写入（propose）
- *   - IClusterMembershipTransition 提供上层编排（重试、回滚、超时、事件）
- *   - 此接口在 RaftGroupManager 层级聚合，提供跨分片协调
+ * Relationship with RaftGroup.proposeMembershipChange:
+ *   - RaftGroup writes the underlying log entry (propose)
+ *   - IClusterMembershipTransition owns orchestration (retries, rollback, timeouts, events)
+ *   - This interface is aggregated at the RaftGroupManager level for cross-shard coordination
  */
 
 import type { MembershipChange, RaftConsensusPhase } from '../../interfaces/types';
 
-/** Peer 配置 */
+/** Peer configuration */
 export interface PeerConfig {
-  /** 节点唯一标识 */
+  /** Unique node identifier */
   id: string;
-  /** 节点地址 */
+  /** Node address */
   host: string;
-  /** 节点端口 */
+  /** Node port */
   port: number;
-  /** 角色：voter（投票成员） 或 learner（非投票成员） */
+  /** Role: voter (voting member) or learner (non-voting member) */
   role: 'voter' | 'learner';
-  /** 选举优先级（仅 voter 有效） */
+  /** Election priority (voters only) */
   priority?: number;
-  /** 节点所在区域（用于拓扑感知） */
+  /** Region the node lives in (used for topology awareness) */
   region?: string;
-  /** 节点所在可用区 */
+  /** Availability zone the node lives in */
   zone?: string;
 }
 
-/** 当前过渡阶段 */
+/** Current transition phase */
 export type TransitionPhase = 'stable' | 'joint' | 'new';
 
-/** 成员变更结果 */
+/** Result of a membership change */
 export interface TransitionResult {
-  /** 是否成功 */
+  /** Whether the change succeeded */
   success: boolean;
-  /** 错误信息（失败时） */
+  /** Error message (on failure) */
   error?: string;
-  /** 旧配置 */
+  /** Previous configuration */
   oldConfig: PeerConfig[];
-  /** 新配置 */
+  /** New configuration */
   newConfig: PeerConfig[];
-  /** Joint 阶段配置（C_old ∪ C_new） */
+  /** Joint-phase configuration (C_old ∪ C_new) */
   jointConfig: PeerConfig[];
-  /** 最终提交的阶段 */
+  /** Phase that finally committed */
   committedStep: 'old' | 'joint' | 'new' | 'none';
-  /** 耗时（ms） */
+  /** Elapsed time (ms) */
   duration: number;
-  /** 变更后的活跃阶段 */
+  /** Active phase after the change */
   phase: Exclude<TransitionPhase, 'stable' | 'new'> | 'stable';
 }
 
-/** 成员变更事件 */
+/** Membership change event */
 export interface MembershipChangeEvent {
   type: 'transition_started' | 'joint_committed' | 'new_committed' | 'transition_aborted' | 'transition_failed';
   changeId: string;
@@ -70,70 +70,70 @@ export interface MembershipChangeEvent {
   error?: string;
 }
 
-/** 变更进度报告 */
+/** Progress report for an in-flight change */
 export interface TransitionProgress {
   changeId: string;
   phase: TransitionPhase;
-  /** Joint 阶段的 ack 数量 */
+  /** Number of acknowledgements received for the joint phase */
   jointAcks: { oldMajority: number; oldAcks: number; newMajority: number; newAcks: number };
-  /** 是否已超时 */
+  /** Whether the transition already timed out */
   isTimedOut: boolean;
-  /** 经过时间 (ms) */
+  /** Elapsed time (ms) */
   elapsed: number;
-  /** 预定超时时间 (ms) */
+  /** Configured timeout (ms) */
   timeoutMs: number;
 }
 
-/** 变更选项 */
+/** Transition options */
 export interface TransitionOptions {
-  /** 超时时间 (ms)，默认 30_000 */
+  /** Timeout (ms); defaults to 30_000 */
   timeoutMs?: number;
-  /** 重试次数，默认 10 */
+  /** Retry budget; defaults to 10 */
   maxRetries?: number;
-  /** 重试基时间 (ms)，默认 200 */
+  /** Base retry delay (ms); defaults to 200 */
   retryBaseMs?: number;
-  /** 是否自动触发选举（加入新节点后） */
+  /** Whether to trigger an election after a node joins */
   autoCampaign?: boolean;
-  /** 变更标识符 */
+  /** Change identifier */
   changeId?: string;
 }
 
 /**
- * IClusterMembershipTransition — Joint Consensus 安全成员变更
+ * IClusterMembershipTransition — safe membership changes through joint consensus
  *
- * 职责边界：
- *   - 只负责成员变更的编排（不负责 Raft 核心日志复制）
- *   - 不负责分片迁移（那是 IOnlineShardMigration 的职责）
- *   - 不负责集群拓扑（那是 IClusterTopology 的职责）
+ * Responsibility boundaries:
+ *   - Orchestrates membership changes only (does not replicate the Raft log itself)
+ *   - Does not migrate shards (that is IOnlineShardMigration)
+ *   - Does not own cluster topology (that is IClusterTopology)
  *
- * 安全性：
- *   使用 Raft Joint Consensus 两阶段提交保证：
- *     - 不允许从 C_old 直接到 C_new
- *     - Joint 阶段使用双 majority
- *     - 超时自动回滚
+ * Safety:
+ *   The two-phase Raft joint consensus protocol guarantees:
+ *     - a direct C_old → C_new jump is rejected
+ *     - the joint phase uses a double majority
+ *     - a timeout rolls the change back
  */
 export interface IClusterMembershipTransition {
   /**
-   * 安全地将集群从当前配置过渡到新配置。
+   * Safely move the cluster from its current configuration to a new one.
    *
-   * 过程：
-   *   1. 验证变更合法性（不能是单节点集群踢出最后一个节点）
-   *   2. 创建 C_old_new (old ∪ new)
-   *   3. 以联合 majority 提交 C_old_new 条目
-   *   4. 提交 C_new 条目（仅需新配置 majority）
-   *   5. 清理过渡状态
+   * Procedure:
+   *   1. Validate the change (a single-node cluster cannot evict its last node)
+   *   2. Create C_old_new (old ∪ new)
+   *   3. Commit the C_old_new entry behind a joint majority
+   *   4. Commit the C_new entry (only a C_new majority is required)
+   *   5. Clean up the transitional state
    *
-   * 线程安全：同一时间只能有一个 transition 在进行
+   * Thread safety: only one transition may be in flight at a time.
    */
   transitionTo(peers: PeerConfig[], options?: TransitionOptions): Promise<TransitionResult>;
 
   /**
-   * 获取当前过渡阶段
+   * Current transition phase.
    */
   getTransitionPhase(): TransitionPhase;
 
   /**
-   * 获取当前的 Joint Consensus 配置（如果正在过渡中）
+   * Current joint consensus configuration, if a transition is in flight.
    */
   getActiveTransition(): {
     changeId: string;
@@ -143,19 +143,19 @@ export interface IClusterMembershipTransition {
   } | null;
 
   /**
-   * 获取当前过渡进度
+   * Progress of the in-flight transition.
    */
   getProgress(): TransitionProgress | null;
 
   /**
-   * 中止正在进行的过渡。
-   * 仅在 C_old_new 尚未提交时安全可用。
-   * 如果 C_new 已提交，则不可中止。
+   * Abort the in-flight transition.
+   * Only safe while C_old_new has not committed.
+   * Once C_new has committed the transition can no longer be aborted.
    */
   abortTransition(): Promise<TransitionResult>;
 
   /**
-   * 注册过渡事件监听
+   * Register a listener for transition events.
    */
   onTransitionEvent(handler: (event: MembershipChangeEvent) => void): () => void;
 }

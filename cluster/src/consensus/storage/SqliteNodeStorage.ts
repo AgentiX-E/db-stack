@@ -121,8 +121,7 @@ export class SqliteLogStorage implements LogStorage {
     // When the log tail coincides with the snapshot boundary, the authoritative
     // term is the snapshot term (the on-disk row for that index was compacted
     // away); otherwise read the term of the surviving tail entry.
-    const lastTerm =
-      lastIndex > snapshotIndex ? this.sqlite.getTerm(lastIndex) : snapshotTerm;
+    const lastTerm = lastIndex > snapshotIndex ? this.sqlite.getTerm(lastIndex) : snapshotTerm;
 
     return { snapshotIndex, snapshotTerm, lastIndex, lastTerm };
   }

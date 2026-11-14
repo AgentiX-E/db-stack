@@ -96,12 +96,7 @@ function bench(label: string, fn: () => void, limitNs: number): void {
  * @param iterations - Number of iterations
  * @param minOpsPerSec - Minimum operations per second
  */
-function benchThroughput(
-  label: string,
-  fn: () => void,
-  iterations: number,
-  minOpsPerSec: number,
-): void {
+function benchThroughput(label: string, fn: () => void, iterations: number, minOpsPerSec: number): void {
   it(label, () => {
     const start = process.hrtime.bigint();
     for (let i = 0; i < iterations; i++) {

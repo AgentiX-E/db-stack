@@ -21,13 +21,13 @@
  * port and never bind a listener of their own.
  */
 
-import type { ITransport } from "../interfaces/transport/ITransport";
-import type { TransportMessage } from "../interfaces/transport/TransportMessage";
-import type { InboundMessage } from "../interfaces/transport/InboundMessage";
-import type { PeerInfo, TransportStats } from "../interfaces/types";
-import { RaftTcpTransport } from "@agentix-e/db-cluster";
-import { makeHLC } from "../hlc/HLC";
-import type { RaftTcpTransportConfig } from "@agentix-e/db-cluster";
+import type { ITransport } from '../interfaces/transport/ITransport';
+import type { TransportMessage } from '../interfaces/transport/TransportMessage';
+import type { InboundMessage } from '../interfaces/transport/InboundMessage';
+import type { PeerInfo, TransportStats } from '../interfaces/types';
+import { RaftTcpTransport } from '@agentix-e/db-cluster';
+import { makeHLC } from '../hlc/HLC';
+import type { RaftTcpTransportConfig } from '@agentix-e/db-cluster';
 
 // ── Raft message shape used on the wire ──
 
@@ -50,7 +50,11 @@ interface IRaftTransport {
   stop(): Promise<void>;
   /** Numeric ids (or `{ nodeId }` records) of peers with a live connection. */
   getConnectedPeers?(): Array<number | { nodeId?: string | number; peerId?: string }>;
-  getStatus?(): { connectedPeers: number[]; totalPeers: number; started: boolean };
+  getStatus?(): {
+    connectedPeers: number[];
+    totalPeers: number;
+    started: boolean;
+  };
   getBoundPort?(): number;
 }
 
@@ -134,10 +138,14 @@ export class TcpSecureTransport implements ITransport {
       const raftConfig: RaftTcpTransportConfig = {
         node: {
           id: this.localId,
-          host: config.listen?.host ?? "127.0.0.1",
+          host: config.listen?.host ?? '127.0.0.1',
           port: config.listen?.port ?? 0,
         },
-        peers: peers.map((p) => ({ id: p.transportNodeId, host: p.host, port: p.port })),
+        peers: peers.map((p) => ({
+          id: p.transportNodeId,
+          host: p.host,
+          port: p.port,
+        })),
         tls: { cert: config.tls.cert, key: config.tls.key, ca: config.tls.ca },
         connectTimeoutMs: config.connectTimeoutMs ?? 5000,
         initialRetryMs: config.initialRetryMs ?? 100,
@@ -173,7 +181,7 @@ export class TcpSecureTransport implements ITransport {
     const delay = Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
 
     const numericId = this.numericByLogical.get(peerId);
-    if (numericId === undefined || typeof this.transport.register !== "function") {
+    if (numericId === undefined || typeof this.transport.register !== 'function') {
       return;
     }
 
@@ -181,7 +189,11 @@ export class TcpSecureTransport implements ITransport {
     if (!peer) return;
 
     try {
-      this.transport.register({ id: numericId, host: peer.host, port: peer.port });
+      this.transport.register({
+        id: numericId,
+        host: peer.host,
+        port: peer.port,
+      });
       this._attemptCount.set(peerId, 0);
     } catch {
       const timer = setTimeout(() => {
@@ -240,7 +252,7 @@ export class TcpSecureTransport implements ITransport {
     }
 
     const raftMsg: RaftMessage = {
-      type: "federation_send",
+      type: 'federation_send',
       term: 1,
       from: String(this.localId),
       to: String(targetId),
@@ -278,10 +290,8 @@ export class TcpSecureTransport implements ITransport {
     const peers = this.getConnectedPeers();
     if (peers.length === 0) return 0;
 
-    const results = await Promise.allSettled(
-      peers.map((peer) => this.send({ ...msg, targetPeerId: peer.peerId })),
-    );
-    return results.filter((r) => r.status === "fulfilled" && r.value).length;
+    const results = await Promise.allSettled(peers.map((peer) => this.send({ ...msg, targetPeerId: peer.peerId })));
+    return results.filter((r) => r.status === 'fulfilled' && r.value).length;
   }
 
   /** Subscribe to inbound messages. Returns an unsubscribe function. */
@@ -296,16 +306,13 @@ export class TcpSecureTransport implements ITransport {
   getConnectedPeers(): PeerInfo[] {
     // Prefer the transport's dedicated accessor (numeric ids in production,
     // arbitrary records in test doubles); fall back to the status snapshot.
-    const raw =
-      this.transport.getConnectedPeers?.() ??
-      this.transport.getStatus?.().connectedPeers ??
-      [];
+    const raw = this.transport.getConnectedPeers?.() ?? this.transport.getStatus?.().connectedPeers ?? [];
 
     return raw.map((peer) => {
       const peerId = this._toLogicalId(peer);
       return {
         peerId,
-        address: "",
+        address: '',
         connectedAt: this._uptimeStart,
         latencyMs: 0,
         nodeId: peerId,
@@ -315,11 +322,11 @@ export class TcpSecureTransport implements ITransport {
 
   /** Normalise a numeric wire id or a `{ nodeId }` record into a logical id. */
   private _toLogicalId(peer: number | { nodeId?: string | number; peerId?: string }): string {
-    if (typeof peer === "number") {
+    if (typeof peer === 'number') {
       return this.logicalByNumeric.get(peer) ?? String(peer);
     }
     const explicit = peer.peerId ?? peer.nodeId;
-    if (explicit === undefined) return "";
+    if (explicit === undefined) return '';
     const asString = String(explicit);
     // A record carrying a numeric wire id still needs the logical mapping.
     const asNumber = Number(asString);
@@ -337,7 +344,7 @@ export class TcpSecureTransport implements ITransport {
   /** Address this node is actually listening on (port resolved after start). */
   getLocalAddress(): { host: string; port: number } {
     return {
-      host: this.config.listen?.host ?? "127.0.0.1",
+      host: this.config.listen?.host ?? '127.0.0.1',
       port: this.transport.getBoundPort?.() ?? this.config.listen?.port ?? 0,
     };
   }
@@ -368,11 +375,10 @@ export class TcpSecureTransport implements ITransport {
       this._bytesReceived += Array.isArray(bytes) ? bytes.length : 0;
 
       const wireTimestamp = payload?.timestamp as
-        | { wallTime?: string | number; logical?: number; nodeId?: string }
-        | undefined;
+        { wallTime?: string | number; logical?: number; nodeId?: string } | undefined;
 
       const inbound: InboundMessage = {
-        messageId: String(payload?.messageId ?? ""),
+        messageId: String(payload?.messageId ?? ''),
         sourcePeerId: String(payload?.sourcePeerId ?? raftMsg.from),
         targetPeerId: String(raftMsg.to),
         timestamp: makeHLC(
@@ -397,9 +403,7 @@ export class TcpSecureTransport implements ITransport {
 }
 
 /** Normalise the two accepted peer shapes into one list with numeric ids. */
-function resolvePeers(
-  config: TcpSecureTransportConfig,
-): Array<TcpSecureTransportPeer & { transportNodeId: number }> {
+function resolvePeers(config: TcpSecureTransportConfig): Array<TcpSecureTransportPeer & { transportNodeId: number }> {
   if (config.peers && config.peers.length > 0) {
     return config.peers.map((peer, index) => ({
       ...peer,
@@ -416,17 +420,17 @@ function resolvePeers(
 }
 
 function deriveNumericId(nodeId: string): number {
-  const digits = nodeId.replace(/[^0-9]/g, "");
+  const digits = nodeId.replace(/[^0-9]/g, '');
   const parsed = parseInt(digits, 10);
   return Number.isNaN(parsed) ? 1 : parsed;
 }
 
 function extractHost(address: string): string {
-  const [host] = address.split(":");
-  return host && host.length > 0 ? host : "127.0.0.1";
+  const [host] = address.split(':');
+  return host && host.length > 0 ? host : '127.0.0.1';
 }
 
 function extractPort(address: string): number {
-  const port = parseInt(address.split(":")[1] ?? "", 10);
+  const port = parseInt(address.split(':')[1] ?? '', 10);
   return Number.isNaN(port) ? 7000 : port;
 }

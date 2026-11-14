@@ -63,7 +63,10 @@ describe('InMemoryAuditStore', () => {
 
   // ── A2: get returns matching entry by ID ───────────────────────
   it('A2: get returns matching entry by ID', async () => {
-    const id = await makeEntry(store, { operation: 'get.test', actor: 'alice' });
+    const id = await makeEntry(store, {
+      operation: 'get.test',
+      actor: 'alice',
+    });
     const entry = await store.get(id);
     expect(entry).not.toBeNull();
     expect(entry!.id).toBe(id);
@@ -322,7 +325,9 @@ describe('JsonAuditExporter', () => {
     await makeEntry(store, { operation: 'export-me-too' });
 
     const outPath = join(tmpDir, 'export.json');
-    const count = await exporter.exportToFile(outPath, { format: 'json-array' });
+    const count = await exporter.exportToFile(outPath, {
+      format: 'json-array',
+    });
 
     expect(count).toBe(2);
     expect(existsSync(outPath)).toBe(true);
@@ -345,7 +350,9 @@ describe('JsonAuditExporter', () => {
   // ── exportToFile returns 0 if no entries ───────────────────────
   it('exportToFile returns 0 when store is empty', async () => {
     const outPath = join(tmpDir, 'empty.json');
-    const count = await exporter.exportToFile(outPath, { format: 'json-array' });
+    const count = await exporter.exportToFile(outPath, {
+      format: 'json-array',
+    });
     expect(count).toBe(0);
     expect(existsSync(outPath)).toBe(true);
     const content = JSON.parse(readFileSync(outPath, 'utf-8'));

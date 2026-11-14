@@ -29,7 +29,7 @@ import type {
   InvariantCheckResult,
   ChaosTransportStats,
   ChaoticInvariant,
-} from "../interfaces/v2-types.js";
+} from '../interfaces/v2-types.js';
 
 // ── Mulberry32 PRNG ──────────────────────────────────────────
 
@@ -206,10 +206,7 @@ export class ChaosEngineV2 implements IChaosEngineV2 {
 
   // ── Scenario Runner ─────────────────────────────────────
 
-  async runScenario(
-    scenario: ChaosScenario,
-    checker: IChaoticInvariantChecker,
-  ): Promise<ScenarioRunResult> {
+  async runScenario(scenario: ChaosScenario, checker: IChaoticInvariantChecker): Promise<ScenarioRunResult> {
     const startTime = Date.now();
     const errorLog: string[] = [];
     const invariantResults: InvariantCheckResult[] = [];
@@ -313,7 +310,7 @@ export class ChaosEngineV2 implements IChaosEngineV2 {
 
   private ensureStarted(): void {
     if (!this.started) {
-      throw new Error("ChaosEngineV2 not started. Call start(transports) first.");
+      throw new Error('ChaosEngineV2 not started. Call start(transports) first.');
     }
   }
 
@@ -321,26 +318,24 @@ export class ChaosEngineV2 implements IChaosEngineV2 {
     const targets = this.resolveTargets(fault.targets);
 
     switch (fault.type) {
-      case "network-partition": {
+      case 'network-partition': {
         // Isolate target(s) from ALL other registered transports (not just from each other)
         const allTransports = Array.from(this.transports.values());
         for (const target of targets) {
-          const peersToIsolate = allTransports.filter(
-            (t) => t.transportId !== target.transportId,
-          );
+          const peersToIsolate = allTransports.filter((t) => t.transportId !== target.transportId);
           target.isolate(peersToIsolate.map((t) => t.transportId));
         }
         break;
       }
 
-      case "node-crash": {
+      case 'node-crash': {
         for (const target of targets) {
           await target.stop();
         }
         break;
       }
 
-      case "message-loss": {
+      case 'message-loss': {
         const rate = (fault.config.lossRate as number) ?? 0.3;
         for (const target of targets) {
           target.setMessageLoss(rate);
@@ -348,7 +343,7 @@ export class ChaosEngineV2 implements IChaosEngineV2 {
         break;
       }
 
-      case "latency-injection": {
+      case 'latency-injection': {
         const latencyMs = (fault.config.latencyMs as number) ?? 200;
         for (const target of targets) {
           target.setLatency(latencyMs);
@@ -356,7 +351,7 @@ export class ChaosEngineV2 implements IChaosEngineV2 {
         break;
       }
 
-      case "clock-skew": {
+      case 'clock-skew': {
         // Clock skew is repository-specific — we signal it via config
         // and let the transport adapter handle it
         const skewMs = (fault.config.skewMs as number) ?? 500;
@@ -366,18 +361,18 @@ export class ChaosEngineV2 implements IChaosEngineV2 {
         break;
       }
 
-      case "resource-pressure": {
+      case 'resource-pressure': {
         // Signal resource pressure via config
         // No actual resource exhaustion (that would crash the test runner),
         // but the transport adapter may simulate slow responses
-        const pressureType = (fault.config.pressureType as string) ?? "cpu";
+        const pressureType = (fault.config.pressureType as string) ?? 'cpu';
         for (const target of targets) {
-          target.setLatency(pressureType === "disk" ? 1000 : 500);
+          target.setLatency(pressureType === 'disk' ? 1000 : 500);
         }
         break;
       }
 
-      case "leadership-flap": {
+      case 'leadership-flap': {
         // Leadership changes are Raft-specific.
         // The transport adapter is responsible for triggering step-down.
         for (const target of targets) {
@@ -386,7 +381,7 @@ export class ChaosEngineV2 implements IChaosEngineV2 {
         break;
       }
 
-      case "cascading-failure": {
+      case 'cascading-failure': {
         // Apply node crashes with staggered delays
         const staggerMs = (fault.config.staggerMs as number) ?? 1000;
         for (let i = 0; i < targets.length; i++) {
@@ -407,20 +402,20 @@ export class ChaosEngineV2 implements IChaosEngineV2 {
     const targets = this.resolveTargets(fault.targets);
 
     switch (fault.type) {
-      case "network-partition":
-      case "message-loss":
-      case "latency-injection":
-      case "clock-skew":
-      case "resource-pressure":
-      case "leadership-flap": {
+      case 'network-partition':
+      case 'message-loss':
+      case 'latency-injection':
+      case 'clock-skew':
+      case 'resource-pressure':
+      case 'leadership-flap': {
         for (const target of targets) {
           target.healAll();
         }
         break;
       }
 
-      case "node-crash":
-      case "cascading-failure": {
+      case 'node-crash':
+      case 'cascading-failure': {
         for (const target of targets) {
           await target.start();
         }
@@ -436,11 +431,11 @@ export class ChaosEngineV2 implements IChaosEngineV2 {
     const result: IChaosTransport[] = [];
     for (const id of targetIds) {
       // Support wildcard: "all" matches all transports
-      if (id === "all" || id === "*") {
+      if (id === 'all' || id === '*') {
         return Array.from(this.transports.values());
       }
       // Support DC-level targeting: "dc:*" matches all transports in a DC
-      if (id.startsWith("dc:")) {
+      if (id.startsWith('dc:')) {
         const dcId = id.slice(3);
         for (const t of this.transports.values()) {
           if (t.transportId.startsWith(`${dcId}:`)) {

@@ -43,7 +43,11 @@ function tmpDir(label: string): string {
 
 function cleanupAll(): void {
   for (const d of TEMP_DIRS) {
-    try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      rmSync(d, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
   }
   TEMP_DIRS.length = 0;
 }
@@ -64,15 +68,16 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   it('BM1: should assign sequential IDs with no gaps in addBatch', () => {
     const dir = tmpDir('bm1');
     const store = new OutboxStore({
-      dataDir: dir, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dir,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
     const hlc = new HLC();
 
     try {
-      const entries = Array.from({ length: 5 }, (_, i) =>
-        makeEntry(hlc, { seq: i, data: `bm1-${i}` }),
-      );
+      const entries = Array.from({ length: 5 }, (_, i) => makeEntry(hlc, { seq: i, data: `bm1-${i}` }));
 
       const created = store.addBatch(entries);
       expect(created.length).toBe(5);
@@ -96,18 +101,17 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   it('BM2: should allow fetching individual entries from addBatch', () => {
     const dir = tmpDir('bm2');
     const store = new OutboxStore({
-      dataDir: dir, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dir,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
     const hlc = new HLC();
 
     try {
       // Add 3 entries via addBatch
-      const created = store.addBatch(
-        Array.from({ length: 3 }, (_, i) =>
-          makeEntry(hlc, { seq: i }),
-        ),
-      );
+      const created = store.addBatch(Array.from({ length: 3 }, (_, i) => makeEntry(hlc, { seq: i })));
 
       // Add 1 more via serial add
       store.add(makeEntry(hlc, { seq: 99 })).then(() => {});
@@ -129,18 +133,17 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   it('BM3: fetchAndFlush should atomically fetch and deliver all entries', () => {
     const dir = tmpDir('bm3');
     const store = new OutboxStore({
-      dataDir: dir, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dir,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
     const hlc = new HLC();
 
     try {
       // Add 10 entries via batch
-      const created = store.addBatch(
-        Array.from({ length: 10 }, (_, i) =>
-          makeEntry(hlc, { seq: i }),
-        ),
-      );
+      const created = store.addBatch(Array.from({ length: 10 }, (_, i) => makeEntry(hlc, { seq: i })));
       expect(created.length).toBe(10);
 
       // BM3: fetchAndFlush fetches AND delivers in one transaction
@@ -165,18 +168,17 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   it('BM4: fetchAndFlush should not deliver the same entry twice', () => {
     const dir = tmpDir('bm4');
     const store = new OutboxStore({
-      dataDir: dir, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dir,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
     const hlc = new HLC();
 
     try {
       // Add entries
-      store.addBatch(
-        Array.from({ length: 5 }, (_, i) =>
-          makeEntry(hlc, { seq: i }),
-        ),
-      );
+      store.addBatch(Array.from({ length: 5 }, (_, i) => makeEntry(hlc, { seq: i })));
 
       // First flush: 5 entries
       const flush1 = store.fetchAndFlush(5);
@@ -187,11 +189,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       expect(flush2.length).toBe(0);
 
       // Add more entries
-      store.addBatch(
-        Array.from({ length: 3 }, (_, i) =>
-          makeEntry(hlc, { seq: 10 + i }),
-        ),
-      );
+      store.addBatch(Array.from({ length: 3 }, (_, i) => makeEntry(hlc, { seq: 10 + i })));
 
       // New entries are flushed, but old ones are not re-flushed
       const flush3 = store.fetchAndFlush(5);
@@ -210,16 +208,17 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   it('BM5: should safely interleave addBatch with serial add', () => {
     const dir = tmpDir('bm5');
     const store = new OutboxStore({
-      dataDir: dir, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dir,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
     const hlc = new HLC();
 
     try {
       // Interleaving pattern: batch(2) → serial(1) → batch(2) → serial(2)
-      const batch1 = store.addBatch(
-        Array.from({ length: 2 }, (_, i) => makeEntry(hlc, { seq: i, source: 'batch1' })),
-      );
+      const batch1 = store.addBatch(Array.from({ length: 2 }, (_, i) => makeEntry(hlc, { seq: i, source: 'batch1' })));
 
       store.add(makeEntry(hlc, { seq: 10, source: 'serial1' }));
 
@@ -263,8 +262,11 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   it('BM6a: a 100-entry batch commits inside a fixed budget', async () => {
     const dirBatch = tmpDir('bm6-batch');
     const storeBatch = new OutboxStore({
-      dataDir: dirBatch, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dirBatch,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
     const hlc = new HLC();
     const N = 100;
@@ -293,12 +295,18 @@ describe('D3.1: OutboxStore Batch Operations', () => {
     const dirBatch = tmpDir('bm6b-batch');
     const dirSerial = tmpDir('bm6b-serial');
     const storeBatch = new OutboxStore({
-      dataDir: dirBatch, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dirBatch,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
     const storeSerial = new OutboxStore({
-      dataDir: dirSerial, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dirSerial,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
     const hlc = new HLC();
     const N = 500;
@@ -340,8 +348,11 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   it('BM7: should handle empty batch gracefully', () => {
     const dir = tmpDir('bm7');
     const store = new OutboxStore({
-      dataDir: dir, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dir,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
 
     try {
@@ -359,8 +370,11 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   it('BM8: fetchAndFlush should only flush requested count', () => {
     const dir = tmpDir('bm8');
     const store = new OutboxStore({
-      dataDir: dir, ttlMs: 60_000, maxRetries: 3,
-      deadLetterTtlMs: 60_000, mapSize: 16 * 1024 * 1024,
+      dataDir: dir,
+      ttlMs: 60_000,
+      maxRetries: 3,
+      deadLetterTtlMs: 60_000,
+      mapSize: 16 * 1024 * 1024,
     });
     const hlc = new HLC();
 

@@ -11,8 +11,8 @@
  *   - Catch-up: auto-resume from last acknowledged position
  */
 
-import type { LogEntry } from "../interfaces/types";
-import type { IWalStorage } from "../interfaces/wal/IWalStorage";
+import type { LogEntry } from '../interfaces/types';
+import type { IWalStorage } from '../interfaces/wal/IWalStorage';
 
 /**
  * A structured event emitted from the WAL stream.
@@ -115,11 +115,7 @@ export interface IWalStreamer {
    * Subscribe to the WAL stream with an optional filter.
    * Returns a subscription handle that can be used to unsubscribe or query status.
    */
-  subscribe(
-    subscriberId: string,
-    handler: StreamHandler,
-    filter?: StreamFilter,
-  ): Promise<StreamSubscription>;
+  subscribe(subscriberId: string, handler: StreamHandler, filter?: StreamFilter): Promise<StreamSubscription>;
 
   /**
    * Unsubscribe and release resources for a subscription.
@@ -133,12 +129,7 @@ export interface IWalStreamer {
    * Events are delivered to the provided handler directly (bypasses subscriptions).
    * Returns total events replayed.
    */
-  replay(
-    fromIndex: number,
-    toIndex: number,
-    handler: StreamHandler,
-    filter?: StreamFilter,
-  ): Promise<number>;
+  replay(fromIndex: number, toIndex: number, handler: StreamHandler, filter?: StreamFilter): Promise<number>;
 
   // ── Position Tracking ─────────────────────────────────────
 

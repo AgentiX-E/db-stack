@@ -11,17 +11,17 @@
  *   - retryDeadLetter / isDelivered / isCapacityExceeded edge paths
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { OutboxStore, type OutboxStoreConfig } from "./OutboxStore";
-import type { OutboxEntry } from "../interfaces/outbox/OutboxEntry";
-import type { IHLCTimestamp } from "../interfaces/hlc/IHLCTimestamp";
-import { HLC } from "../hlc/HLC";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { OutboxStore, type OutboxStoreConfig } from './OutboxStore';
+import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
+import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
+import { HLC } from '../hlc/HLC';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 function createTestStore(config?: Partial<OutboxStoreConfig>): OutboxStore {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "outbox-branch-"));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbox-branch-'));
   return new OutboxStore({
     dataDir: tmpDir,
     ttlMs: 60_000,
@@ -32,56 +32,68 @@ function createTestStore(config?: Partial<OutboxStoreConfig>): OutboxStore {
   });
 }
 
-function makeEntry(payload: string, msgId?: string): Omit<OutboxEntry, "id"> {
+function makeEntry(payload: string, msgId?: string): Omit<OutboxEntry, 'id'> {
   return {
-    targetPeerIds: ["peer-b"],
+    targetPeerIds: ['peer-b'],
     payload: new TextEncoder().encode(payload),
-    timestamp: new HLC("test-node").now(),
-    type: "test",
-    status: "pending",
+    timestamp: new HLC('test-node').now(),
+    type: 'test',
+    status: 'pending',
     createdAt: Date.now(),
     lastAttemptAt: null,
     attemptCount: 0,
     lastError: null,
-    ...(msgId ? { id: msgId } as any : {}),
+    ...(msgId ? ({ id: msgId } as any) : {}),
   };
 }
 
-describe("OutboxStore — addBatch", () => {
+describe('OutboxStore — addBatch', () => {
   let store: OutboxStore;
   let dataDir: string;
-  beforeEach(() => { dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ob-batch-")); store = createTestStore({ dataDir }); });
-  afterEach(() => { store.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-batch-'));
+    store = createTestStore({ dataDir });
+  });
+  afterEach(() => {
+    store.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
 
-  it("returns an empty array for an empty batch", () => {
+  it('returns an empty array for an empty batch', () => {
     expect(store.addBatch([])).toEqual([]);
   });
 
-  it("persists a multi-entry batch atomically with assigned IDs", async () => {
-    const out = store.addBatch([makeEntry("a"), makeEntry("b"), makeEntry("c")]);
+  it('persists a multi-entry batch atomically with assigned IDs', async () => {
+    const out = store.addBatch([makeEntry('a'), makeEntry('b'), makeEntry('c')]);
     expect(out).toHaveLength(3);
     expect(out[0].id).toMatch(/^entry:\d+$/);
-    expect(out.map((e) => new TextDecoder().decode(e.payload))).toEqual(["a", "b", "c"]);
+    expect(out.map((e) => new TextDecoder().decode(e.payload))).toEqual(['a', 'b', 'c']);
 
     expect(await store.getPendingCount()).toBe(3);
   });
 });
 
-describe("OutboxStore — fetchAndFlush", () => {
+describe('OutboxStore — fetchAndFlush', () => {
   let store: OutboxStore;
   let dataDir: string;
-  beforeEach(() => { dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ob-flush-")); store = createTestStore({ dataDir }); });
-  afterEach(() => { store.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-flush-'));
+    store = createTestStore({ dataDir });
+  });
+  afterEach(() => {
+    store.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
 
-  it("atomically fetches and flushes pending entries", async () => {
-    await store.add(makeEntry("a"));
-    await store.add(makeEntry("b"));
-    await store.add(makeEntry("c"));
+  it('atomically fetches and flushes pending entries', async () => {
+    await store.add(makeEntry('a'));
+    await store.add(makeEntry('b'));
+    await store.add(makeEntry('c'));
 
     const flushed = store.fetchAndFlush(2);
     expect(flushed).toHaveLength(2);
     for (const e of flushed) {
-      expect(e.status).toBe("delivered");
+      expect(e.status).toBe('delivered');
       expect(store.isDelivered(e.id)).toBe(true);
     }
 
@@ -90,16 +102,22 @@ describe("OutboxStore — fetchAndFlush", () => {
   });
 });
 
-describe("OutboxStore — fetchOldestPending limit scan", () => {
+describe('OutboxStore — fetchOldestPending limit scan', () => {
   let store: OutboxStore;
   let dataDir: string;
-  beforeEach(() => { dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ob-limit-")); store = createTestStore({ dataDir }); });
-  afterEach(() => { store.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-limit-'));
+    store = createTestStore({ dataDir });
+  });
+  afterEach(() => {
+    store.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
 
-  it("caps the scan at `limit` even when count is larger", async () => {
-    await store.add(makeEntry("a"));
-    await store.add(makeEntry("b"));
-    await store.add(makeEntry("c"));
+  it('caps the scan at `limit` even when count is larger', async () => {
+    await store.add(makeEntry('a'));
+    await store.add(makeEntry('b'));
+    await store.add(makeEntry('c'));
 
     // limit=1 caps the scan; count=10 is never reached
     const out = await store.fetchOldestPending(10, 1);
@@ -107,14 +125,20 @@ describe("OutboxStore — fetchOldestPending limit scan", () => {
   });
 });
 
-describe("OutboxStore — markDelivered / markFailed fallback scan", () => {
+describe('OutboxStore — markDelivered / markFailed fallback scan', () => {
   let store: OutboxStore;
   let dataDir: string;
-  beforeEach(() => { dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ob-fallback-")); store = createTestStore({ dataDir }); });
-  afterEach(() => { store.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-fallback-'));
+    store = createTestStore({ dataDir });
+  });
+  afterEach(() => {
+    store.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
 
-  it("markDelivered falls back to O(n) scan when msgId index is missing", async () => {
-    const entry = await store.add(makeEntry("scan-deliver"));
+  it('markDelivered falls back to O(n) scan when msgId index is missing', async () => {
+    const entry = await store.add(makeEntry('scan-deliver'));
     // Remove the msgId→seq reverse index to force the fallback scan path
     (store as any).msgIdToSeqDb.removeSync(entry.id);
 
@@ -122,50 +146,56 @@ describe("OutboxStore — markDelivered / markFailed fallback scan", () => {
     expect(store.isDelivered(entry.id)).toBe(true);
   });
 
-  it("markFailed falls back to O(n) scan when msgId index is missing", async () => {
-    const entry = await store.add(makeEntry("scan-fail"));
+  it('markFailed falls back to O(n) scan when msgId index is missing', async () => {
+    const entry = await store.add(makeEntry('scan-fail'));
     (store as any).msgIdToSeqDb.removeSync(entry.id);
 
-    const result = store.markFailed(entry.id, "boom");
+    const result = store.markFailed(entry.id, 'boom');
     expect(result).toBe(false); // attempt 1 < maxRetries, still pending
   });
 });
 
-describe("OutboxStore — dead letter stats & edge paths", () => {
+describe('OutboxStore — dead letter stats & edge paths', () => {
   let store: OutboxStore;
   let dataDir: string;
-  beforeEach(() => { dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ob-dlstats-")); store = createTestStore({ dataDir, maxRetries: 1 }); });
-  afterEach(() => { store.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-dlstats-'));
+    store = createTestStore({ dataDir, maxRetries: 1 });
+  });
+  afterEach(() => {
+    store.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
 
-  it("getDeadLetterStats reports the DLQ count", async () => {
+  it('getDeadLetterStats reports the DLQ count', async () => {
     expect(store.getDeadLetterStats()).toEqual({ count: 0 });
 
-    const e1 = await store.add(makeEntry("dl-1"));
-    const e2 = await store.add(makeEntry("dl-2"));
-    store.markFailed(e1.id, "x"); // maxRetries=1 → moves to DL immediately
-    store.markFailed(e2.id, "x");
+    const e1 = await store.add(makeEntry('dl-1'));
+    const e2 = await store.add(makeEntry('dl-2'));
+    store.markFailed(e1.id, 'x'); // maxRetries=1 → moves to DL immediately
+    store.markFailed(e2.id, 'x');
 
     expect(store.getDeadLetterStats()).toEqual({ count: 2 });
   });
 
-  it("isDelivered returns false for unknown entry", () => {
-    expect(store.isDelivered("entry:ghost")).toBe(false);
+  it('isDelivered returns false for unknown entry', () => {
+    expect(store.isDelivered('entry:ghost')).toBe(false);
   });
 });
 
-describe("OutboxStore — nullish defaults", () => {
-  it("falls back to default maxRetries when config omits it", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ob-nullish-"));
+describe('OutboxStore — nullish defaults', () => {
+  it('falls back to default maxRetries when config omits it', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-nullish-'));
     const s = new OutboxStore({ dataDir: tmp } as any); // no maxRetries → ?? 3
     expect((s as any).maxRetries).toBe(3);
     s.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("add() assigns createdAt when the entry omits it", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ob-nullish2-"));
+  it('add() assigns createdAt when the entry omits it', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-nullish2-'));
     const s = createTestStore({ dataDir: tmp });
-    const partial = makeEntry("no-created-at");
+    const partial = makeEntry('no-created-at');
     delete (partial as any).createdAt;
 
     const e = await s.add(partial);
@@ -174,10 +204,10 @@ describe("OutboxStore — nullish defaults", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("addBatch assigns createdAt when a partial omits it", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ob-nullish3-"));
+  it('addBatch assigns createdAt when a partial omits it', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-nullish3-'));
     const s = createTestStore({ dataDir: tmp });
-    const partial = makeEntry("batch-no-created-at");
+    const partial = makeEntry('batch-no-created-at');
     delete (partial as any).createdAt;
 
     const out = s.addBatch([partial]);
@@ -187,23 +217,29 @@ describe("OutboxStore — nullish defaults", () => {
   });
 });
 
-describe("OutboxStore — markFailed missing main entry + housekeeping dead-letter sweep", () => {
+describe('OutboxStore — markFailed missing main entry + housekeeping dead-letter sweep', () => {
   let store: OutboxStore;
   let dataDir: string;
-  beforeEach(() => { dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ob-hk2-")); store = createTestStore({ dataDir, maxRetries: 1, deadLetterTtlMs: 0 }); });
-  afterEach(() => { store.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-hk2-'));
+    store = createTestStore({ dataDir, maxRetries: 1, deadLetterTtlMs: 0 });
+  });
+  afterEach(() => {
+    store.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
 
-  it("markFailed returns false when seq exists but main entry is missing", async () => {
-    const e = await store.add(makeEntry("will-vanish"));
+  it('markFailed returns false when seq exists but main entry is missing', async () => {
+    const e = await store.add(makeEntry('will-vanish'));
     // Corrupt: remove main entry but keep msgId→seq index
     (store as any).mainDb.removeSync(e.id);
     // msgIdToSeqDb still has e.id → seq lookup succeeds, main get() returns undefined
-    expect(store.markFailed(e.id, "x")).toBe(false);
+    expect(store.markFailed(e.id, 'x')).toBe(false);
   });
 
-  it("housekeeping sweeps dead-letter entries past deadLetterTtlMs", async () => {
-    const e = await store.add(makeEntry("dl-expire"));
-    store.markFailed(e.id, "x"); // → dead letter (maxRetries=1)
+  it('housekeeping sweeps dead-letter entries past deadLetterTtlMs', async () => {
+    const e = await store.add(makeEntry('dl-expire'));
+    store.markFailed(e.id, 'x'); // → dead letter (maxRetries=1)
 
     expect(store.getDeadLetterEntries()).toHaveLength(1);
 
@@ -213,27 +249,32 @@ describe("OutboxStore — markFailed missing main entry + housekeeping dead-lett
     // housekeeping() made this pass only on slow storage.
     const deadKey = `dlq:${e.id}`;
     const dead = (store as any).deadLetterDb.get(deadKey);
-    (store as any).deadLetterDb.putSync(deadKey, { ...dead, deadAt: Date.now() - 10_000 });
+    (store as any).deadLetterDb.putSync(deadKey, {
+      ...dead,
+      deadAt: Date.now() - 10_000,
+    });
 
     store.housekeeping();
     expect(store.getDeadLetterEntries()).toHaveLength(0);
   });
 });
 
-describe("OutboxStore — isCapacityExceeded fallback guards", () => {
-  it("returns false when getStats throws (defensive catch)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ob-cap-"));
+describe('OutboxStore — isCapacityExceeded fallback guards', () => {
+  it('returns false when getStats throws (defensive catch)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cap-'));
     const s = createTestStore({ dataDir: tmp });
     const orig = (s as any).mainDb.getStats;
-    (s as any).mainDb.getStats = () => { throw new Error("stats unavailable"); };
+    (s as any).mainDb.getStats = () => {
+      throw new Error('stats unavailable');
+    };
     expect(s.isCapacityExceeded()).toBe(false);
     (s as any).mainDb.getStats = orig;
     s.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("guards against incomplete getStats shaping (pageSize/lastPageNumber/mapSize fallbacks)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ob-cap2-"));
+  it('guards against incomplete getStats shaping (pageSize/lastPageNumber/mapSize fallbacks)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cap2-'));
     const s = createTestStore({ dataDir: tmp });
     const orig = (s as any).mainDb.getStats;
     // Return an object missing pageSize / lastPageNumber / mapSize to exercise
@@ -246,11 +287,11 @@ describe("OutboxStore — isCapacityExceeded fallback guards", () => {
   });
 });
 
-describe("OutboxStore — _markFailed attemptCount nullish", () => {
-  it("increments attemptCount from 0 when the field is absent", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ob-attempt-"));
+describe('OutboxStore — _markFailed attemptCount nullish', () => {
+  it('increments attemptCount from 0 when the field is absent', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-attempt-'));
     const s = createTestStore({ dataDir: tmp, maxRetries: 3 });
-    const e = await s.add(makeEntry("no-attempt"));
+    const e = await s.add(makeEntry('no-attempt'));
     const seq = (s as any).msgIdToSeqDb.get(e.id);
 
     // Strip attemptCount from the stored entry to exercise `?? 0`.
@@ -258,10 +299,9 @@ describe("OutboxStore — _markFailed attemptCount nullish", () => {
     delete (stored as any).attemptCount;
     (s as any).mainDb.putSync(`entry:${seq}`, stored);
 
-    const result = s.markFailed(e.id, "x");
+    const result = s.markFailed(e.id, 'x');
     expect(result).toBe(false); // attempt 1 < maxRetries
     s.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 });
-

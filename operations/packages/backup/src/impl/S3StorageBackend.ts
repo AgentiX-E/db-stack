@@ -40,7 +40,7 @@ import type { IStorageBackend } from '../interfaces/index.js';
 const DEFAULT_MULTIPART_THRESHOLD = 10 * 1024 * 1024;
 
 /** Default part size for multipart upload: 5 MB. */
-const DEFAULT_PART_SIZE = 5 / 1024 * 1024;
+const DEFAULT_PART_SIZE = (5 / 1024) * 1024;
 
 /** Maximum retries for transient errors. */
 const MAX_RETRIES = 3;
@@ -92,9 +92,7 @@ function retry<T>(fn: () => Promise<T>, attempt = 1): Promise<T> {
   return fn().catch((err) => {
     if (attempt >= MAX_RETRIES) throw err;
     const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1);
-    return new Promise((resolve) => setTimeout(resolve, delay)).then(() =>
-      retry(fn, attempt + 1),
-    );
+    return new Promise((resolve) => setTimeout(resolve, delay)).then(() => retry(fn, attempt + 1));
   });
 }
 
@@ -163,7 +161,11 @@ export class S3StorageBackend implements IStorageBackend {
 
   private getSseInput():
     | { ServerSideEncryption: 'AES256' | 'aws:kms'; SSEKMSKeyId?: string }
-    | { SSECustomerAlgorithm: 'AES256'; SSECustomerKey: string; SSECustomerKeyMD5?: string }
+    | {
+        SSECustomerAlgorithm: 'AES256';
+        SSECustomerKey: string;
+        SSECustomerKeyMD5?: string;
+      }
     | undefined {
     if (this.sse === 's3') {
       return { ServerSideEncryption: 'AES256' };
@@ -272,9 +274,7 @@ export class S3StorageBackend implements IStorageBackend {
         for (const obj of response.Contents) {
           if (!obj.Key) continue;
           // Strip the keyPrefix from returned keys
-          const relativeKey = this.keyPrefix
-            ? obj.Key.slice(this.keyPrefix.length)
-            : obj.Key;
+          const relativeKey = this.keyPrefix ? obj.Key.slice(this.keyPrefix.length) : obj.Key;
           results.push({
             key: relativeKey,
             size: obj.Size ?? 0,

@@ -9,13 +9,13 @@
  *     of both `!== undefined` guards), confirming default values are preserved
  */
 
-import { describe, it, expect } from "vitest";
-import { W3CTraceContextProvider } from "../impl/W3CTraceContext.js";
+import { describe, it, expect } from 'vitest';
+import { W3CTraceContextProvider } from '../impl/W3CTraceContext.js';
 
-describe("W3CTC-branch: span accessor and end() optional args", () => {
-  it("child span exposes its own spanId via getSpanId", () => {
+describe('W3CTC-branch: span accessor and end() optional args', () => {
+  it('child span exposes its own spanId via getSpanId', () => {
     const ctx = new W3CTraceContextProvider();
-    const span = ctx.createChildSpan("op");
+    const span = ctx.createChildSpan('op');
 
     const viaAccessor = span.getSpanId();
     // getSpanId must return the 16-hex span id and match the traceparent's span segment.
@@ -23,25 +23,25 @@ describe("W3CTC-branch: span accessor and end() optional args", () => {
     expect(span.getTraceParent()).toContain(viaAccessor);
   });
 
-  it("end(status, errorMessage) records the explicit errorMessage", () => {
+  it('end(status, errorMessage) records the explicit errorMessage', () => {
     const ctx = new W3CTraceContextProvider();
-    const span = ctx.createChildSpan("failing");
-    span.end("error", "socket hang up");
+    const span = ctx.createChildSpan('failing');
+    span.end('error', 'socket hang up');
 
     const [data] = ctx.flush();
-    expect(data.status).toBe("error");
-    expect(data.errorMessage).toBe("socket hang up");
+    expect(data.status).toBe('error');
+    expect(data.errorMessage).toBe('socket hang up');
   });
 
-  it("end() with undefined args preserves defaults and clears active span", () => {
+  it('end() with undefined args preserves defaults and clears active span', () => {
     const ctx = new W3CTraceContextProvider();
-    const span = ctx.createChildSpan("no-status");
+    const span = ctx.createChildSpan('no-status');
 
     // Explicitly-undefined status/errorMessage must not override defaults.
     span.end(undefined, undefined);
 
     const [data] = ctx.flush();
-    expect(data.status).toBe("ok");
+    expect(data.status).toBe('ok');
     expect(data.errorMessage).toBeUndefined();
     // The child is no longer active after end().
     expect(ctx.getActiveSpans()).toHaveLength(0);

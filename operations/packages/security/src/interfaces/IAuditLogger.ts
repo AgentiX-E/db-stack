@@ -8,20 +8,20 @@
 // ── Audit Event ─────────────────────────────────────────────
 
 /** Audit severity level. */
-export type AuditSeverity = "debug" | "info" | "warning" | "error" | "critical";
+export type AuditSeverity = 'debug' | 'info' | 'warning' | 'error' | 'critical';
 
 /** Audit event category. */
 export type AuditCategory =
-  | "authentication"
-  | "authorization"
-  | "data_access"
-  | "schema_change"
-  | "configuration"
-  | "security"
-  | "connection"
-  | "query"
-  | "system"
-  | "compliance";
+  | 'authentication'
+  | 'authorization'
+  | 'data_access'
+  | 'schema_change'
+  | 'configuration'
+  | 'security'
+  | 'connection'
+  | 'query'
+  | 'system'
+  | 'compliance';
 
 /** Structured audit event. */
 export interface AuditEvent {
@@ -98,9 +98,9 @@ export interface AuditQuery {
   /** Results offset for pagination. */
   offset?: number;
   /** Sort by field. */
-  sortBy?: "timestamp" | "seq" | "severity" | "category";
+  sortBy?: 'timestamp' | 'seq' | 'severity' | 'category';
   /** Sort direction. */
-  sortDir?: "asc" | "desc";
+  sortDir?: 'asc' | 'desc';
 }
 
 // ── Audit Statistics ────────────────────────────────────────
@@ -119,10 +119,10 @@ export interface AuditStats {
 
 export interface IAuditLogger {
   /** Record a single audit event. */
-  log(event: Omit<AuditEvent, "id" | "seq" | "timestamp" | "hash" | "prevHash">): Promise<AuditEvent>;
+  log(event: Omit<AuditEvent, 'id' | 'seq' | 'timestamp' | 'hash' | 'prevHash'>): Promise<AuditEvent>;
 
   /** Record multiple events in batch (atomic). */
-  logBatch(events: Omit<AuditEvent, "id" | "seq" | "timestamp" | "hash" | "prevHash">[]): Promise<AuditEvent[]>;
+  logBatch(events: Omit<AuditEvent, 'id' | 'seq' | 'timestamp' | 'hash' | 'prevHash'>[]): Promise<AuditEvent[]>;
 
   /** Query audit events with filters. */
   query(query: AuditQuery): Promise<AuditEvent[]>;

@@ -267,7 +267,7 @@ export class HAFailoverDetector {
     // ── [PATH 1 & 2] Get current leader and commit index ──────────
     let currentLeader: string | null;
     let amILeader: boolean;
-    let commitIndex: number = 0;
+    let commitIndex: number;
     try {
       currentLeader = await this.consensusLayer.getLeader(shardId);
       amILeader = await this.consensusLayer.isLeader(shardId);

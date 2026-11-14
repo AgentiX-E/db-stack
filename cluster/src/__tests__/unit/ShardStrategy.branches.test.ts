@@ -36,12 +36,7 @@ describe('ShardStrategy — delegation and boundary branches', () => {
     });
 
     it('computeAssignments delegates to hash round-robin', async () => {
-      const r = await strategy.computeAssignments(
-        ['s0', 's1', 's2'],
-        ['n1', 'n2'],
-        {},
-        1,
-      );
+      const r = await strategy.computeAssignments(['s0', 's1', 's2'], ['n1', 'n2'], {}, 1);
       expect(r.success).toBe(true);
       expect(Object.keys(r.data!)).toHaveLength(3);
     });
@@ -97,10 +92,7 @@ describe('ShardStrategy — delegation and boundary branches', () => {
     });
 
     it('returns true for a fully valid distribution', async () => {
-      const r = await strategy.validateDistribution(
-        { s0: ['n1', 'n2'], s1: ['n2', 'n3'] },
-        2,
-      );
+      const r = await strategy.validateDistribution({ s0: ['n1', 'n2'], s1: ['n2', 'n3'] }, 2);
       expect(r.data).toBe(true);
     });
   });
@@ -109,12 +101,7 @@ describe('ShardStrategy — delegation and boundary branches', () => {
     const strategy = new HashShardStrategy();
 
     it('assigns multiple distinct replicas when replicationFactor > 1', async () => {
-      const r = await strategy.computeAssignments(
-        ['s0', 's1'],
-        ['n1', 'n2', 'n3'],
-        {},
-        3,
-      );
+      const r = await strategy.computeAssignments(['s0', 's1'], ['n1', 'n2', 'n3'], {}, 3);
       expect(r.success).toBe(true);
       for (const replicas of Object.values(r.data!)) {
         expect(replicas).toHaveLength(3);
@@ -123,12 +110,7 @@ describe('ShardStrategy — delegation and boundary branches', () => {
     });
 
     it('avoids duplicate replicas when replicationFactor exceeds node count', async () => {
-      const r = await strategy.computeAssignments(
-        ['s0'],
-        ['n1', 'n2'],
-        {},
-        5,
-      );
+      const r = await strategy.computeAssignments(['s0'], ['n1', 'n2'], {}, 5);
       expect(r.success).toBe(true);
       // Only 2 unique nodes exist; replicas are not duplicated.
       expect(new Set(r.data!['s0']!).size).toBe(2);
@@ -138,17 +120,13 @@ describe('ShardStrategy — delegation and boundary branches', () => {
 
 describe('RangeShardStrategy — getShardForKey binary-search boundaries', () => {
   it('returns error when key is below all ranges', async () => {
-    const s = new RangeShardStrategy([
-      { shardId: 'A', rangeStart: 'm', rangeEnd: 'z' },
-    ]);
+    const s = new RangeShardStrategy([{ shardId: 'A', rangeStart: 'm', rangeEnd: 'z' }]);
     const r = await s.getShardForKey('a', 1);
     expect(r.success).toBe(false);
   });
 
   it('returns error when key is above all ranges', async () => {
-    const s = new RangeShardStrategy([
-      { shardId: 'A', rangeStart: 'a', rangeEnd: 'm' },
-    ]);
+    const s = new RangeShardStrategy([{ shardId: 'A', rangeStart: 'a', rangeEnd: 'm' }]);
     const r = await s.getShardForKey('zebra', 1);
     expect(r.success).toBe(false);
   });

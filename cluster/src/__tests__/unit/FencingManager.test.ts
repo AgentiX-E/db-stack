@@ -292,7 +292,9 @@ describe('FencingManager - edge cases', () => {
     fm.receiveHeartbeat(0, 1, '1');
     fm.receiveHeartbeat(1, 1, '2');
 
-    fm.onFenceTriggered(() => { throw new Error('callback-boom'); });
+    fm.onFenceTriggered(() => {
+      throw new Error('callback-boom');
+    });
     fm.start();
 
     vi.advanceTimersByTime(1500);
@@ -343,7 +345,9 @@ describe('FencingManager - edge cases', () => {
       action: 'panic',
     });
     fm.receiveHeartbeat(0, 1, '1');
-    fm.onPanic(() => { throw new Error('panic-boom'); });
+    fm.onPanic(() => {
+      throw new Error('panic-boom');
+    });
     fm.start();
 
     expect(() => vi.advanceTimersByTime(1500)).not.toThrow();

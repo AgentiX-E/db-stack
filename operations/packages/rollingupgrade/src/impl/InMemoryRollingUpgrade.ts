@@ -12,6 +12,4 @@ import { RollingUpgradeOrchestrator } from './RollingUpgradeOrchestrator.js';
  *
  * @module @agentix-e/db-operations-rollingupgrade/impl
  */
-export class InMemoryRollingUpgrade
-  extends RollingUpgradeOrchestrator
-  implements IRollingUpgrade {}
+export class InMemoryRollingUpgrade extends RollingUpgradeOrchestrator implements IRollingUpgrade {}

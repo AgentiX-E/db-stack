@@ -12,7 +12,7 @@
  *   - Recovery orchestration on DC reconnection
  */
 
-import type { TopologyManager } from "../topology/TopologyManager";
+import type { TopologyManager } from '../topology/TopologyManager';
 
 /** Default timeout (ms) before considering a DC failed */
 const DEFAULT_DC_TIMEOUT_MS = 30_000;

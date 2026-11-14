@@ -73,7 +73,7 @@ function computeLatencyStats(sortedLatencies: number[]): LatencyStats {
     return { p50: 0, p95: 0, p99: 0, max: 0 };
   }
 
-  const p50Index = Math.floor(sortedLatencies.length * 0.50);
+  const p50Index = Math.floor(sortedLatencies.length * 0.5);
   const p95Index = Math.floor(sortedLatencies.length * 0.95);
   const p99Index = Math.floor(sortedLatencies.length * 0.99);
 
@@ -129,10 +129,7 @@ function* latestGenerator(seed: number): Generator<number> {
 
 type DistributionGenerator = Generator<number>;
 
-function createDistribution(
-  type: 'uniform' | 'zipfian' | 'latest',
-  seed: number,
-): DistributionGenerator {
+function createDistribution(type: 'uniform' | 'zipfian' | 'latest', seed: number): DistributionGenerator {
   switch (type) {
     case 'uniform':
       return uniformGenerator(seed);
@@ -184,8 +181,7 @@ export class YCSBExecutor<T = string> {
     const cooldownCut = Math.floor(measureOps.length * 0.1);
     const trimmedOps = measureOps.slice(cooldownCut, measureOps.length - cooldownCut);
 
-    const { readLatencies, updateLatencies, errorCount, durationMs } =
-      await this.executeBatch(target, trimmedOps);
+    const { readLatencies, updateLatencies, errorCount, durationMs } = await this.executeBatch(target, trimmedOps);
 
     // Phase 5: Compute results
     const readSorted = [...readLatencies].sort((a, b) => a - b);
@@ -243,7 +239,10 @@ export class YCSBExecutor<T = string> {
 
     const dist = createDistribution(requestDistribution, 42);
     const typeDist = uniformGenerator(12345);
-    const operations: Array<{ type: 'read' | 'update' | 'insert' | 'scan' | 'readModifyWrite'; key: string }> = [];
+    const operations: Array<{
+      type: 'read' | 'update' | 'insert' | 'scan' | 'readModifyWrite';
+      key: string;
+    }> = [];
     let insertCounter = recordCount;
 
     for (let i = 0; i < operationCount; i++) {
@@ -279,7 +278,7 @@ export class YCSBExecutor<T = string> {
   }> {
     const readLatencies: number[] = [];
     const updateLatencies: number[] = [];
-    let errorCount = 0;
+    const errorCount = 0;
     const start = Date.now();
 
     for (const op of operations) {

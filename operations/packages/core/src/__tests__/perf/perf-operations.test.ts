@@ -25,7 +25,9 @@ import { describe, it, expect, beforeAll } from 'vitest';
 
 // ── Warmup ──
 beforeAll(() => {
-  for (let i = 0; i < 100_000; i++) { /* warmup */ }
+  for (let i = 0; i < 100_000; i++) {
+    /* warmup */
+  }
   if (typeof globalThis.gc === 'function') {
     for (let i = 0; i < 3; i++) globalThis.gc();
   }
@@ -167,7 +169,10 @@ class MetricsRegistryMock {
     };
   }
 
-  snapshot(): { counters: Record<string, number>; gauges: Record<string, number> } {
+  snapshot(): {
+    counters: Record<string, number>;
+    gauges: Record<string, number>;
+  } {
     return {
       counters: Object.fromEntries(this.counters),
       gauges: Object.fromEntries(this.gauges),
@@ -181,7 +186,12 @@ class MetricsRegistryMock {
 
 /** Minimal audit store */
 class AuditStoreMock {
-  private entries: Array<{ timestamp: number; action: string; actor: string; detail: string }> = [];
+  private entries: Array<{
+    timestamp: number;
+    action: string;
+    actor: string;
+    detail: string;
+  }> = [];
 
   write(entry: { action: string; actor: string; detail: string }): void {
     this.entries.push({ timestamp: Date.now(), ...entry });
@@ -202,10 +212,7 @@ class DistributedTracerMock {
     startTime: bigint;
   }> = [];
 
-  startSpan(
-    operation: string,
-    parentSpanId?: string,
-  ): { spanId: string; end: () => void } {
+  startSpan(operation: string, parentSpanId?: string): { spanId: string; end: () => void } {
     const spanId = Math.random().toString(36).slice(2, 10);
     const traceId = parentSpanId ?? spanId;
     this.spans.push({
@@ -276,19 +283,12 @@ function bench(label: string, fn: () => void, limitNs: number): void {
     const start = process.hrtime.bigint();
     fn();
     const elapsed = Number(process.hrtime.bigint() - start);
-    process.stdout.write(
-      `\n  [${label}] ${(elapsed / 1e6).toFixed(3)}ms (${elapsed}ns, limit=${limitNs}ns)`,
-    );
+    process.stdout.write(`\n  [${label}] ${(elapsed / 1e6).toFixed(3)}ms (${elapsed}ns, limit=${limitNs}ns)`);
     expect(elapsed).toBeLessThan(limitNs);
   });
 }
 
-function benchThroughput(
-  label: string,
-  fn: () => void,
-  iterations: number,
-  minOpsPerSec: number,
-): void {
+function benchThroughput(label: string, fn: () => void, iterations: number, minOpsPerSec: number): void {
   it(label, () => {
     const start = process.hrtime.bigint();
     for (let i = 0; i < iterations; i++) {
@@ -457,11 +457,21 @@ describe('Operations — MaintenanceExecutor', () => {
     'maintenance executor operations (> 500 ops/s)',
     () => {
       const me = new MaintenanceExecutorMock();
-      me.register('vacuum', () => { /* no-op */ });
-      me.register('reindex', () => { /* no-op */ });
-      me.register('cleanup', () => { /* no-op */ });
-      me.register('backup-check', () => { /* no-op */ });
-      me.register('health-check', () => { /* no-op */ });
+      me.register('vacuum', () => {
+        /* no-op */
+      });
+      me.register('reindex', () => {
+        /* no-op */
+      });
+      me.register('cleanup', () => {
+        /* no-op */
+      });
+      me.register('backup-check', () => {
+        /* no-op */
+      });
+      me.register('health-check', () => {
+        /* no-op */
+      });
       me.executeAll();
     },
     100,

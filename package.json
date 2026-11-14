@@ -13,13 +13,13 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "format:check": "turbo run format:check",
-    "test": "turbo run test",
+    "test": "turbo run test --filter=!@agentix-e/db-stack-e2e",
     "test:unit": "turbo run test:unit",
     "test:integration": "turbo run test:integration",
     "coverage": "turbo run coverage",
     "coverage:merge": "node scripts/merge-coverage.mjs",
     "coverage:gate": "node scripts/coverage-gate.mjs",
-    "e2e": "pnpm --filter @agentix-e/db-stack-e2e run test",
+    "e2e": "pnpm --filter @agentix-e/db-stack-e2e run test:cluster && pnpm --filter @agentix-e/db-stack-e2e run test:federation",
     "bench": "turbo run bench",
     "verify": "node scripts/verify.mjs",
     "bench:real": "pnpm --filter @agentix-e/db-stack-e2e run bench",
@@ -30,11 +30,14 @@
     "test:perf": "pnpm --filter @agentix-e/db-cluster run test:perf && pnpm --filter @agentix-e/db-stack-e2e run bench"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@vitest/coverage-v8": "3.2.6",
+    "eslint": "^10.15.0",
     "prettier": "^3.9.5",
     "tsx": "^4.23.0",
     "turbo": "^2.10.7",
     "typescript": "^5.7.3",
+    "typescript-eslint": "^8.72.2",
     "vitest": "3.2.6"
   },
   "pnpm": {

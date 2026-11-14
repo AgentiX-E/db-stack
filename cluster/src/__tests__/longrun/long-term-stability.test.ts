@@ -35,8 +35,8 @@ import { TestCluster } from '../../__tests__/integration/TestCluster';
 
 const isFullRun = process.env.LTS_FULL === '1';
 const TOTAL_DURATION_MS = isFullRun ? 1_800_000 : 300_000; // 30 min vs 5 min
-const CHECK_INTERVAL_MS = isFullRun ? 60_000 : 30_000;     // 60s vs 30s
-const TIMEOUT_MS = isFullRun ? 7_200_000 : 540_000;         // 2h vs 9 min
+const CHECK_INTERVAL_MS = isFullRun ? 60_000 : 30_000; // 60s vs 30s
+const TIMEOUT_MS = isFullRun ? 7_200_000 : 540_000; // 2h vs 9 min
 const BASELINE_WARMUP_MS = 15_000;
 
 // ── Adaptive thresholds ──────────────────────────────────
@@ -59,9 +59,9 @@ const RETAINED_LOG_MAX = 200 * 20;
 interface Snapshot {
   timestamp: number;
   elapsed: number;
-  throughput: number;   // ops/sec since last check
+  throughput: number; // ops/sec since last check
   heapUsedMB: number;
-  retainedLog: number;  // lastLog - applied (bounded log length)
+  retainedLog: number; // lastLog - applied (bounded log length)
   leaderChanges: number;
   p50: number;
   p95: number;
@@ -105,206 +105,216 @@ describe('LTS: Long-Term Stability', () => {
     await new Promise((r) => setTimeout(r, 1000));
   }, 30_000);
 
-  it('LTS: should maintain stable throughput and no resource degradation under sustained load', async () => {
-    // ── Phase 1: Baseline measurement ──────────────────
-    const baselineOps: number[] = [];
-    const baselineLatencies: number[] = [];
-    const baselineStart = Date.now();
+  it(
+    'LTS: should maintain stable throughput and no resource degradation under sustained load',
+    async () => {
+      // ── Phase 1: Baseline measurement ──────────────────
+      const baselineOps: number[] = [];
+      const baselineLatencies: number[] = [];
+      const baselineStart = Date.now();
 
-    while (Date.now() - baselineStart < BASELINE_WARMUP_MS) {
-      try {
-        const leader = await cluster.findLeader();
-        // Guard against null leader (ECONNREFUSED during cluster start)
-        if (!leader?.adapter) {
-          await new Promise((r) => setTimeout(r, 500));
-          continue;
-        }
-        const t0 = performance.now();
-        await leader.adapter.proposeAndWait(`lts-baseline-${Date.now()}`);
-        const lat = performance.now() - t0;
-        baselineLatencies.push(lat);
-        latencySamples.push(lat);
-        baselineOps.push(1);
-      } catch {
-        // Leader flapping during warmup — retry after delay
-        await new Promise((r) => setTimeout(r, 300));
-      }
-    }
-
-    const baselineDuration = (Date.now() - baselineStart) / 1000;
-    const baselineThroughput = baselineOps.length / Math.max(baselineDuration, 0.1);
-    const baselineSort = [...baselineLatencies].sort((a, b) => a - b);
-    const baselineP99 = baselineSort[Math.floor(baselineSort.length * 0.99)] ?? 0;
-
-    console.log(`[LTS] Baseline throughput: ${baselineThroughput.toFixed(1)} ops/sec (${baselineOps.length} samples / ${baselineDuration.toFixed(1)}s)`);
-    console.log(`[LTS] Baseline P99 latency: ${baselineP99.toFixed(1)} ms`);
-
-    // If baseline has 0 ops (cluster never healthy), skip with a useful message.
-    if (baselineOps.length === 0) {
-      console.warn('[LTS] Unable to establish baseline — cluster may be unhealthy. Skipping.');
-      return;
-    }
-
-    // ── Phase 2: Sustained load ───────────────────────
-    const startTime = Date.now();
-    let opsSinceLastCheck = 0;
-    let lastCheckTime = startTime;
-    const snapshots: Snapshot[] = [];
-    const stopFlag = { current: false };
-
-    // Controlled load loop with adaptive backoff
-    setTimeout(async function loadLoop(): Promise<void> {
-      while (!stopFlag.current && Date.now() - startTime < TOTAL_DURATION_MS) {
+      while (Date.now() - baselineStart < BASELINE_WARMUP_MS) {
         try {
           const leader = await cluster.findLeader();
+          // Guard against null leader (ECONNREFUSED during cluster start)
           if (!leader?.adapter) {
             await new Promise((r) => setTimeout(r, 500));
             continue;
           }
           const t0 = performance.now();
-          await leader.adapter.proposeAndWait(`lts-data-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-          latencySamples.push(performance.now() - t0);
-          opsSinceLastCheck++;
-          await new Promise((r) => setTimeout(r, 1));
+          await leader.adapter.proposeAndWait(`lts-baseline-${Date.now()}`);
+          const lat = performance.now() - t0;
+          baselineLatencies.push(lat);
+          latencySamples.push(lat);
+          baselineOps.push(1);
         } catch {
-          // Leader change or network hiccup — back off
+          // Leader flapping during warmup — retry after delay
           await new Promise((r) => setTimeout(r, 300));
         }
       }
-    }, 0);
 
-    // Check loop
-    while (Date.now() - startTime < TOTAL_DURATION_MS) {
-      await new Promise((r) => setTimeout(r, CHECK_INTERVAL_MS));
-      const now = Date.now();
-      const elapsed = now - startTime;
-      const elapsedSinceCheck = (now - lastCheckTime) / 1000;
-      const throughputSlice = opsSinceLastCheck / Math.max(elapsedSinceCheck, 0.1);
+      const baselineDuration = (Date.now() - baselineStart) / 1000;
+      const baselineThroughput = baselineOps.length / Math.max(baselineDuration, 0.1);
+      const baselineSort = [...baselineLatencies].sort((a, b) => a - b);
+      const baselineP99 = baselineSort[Math.floor(baselineSort.length * 0.99)] ?? 0;
 
-      // Leader changes
-      try {
-        const currentLeader = await cluster.findLeader(5_000);
-        if (currentLeader) {
-          const cid = currentLeader.id ?? -1;
-          if (lastLeader !== null && cid !== lastLeader) {
-            leaderChanges++;
-          }
-          lastLeader = cid;
-        }
-      } catch {
-        // No leader available — count as a disruption
-      }
-
-      // Latencies (most recent 1000 samples, or all if fewer)
-      const recent = latencySamples.length > 0 ? latencySamples.slice(-Math.min(latencySamples.length, 1000)) : [0];
-      const sorted = [...recent].sort((a, b) => a - b);
-      const p50 = sorted[Math.floor(sorted.length * 0.5)] ?? 0;
-      const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
-      const p99 = sorted[Math.floor(sorted.length * 0.99)] ?? 0;
-
-      const heapUsedMB = process.memoryUsage().heapUsed / 1024 / 1024;
-
-      // Retained log length — the authoritative measure of bounded log growth.
-      // `lastLog - applied` collapses on snapshot compaction and grows again
-      // until the next snapshot, so it is bounded by the snapshot cadence rather
-      // than by the total number of committed entries.
-      let retainedLog = 0;
-      try {
-        const leader = await cluster.findLeader(5_000);
-        if (leader?.adapter) {
-          retainedLog = await leader.adapter.getRetainedLogLength();
-        }
-      } catch {
-        // No leader available — leave retainedLog at the last known value.
-      }
-
-      const snap: Snapshot = {
-        timestamp: now,
-        elapsed,
-        throughput: throughputSlice,
-        heapUsedMB,
-        retainedLog,
-        leaderChanges,
-        p50, p95, p99,
-      };
-
-      snapshots.push(snap);
-
-      const pct = ((elapsed / TOTAL_DURATION_MS) * 100).toFixed(0);
       console.log(
-        `[LTS] ${pct}% | tput=${snap.throughput.toFixed(1)} o/s | ` +
-        `p50=${snap.p50.toFixed(1)} p95=${snap.p95.toFixed(1)} p99=${snap.p99.toFixed(1)} | ` +
-        `heap=${snap.heapUsedMB.toFixed(1)}MB retainedLog=${snap.retainedLog} | ` +
-        `leader_changes=${snap.leaderChanges}`
+        `[LTS] Baseline throughput: ${baselineThroughput.toFixed(1)} ops/sec (${baselineOps.length} samples / ${baselineDuration.toFixed(1)}s)`,
       );
+      console.log(`[LTS] Baseline P99 latency: ${baselineP99.toFixed(1)} ms`);
 
-      opsSinceLastCheck = 0;
-      lastCheckTime = now;
-    }
+      // If baseline has 0 ops (cluster never healthy), skip with a useful message.
+      if (baselineOps.length === 0) {
+        console.warn('[LTS] Unable to establish baseline — cluster may be unhealthy. Skipping.');
+        return;
+      }
 
-    stopFlag.current = true;
-    const totalDuration = (Date.now() - startTime) / 1000;
+      // ── Phase 2: Sustained load ───────────────────────
+      const startTime = Date.now();
+      let opsSinceLastCheck = 0;
+      let lastCheckTime = startTime;
+      const snapshots: Snapshot[] = [];
+      const stopFlag = { current: false };
 
-    // ── Phase 3: Adaptive acceptance checks ────────────────────
+      // Controlled load loop with adaptive backoff
+      setTimeout(async function loadLoop(): Promise<void> {
+        while (!stopFlag.current && Date.now() - startTime < TOTAL_DURATION_MS) {
+          try {
+            const leader = await cluster.findLeader();
+            if (!leader?.adapter) {
+              await new Promise((r) => setTimeout(r, 500));
+              continue;
+            }
+            const t0 = performance.now();
+            await leader.adapter.proposeAndWait(`lts-data-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+            latencySamples.push(performance.now() - t0);
+            opsSinceLastCheck++;
+            await new Promise((r) => setTimeout(r, 1));
+          } catch {
+            // Leader change or network hiccup — back off
+            await new Promise((r) => setTimeout(r, 300));
+          }
+        }
+      }, 0);
 
-    // We need at least some data points, but single-core might give very few
-    expect(snapshots.length).toBeGreaterThanOrEqual(2);
+      // Check loop
+      while (Date.now() - startTime < TOTAL_DURATION_MS) {
+        await new Promise((r) => setTimeout(r, CHECK_INTERVAL_MS));
+        const now = Date.now();
+        const elapsed = now - startTime;
+        const elapsedSinceCheck = (now - lastCheckTime) / 1000;
+        const throughputSlice = opsSinceLastCheck / Math.max(elapsedSinceCheck, 0.1);
 
-    // LTS.1: Throughput — final throughput must be positive (system still working)
-    const finalSnap = snapshots[snapshots.length - 1];
-    console.log(`[LTS] Throughput: final=${finalSnap.throughput.toFixed(1)} ops/sec`);
-    if (THROUGHPUT_FLOOR_RATIO > 0) {
-      // Multi-core: compare second half to first half
-      const mid = Math.max(1, Math.floor(snapshots.length / 2));
-      const firstHalf = snapshots.slice(0, mid);
-      const secondHalf = snapshots.slice(mid);
-      const avgFirst = firstHalf.reduce((s, x) => s + x.throughput, 0) / Math.max(firstHalf.length, 1);
-      const avgSecond = secondHalf.reduce((s, x) => s + x.throughput, 0) / Math.max(secondHalf.length, 1);
-      const ratio = avgSecond / Math.max(avgFirst, 0.01);
-      console.log(`[LTS] Throughput ratio (2nd/1st half): ${ratio.toFixed(2)} (need > ${THROUGHPUT_FLOOR_RATIO})`);
-      expect(ratio).toBeGreaterThan(THROUGHPUT_FLOOR_RATIO);
-    } else {
-      // Single-core: just verify we did some work
-      const lastOps = latencySamples.length;
-      console.log(`[LTS] Total operations: ${lastOps}`);
-      expect(lastOps).toBeGreaterThan(0);
-    }
+        // Leader changes
+        try {
+          const currentLeader = await cluster.findLeader(5_000);
+          if (currentLeader) {
+            const cid = currentLeader.id ?? -1;
+            if (lastLeader !== null && cid !== lastLeader) {
+              leaderChanges++;
+            }
+            lastLeader = cid;
+          }
+        } catch {
+          // No leader available — count as a disruption
+        }
 
-    // LTS.2: P99 latency — bounded spike
-    if (baselineP99 > 0) {
-      const maxP99 = Math.max(...snapshots.map((s) => s.p99));
-      const latRatio = maxP99 / Math.max(baselineP99, 0.1);
-      console.log(`[LTS] P99 latency: max=${maxP99.toFixed(1)} baseline=${baselineP99.toFixed(1)} ratio=${latRatio.toFixed(1)}x (need < ${P99_MAX_X_BASELINE}x)`);
-      expect(latRatio).toBeLessThan(P99_MAX_X_BASELINE);
-    }
+        // Latencies (most recent 1000 samples, or all if fewer)
+        const recent = latencySamples.length > 0 ? latencySamples.slice(-Math.min(latencySamples.length, 1000)) : [0];
+        const sorted = [...recent].sort((a, b) => a - b);
+        const p50 = sorted[Math.floor(sorted.length * 0.5)] ?? 0;
+        const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
+        const p99 = sorted[Math.floor(sorted.length * 0.99)] ?? 0;
 
-    // LTS.3: Retained log bounded — no unbounded growth of the Raft log.
-    // The retained log length (lastLog - applied) collapses on every snapshot
-    // and must never exceed a small multiple of the snapshot interval. This is
-    // the correct measure of bounded log growth; physical file size is NOT used
-    // because SQLite WAL + DELETE compaction reuses freelist pages without
-    // shrinking the on-disk file, which would falsely report unbounded growth.
-    const maxRetainedLog = Math.max(...snapshots.map((s) => s.retainedLog));
-    console.log(`[LTS] Retained log: max=${maxRetainedLog} (need < ${RETAINED_LOG_MAX})`);
-    expect(maxRetainedLog).toBeLessThan(RETAINED_LOG_MAX);
+        const heapUsedMB = process.memoryUsage().heapUsed / 1024 / 1024;
 
-    // LTS.4: Heap — bounded, not monotonic growth
-    if (snapshots.length >= 4) {
-      const maxHeap = Math.max(...snapshots.map((s) => s.heapUsedMB));
-      console.log(`[LTS] Heap: max=${maxHeap.toFixed(1)}MB (need < ${HEAP_MAX_MB}MB)`);
-      expect(maxHeap).toBeLessThan(HEAP_MAX_MB);
-    }
+        // Retained log length — the authoritative measure of bounded log growth.
+        // `lastLog - applied` collapses on snapshot compaction and grows again
+        // until the next snapshot, so it is bounded by the snapshot cadence rather
+        // than by the total number of committed entries.
+        let retainedLog = 0;
+        try {
+          const leader = await cluster.findLeader(5_000);
+          if (leader?.adapter) {
+            retainedLog = await leader.adapter.getRetainedLogLength();
+          }
+        } catch {
+          // No leader available — leave retainedLog at the last known value.
+        }
 
-    // LTS.5: Leader stability
-    console.log(`[LTS] Leader changes: ${leaderChanges} (need ≤ ${LEADER_CHANGES_MAX})`);
-    expect(leaderChanges).toBeLessThanOrEqual(LEADER_CHANGES_MAX);
+        const snap: Snapshot = {
+          timestamp: now,
+          elapsed,
+          throughput: throughputSlice,
+          heapUsedMB,
+          retainedLog,
+          leaderChanges,
+          p50,
+          p95,
+          p99,
+        };
 
-    // LTS.6: System responsive at end
-    const finalLeader = await cluster.findLeader(15_000);
-    expect(finalLeader).toBeDefined();
-    expect(finalLeader.adapter).toBeDefined();
-    await finalLeader.adapter.proposeAndWait(`lts-final-check-${Date.now()}`);
+        snapshots.push(snap);
 
-    console.log(`[LTS] PASS — ${snapshots.length} checkpoints / ${(totalDuration / 60).toFixed(1)} min`);
-  }, TIMEOUT_MS);
+        const pct = ((elapsed / TOTAL_DURATION_MS) * 100).toFixed(0);
+        console.log(
+          `[LTS] ${pct}% | tput=${snap.throughput.toFixed(1)} o/s | ` +
+            `p50=${snap.p50.toFixed(1)} p95=${snap.p95.toFixed(1)} p99=${snap.p99.toFixed(1)} | ` +
+            `heap=${snap.heapUsedMB.toFixed(1)}MB retainedLog=${snap.retainedLog} | ` +
+            `leader_changes=${snap.leaderChanges}`,
+        );
+
+        opsSinceLastCheck = 0;
+        lastCheckTime = now;
+      }
+
+      stopFlag.current = true;
+      const totalDuration = (Date.now() - startTime) / 1000;
+
+      // ── Phase 3: Adaptive acceptance checks ────────────────────
+
+      // We need at least some data points, but single-core might give very few
+      expect(snapshots.length).toBeGreaterThanOrEqual(2);
+
+      // LTS.1: Throughput — final throughput must be positive (system still working)
+      const finalSnap = snapshots[snapshots.length - 1];
+      console.log(`[LTS] Throughput: final=${finalSnap.throughput.toFixed(1)} ops/sec`);
+      if (THROUGHPUT_FLOOR_RATIO > 0) {
+        // Multi-core: compare second half to first half
+        const mid = Math.max(1, Math.floor(snapshots.length / 2));
+        const firstHalf = snapshots.slice(0, mid);
+        const secondHalf = snapshots.slice(mid);
+        const avgFirst = firstHalf.reduce((s, x) => s + x.throughput, 0) / Math.max(firstHalf.length, 1);
+        const avgSecond = secondHalf.reduce((s, x) => s + x.throughput, 0) / Math.max(secondHalf.length, 1);
+        const ratio = avgSecond / Math.max(avgFirst, 0.01);
+        console.log(`[LTS] Throughput ratio (2nd/1st half): ${ratio.toFixed(2)} (need > ${THROUGHPUT_FLOOR_RATIO})`);
+        expect(ratio).toBeGreaterThan(THROUGHPUT_FLOOR_RATIO);
+      } else {
+        // Single-core: just verify we did some work
+        const lastOps = latencySamples.length;
+        console.log(`[LTS] Total operations: ${lastOps}`);
+        expect(lastOps).toBeGreaterThan(0);
+      }
+
+      // LTS.2: P99 latency — bounded spike
+      if (baselineP99 > 0) {
+        const maxP99 = Math.max(...snapshots.map((s) => s.p99));
+        const latRatio = maxP99 / Math.max(baselineP99, 0.1);
+        console.log(
+          `[LTS] P99 latency: max=${maxP99.toFixed(1)} baseline=${baselineP99.toFixed(1)} ratio=${latRatio.toFixed(1)}x (need < ${P99_MAX_X_BASELINE}x)`,
+        );
+        expect(latRatio).toBeLessThan(P99_MAX_X_BASELINE);
+      }
+
+      // LTS.3: Retained log bounded — no unbounded growth of the Raft log.
+      // The retained log length (lastLog - applied) collapses on every snapshot
+      // and must never exceed a small multiple of the snapshot interval. This is
+      // the correct measure of bounded log growth; physical file size is NOT used
+      // because SQLite WAL + DELETE compaction reuses freelist pages without
+      // shrinking the on-disk file, which would falsely report unbounded growth.
+      const maxRetainedLog = Math.max(...snapshots.map((s) => s.retainedLog));
+      console.log(`[LTS] Retained log: max=${maxRetainedLog} (need < ${RETAINED_LOG_MAX})`);
+      expect(maxRetainedLog).toBeLessThan(RETAINED_LOG_MAX);
+
+      // LTS.4: Heap — bounded, not monotonic growth
+      if (snapshots.length >= 4) {
+        const maxHeap = Math.max(...snapshots.map((s) => s.heapUsedMB));
+        console.log(`[LTS] Heap: max=${maxHeap.toFixed(1)}MB (need < ${HEAP_MAX_MB}MB)`);
+        expect(maxHeap).toBeLessThan(HEAP_MAX_MB);
+      }
+
+      // LTS.5: Leader stability
+      console.log(`[LTS] Leader changes: ${leaderChanges} (need ≤ ${LEADER_CHANGES_MAX})`);
+      expect(leaderChanges).toBeLessThanOrEqual(LEADER_CHANGES_MAX);
+
+      // LTS.6: System responsive at end
+      const finalLeader = await cluster.findLeader(15_000);
+      expect(finalLeader).toBeDefined();
+      expect(finalLeader.adapter).toBeDefined();
+      await finalLeader.adapter.proposeAndWait(`lts-final-check-${Date.now()}`);
+
+      console.log(`[LTS] PASS — ${snapshots.length} checkpoints / ${(totalDuration / 60).toFixed(1)} min`);
+    },
+    TIMEOUT_MS,
+  );
 });

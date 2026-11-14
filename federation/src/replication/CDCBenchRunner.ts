@@ -9,7 +9,7 @@
  *   - Batching efficiency factor
  */
 
-import type { ICDCSink, CDCEvent } from "../interfaces/replication/ICDCSink";
+import type { ICDCSink, CDCEvent } from '../interfaces/replication/ICDCSink';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -81,9 +81,7 @@ export class CDCBenchRunner {
     }
 
     const overallDurationMs = Date.now() - overallStart;
-    const totalEmitted = batchResults.reduce(
-      (sum, r) => sum + r.totalEvents, 0,
-    );
+    const totalEmitted = batchResults.reduce((sum, r) => sum + r.totalEvents, 0);
 
     await sink.disconnect();
 
@@ -98,10 +96,7 @@ export class CDCBenchRunner {
   /**
    * Run a single batch size benchmark.
    */
-  private async _benchBatchSize(
-    sink: ICDCSink,
-    batchSize: number,
-  ): Promise<BatchBenchResult> {
+  private async _benchBatchSize(sink: ICDCSink, batchSize: number): Promise<BatchBenchResult> {
     const total = this.config.totalEvents;
     const latencies: number[] = [];
     const batchStart = Date.now();
@@ -137,11 +132,7 @@ export class CDCBenchRunner {
   /**
    * Run a latency-only benchmark (single batch size, detailed measurements).
    */
-  async latencyBench(
-    sink: ICDCSink,
-    batchSize = 100,
-    samples = 1000,
-  ): Promise<LatencyPercentiles> {
+  async latencyBench(sink: ICDCSink, batchSize = 100, samples = 1000): Promise<LatencyPercentiles> {
     await sink.connect();
 
     // Warmup
@@ -162,10 +153,7 @@ export class CDCBenchRunner {
 
   // ── Internal ─────────────────────────────────────────────
 
-  private async _emitWarmup(
-    sink: ICDCSink,
-    batchSize: number,
-  ): Promise<void> {
+  private async _emitWarmup(sink: ICDCSink, batchSize: number): Promise<void> {
     const warmupBatches = Math.ceil(this.config.warmupEvents / batchSize);
     for (let i = 0; i < warmupBatches; i++) {
       const events = this._generateEvents(batchSize, i * batchSize);
@@ -178,8 +166,8 @@ export class CDCBenchRunner {
     for (let i = 0; i < count; i++) {
       events.push({
         id: `evt-${startIdx + i}`,
-        type: "insert",
-        table: "bench_table",
+        type: 'insert',
+        table: 'bench_table',
         key: `key-${startIdx + i}`,
         data: { idx: startIdx + i, payload: `data-${startIdx + i}` },
         timestamp: BigInt(Date.now()),

@@ -22,22 +22,22 @@ import type {
   CooldownState,
   ScaleDirection,
   ScalingStrategy,
-} from "../interfaces/types.js";
+} from '../interfaces/types.js';
 
 // ── Constants ──────────────────────────────────────────────
 
 const DEFAULT_POLICY: ScalingPolicy = {
-  id: "default",
-  name: "Default Policy",
-  strategy: "conservative",
+  id: 'default',
+  name: 'Default Policy',
+  strategy: 'conservative',
   minNodes: 1,
   maxNodes: 10,
   cpuTarget: 0.7,
-  scaleUpCooldownMs: 300_000,    // 5 min
-  scaleDownCooldownMs: 600_000,  // 10 min
+  scaleUpCooldownMs: 300_000, // 5 min
+  scaleDownCooldownMs: 600_000, // 10 min
   predictiveScaling: false,
   overProvisionFactor: 1.1,
-  evaluationIntervalMs: 60_000,   // 1 min
+  evaluationIntervalMs: 60_000, // 1 min
 };
 
 // ── Strategy Weights ─────────────────────────────────────────
@@ -76,10 +76,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
   registerPolicy(policy: ScalingPolicy): void {
     this.policy = { ...policy };
     // Clamp current count to new policy bounds
-    const clamped = Math.max(
-      this.policy.minNodes,
-      this.currentCount,
-    );
+    const clamped = Math.max(this.policy.minNodes, this.currentCount);
     this.currentCount = Math.min(this.policy.maxNodes, clamped);
   }
 
@@ -135,24 +132,24 @@ export class PredictiveScalingEngine implements IAutoScaler {
     }
 
     // --- Compute scaled amount ---
-    const isScaleUp = scaleReason.direction === "up";
+    const isScaleUp = scaleReason.direction === 'up';
     let direction: ScaleDirection;
     let rawAmount: number;
 
     if (isScaleUp) {
       if (!canScaleUp) return null;
-      direction = "scale_up";
+      direction = 'scale_up';
       // Gradient: how far from target, normalized
       rawAmount = Math.max(1, Math.ceil(scaleReason.severity));
     } else {
       if (!canScaleDown) return null;
-      direction = "scale_down";
+      direction = 'scale_down';
       rawAmount = Math.max(1, Math.ceil(scaleReason.severity));
     }
 
     // --- Apply strategy modifier ---
     const modifier = STRATEGY_MODIFIERS[this.policy.strategy];
-    const isScaleUpDir = direction === "scale_up";
+    const isScaleUpDir = direction === 'scale_up';
     const modifierFactor = isScaleUpDir ? modifier.up : modifier.down;
     const modifiedAmount = Math.round(rawAmount * modifierFactor);
 
@@ -187,7 +184,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
     };
 
     // --- Apply cooldown ---
-    if (direction === "scale_up") {
+    if (direction === 'scale_up') {
       this.cooldown.scaleUpUntil = now + this.policy.scaleUpCooldownMs;
     } else {
       this.cooldown.scaleDownUntil = now + this.policy.scaleDownCooldownMs;
@@ -209,44 +206,34 @@ export class PredictiveScalingEngine implements IAutoScaler {
 
   // ── Force Scale ──────────────────────────────────────────
 
-  async forceScale(
-    direction: ScaleDirection,
-    amount: number,
-    reason: string,
-  ): Promise<ScaleAction> {
-    if (direction === "none") {
+  async forceScale(direction: ScaleDirection, amount: number, reason: string): Promise<ScaleAction> {
+    if (direction === 'none') {
       // Rejected: no-op
       return {
-        action: "none",
+        action: 'none',
         amount: 0,
-        reason: "Force scale cancelled",
+        reason: 'Force scale cancelled',
         triggeredBy: [],
         targetCount: this.currentCount,
         timestamp: Date.now(),
-        policy: "override",
+        policy: 'override',
         confidence: 1.0,
       };
     }
 
     const now = Date.now();
-    const rawTarget =
-      direction === "scale_up"
-        ? this.currentCount + amount
-        : this.currentCount - amount;
+    const rawTarget = direction === 'scale_up' ? this.currentCount + amount : this.currentCount - amount;
 
-    const targetCount = Math.max(
-      this.policy.minNodes,
-      Math.min(this.policy.maxNodes, rawTarget),
-    );
+    const targetCount = Math.max(this.policy.minNodes, Math.min(this.policy.maxNodes, rawTarget));
 
     const action: ScaleAction = {
-      action: direction as "scale_up" | "scale_down",
+      action: direction as 'scale_up' | 'scale_down',
       amount: Math.abs(targetCount - this.currentCount),
       reason,
-      triggeredBy: ["manual_override"],
+      triggeredBy: ['manual_override'],
       targetCount,
       timestamp: now,
-      policy: "override",
+      policy: 'override',
       confidence: 1.0,
     };
 
@@ -274,8 +261,8 @@ export class PredictiveScalingEngine implements IAutoScaler {
   }
 
   getStats(): ScalingStats {
-    const scaleUps = this.history.filter((e) => e.action.action === "scale_up").length;
-    const scaleDowns = this.history.filter((e) => e.action.action === "scale_down").length;
+    const scaleUps = this.history.filter((e) => e.action.action === 'scale_up').length;
+    const scaleDowns = this.history.filter((e) => e.action.action === 'scale_down').length;
 
     let avgInterval = 0;
     if (this.history.length >= 2) {
@@ -289,12 +276,10 @@ export class PredictiveScalingEngine implements IAutoScaler {
     return {
       totalScaleUps: scaleUps,
       totalScaleDowns: scaleDowns,
-      totalNoise: this.history.filter((e) => e.action.action === "none").length,
+      totalNoise: this.history.filter((e) => e.action.action === 'none').length,
       currentNodeCount: this.currentCount,
       peakNodeCount: this.peakCount,
-      lastActionAt: this.history.length > 0
-        ? this.history[this.history.length - 1]!.action.timestamp
-        : null,
+      lastActionAt: this.history.length > 0 ? this.history[this.history.length - 1]!.action.timestamp : null,
       averageEvaluationIntervalMs: avgInterval,
     };
   }
@@ -318,8 +303,8 @@ export class PredictiveScalingEngine implements IAutoScaler {
     metrics: AutoScalerMetrics,
     canScaleUp: boolean,
     canScaleDown: boolean,
-  ): { direction: "up" | "down"; severity: number } | null {
-    const cpu = this._predictMetric("cpu", metrics.cpu);
+  ): { direction: 'up' | 'down'; severity: number } | null {
+    const cpu = this._predictMetric('cpu', metrics.cpu);
     const cpuTarget = this.policy.cpuTarget;
     const gap = cpu - cpuTarget;
 
@@ -327,7 +312,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
     const canUpScale = cpuTooHigh && canScaleUp;
     if (canUpScale) {
       const severity = gap * 10; // 0.1 above target → 1 node
-      return { direction: "up", severity };
+      return { direction: 'up', severity };
     }
 
     const cpuWellBelow = gap < -0.2;
@@ -335,7 +320,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
     const canDownScale = cpuWellBelow && cpuLowEnough && canScaleDown;
     if (canDownScale) {
       const severity = Math.abs(gap) * 5;
-      return { direction: "down", severity };
+      return { direction: 'down', severity };
     }
     return null;
   }
@@ -344,7 +329,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
     metrics: AutoScalerMetrics,
     canScaleUp: boolean,
     canScaleDown: boolean,
-  ): { direction: "up" | "down"; severity: number } | null {
+  ): { direction: 'up' | 'down'; severity: number } | null {
     const memoryTarget = this.policy.memoryTarget;
     const actualMemory = metrics.memory;
     const noTarget = memoryTarget === undefined;
@@ -356,13 +341,13 @@ export class PredictiveScalingEngine implements IAutoScaler {
     const overTarget = gap > 0;
     const canUp = overTarget && canScaleUp;
     if (canUp) {
-      return { direction: "up", severity: gap * 10 };
+      return { direction: 'up', severity: gap * 10 };
     }
 
     const wellBelow = gap < -0.3;
     const canDown = wellBelow && canScaleDown;
     if (canDown) {
-      return { direction: "down", severity: Math.abs(gap) * 3 };
+      return { direction: 'down', severity: Math.abs(gap) * 3 };
     }
     return null;
   }
@@ -372,7 +357,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
     currentNodeCount: number,
     canScaleUp: boolean,
     canScaleDown: boolean,
-  ): { direction: "up" | "down"; severity: number } | null {
+  ): { direction: 'up' | 'down'; severity: number } | null {
     const qpsPerNode = this.policy.qpsPerNode;
     if (!qpsPerNode) return null;
 
@@ -384,14 +369,14 @@ export class PredictiveScalingEngine implements IAutoScaler {
     const canUp = overutilized && canScaleUp;
     if (canUp) {
       const targetNodes = Math.ceil(currentQPS / (qpsPerNode * 0.7));
-      return { direction: "up", severity: targetNodes - currentNodeCount };
+      return { direction: 'up', severity: targetNodes - currentNodeCount };
     }
 
     const underutilized = utilization < 0.3;
     const aboveMin = currentNodeCount > this.policy.minNodes;
     const canDown = underutilized && aboveMin && canScaleDown;
     if (canDown) {
-      return { direction: "down", severity: 1 };
+      return { direction: 'down', severity: 1 };
     }
     return null;
   }
@@ -399,7 +384,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
   private _computeLatencyExcess(
     metrics: AutoScalerMetrics,
     canScaleUp: boolean,
-  ): { direction: "up"; severity: number } | null {
+  ): { direction: 'up'; severity: number } | null {
     const threshold = this.policy.latencyThresholdMs;
     if (!threshold) return null;
 
@@ -407,7 +392,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
     const overThreshold = excess > 0;
     if (overThreshold && canScaleUp) {
       // Severity: each 100ms excess → 1 node
-      return { direction: "up", severity: Math.ceil(excess / 100) };
+      return { direction: 'up', severity: Math.ceil(excess / 100) };
     }
     return null;
   }
@@ -417,7 +402,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
     currentNodeCount: number,
     canScaleUp: boolean,
     canScaleDown: boolean,
-  ): { direction: "up" | "down"; severity: number } | null {
+  ): { direction: 'up' | 'down'; severity: number } | null {
     const connPerNode = this.policy.connectionsPerNode;
     if (!connPerNode) return null;
 
@@ -428,25 +413,30 @@ export class PredictiveScalingEngine implements IAutoScaler {
     const canUp = overutilized && canScaleUp;
     if (canUp) {
       const targetNodes = Math.ceil(metrics.connectionCount / (connPerNode * 0.7));
-      return { direction: "up", severity: targetNodes - currentNodeCount };
+      return { direction: 'up', severity: targetNodes - currentNodeCount };
     }
 
     const underutilized = utilization < 0.3;
     const aboveMin = currentNodeCount > this.policy.minNodes;
     const canDown = underutilized && aboveMin && canScaleDown;
     if (canDown) {
-      return { direction: "down", severity: 1 };
+      return { direction: 'down', severity: 1 };
     }
     return null;
   }
 
   // ── Internal: Aggregation ────────────────────────────────
 
-  private _aggregateGaps(
-    ...gaps: Array<{ direction: "up" | "down"; severity: number } | null>
-  ): { direction: "up" | "down"; severity: number; message: string; metrics: string[] } | null {
-    const upGaps = gaps.filter((g): g is { direction: "up"; severity: number } => g !== null && g.direction === "up");
-    const downGaps = gaps.filter((g): g is { direction: "down"; severity: number } => g !== null && g.direction === "down");
+  private _aggregateGaps(...gaps: Array<{ direction: 'up' | 'down'; severity: number } | null>): {
+    direction: 'up' | 'down';
+    severity: number;
+    message: string;
+    metrics: string[];
+  } | null {
+    const upGaps = gaps.filter((g): g is { direction: 'up'; severity: number } => g !== null && g.direction === 'up');
+    const downGaps = gaps.filter(
+      (g): g is { direction: 'down'; severity: number } => g !== null && g.direction === 'down',
+    );
 
     // Scale-up takes priority over scale-down
     if (upGaps.length > 0) {
@@ -455,21 +445,21 @@ export class PredictiveScalingEngine implements IAutoScaler {
       if (upGaps.some(() => true)) {
         // We collect triggered metrics directly from the gap sources
         const metricSources = [
-          { name: "CPU", gap: gaps[0] },
-          { name: "Memory", gap: gaps[1] },
-          { name: "QPS", gap: gaps[2] },
-          { name: "Latency", gap: gaps[3] },
-          { name: "Connections", gap: gaps[4] },
+          { name: 'CPU', gap: gaps[0] },
+          { name: 'Memory', gap: gaps[1] },
+          { name: 'QPS', gap: gaps[2] },
+          { name: 'Latency', gap: gaps[3] },
+          { name: 'Connections', gap: gaps[4] },
         ];
         for (const src of metricSources) {
-          if (src.gap && src.gap.direction === "up") {
+          if (src.gap && src.gap.direction === 'up') {
             allTriggeredMetrics.add(src.name);
           }
         }
       }
 
       return {
-        direction: "up",
+        direction: 'up',
         severity: maxSeverity,
         message: `Scaling up: ${upGaps.length} metric(s) exceed target`,
         metrics: Array.from(allTriggeredMetrics),
@@ -485,20 +475,20 @@ export class PredictiveScalingEngine implements IAutoScaler {
 
         const allTriggeredMetrics = new Set<string>();
         const metricSources = [
-          { name: "CPU", gap: gaps[0] },
-          { name: "Memory", gap: gaps[1] },
-          { name: "QPS", gap: gaps[2] },
-          { name: "Latency", gap: gaps[3] },
-          { name: "Connections", gap: gaps[4] },
+          { name: 'CPU', gap: gaps[0] },
+          { name: 'Memory', gap: gaps[1] },
+          { name: 'QPS', gap: gaps[2] },
+          { name: 'Latency', gap: gaps[3] },
+          { name: 'Connections', gap: gaps[4] },
         ];
         for (const src of metricSources) {
-          if (src.gap && src.gap.direction === "down") {
+          if (src.gap && src.gap.direction === 'down') {
             allTriggeredMetrics.add(src.name);
           }
         }
 
         return {
-          direction: "down",
+          direction: 'down',
           severity: Math.ceil(avgSeverity),
           message: `Scaling down: all ${downGaps.length} metric(s) below thresholds`,
           metrics: Array.from(allTriggeredMetrics),
@@ -526,10 +516,17 @@ export class PredictiveScalingEngine implements IAutoScaler {
     const points = window.map((h, i) => {
       let value: number;
       switch (metricName) {
-        case "cpu": value = h.metrics.cpu; break;
-        case "memory": value = h.metrics.memory ?? 0; break;
-        case "qps": value = h.metrics.qps; break;
-        default: value = 0;
+        case 'cpu':
+          value = h.metrics.cpu;
+          break;
+        case 'memory':
+          value = h.metrics.memory ?? 0;
+          break;
+        case 'qps':
+          value = h.metrics.qps;
+          break;
+        default:
+          value = 0;
       }
       return { x: i, y: value };
     });
@@ -552,7 +549,7 @@ export class PredictiveScalingEngine implements IAutoScaler {
     const numeratorA = nTimesSumXY - sumXTimesSumY;
     const a = numeratorA / denominator; // slope
     const aTimesSumX = a * sumX;
-    const b = (sumY - aTimesSumX) / n;   // intercept
+    const b = (sumY - aTimesSumX) / n; // intercept
 
     // Predict next point
     const aTimesN = a * n;

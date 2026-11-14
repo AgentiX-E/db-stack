@@ -91,11 +91,11 @@ export class InMemoryDeadlockDetector {
    */
   getDeadlockHistory(): Promise<IDeadlockInfo[]> {
     return Promise.resolve(
-      this._deadlocks.map(e => ({
+      this._deadlocks.map((e) => ({
         cycle: e.transactions,
         victimTransaction: e.resolvedBy.replace(/^timeout:/, ''),
         detectedAt: new Date(e.timestamp),
-      }))
+      })),
     );
   }
 
@@ -181,15 +181,21 @@ export class InMemoryDeadlockDetector {
   private _makeCycleEvent(cycle: string[]): DeadlockEvent {
     const victimTx = cycle[0];
     if (victimTx === undefined) {
-      throw new Error("_makeCycleEvent requires a non-empty cycle");
+      throw new Error('_makeCycleEvent requires a non-empty cycle');
     }
 
     const resourceList: string[] = [];
     for (const tx of cycle) {
       const held = this._acquired.get(tx);
       const wait = this._waitFor.get(tx);
-      if (held) for (const r of held) { resourceList.push(r); }
-      if (wait) for (const r of wait) { resourceList.push(r); }
+      if (held)
+        for (const r of held) {
+          resourceList.push(r);
+        }
+      if (wait)
+        for (const r of wait) {
+          resourceList.push(r);
+        }
     }
 
     // Victim: pick the first transaction in the detected cycle.

@@ -29,7 +29,7 @@ import type {
   NodeExecutor,
   FailoverEvent,
   RouterStats,
-} from "../interfaces/index.js";
+} from '../interfaces/index.js';
 
 // ── Router Implementation ────────────────────────────────────
 
@@ -110,10 +110,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
 
   // ── Execution ─────────────────────────────────────────────
 
-  async executeQuery(
-    query: FederatedQuery,
-    executor: NodeExecutor,
-  ): Promise<FederatedResult> {
+  async executeQuery(query: FederatedQuery, executor: NodeExecutor): Promise<FederatedResult> {
     this.totalQueries++;
     this.lastQueryTimestamp = Date.now();
 
@@ -132,9 +129,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
       }
 
       // Failover: reassign failed nodes
-      const failedNodeIds = result.nodeResults
-        .filter((r) => !r.success)
-        .map((r) => r.nodeId);
+      const failedNodeIds = result.nodeResults.filter((r) => !r.success).map((r) => r.nodeId);
 
       if (failedNodeIds.length === 0) {
         // No nodes reported as failed. This happens when all nodes were
@@ -145,7 +140,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
         if (result.nodeResults.length > 0) return result;
         return {
           ...result,
-          error: lastError || result.error || "Max retries exceeded",
+          error: lastError || result.error || 'Max retries exceeded',
         };
       }
 
@@ -162,7 +157,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
       const attemptError = result.nodeResults
         .filter((r) => !r.success)
         .map((r) => r.error)
-        .join("; ");
+        .join('; ');
       if (attemptError) lastError = attemptError;
 
       if (retries < this.policy.maxRetries) {
@@ -187,14 +182,11 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
       totalDurationMs: 0,
       successCount: 0,
       failCount: 1,
-      error: lastError || "Max retries exceeded",
+      error: lastError || 'Max retries exceeded',
     };
   }
 
-  async executePlan(
-    plan: QueryPlan,
-    executor: NodeExecutor,
-  ): Promise<FederatedResult> {
+  async executePlan(plan: QueryPlan, executor: NodeExecutor): Promise<FederatedResult> {
     this.totalQueries++;
     this.lastQueryTimestamp = Date.now();
 
@@ -224,7 +216,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     }
 
     return {
-      queryId: "",
+      queryId: '',
       success: failResults.length === 0,
       rows: mergedRows,
       totalRowCount: mergedRows.length,
@@ -232,9 +224,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
       totalDurationMs: results.reduce((s, r) => s + r.durationMs, 0),
       successCount: successResults.length,
       failCount: failResults.length,
-      error: failResults.length > 0
-        ? failResults.map((r) => r.error).join("; ")
-        : undefined,
+      error: failResults.length > 0 ? failResults.map((r) => r.error).join('; ') : undefined,
     };
   }
 
@@ -261,9 +251,9 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
 
     return {
       totalNodes: allNodes.length,
-      healthyNodes: allNodes.filter((n) => n.health === "healthy").length,
-      degradedNodes: allNodes.filter((n) => n.health === "degraded").length,
-      unhealthyNodes: allNodes.filter((n) => n.health === "unhealthy").length,
+      healthyNodes: allNodes.filter((n) => n.health === 'healthy').length,
+      degradedNodes: allNodes.filter((n) => n.health === 'degraded').length,
+      unhealthyNodes: allNodes.filter((n) => n.health === 'unhealthy').length,
       totalQueries: this.totalQueries,
       successfulQueries: this.successfulQueries,
       failedQueries: this.failedQueries,
@@ -285,7 +275,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
 
     // Filter out unhealthy nodes if policy says so
     if (this.policy.skipUnhealthy) {
-      candidates = candidates.filter((n) => n.health === "healthy");
+      candidates = candidates.filter((n) => n.health === 'healthy');
     }
 
     // Exclude failed nodes during retry
@@ -294,14 +284,10 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     }
 
     // Filter by role based on intent
-    if (query.intent === "write" || strategy === "leader_only") {
-      candidates = candidates.filter(
-        (n) => n.role === "primary" || n.role === "coordinator",
-      );
-    } else if (query.intent === "analytics") {
-      candidates = candidates.filter((n) =>
-        n.capabilities.includes("analytics"),
-      );
+    if (query.intent === 'write' || strategy === 'leader_only') {
+      candidates = candidates.filter((n) => n.role === 'primary' || n.role === 'coordinator');
+    } else if (query.intent === 'analytics') {
+      candidates = candidates.filter((n) => n.capabilities.includes('analytics'));
     }
 
     if (candidates.length === 0) {
@@ -318,36 +304,32 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     strategy: RoutingStrategy,
     candidates: FederatedNode[],
   ): NodeAssignment[] {
-    const targetShards = query.targetShards.length > 0
-      ? new Set(query.targetShards)
-      : null;
+    const targetShards = query.targetShards.length > 0 ? new Set(query.targetShards) : null;
 
     switch (strategy) {
-      case "round_robin":
+      case 'round_robin':
         return this._selectRoundRobin(candidates, targetShards);
 
-      case "least_connections":
+      case 'least_connections':
         return this._selectLeastConnections(candidates, targetShards);
 
-      case "weighted":
+      case 'weighted':
         return this._selectWeighted(candidates, targetShards);
 
-      case "geo_affinity":
+      case 'geo_affinity':
         return this._selectGeoAffinity(candidates, targetShards);
 
-      case "cost_based":
+      case 'cost_based':
         return this._selectCostBased(candidates, targetShards);
 
-      case "leader_only":
+      case 'leader_only':
         return candidates
-          .filter((n) => n.role === "primary")
+          .filter((n) => n.role === 'primary')
           .map((n) => ({
             nodeId: n.id,
-            shardIds: n.shardIds.filter(
-              (s) => !targetShards || targetShards.has(s),
-            ),
+            shardIds: n.shardIds.filter((s) => !targetShards || targetShards.has(s)),
             priority: 1,
-            reason: "leader_only",
+            reason: 'leader_only',
           }));
 
       default:
@@ -355,40 +337,35 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     }
   }
 
-  private _selectRoundRobin(
-    candidates: FederatedNode[],
-    targetShards: Set<string> | null,
-  ): NodeAssignment[] {
+  private _selectRoundRobin(candidates: FederatedNode[], targetShards: Set<string> | null): NodeAssignment[] {
     const idx = this.roundRobinCounter++ % candidates.length;
     const node = candidates[idx]!;
-    return [{
-      nodeId: node.id,
-      shardIds: node.shardIds.filter((s) => !targetShards || targetShards.has(s)),
-      priority: 1,
-      reason: `round_robin (index ${idx})`,
-    }];
+    return [
+      {
+        nodeId: node.id,
+        shardIds: node.shardIds.filter((s) => !targetShards || targetShards.has(s)),
+        priority: 1,
+        reason: `round_robin (index ${idx})`,
+      },
+    ];
   }
 
-  private _selectLeastConnections(
-    candidates: FederatedNode[],
-    targetShards: Set<string> | null,
-  ): NodeAssignment[] {
+  private _selectLeastConnections(candidates: FederatedNode[], targetShards: Set<string> | null): NodeAssignment[] {
     const sorted = [...candidates].sort(
       (a, b) => (a.load?.activeConnections ?? Infinity) - (b.load?.activeConnections ?? Infinity),
     );
     const node = sorted[0]!;
-    return [{
-      nodeId: node.id,
-      shardIds: node.shardIds.filter((s) => !targetShards || targetShards.has(s)),
-      priority: 1,
-      reason: `least_connections (${node.load?.activeConnections ?? "unknown"})`,
-    }];
+    return [
+      {
+        nodeId: node.id,
+        shardIds: node.shardIds.filter((s) => !targetShards || targetShards.has(s)),
+        priority: 1,
+        reason: `least_connections (${node.load?.activeConnections ?? 'unknown'})`,
+      },
+    ];
   }
 
-  private _selectWeighted(
-    candidates: FederatedNode[],
-    targetShards: Set<string> | null,
-  ): NodeAssignment[] {
+  private _selectWeighted(candidates: FederatedNode[], targetShards: Set<string> | null): NodeAssignment[] {
     // Sort by weight descending (higher = more preferred)
     const sorted = [...candidates].sort((a, b) => b.weight - a.weight);
     return sorted.slice(0, candidates.length).map((node, i) => ({
@@ -399,17 +376,10 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     }));
   }
 
-  private _selectGeoAffinity(
-    candidates: FederatedNode[],
-    targetShards: Set<string> | null,
-  ): NodeAssignment[] {
+  private _selectGeoAffinity(candidates: FederatedNode[], targetShards: Set<string> | null): NodeAssignment[] {
     const preferred = this.policy.preferredRegion;
-    const local = candidates.filter(
-      (n) => !preferred || n.region === preferred,
-    );
-    const remote = candidates.filter(
-      (n) => preferred && n.region !== preferred,
-    );
+    const local = candidates.filter((n) => !preferred || n.region === preferred);
+    const remote = candidates.filter((n) => preferred && n.region !== preferred);
 
     const result: NodeAssignment[] = [
       ...local.map((n) => ({
@@ -429,10 +399,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     return result.length > 0 ? result : this._selectRoundRobin(candidates, targetShards);
   }
 
-  private _selectCostBased(
-    candidates: FederatedNode[],
-    targetShards: Set<string> | null,
-  ): NodeAssignment[] {
+  private _selectCostBased(candidates: FederatedNode[], targetShards: Set<string> | null): NodeAssignment[] {
     const threshold = this.policy.costThreshold;
 
     // Score each node based on load metrics
@@ -450,30 +417,25 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     if (valid.length === 0) {
       // All candidates exceed thresholds — pick the least bad one
       const leastBad = scored.sort((a, b) => a.score - b.score)[0]!;
-      return [{
-        nodeId: leastBad.node.id,
-        shardIds: leastBad.node.shardIds.filter(
-          (s) => !targetShards || targetShards.has(s),
-        ),
-        priority: 1,
-        reason: `cost_based (score=${leastBad.score}, all exceeded thresholds)`,
-      }];
+      return [
+        {
+          nodeId: leastBad.node.id,
+          shardIds: leastBad.node.shardIds.filter((s) => !targetShards || targetShards.has(s)),
+          priority: 1,
+          reason: `cost_based (score=${leastBad.score}, all exceeded thresholds)`,
+        },
+      ];
     }
 
     return valid.slice(0, candidates.length).map((s, i) => ({
       nodeId: s.node.id,
-      shardIds: s.node.shardIds.filter(
-        (si) => !targetShards || targetShards.has(si),
-      ),
+      shardIds: s.node.shardIds.filter((si) => !targetShards || targetShards.has(si)),
       priority: i + 1,
       reason: `cost_based (score=${s.score})`,
     }));
   }
 
-  computeNodeScore(
-    node: FederatedNode,
-    threshold?: import("../interfaces/index.js").CostThreshold,
-  ): number {
+  computeNodeScore(node: FederatedNode, threshold?: import('../interfaces/index.js').CostThreshold): number {
     const load = node.load;
     if (!load || !threshold) return 50; // No data = medium score
 
@@ -492,8 +454,8 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     score += latRatio * 20;
 
     // Add health penalty
-    if (node.health === "degraded") score += 30;
-    if (node.health === "unhealthy") score += 100;
+    if (node.health === 'degraded') score += 30;
+    if (node.health === 'unhealthy') score += 100;
 
     return Math.round(score);
   }
@@ -504,10 +466,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
 
   // ── Internal: Execution ───────────────────────────────────
 
-  private async _executePlanInternal(
-    plan: QueryPlan,
-    executor: NodeExecutor,
-  ): Promise<FederatedResult> {
+  private async _executePlanInternal(plan: QueryPlan, executor: NodeExecutor): Promise<FederatedResult> {
     const results: NodeResult[] = [];
     const startMs = this._clock.nowMs();
 
@@ -527,9 +486,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
         };
       }
 
-      const shardIds = plan.assignments
-        .filter((a) => a.nodeId === nodeId)
-        .flatMap((a) => a.shardIds);
+      const shardIds = plan.assignments.filter((a) => a.nodeId === nodeId).flatMap((a) => a.shardIds);
 
       if (shardIds.length === 0 && plan.assignments.some((a) => a.nodeId === nodeId)) {
         // This node was assigned but has no shards — execute on all its shards
@@ -541,17 +498,17 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
 
     const settled = await Promise.allSettled(promises);
     for (const r of settled) {
-      if (r.status === "fulfilled") {
+      if (r.status === 'fulfilled') {
         results.push(r.value);
       } else {
         results.push({
-          nodeId: "unknown",
+          nodeId: 'unknown',
           shardIds: [],
           rows: [],
           rowCount: 0,
           durationMs: 0,
           success: false,
-          error: r.reason?.message ?? "Promise rejected",
+          error: r.reason?.message ?? 'Promise rejected',
         });
       }
     }
@@ -560,9 +517,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     const totalDuration = this._clock.nowMs() - startMs;
 
     // Merge rows from successful nodes
-    const mergedRows = results
-      .filter((r) => r.success)
-      .flatMap((r) => r.rows);
+    const mergedRows = results.filter((r) => r.success).flatMap((r) => r.rows);
 
     return {
       queryId: plan.query.id,
@@ -573,32 +528,27 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
       totalDurationMs: totalDuration,
       successCount,
       failCount: results.length - successCount,
-      error: successCount === 0
-        ? results.filter((r) => !r.success).map((r) => r.error).join("; ")
-        : undefined,
+      error:
+        successCount === 0
+          ? results
+              .filter((r) => !r.success)
+              .map((r) => r.error)
+              .join('; ')
+          : undefined,
     };
   }
 
   // ── Internal: Failover ────────────────────────────────────
 
-  private _failover(
-    failedNodeId: string,
-    plan: QueryPlan,
-    retryAttempt: number,
-  ): FailoverEvent {
+  private _failover(failedNodeId: string, plan: QueryPlan, retryAttempt: number): FailoverEvent {
     // Try to find a replacement
     const failed = this.nodes.get(failedNodeId);
     const shards = failed?.shardIds ?? [];
     const candidates = Array.from(this.nodes.values()).filter(
-      (n) =>
-        n.id !== failedNodeId &&
-        n.health === "healthy" &&
-        shards.some((s) => n.shardIds.includes(s)),
+      (n) => n.id !== failedNodeId && n.health === 'healthy' && shards.some((s) => n.shardIds.includes(s)),
     );
 
-    const replacement = this.policy.skipUnhealthy
-      ? candidates.filter((n) => n.health === "healthy")
-      : candidates;
+    const replacement = this.policy.skipUnhealthy ? candidates.filter((n) => n.health === 'healthy') : candidates;
 
     const fbNode = replacement.length > 0 ? replacement[0]! : undefined;
 
@@ -615,7 +565,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
 
     // Mark failed node as degraded
     if (failed) {
-      failed.health = "degraded";
+      failed.health = 'degraded';
     }
 
     return {
@@ -628,16 +578,8 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     };
   }
 
-  private _replan(
-    plan: QueryPlan,
-    fallbackStrategy: RoutingStrategy,
-    excludeNodeIds: string[],
-  ): QueryPlan {
-    const assignments = this._computeAssignments(
-      plan.query,
-      fallbackStrategy,
-      excludeNodeIds,
-    );
+  private _replan(plan: QueryPlan, fallbackStrategy: RoutingStrategy, excludeNodeIds: string[]): QueryPlan {
+    const assignments = this._computeAssignments(plan.query, fallbackStrategy, excludeNodeIds);
 
     return {
       ...plan,
@@ -651,8 +593,8 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
 // ── Default Policy ──────────────────────────────────────────
 
 const DEFAULT_POLICY: RoutingPolicy = {
-  strategy: "round_robin",
-  fallbackStrategy: "least_connections",
+  strategy: 'round_robin',
+  fallbackStrategy: 'least_connections',
   maxRetries: 3,
   retryBackoffMs: 100,
   skipUnhealthy: true,

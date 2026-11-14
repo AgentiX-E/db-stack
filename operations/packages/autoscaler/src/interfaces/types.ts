@@ -35,7 +35,7 @@ export interface AutoScalerMetrics {
 
 // ── Scale Action ────────────────────────────────────────────
 
-export type ScaleDirection = "scale_up" | "scale_down" | "none";
+export type ScaleDirection = 'scale_up' | 'scale_down' | 'none';
 
 export interface ScaleAction {
   /** Direction of scaling. */
@@ -58,7 +58,7 @@ export interface ScaleAction {
 
 // ── Scaling Policy ──────────────────────────────────────────
 
-export type ScalingStrategy = "aggressive" | "conservative" | "cost_optimized" | "custom";
+export type ScalingStrategy = 'aggressive' | 'conservative' | 'cost_optimized' | 'custom';
 
 export interface ScalingPolicy {
   /** Unique policy identifier. */

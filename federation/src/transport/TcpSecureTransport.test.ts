@@ -12,10 +12,10 @@
  *     — stop() cleans up subscriptions
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TcpSecureTransport } from "./TcpSecureTransport";
-import type { TransportMessage } from "../interfaces/transport/TransportMessage";
-import type { InboundMessage } from "../interfaces/transport/InboundMessage";
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { TcpSecureTransport } from './TcpSecureTransport';
+import type { TransportMessage } from '../interfaces/transport/TransportMessage';
+import type { InboundMessage } from '../interfaces/transport/InboundMessage';
 
 /** Mock Raft transport for testing (avoids real TLS/network) */
 function createMockRaftTransport() {
@@ -24,15 +24,16 @@ function createMockRaftTransport() {
 
   return {
     send: vi.fn().mockResolvedValue(undefined),
-    start: vi.fn().mockImplementation(async () => { started = true; }),
-    stop: vi.fn().mockImplementation(async () => { started = false; }),
+    start: vi.fn().mockImplementation(async () => {
+      started = true;
+    }),
+    stop: vi.fn().mockImplementation(async () => {
+      started = false;
+    }),
     onMessage: vi.fn().mockImplementation((handler: (msg: any) => void) => {
       messageHandlers.push(handler);
     }),
-    getConnectedPeers: vi.fn().mockReturnValue([
-      { nodeId: "2" },
-      { nodeId: "3" },
-    ]),
+    getConnectedPeers: vi.fn().mockReturnValue([{ nodeId: '2' }, { nodeId: '3' }]),
     getStats: vi.fn().mockReturnValue({
       messagesSent: 42,
       messagesReceived: 17,
@@ -45,48 +46,48 @@ function createMockRaftTransport() {
   };
 }
 
-describe("TcpSecureTransport — AC 46.7: ITransport Interface", () => {
-  it("should implement ITransport interface methods", () => {
+describe('TcpSecureTransport — AC 46.7: ITransport Interface', () => {
+  it('should implement ITransport interface methods', () => {
     const mockRaft = createMockRaftTransport();
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
       tls: {
-        cert: "fake-cert",
-        key: "fake-key",
-        ca: "fake-ca",
+        cert: 'fake-cert',
+        key: 'fake-key',
+        ca: 'fake-ca',
       },
       _transportOverride: mockRaft as any,
     });
 
-    expect(typeof transport.send).toBe("function");
-    expect(typeof transport.broadcast).toBe("function");
-    expect(typeof transport.onMessage).toBe("function");
-    expect(typeof transport.getConnectedPeers).toBe("function");
-    expect(typeof transport.getStats).toBe("function");
+    expect(typeof transport.send).toBe('function');
+    expect(typeof transport.broadcast).toBe('function');
+    expect(typeof transport.onMessage).toBe('function');
+    expect(typeof transport.getConnectedPeers).toBe('function');
+    expect(typeof transport.getStats).toBe('function');
   });
 });
 
-describe("TcpSecureTransport — AC 46.8: Send & Receive", () => {
-  it("should send a message via underlying transport", async () => {
+describe('TcpSecureTransport — AC 46.8: Send & Receive', () => {
+  it('should send a message via underlying transport', async () => {
     const mockRaft = createMockRaftTransport();
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft as any,
     });
 
     await transport.start();
 
     const msg: TransportMessage = {
-      messageId: "msg-1",
-      sourcePeerId: "node-1",
-      targetPeerId: "node-2",
+      messageId: 'msg-1',
+      sourcePeerId: 'node-1',
+      targetPeerId: 'node-2',
       payload: new Uint8Array([1, 2, 3]),
-      timestamp: { wallTime: 100, logical: 1, nodeId: "node-1" } as any,
+      timestamp: { wallTime: 100, logical: 1, nodeId: 'node-1' } as any,
       createdAt: Date.now(),
-      type: "test",
+      type: 'test',
     };
 
     const result = await transport.send(msg);
@@ -96,27 +97,27 @@ describe("TcpSecureTransport — AC 46.8: Send & Receive", () => {
     await transport.stop();
   });
 
-  it("should return false on send failure", async () => {
+  it('should return false on send failure', async () => {
     const mockRaft = createMockRaftTransport();
-    mockRaft.send.mockRejectedValue(new Error("Connection refused"));
+    mockRaft.send.mockRejectedValue(new Error('Connection refused'));
 
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft as any,
     });
 
     await transport.start();
 
     const msg: TransportMessage = {
-      messageId: "fail-msg",
-      sourcePeerId: "node-1",
-      targetPeerId: "node-2",
+      messageId: 'fail-msg',
+      sourcePeerId: 'node-1',
+      targetPeerId: 'node-2',
       payload: new Uint8Array(),
-      timestamp: { wallTime: 0, logical: 0, nodeId: "" },
+      timestamp: { wallTime: 0, logical: 0, nodeId: '' },
       createdAt: 0,
-      type: "fail",
+      type: 'fail',
     };
 
     const result = await transport.send(msg);
@@ -125,48 +126,48 @@ describe("TcpSecureTransport — AC 46.8: Send & Receive", () => {
     await transport.stop();
   });
 
-  it("should not send before start", async () => {
+  it('should not send before start', async () => {
     const mockRaft = createMockRaftTransport();
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft as any,
     });
 
     const msg: TransportMessage = {
-      messageId: "pre-start",
-      sourcePeerId: "node-1",
-      targetPeerId: "node-2",
+      messageId: 'pre-start',
+      sourcePeerId: 'node-1',
+      targetPeerId: 'node-2',
       payload: new Uint8Array(),
-      timestamp: { wallTime: 0, logical: 0, nodeId: "" },
+      timestamp: { wallTime: 0, logical: 0, nodeId: '' },
       createdAt: 0,
-      type: "test",
+      type: 'test',
     };
 
     const result = await transport.send(msg);
     expect(result).toBe(false);
   });
 
-  it("should broadcast to all connected peers", async () => {
+  it('should broadcast to all connected peers', async () => {
     const mockRaft = createMockRaftTransport();
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001", "127.0.0.1:7002"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001', '127.0.0.1:7002'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft as any,
     });
 
     await transport.start();
 
     const msg: TransportMessage = {
-      messageId: "broadcast-1",
-      sourcePeerId: "node-1",
-      targetPeerId: "*",
+      messageId: 'broadcast-1',
+      sourcePeerId: 'node-1',
+      targetPeerId: '*',
       payload: new Uint8Array([10, 20]),
-      timestamp: { wallTime: 100, logical: 1, nodeId: "node-1" } as any,
+      timestamp: { wallTime: 100, logical: 1, nodeId: 'node-1' } as any,
       createdAt: Date.now(),
-      type: "broadcast",
+      type: 'broadcast',
     };
 
     const sent = await transport.broadcast(msg);
@@ -176,12 +177,12 @@ describe("TcpSecureTransport — AC 46.8: Send & Receive", () => {
     await transport.stop();
   });
 
-  it("should subscribe to inbound messages", async () => {
+  it('should subscribe to inbound messages', async () => {
     const mockRaft = createMockRaftTransport() as any;
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft,
     });
 
@@ -192,74 +193,74 @@ describe("TcpSecureTransport — AC 46.8: Send & Receive", () => {
 
     // Simulate an incoming Raft message
     mockRaft._simulateIncoming({
-      type: "federation_send",
+      type: 'federation_send',
       term: 1,
-      from: "2",
-      to: "node-1",
+      from: '2',
+      to: 'node-1',
       payload: {
-        messageId: "incoming-1",
-        sourcePeerId: "node-2",
-        timestamp: { wallTime: 200, logical: 1, nodeId: "node-2" },
+        messageId: 'incoming-1',
+        sourcePeerId: 'node-2',
+        timestamp: { wallTime: 200, logical: 1, nodeId: 'node-2' },
         payload: [65, 66, 67],
-        type: "replicate",
+        type: 'replicate',
       },
     });
 
     expect(received).toHaveLength(1);
-    expect(received[0].messageId).toBe("incoming-1");
-    expect(received[0].sourcePeerId).toBe("node-2");
-    expect(received[0].type).toBe("replicate");
+    expect(received[0].messageId).toBe('incoming-1');
+    expect(received[0].sourcePeerId).toBe('node-2');
+    expect(received[0].type).toBe('replicate');
     expect(Array.from(received[0].payload)).toEqual([65, 66, 67]);
 
     await transport.stop();
   });
 });
 
-describe("TcpSecureTransport — Get Connected Peers", () => {
-  it("should return peers from underlying transport", async () => {
+describe('TcpSecureTransport — Get Connected Peers', () => {
+  it('should return peers from underlying transport', async () => {
     const mockRaft = createMockRaftTransport();
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft as any,
     });
 
     const peers = transport.getConnectedPeers();
     expect(peers).toHaveLength(2);
-    expect(peers[0].nodeId).toBe("2");
-    expect(peers[1].nodeId).toBe("3");
+    expect(peers[0].nodeId).toBe('2');
+    expect(peers[1].nodeId).toBe('3');
   });
 });
 
-describe("TcpSecureTransport — Get Stats", () => {
-  it("should return transport metrics", async () => {
+describe('TcpSecureTransport — Get Stats', () => {
+  it('should return transport metrics', async () => {
     const mockRaft = createMockRaftTransport();
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft as any,
     });
 
     const stats = transport.getStats();
-    expect(stats).toHaveProperty("peersConnected");
-    expect(stats).toHaveProperty("messagesSent");
-    expect(stats).toHaveProperty("messagesReceived");
-    expect(stats).toHaveProperty("bytesSent");
-    expect(stats).toHaveProperty("bytesReceived");
-    expect(stats).toHaveProperty("uptimeMs");
+    expect(stats).toHaveProperty('peersConnected');
+    expect(stats).toHaveProperty('messagesSent');
+    expect(stats).toHaveProperty('messagesReceived');
+    expect(stats).toHaveProperty('bytesSent');
+    expect(stats).toHaveProperty('bytesReceived');
+    expect(stats).toHaveProperty('uptimeMs');
     expect(stats.uptimeMs).toBeGreaterThanOrEqual(0);
   });
 });
 
-describe("TcpSecureTransport — AC 46.9: Lifecycle", () => {
-  it("should start and stop the underlying transport", async () => {
+describe('TcpSecureTransport — AC 46.9: Lifecycle', () => {
+  it('should start and stop the underlying transport', async () => {
     const mockRaft = createMockRaftTransport();
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft as any,
     });
 
@@ -271,12 +272,12 @@ describe("TcpSecureTransport — AC 46.9: Lifecycle", () => {
     expect(mockRaft.stop).toHaveBeenCalledTimes(1);
   });
 
-  it("should not start twice", async () => {
+  it('should not start twice', async () => {
     const mockRaft = createMockRaftTransport();
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft as any,
     });
 
@@ -286,12 +287,12 @@ describe("TcpSecureTransport — AC 46.9: Lifecycle", () => {
     expect(mockRaft.start).toHaveBeenCalledTimes(1);
   });
 
-  it("should destroy and clean up", async () => {
+  it('should destroy and clean up', async () => {
     const mockRaft = createMockRaftTransport();
     const transport = new TcpSecureTransport({
-      nodeId: "node-1",
-      peerAddresses: ["127.0.0.1:7001"],
-      tls: { cert: "c", key: "k", ca: "ca" },
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
       _transportOverride: mockRaft as any,
     });
 
@@ -303,13 +304,13 @@ describe("TcpSecureTransport — AC 46.9: Lifecycle", () => {
 
     // After destroy, send should fail
     const msg: TransportMessage = {
-      messageId: "after-destroy",
-      sourcePeerId: "node-1",
-      targetPeerId: "node-2",
+      messageId: 'after-destroy',
+      sourcePeerId: 'node-1',
+      targetPeerId: 'node-2',
       payload: new Uint8Array(),
-      timestamp: { wallTime: 0, logical: 0, nodeId: "" },
+      timestamp: { wallTime: 0, logical: 0, nodeId: '' },
       createdAt: 0,
-      type: "test",
+      type: 'test',
     };
 
     const result = await transport.send(msg);

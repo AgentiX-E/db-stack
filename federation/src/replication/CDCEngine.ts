@@ -13,10 +13,10 @@
  * change events via appendChange().
  */
 
-import type { ICDCEngine, CDCChangeEvent } from "../interfaces/replication/ICDCManager";
-import type { IHLCTimestamp } from "../interfaces/hlc/IHLCTimestamp";
-import { HLC } from "../hlc/HLC";
-import { randomUUID } from "crypto";
+import type { ICDCEngine, CDCChangeEvent } from '../interfaces/replication/ICDCManager';
+import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
+import { HLC } from '../hlc/HLC';
+import { randomUUID } from 'crypto';
 
 export type CDCEngineConfig = {
   nodeId: string;
@@ -65,7 +65,7 @@ export class CDCEngine implements ICDCEngine {
    * Test-only: simulate a CDC change event.
    * In production, this would be triggered by WAL decoding.
    */
-  appendChange(change: Omit<CDCChangeEvent, "lsn" | "timestamp" | "txId">): CDCChangeEvent {
+  appendChange(change: Omit<CDCChangeEvent, 'lsn' | 'timestamp' | 'txId'>): CDCChangeEvent {
     const timestamp = this.hlc.now();
     const event: CDCChangeEvent = {
       lsn: `0/${(Date.now() * 1000).toString(16)}`,

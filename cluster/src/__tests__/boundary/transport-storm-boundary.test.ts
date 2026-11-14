@@ -57,8 +57,12 @@ describe('Boundary: Transport Storm (A1)', () => {
             batch.push(
               leader.adapter
                 .proposeAndWait(`ts1-${idx}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`)
-                .then(() => { successes++; })
-                .catch(() => { failures++; }),
+                .then(() => {
+                  successes++;
+                })
+                .catch(() => {
+                  failures++;
+                }),
             );
           }
           await Promise.all(batch);
@@ -70,7 +74,7 @@ describe('Boundary: Transport Storm (A1)', () => {
 
         console.log(
           `[TS.1] 1,000 proposals: ${successes} ok / ${failures} fail ` +
-          `in ${elapsed}ms, heap ${heapGrowthMB.toFixed(1)}MB`,
+            `in ${elapsed}ms, heap ${heapGrowthMB.toFixed(1)}MB`,
         );
 
         expect(successes).toBeGreaterThan(900);
@@ -89,14 +93,9 @@ describe('Boundary: Transport Storm (A1)', () => {
         await cluster.start();
         const leader = await cluster.findLeader();
         const proposals = Array.from({ length: 10 }, (_, i) =>
-          leader.adapter
-            .proposeAndWait(`ts2-c${cycle}-${i}`)
-            .catch(() => {}),
+          leader.adapter.proposeAndWait(`ts2-c${cycle}-${i}`).catch(() => {}),
         );
-        await Promise.race([
-          Promise.all(proposals),
-          new Promise((r) => setTimeout(r, 500)),
-        ]);
+        await Promise.race([Promise.all(proposals), new Promise((r) => setTimeout(r, 500))]);
         await expect(cluster.stop()).resolves.not.toThrow();
       }
       console.log('[TS.2] 5 rapid stop/start cycles — no throw');
@@ -118,7 +117,9 @@ describe('Boundary: Transport Storm (A1)', () => {
             batch.push(
               leader.adapter
                 .proposeAndWait(`ts3-${i + j}`)
-                .then(() => { results.push(i + j); })
+                .then(() => {
+                  results.push(i + j);
+                })
                 .catch(() => {}),
             );
           }
@@ -140,11 +141,7 @@ describe('Boundary: Transport Storm (A1)', () => {
 
         const promises: Promise<void>[] = [];
         for (let i = 0; i < 50; i++) {
-          promises.push(
-            leader.adapter
-              .proposeAndWait(`ts4-${i}`)
-              .catch(() => {}),
-          );
+          promises.push(leader.adapter.proposeAndWait(`ts4-${i}`).catch(() => {}));
         }
 
         await Promise.all(promises);

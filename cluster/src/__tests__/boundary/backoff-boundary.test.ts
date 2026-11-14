@@ -46,8 +46,12 @@ async function batchPropose(
       batch.push(
         leader.adapter
           .proposeAndWait(`${prefix}-${idx}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`)
-          .then(() => { successes++; })
-          .catch(() => { failures++; }),
+          .then(() => {
+            successes++;
+          })
+          .catch(() => {
+            failures++;
+          }),
       );
     }
     await Promise.all(batch);
@@ -74,13 +78,11 @@ describe('Boundary: Adaptive Backoff (A2)', () => {
       await withCluster(async (cluster) => {
         const leader = await cluster.findLeader();
 
-        const { successes, failures, elapsedMs } = await batchPropose(
-          leader, 2_500, 16, 'bof1',
-        );
+        const { successes, failures, elapsedMs } = await batchPropose(leader, 2_500, 16, 'bof1');
 
         console.log(
           `[BOF.1] 2,500 proposals: ${successes} ok / ${failures} fail ` +
-          `in ${elapsedMs}ms (${(successes / (elapsedMs / 1000)).toFixed(1)} ops/sec)`,
+            `in ${elapsedMs}ms (${(successes / (elapsedMs / 1000)).toFixed(1)} ops/sec)`,
         );
 
         // 2,500 proposals batched 16-way through Raft's single-pipeline.
@@ -145,7 +147,7 @@ describe('Boundary: Adaptive Backoff (A2)', () => {
 
         console.log(
           `[BOF.3] ${totalOk + totalFailures} proposals (16 concurrent × 13): ` +
-          `${totalOk} ok / ${totalFailures} fail in ${elapsed}ms`,
+            `${totalOk} ok / ${totalFailures} fail in ${elapsed}ms`,
         );
 
         // 16 concurrent workers × 13 proposals each = 208 total.
@@ -176,10 +178,7 @@ describe('Boundary: Adaptive Backoff (A2)', () => {
         const elapsed = Date.now() - start;
         const opsPerSec = (COUNT / (elapsed / 1000)).toFixed(1);
 
-        console.log(
-          `[BOF.4] ${COUNT} sequential proposals: ${elapsed}ms ` +
-          `(${opsPerSec} ops/sec)`,
-        );
+        console.log(`[BOF.4] ${COUNT} sequential proposals: ${elapsed}ms ` + `(${opsPerSec} ops/sec)`);
 
         // Sequential throughput should exceed 10 ops/sec on 3-node cluster.
         // (Raft serial commit pipeline with 2 followers: ~5ms avg commit)

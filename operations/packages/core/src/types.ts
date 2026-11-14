@@ -15,13 +15,7 @@
 export type EngineType = 'sqlvec' | 'graphvec' | 'custom';
 
 /** Component lifecycle phase. */
-export type LifecyclePhase =
-  | 'created'
-  | 'starting'
-  | 'started'
-  | 'stopping'
-  | 'stopped'
-  | 'failed';
+export type LifecyclePhase = 'created' | 'starting' | 'started' | 'stopping' | 'stopped' | 'failed';
 
 // ══════════════════════════════════════════════════════════════════════
 //  Health & Probes
@@ -101,13 +95,7 @@ export interface MetricsSnapshot {
 export type SnapshotType = 'full' | 'incremental' | 'logical';
 
 /** Snapshot lifecycle state. */
-export type SnapshotState =
-  | 'pending'
-  | 'in-progress'
-  | 'completed'
-  | 'failed'
-  | 'verifying'
-  | 'verified';
+export type SnapshotState = 'pending' | 'in-progress' | 'completed' | 'failed' | 'verifying' | 'verified';
 
 /** Backup metadata. */
 export interface BackupMetadata {

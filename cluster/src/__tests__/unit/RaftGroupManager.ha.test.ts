@@ -36,16 +36,35 @@ vi.mock('../../consensus/core/RaftGroup', () => ({
       this.config = config;
       mockGroups.set(shardId, this);
     }
-    async init(_t?: any) { this._initArgs.push(_t); }
+    async init(_t?: any) {
+      this._initArgs.push(_t);
+    }
     stop() {}
-    async isLeader() { return this._isLeader; }
-    async getLeader() { return this._leader; }
-    async getProgress() { return this._progress; }
-    async propose(e: any) { this._proposeCalls.push(e); return { index: '1', term: '1' }; }
-    async getLeaderHealth() { return this._health; }
-    getRaftAdapter() { return this._raftAdapter; }
-    setStorage(s: any) { this._storage = s; }
-    toString() { return `MockRaftGroup(${this.shardId})`; }
+    async isLeader() {
+      return this._isLeader;
+    }
+    async getLeader() {
+      return this._leader;
+    }
+    async getProgress() {
+      return this._progress;
+    }
+    async propose(e: any) {
+      this._proposeCalls.push(e);
+      return { index: '1', term: '1' };
+    }
+    async getLeaderHealth() {
+      return this._health;
+    }
+    getRaftAdapter() {
+      return this._raftAdapter;
+    }
+    setStorage(s: any) {
+      this._storage = s;
+    }
+    toString() {
+      return `MockRaftGroup(${this.shardId})`;
+    }
   },
 }));
 
@@ -55,8 +74,12 @@ vi.mock('../../consensus/opt/AdaptiveElectionTimeout', () => ({
     start() {}
     stop() {}
     recordRtt() {}
-    getSampleCount() { return 0; }
-    getAvgRtt() { return 0; }
+    getSampleCount() {
+      return 0;
+    }
+    getAvgRtt() {
+      return 0;
+    }
   },
 }));
 
@@ -97,7 +120,7 @@ describe('RaftGroupManager — reconnect / retry / pg-forward / cleanup', () => 
   });
 
   function registerOne(shardId = 1, raftIndex = 1): any {
-    manager.registerShardWithReplica(shardId, new MockReplica(), [{ nodeId: 'n1', raftIndex: raftIndex }], raftIndex);
+    manager.registerShardWithReplica(shardId, new MockReplica(), [{ nodeId: 'n1', raftIndex }], raftIndex);
     return mockGroups.get(shardId);
   }
 
@@ -131,7 +154,15 @@ describe('RaftGroupManager — reconnect / retry / pg-forward / cleanup', () => 
       manager.setClusterTopology({ isPeerAlive: () => false });
       registerOne(1, 1); // config.id=1, peers=[1] → no external peers
       // register a second group with a peer different from self
-      manager.registerShardWithReplica(2, new MockReplica(), [{ nodeId: 'n1', raftIndex: 2 }, { nodeId: 'n2', raftIndex: 9 }], 2);
+      manager.registerShardWithReplica(
+        2,
+        new MockReplica(),
+        [
+          { nodeId: 'n1', raftIndex: 2 },
+          { nodeId: 'n2', raftIndex: 9 },
+        ],
+        2,
+      );
       await (manager as any)._checkReconnections();
       // peer 9 is dead and not self → reconnect scheduled
       expect(manager.peerReconnectState.has('9')).toBe(true);
@@ -270,7 +301,10 @@ describe('RaftGroupManager — reconnect / retry / pg-forward / cleanup', () => 
     });
 
     it('_cleanPgClientPool closes idle connections', () => {
-      manager.pgClientPool.set(6000, { client: { end: vi.fn().mockResolvedValue(undefined) }, lastUsed: Date.now() - 60_000 });
+      manager.pgClientPool.set(6000, {
+        client: { end: vi.fn().mockResolvedValue(undefined) },
+        lastUsed: Date.now() - 60_000,
+      });
       manager.pgPoolConnected.add(6000);
       (manager as any)._cleanPgClientPool();
       expect(manager.pgClientPool.size).toBe(0);

@@ -36,18 +36,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HAFailoverCoordinator } from '../../ha/HAFailoverCoordinator';
-import {
-  HAFailoverDetector,
-  type FailoverEvent,
-} from '../../ha/HAFailoverDetector';
+import { HAFailoverDetector, type FailoverEvent } from '../../ha/HAFailoverDetector';
 import { HAConsistencyVerifier } from '../../ha/HAConsistencyVerifier';
 import { HAClientManager } from '../../ha/HAClientManager';
 import { ClockCompensator } from '../../ha/ClockCompensator';
-import {
-  IConsensusLayer,
-  IClusterTopology,
-  TopologyChange,
-} from '../../consensus/interfaces/interfaces';
+import { IConsensusLayer, IClusterTopology, TopologyChange } from '../../consensus/interfaces/interfaces';
 
 // ─────────────────────────────────────────────────────────────
 //  Mock HAFailoverDetector so we can capture the onFailover callback
@@ -74,9 +67,7 @@ vi.mock('pino', () => {
 });
 
 vi.mock('../../ha/HAFailoverDetector', async () => {
-  const actual = await vi.importActual<typeof import('../../ha/HAFailoverDetector')>(
-    '../../ha/HAFailoverDetector',
-  );
+  const actual = await vi.importActual<typeof import('../../ha/HAFailoverDetector')>('../../ha/HAFailoverDetector');
   return {
     ...actual,
     HAFailoverDetector: class MockDetector {
@@ -112,9 +103,7 @@ function createMockTopology(
  * A fully controllable IConsensusLayer mock. Every method is a vi.fn whose
  * implementation can be overridden per test.
  */
-function createMockConsensus(
-  overrides: Partial<Record<keyof IConsensusLayer, unknown>> = {},
-): IConsensusLayer {
+function createMockConsensus(overrides: Partial<Record<keyof IConsensusLayer, unknown>> = {}): IConsensusLayer {
   const base: IConsensusLayer = {
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
@@ -163,15 +152,17 @@ interface Collaborators {
   coord: HAFailoverCoordinator;
 }
 
-function build(cfg: {
-  consensus?: IConsensusLayer;
-  topology?: IClusterTopology;
-  verifier?: HAConsistencyVerifier;
-  clientManager?: HAClientManager;
-  clock?: ClockCompensator;
-  fencing?: { fenceNode: ReturnType<typeof vi.fn> };
-  detectorConfig?: Record<string, unknown>;
-} = {}): Collaborators {
+function build(
+  cfg: {
+    consensus?: IConsensusLayer;
+    topology?: IClusterTopology;
+    verifier?: HAConsistencyVerifier;
+    clientManager?: HAClientManager;
+    clock?: ClockCompensator;
+    fencing?: { fenceNode: ReturnType<typeof vi.fn> };
+    detectorConfig?: Record<string, unknown>;
+  } = {},
+): Collaborators {
   const consensus = cfg.consensus ?? createMockConsensus();
   const topology = cfg.topology ?? createMockTopology();
   const verifier = cfg.verifier ?? createMockVerifier(true);
@@ -251,9 +242,7 @@ describe('HAFailoverCoordinator — constructor & lifecycle', () => {
     expect(coord.getConsistencyVerifier()).toBe(verifier);
     expect(coord.getClientManager()).toBe(clientManager);
     expect(coord.getClockCompensator()).toBe(clock);
-    expect(
-      coord.isClockCompensationEnabled(),
-    ).toBe(true);
+    expect(coord.isClockCompensationEnabled()).toBe(true);
 
     coord.shutdown();
     expect((coord.getDetector() as any).stop).toHaveBeenCalled();
@@ -312,9 +301,7 @@ describe('HAFailoverCoordinator — handleFailover', () => {
     });
     const { coord } = build({ consensus });
 
-    const result = await (coord as any).handleFailover(
-      event({ type: 'leader_failure', affectedNodeId: 'node-2' }),
-    );
+    const result = await (coord as any).handleFailover(event({ type: 'leader_failure', affectedNodeId: 'node-2' }));
 
     expect(result).toBe(true);
     // Stage 6 reconfiguration removes the dead node.
@@ -357,9 +344,7 @@ describe('HAFailoverCoordinator — handleFailover', () => {
     });
     const { coord } = build({ consensus });
 
-    const result = await (coord as any).handleFailover(
-      event({ type: 'leader_failure' }),
-    );
+    const result = await (coord as any).handleFailover(event({ type: 'leader_failure' }));
 
     expect(result).toBe(false);
     expect((coord as any).activeFailovers).toBe(0);
@@ -375,9 +360,7 @@ describe('HAFailoverCoordinator — handleFailover', () => {
     });
     const { coord } = build({ consensus });
 
-    const result = await (coord as any).handleFailover(
-      event({ type: 'quorum_loss' }),
-    );
+    const result = await (coord as any).handleFailover(event({ type: 'quorum_loss' }));
 
     expect(result).toBe(false);
   });
@@ -388,9 +371,7 @@ describe('HAFailoverCoordinator — handleFailover', () => {
     const topology = createMockTopology('node-2', ['node-3']);
     const { coord } = build({ consensus, topology });
 
-    const result = await (coord as any).handleFailover(
-      event({ type: 'node_failure', affectedNodeId: 'node-2' }),
-    );
+    const result = await (coord as any).handleFailover(event({ type: 'node_failure', affectedNodeId: 'node-2' }));
 
     expect(result).toBe(false);
     expect((coord as any).unhealthyNodes.has('node-2')).toBe(true);
@@ -408,9 +389,7 @@ describe('HAFailoverCoordinator — handleFailover', () => {
       throw new Error('logger-fail');
     });
 
-    const result = await (coord as any).handleFailover(
-      event({ type: 'quorum_loss' }),
-    );
+    const result = await (coord as any).handleFailover(event({ type: 'quorum_loss' }));
 
     expect(result).toBe(false);
     expect((coord as any).activeFailovers).toBe(0);
@@ -429,9 +408,7 @@ describe('HAFailoverCoordinator — handleFailover', () => {
       throw new Error('election-body-fail');
     });
 
-    const result = await (coord as any).handleFailover(
-      event({ type: 'quorum_loss' }),
-    );
+    const result = await (coord as any).handleFailover(event({ type: 'quorum_loss' }));
 
     expect(result).toBe(false);
     expect(mockLogger.warn).toHaveBeenCalled();
@@ -473,9 +450,7 @@ describe('HAFailoverCoordinator — handleFailover', () => {
     });
     const { coord } = build({ consensus, verifier });
 
-    const result = await (coord as any).handleFailover(
-      event({ type: 'node_failure' }),
-    );
+    const result = await (coord as any).handleFailover(event({ type: 'node_failure' }));
 
     expect(result).toBe(true);
     expect(mockLogger.warn).toHaveBeenCalled();
@@ -488,9 +463,7 @@ describe('HAFailoverCoordinator — handleFailover', () => {
     });
     const { coord } = build({ consensus, verifier });
 
-    const result = await (coord as any).handleFailover(
-      event({ type: 'node_failure' }),
-    );
+    const result = await (coord as any).handleFailover(event({ type: 'node_failure' }));
 
     expect(result).toBe(true);
     expect(mockLogger.warn).toHaveBeenCalled();
@@ -504,9 +477,7 @@ describe('HAFailoverCoordinator — handleFailover', () => {
     const verifier = createMockVerifier(true);
     const { coord } = build({ consensus, verifier });
 
-    const result = await (coord as any).handleFailover(
-      event({ type: 'node_failure' }),
-    );
+    const result = await (coord as any).handleFailover(event({ type: 'node_failure' }));
 
     expect(result).toBe(true);
     expect(verifier.verifyNewLeaderConsistency).toHaveBeenCalled();
@@ -609,33 +580,21 @@ describe('HAFailoverCoordinator — shouldTakeOver', () => {
 
   it('AC 31.11: node_failure → local !== affected', async () => {
     const { coord } = build({ topology: createMockTopology('node-1', ['node-2']) });
-    const r = await (coord as any).shouldTakeOver(
-      event({ type: 'node_failure', affectedNodeId: 'node-2' }),
-      'node-1',
-    );
+    const r = await (coord as any).shouldTakeOver(event({ type: 'node_failure', affectedNodeId: 'node-2' }), 'node-1');
     expect(r).toBe(true);
-    const r2 = await (coord as any).shouldTakeOver(
-      event({ type: 'node_failure', affectedNodeId: 'node-1' }),
-      'node-1',
-    );
+    const r2 = await (coord as any).shouldTakeOver(event({ type: 'node_failure', affectedNodeId: 'node-1' }), 'node-1');
     expect(r2).toBe(false);
   });
 
   it('AC 31.11: quorum_loss → always true', async () => {
     const { coord } = build();
-    const r = await (coord as any).shouldTakeOver(
-      event({ type: 'quorum_loss' }),
-      'node-1',
-    );
+    const r = await (coord as any).shouldTakeOver(event({ type: 'quorum_loss' }), 'node-1');
     expect(r).toBe(true);
   });
 
   it('AC 31.11: unknown type → false', async () => {
     const { coord } = build();
-    const r = await (coord as any).shouldTakeOver(
-      event({ type: 'unknown' as any }),
-      'node-1',
-    );
+    const r = await (coord as any).shouldTakeOver(event({ type: 'unknown' as any }), 'node-1');
     expect(r).toBe(false);
   });
 });
@@ -877,9 +836,7 @@ describe('HAFailoverCoordinator — transferLeadership', () => {
 
   it('AC 31.17: getHealthStatus fallback — target commit index gap too large', async () => {
     const consensus = createMockConsensus({
-      getHealthStatus: vi.fn().mockResolvedValue([
-        { nodeId: 'node-2', matchIndex: 0 },
-      ]),
+      getHealthStatus: vi.fn().mockResolvedValue([{ nodeId: 'node-2', matchIndex: 0 }]),
       getCommitIndex: vi.fn().mockResolvedValue(99999),
     });
     const { coord } = build({ consensus });
@@ -888,11 +845,11 @@ describe('HAFailoverCoordinator — transferLeadership', () => {
   });
 
   it('AC 31.17: getHealthStatus fallback — matches by leaderId and uses commitIndex', async () => {
-    let localIdx = 99999;
+    const localIdx = 99999;
     const consensus = createMockConsensus({
-      getHealthStatus: vi.fn().mockResolvedValue([
-        { nodeId: 'other', leaderId: 'node-2', matchIndex: null, commitIndex: 0 },
-      ]),
+      getHealthStatus: vi
+        .fn()
+        .mockResolvedValue([{ nodeId: 'other', leaderId: 'node-2', matchIndex: null, commitIndex: 0 }]),
       getCommitIndex: vi.fn().mockImplementation(() => localIdx),
     });
     const { coord } = build({ consensus });
@@ -912,9 +869,9 @@ describe('HAFailoverCoordinator — transferLeadership', () => {
 
   it('AC 31.17: getHealthStatus fallback — target info without match/commit index defaults to 0', async () => {
     const consensus = createMockConsensus({
-      getHealthStatus: vi.fn().mockResolvedValue([
-        { nodeId: 'node-2', leaderId: undefined, matchIndex: undefined, commitIndex: undefined },
-      ]),
+      getHealthStatus: vi
+        .fn()
+        .mockResolvedValue([{ nodeId: 'node-2', leaderId: undefined, matchIndex: undefined, commitIndex: undefined }]),
       getCommitIndex: vi.fn().mockResolvedValue(0),
       getLeader: vi.fn().mockResolvedValue('node-2'),
     });

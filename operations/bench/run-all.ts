@@ -25,7 +25,14 @@ class OperationsBenchTarget {
 
   async read(key: string): Promise<string> {
     const entry = this.auditLog.get(key);
-    if (entry) return JSON.stringify({ key, data: entry.data, timestamp: entry.timestamp, auditLogSize: this.auditLog.size, backupCount: this.backupEntries.length });
+    if (entry)
+      return JSON.stringify({
+        key,
+        data: entry.data,
+        timestamp: entry.timestamp,
+        auditLogSize: this.auditLog.size,
+        backupCount: this.backupEntries.length,
+      });
     return JSON.stringify({ key, found: false });
   }
 
@@ -34,12 +41,18 @@ class OperationsBenchTarget {
   }
 
   async insert(key: string, value: string): Promise<void> {
-    this.backupEntries.push(JSON.stringify({ backupKey: key, timestamp: Date.now(), lsn: this.backupEntries.length + 1 }));
+    this.backupEntries.push(
+      JSON.stringify({
+        backupKey: key,
+        timestamp: Date.now(),
+        lsn: this.backupEntries.length + 1,
+      }),
+    );
     this.auditLog.set(key, { data: value, timestamp: Date.now() });
   }
 
   async scan(count: number): Promise<string[]> {
-    return this.healthChecks.slice(0, Math.min(count, this.healthChecks.length)).map(h => JSON.stringify(h));
+    return this.healthChecks.slice(0, Math.min(count, this.healthChecks.length)).map((h) => JSON.stringify(h));
   }
 
   reset(): void {
@@ -83,8 +96,12 @@ async function main(): Promise<void> {
 
     allResults.push(result);
     console.log(`  Throughput: ${result.throughput} ops/s`);
-    console.log(`  Read: P50=${result.readLatency.p50.toFixed(3)}ms  P95=${result.readLatency.p95.toFixed(3)}ms  P99=${result.readLatency.p99.toFixed(3)}ms`);
-    console.log(`  Update: P50=${result.updateLatency.p50.toFixed(3)}ms  P95=${result.updateLatency.p95.toFixed(3)}ms  P99=${result.updateLatency.p99.toFixed(3)}ms`);
+    console.log(
+      `  Read: P50=${result.readLatency.p50.toFixed(3)}ms  P95=${result.readLatency.p95.toFixed(3)}ms  P99=${result.readLatency.p99.toFixed(3)}ms`,
+    );
+    console.log(
+      `  Update: P50=${result.updateLatency.p50.toFixed(3)}ms  P95=${result.updateLatency.p95.toFixed(3)}ms  P99=${result.updateLatency.p99.toFixed(3)}ms`,
+    );
     if (result.errors > 0) console.log(`  ⚠ Errors: ${result.errors}`);
     console.log('');
   }

@@ -28,4 +28,4 @@ export type {
   IConfigWatcherV2,
   ConfigChangeHandlerV2,
   ConfigWatcherStats,
-} from "./types.js";
+} from './types.js';

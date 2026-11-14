@@ -16,7 +16,7 @@
  *   RCHAOS3 — Zero new dependencies on Raft internals beyond transport ref
  */
 
-import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from "@agentix-e/db-operations-chaosengine";
+import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from '@agentix-e/db-operations-chaosengine';
 
 // ── Internal interface (what we receive from the harness) ────
 
@@ -88,7 +88,9 @@ export class RaftChaosAdapter implements IChaosTransport {
     try {
       if (this.injector.stop) await this.injector.stop();
       else await this.injector.inner.stop();
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   async start(): Promise<void> {
@@ -97,7 +99,9 @@ export class RaftChaosAdapter implements IChaosTransport {
     try {
       if (this.injector.start) await this.injector.start();
       else await this.injector.inner.start();
-    } catch { /* already started */ }
+    } catch {
+      /* already started */
+    }
   }
 
   getStats(): ChaosTransportStats {
@@ -114,11 +118,13 @@ export class RaftChaosAdapter implements IChaosTransport {
   }
 
   isHealthy(): boolean {
-    return !this._stopped
-      && !this.injector.isolated
-      && this.injector.partitionedPeers.size === 0
-      && this.messageLossRate === 0
-      && this.currentLatencyMs === 0;
+    return (
+      !this._stopped &&
+      !this.injector.isolated &&
+      this.injector.partitionedPeers.size === 0 &&
+      this.messageLossRate === 0 &&
+      this.currentLatencyMs === 0
+    );
   }
 
   private parseNodeId(transportId: string): number | null {
@@ -132,65 +138,65 @@ export class RaftChaosAdapter implements IChaosTransport {
 export class RaftChaosScenarios {
   static partition(targets: number[], durationMs = 0, desc?: string): ChaosFaultV2 {
     return {
-      type: "network-partition",
+      type: 'network-partition',
       targets: targets.map((n) => `raft:${n}`),
       durationMs,
       config: { raftNodes: targets },
-      description: desc ?? `Partition nodes ${targets.join(", ")}`,
+      description: desc ?? `Partition nodes ${targets.join(', ')}`,
     };
   }
 
   static crash(targets: number[], durationMs = 0, desc?: string): ChaosFaultV2 {
     return {
-      type: "node-crash",
+      type: 'node-crash',
       targets: targets.map((n) => `raft:${n}`),
       durationMs,
       config: { raftNodes: targets },
-      description: desc ?? `Crash nodes ${targets.join(", ")}`,
+      description: desc ?? `Crash nodes ${targets.join(', ')}`,
     };
   }
 
   static messageLoss(targets: number[], lossRate = 0.3, durationMs = 0, desc?: string): ChaosFaultV2 {
     return {
-      type: "message-loss",
+      type: 'message-loss',
       targets: targets.map((n) => `raft:${n}`),
       durationMs,
       config: { lossRate },
-      description: desc ?? `${(lossRate * 100).toFixed(0)}% message loss on ${targets.join(", ")}`,
+      description: desc ?? `${(lossRate * 100).toFixed(0)}% message loss on ${targets.join(', ')}`,
     };
   }
 
   static latency(targets: number[], latencyMs = 200, durationMs = 0, desc?: string): ChaosFaultV2 {
     return {
-      type: "latency-injection",
+      type: 'latency-injection',
       targets: targets.map((n) => `raft:${n}`),
       durationMs,
       config: { latencyMs },
-      description: desc ?? `${latencyMs}ms latency on ${targets.join(", ")}`,
+      description: desc ?? `${latencyMs}ms latency on ${targets.join(', ')}`,
     };
   }
 
   static leadershipFlap(targets: number[], durationMs = 0, desc?: string): ChaosFaultV2 {
     return {
-      type: "leadership-flap",
+      type: 'leadership-flap',
       targets: targets.map((n) => `raft:${n}`),
       durationMs,
       config: { raftNodes: targets },
-      description: desc ?? `Leadership flap on ${targets.join(", ")}`,
+      description: desc ?? `Leadership flap on ${targets.join(', ')}`,
     };
   }
 
   static cascadingFailure(targets: number[], staggerMs = 1000, durationMs = 0, desc?: string): ChaosFaultV2 {
     return {
-      type: "cascading-failure",
+      type: 'cascading-failure',
       targets: targets.map((n) => `raft:${n}`),
       durationMs,
       config: { staggerMs },
-      description: desc ?? `Cascading failure ${targets.join(" → ")}`,
+      description: desc ?? `Cascading failure ${targets.join(' → ')}`,
     };
   }
 
   static allNodes(): string[] {
-    return ["raft:*"];
+    return ['raft:*'];
   }
 }

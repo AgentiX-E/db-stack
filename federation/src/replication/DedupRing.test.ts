@@ -13,41 +13,41 @@
  *   - Sweep amortization
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { DedupRing } from "./DedupRing";
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { DedupRing } from './DedupRing';
 
-describe("DedupRing — Basic Operations", () => {
-  it("should report not contains for empty ring", () => {
+describe('DedupRing — Basic Operations', () => {
+  it('should report not contains for empty ring', () => {
     const ring = new DedupRing();
-    expect(ring.contains("msg-123")).toBe(false);
+    expect(ring.contains('msg-123')).toBe(false);
   });
 
-  it("should accept a new msgId on put()", () => {
+  it('should accept a new msgId on put()', () => {
     const ring = new DedupRing();
-    const result = ring.put("msg-123");
+    const result = ring.put('msg-123');
     expect(result).toBe(true);
-    expect(ring.contains("msg-123")).toBe(true);
+    expect(ring.contains('msg-123')).toBe(true);
   });
 
-  it("should reject duplicate msgId on put()", () => {
+  it('should reject duplicate msgId on put()', () => {
     const ring = new DedupRing();
-    ring.put("msg-123");
-    const result = ring.put("msg-123");
+    ring.put('msg-123');
+    const result = ring.put('msg-123');
     expect(result).toBe(false);
   });
 
-  it("should track size correctly", () => {
+  it('should track size correctly', () => {
     const ring = new DedupRing();
     expect(ring.size).toBe(0);
-    ring.put("a");
-    ring.put("b");
-    ring.put("c");
+    ring.put('a');
+    ring.put('b');
+    ring.put('c');
     expect(ring.size).toBe(3);
   });
 });
 
-describe("DedupRing — Duplicate Detection (AC 40.3)", () => {
-  it("should detect duplicates across 10K unique IDs", () => {
+describe('DedupRing — Duplicate Detection (AC 40.3)', () => {
+  it('should detect duplicates across 10K unique IDs', () => {
     const ring = new DedupRing({ ttlMs: 60_000 });
     const ids: string[] = [];
 
@@ -68,14 +68,14 @@ describe("DedupRing — Duplicate Detection (AC 40.3)", () => {
     }
   });
 
-  it("should track dedup statistics", () => {
+  it('should track dedup statistics', () => {
     const ring = new DedupRing();
-    ring.put("msg-1");
-    ring.put("msg-2");
+    ring.put('msg-1');
+    ring.put('msg-2');
 
     // Two duplicates
-    ring.put("msg-1");
-    ring.put("msg-2");
+    ring.put('msg-1');
+    ring.put('msg-2');
 
     const stats = ring.getStats();
     expect(stats.totalSeen).toBe(2); // 2 unique
@@ -84,44 +84,44 @@ describe("DedupRing — Duplicate Detection (AC 40.3)", () => {
   });
 });
 
-describe("DedupRing — Delete Operation", () => {
-  it("should delete an existing entry", () => {
+describe('DedupRing — Delete Operation', () => {
+  it('should delete an existing entry', () => {
     const ring = new DedupRing();
-    ring.put("msg-1");
-    expect(ring.delete("msg-1")).toBe(true);
-    expect(ring.contains("msg-1")).toBe(false);
+    ring.put('msg-1');
+    expect(ring.delete('msg-1')).toBe(true);
+    expect(ring.contains('msg-1')).toBe(false);
   });
 
-  it("should return false when deleting non-existent entry", () => {
+  it('should return false when deleting non-existent entry', () => {
     const ring = new DedupRing();
-    expect(ring.delete("non-existent")).toBe(false);
+    expect(ring.delete('non-existent')).toBe(false);
   });
 
-  it("should allow re-insert after delete", () => {
+  it('should allow re-insert after delete', () => {
     const ring = new DedupRing();
-    ring.put("msg-1");
-    ring.delete("msg-1");
-    expect(ring.put("msg-1")).toBe(true);
+    ring.put('msg-1');
+    ring.delete('msg-1');
+    expect(ring.put('msg-1')).toBe(true);
   });
 });
 
-describe("DedupRing — Clear Operation", () => {
-  it("should clear all entries", () => {
+describe('DedupRing — Clear Operation', () => {
+  it('should clear all entries', () => {
     const ring = new DedupRing();
-    ring.put("a");
-    ring.put("b");
-    ring.put("c");
+    ring.put('a');
+    ring.put('b');
+    ring.put('c');
     ring.clear();
     expect(ring.size).toBe(0);
-    expect(ring.contains("a")).toBe(false);
-    expect(ring.contains("b")).toBe(false);
-    expect(ring.contains("c")).toBe(false);
+    expect(ring.contains('a')).toBe(false);
+    expect(ring.contains('b')).toBe(false);
+    expect(ring.contains('c')).toBe(false);
   });
 
-  it("should reset stats after clear", () => {
+  it('should reset stats after clear', () => {
     const ring = new DedupRing();
-    ring.put("a");
-    ring.put("b");
+    ring.put('a');
+    ring.put('b');
     ring.clear();
     const stats = ring.getStats();
     // Stats are cumulative (not resets on clear)
@@ -131,7 +131,7 @@ describe("DedupRing — Clear Operation", () => {
   });
 });
 
-describe("DedupRing — TTL-Based Eviction", () => {
+describe('DedupRing — TTL-Based Eviction', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
@@ -140,41 +140,41 @@ describe("DedupRing — TTL-Based Eviction", () => {
     vi.useRealTimers();
   });
 
-  it("should evict entries after TTL expires", () => {
+  it('should evict entries after TTL expires', () => {
     const ring = new DedupRing({ ttlMs: 1000 }); // 1s TTL
-    ring.put("msg-old");
+    ring.put('msg-old');
 
-    expect(ring.contains("msg-old")).toBe(true);
+    expect(ring.contains('msg-old')).toBe(true);
 
     // Advance past TTL
     vi.advanceTimersByTime(1100);
 
     // Sweep on next contains/put
-    expect(ring.contains("msg-old")).toBe(false);
+    expect(ring.contains('msg-old')).toBe(false);
   });
 
-  it("should not evict entries before TTL", () => {
+  it('should not evict entries before TTL', () => {
     const ring = new DedupRing({ ttlMs: 10_000 }); // 10s TTL
-    ring.put("msg-recent");
+    ring.put('msg-recent');
 
     vi.advanceTimersByTime(5000);
-    expect(ring.contains("msg-recent")).toBe(true);
+    expect(ring.contains('msg-recent')).toBe(true);
   });
 
-  it("should evict only expired entries, keep recent ones", () => {
+  it('should evict only expired entries, keep recent ones', () => {
     const ring = new DedupRing({ ttlMs: 2000 });
-    ring.put("msg-recent");
-    
+    ring.put('msg-recent');
+
     vi.advanceTimersByTime(500);
-    ring.put("msg-recent-2"); // refreshed
+    ring.put('msg-recent-2'); // refreshed
 
     vi.advanceTimersByTime(2000);
     // First entry expired, second not yet (put later)
-    expect(ring.contains("msg-recent")).toBe(false);
-    expect(ring.contains("msg-recent-2")).toBe(true);
+    expect(ring.contains('msg-recent')).toBe(false);
+    expect(ring.contains('msg-recent-2')).toBe(true);
   });
 
-  it("should handle sweep on empty ring gracefully", () => {
+  it('should handle sweep on empty ring gracefully', () => {
     const ring = new DedupRing({ ttlMs: 1000 });
     vi.advanceTimersByTime(2000);
     expect(() => ring.sweep()).not.toThrow();
@@ -182,25 +182,25 @@ describe("DedupRing — TTL-Based Eviction", () => {
   });
 });
 
-describe("DedupRing — Capacity Enforcement (FIFO Eviction)", () => {
-  it("should evict oldest entries when capacity exceeded", () => {
+describe('DedupRing — Capacity Enforcement (FIFO Eviction)', () => {
+  it('should evict oldest entries when capacity exceeded', () => {
     const ring = new DedupRing({ maxCapacity: 3, ttlMs: 3_600_000 });
 
-    ring.put("a");
-    ring.put("b");
-    ring.put("c");
+    ring.put('a');
+    ring.put('b');
+    ring.put('c');
     expect(ring.size).toBe(3);
 
     // Adding a 4th should evict oldest
-    ring.put("d");
+    ring.put('d');
     expect(ring.size).toBe(3); // a evicted (max 3 now: b, c, d)
-    expect(ring.contains("a")).toBe(false);
-    expect(ring.contains("b")).toBe(true);
-    expect(ring.contains("c")).toBe(true);
-    expect(ring.contains("d")).toBe(true);
+    expect(ring.contains('a')).toBe(false);
+    expect(ring.contains('b')).toBe(true);
+    expect(ring.contains('c')).toBe(true);
+    expect(ring.contains('d')).toBe(true);
   });
 
-  it("should not evict when under capacity", () => {
+  it('should not evict when under capacity', () => {
     const ring = new DedupRing({ maxCapacity: 100, ttlMs: 3_600_000 });
     for (let i = 0; i < 50; i++) {
       ring.put(`msg-${i}`);
@@ -208,7 +208,7 @@ describe("DedupRing — Capacity Enforcement (FIFO Eviction)", () => {
     expect(ring.size).toBe(50);
   });
 
-  it("should track eviction statistics", () => {
+  it('should track eviction statistics', () => {
     const ring = new DedupRing({ maxCapacity: 5, ttlMs: 3_600_000 });
 
     for (let i = 0; i < 10; i++) {
@@ -221,8 +221,8 @@ describe("DedupRing — Capacity Enforcement (FIFO Eviction)", () => {
   });
 });
 
-describe("DedupRing — High Throughput", () => {
-  it("should handle 100K unique IDs under capacity without degrading", () => {
+describe('DedupRing — High Throughput', () => {
+  it('should handle 100K unique IDs under capacity without degrading', () => {
     const ring = new DedupRing({ maxCapacity: 200_000, ttlMs: 3_600_000 });
 
     // Warm-up phase: the first 10K inserts establish the per-op cost.
@@ -246,7 +246,7 @@ describe("DedupRing — High Throughput", () => {
     expect(largePerOp * 90_000).toBeLessThan(60_000);
   });
 
-  it("should handle 100% duplicate rate at high throughput", () => {
+  it('should handle 100% duplicate rate at high throughput', () => {
     const ring = new DedupRing({ maxCapacity: 200_000, ttlMs: 3_600_000 });
 
     // Insert 50K unique
@@ -267,21 +267,21 @@ describe("DedupRing — High Throughput", () => {
   });
 });
 
-describe("DedupRing — Edge Cases", () => {
-  it("should handle empty string msgId", () => {
+describe('DedupRing — Edge Cases', () => {
+  it('should handle empty string msgId', () => {
     const ring = new DedupRing();
-    expect(ring.put("")).toBe(true);
-    expect(ring.contains("")).toBe(true);
-    expect(ring.put("")).toBe(false); // duplicate
+    expect(ring.put('')).toBe(true);
+    expect(ring.contains('')).toBe(true);
+    expect(ring.put('')).toBe(false); // duplicate
   });
 
-  it("should handle identical msgIds with nodeId tagging", () => {
-    const ring1 = new DedupRing({ nodeId: "node-a" });
-    const ring2 = new DedupRing({ nodeId: "node-b" });
-    ring1.put("shared-msg");
-    ring2.put("shared-msg");
+  it('should handle identical msgIds with nodeId tagging', () => {
+    const ring1 = new DedupRing({ nodeId: 'node-a' });
+    const ring2 = new DedupRing({ nodeId: 'node-b' });
+    ring1.put('shared-msg');
+    ring2.put('shared-msg');
     // Each ring independently tracks
-    expect(ring1.contains("shared-msg")).toBe(true);
-    expect(ring2.contains("shared-msg")).toBe(true);
+    expect(ring1.contains('shared-msg')).toBe(true);
+    expect(ring2.contains('shared-msg')).toBe(true);
   });
 });

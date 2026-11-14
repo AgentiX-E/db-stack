@@ -8,9 +8,9 @@
  * bounded evaluation-interval buffer that feeds `averageEvaluationIntervalMs`.
  */
 
-import { describe, it, expect } from "vitest";
-import { InMemoryAutoScaler } from "../impl/InMemoryAutoScaler.js";
-import type { AutoScalerMetrics, ScalingPolicy } from "../interfaces/types.js";
+import { describe, it, expect } from 'vitest';
+import { InMemoryAutoScaler } from '../impl/InMemoryAutoScaler.js';
+import type { AutoScalerMetrics, ScalingPolicy } from '../interfaces/types.js';
 
 function metrics(overrides: Partial<AutoScalerMetrics> = {}): AutoScalerMetrics {
   return {
@@ -35,8 +35,8 @@ function policy(overrides: Partial<ScalingPolicy> = {}): ScalingPolicy {
   };
 }
 
-describe("InMemoryAutoScaler — node accounting", () => {
-  it("adopts the node count reported by the metrics", async () => {
+describe('InMemoryAutoScaler — node accounting', () => {
+  it('adopts the node count reported by the metrics', async () => {
     const scaler = new InMemoryAutoScaler();
 
     await scaler.evaluate(metrics({ currentNodeCount: 6 }));
@@ -44,7 +44,7 @@ describe("InMemoryAutoScaler — node accounting", () => {
     expect(scaler.getStats().currentNodeCount).toBe(6);
   });
 
-  it("keeps its own count when the metrics omit it", async () => {
+  it('keeps its own count when the metrics omit it', async () => {
     const scaler = new InMemoryAutoScaler();
     await scaler.forceScale('scale_up', 2, 'manual');
 
@@ -53,7 +53,7 @@ describe("InMemoryAutoScaler — node accounting", () => {
     expect(scaler.getStats().currentNodeCount).toBe(3);
   });
 
-  it("tracks the peak node count", async () => {
+  it('tracks the peak node count', async () => {
     const scaler = new InMemoryAutoScaler();
 
     await scaler.forceScale('scale_up', 4, 'burst');
@@ -64,8 +64,8 @@ describe("InMemoryAutoScaler — node accounting", () => {
   });
 });
 
-describe("InMemoryAutoScaler — policy bounds and labels", () => {
-  it("labels actions as threshold-based without a policy", async () => {
+describe('InMemoryAutoScaler — policy bounds and labels', () => {
+  it('labels actions as threshold-based without a policy', async () => {
     const scaler = new InMemoryAutoScaler();
 
     const action = await scaler.evaluate(metrics({ cpu: 0.95 }));
@@ -73,7 +73,7 @@ describe("InMemoryAutoScaler — policy bounds and labels", () => {
     expect(action?.policy).toBe('threshold');
   });
 
-  it("labels actions with the policy id once registered", async () => {
+  it('labels actions with the policy id once registered', async () => {
     const scaler = new InMemoryAutoScaler();
     scaler.registerPolicy(policy());
 
@@ -82,7 +82,7 @@ describe("InMemoryAutoScaler — policy bounds and labels", () => {
     expect(action?.policy).toBe('standard');
   });
 
-  it("clips a forced scale-up to the policy maximum", async () => {
+  it('clips a forced scale-up to the policy maximum', async () => {
     const scaler = new InMemoryAutoScaler();
     scaler.registerPolicy(policy({ minNodes: 1, maxNodes: 3 }));
 
@@ -93,7 +93,7 @@ describe("InMemoryAutoScaler — policy bounds and labels", () => {
     expect(scaler.getStats().currentNodeCount).toBe(3);
   });
 
-  it("clips a forced scale-down to the policy minimum", async () => {
+  it('clips a forced scale-down to the policy minimum', async () => {
     const scaler = new InMemoryAutoScaler();
     scaler.registerPolicy(policy({ minNodes: 2, maxNodes: 6 }));
     await scaler.forceScale('scale_up', 3, 'grow');
@@ -104,7 +104,7 @@ describe("InMemoryAutoScaler — policy bounds and labels", () => {
     expect(scaler.getStats().currentNodeCount).toBe(2);
   });
 
-  it("returns the registered policy as a copy", () => {
+  it('returns the registered policy as a copy', () => {
     const scaler = new InMemoryAutoScaler();
     scaler.registerPolicy(policy({ id: 'copy-check' }));
 
@@ -114,13 +114,13 @@ describe("InMemoryAutoScaler — policy bounds and labels", () => {
     expect(scaler.getPolicy()?.maxNodes).toBe(4);
   });
 
-  it("reports no policy by default", () => {
+  it('reports no policy by default', () => {
     expect(new InMemoryAutoScaler().getPolicy()).toBeNull();
   });
 });
 
-describe("InMemoryAutoScaler — cooldowns", () => {
-  it("suppresses a second scale-up inside the cooldown window", async () => {
+describe('InMemoryAutoScaler — cooldowns', () => {
+  it('suppresses a second scale-up inside the cooldown window', async () => {
     const scaler = new InMemoryAutoScaler();
     scaler.registerPolicy(policy({ scaleUpCooldownMs: 60_000 }));
 
@@ -132,7 +132,7 @@ describe("InMemoryAutoScaler — cooldowns", () => {
     expect(scaler.getCooldownState().scaleUpUntil).toBeGreaterThan(0);
   });
 
-  it("suppresses a second scale-down inside the cooldown window", async () => {
+  it('suppresses a second scale-down inside the cooldown window', async () => {
     const scaler = new InMemoryAutoScaler();
     scaler.registerPolicy(policy({ scaleDownCooldownMs: 60_000 }));
 
@@ -144,7 +144,7 @@ describe("InMemoryAutoScaler — cooldowns", () => {
     expect(scaler.getCooldownState().scaleDownUntil).toBeGreaterThan(0);
   });
 
-  it("does not cool down without a policy", async () => {
+  it('does not cool down without a policy', async () => {
     const scaler = new InMemoryAutoScaler();
 
     const first = await scaler.evaluate(metrics({ cpu: 0.95 }));
@@ -156,7 +156,7 @@ describe("InMemoryAutoScaler — cooldowns", () => {
     expect(scaler.getCooldownState().scaleUpUntil).toBeLessThanOrEqual(Date.now());
   });
 
-  it("records the manual action timestamp", async () => {
+  it('records the manual action timestamp', async () => {
     const scaler = new InMemoryAutoScaler();
     await scaler.forceScale('scale_up', 1, 'manual');
 
@@ -165,8 +165,8 @@ describe("InMemoryAutoScaler — cooldowns", () => {
   });
 });
 
-describe("InMemoryAutoScaler — evaluation observability", () => {
-  it("averages the interval between evaluations", async () => {
+describe('InMemoryAutoScaler — evaluation observability', () => {
+  it('averages the interval between evaluations', async () => {
     const scaler = new InMemoryAutoScaler();
 
     await scaler.evaluate(metrics());
@@ -178,7 +178,7 @@ describe("InMemoryAutoScaler — evaluation observability", () => {
     expect(Number.isFinite(stats.averageEvaluationIntervalMs)).toBe(true);
   });
 
-  it("bounds the interval buffer so memory stays flat", async () => {
+  it('bounds the interval buffer so memory stays flat', async () => {
     const scaler = new InMemoryAutoScaler();
 
     for (let i = 0; i < 300; i++) {
@@ -205,7 +205,7 @@ describe("InMemoryAutoScaler — evaluation observability", () => {
     expect(scaler.getHistory()[0]?.metricsSnapshot.cpu).toBe(0);
   });
 
-  it("resets every counter and the policy", async () => {
+  it('resets every counter and the policy', async () => {
     const scaler = new InMemoryAutoScaler();
     scaler.registerPolicy(policy());
     await scaler.evaluate(metrics({ cpu: 0.95 }));

@@ -211,12 +211,8 @@ describe('InMemoryRBACProvider', () => {
       roles: ['reader'],
     };
 
-    expect(
-      rbac.hasPermission(identity, { resource: 'users', action: 'read' }),
-    ).toBe(true);
-    expect(
-      rbac.hasPermission(identity, { resource: 'users', action: 'delete' }),
-    ).toBe(false);
+    expect(rbac.hasPermission(identity, { resource: 'users', action: 'read' })).toBe(true);
+    expect(rbac.hasPermission(identity, { resource: 'users', action: 'delete' })).toBe(false);
   });
 
   it('registerRole + getRoles lifecycle (S8)', () => {
@@ -240,8 +236,14 @@ describe('InMemoryRBACProvider', () => {
 
   it('identity with multiple roles gets union permissions (S19)', () => {
     const rbac = new InMemoryRBACProvider();
-    rbac.registerRole({ name: 'reader', permissions: [{ resource: 'users', action: 'read' }] });
-    rbac.registerRole({ name: 'editor', permissions: [{ resource: 'users', action: 'update' }] });
+    rbac.registerRole({
+      name: 'reader',
+      permissions: [{ resource: 'users', action: 'read' }],
+    });
+    rbac.registerRole({
+      name: 'editor',
+      permissions: [{ resource: 'users', action: 'update' }],
+    });
 
     const identity: Identity = { id: 'user-2', roles: ['reader', 'editor'] };
 
@@ -253,8 +255,14 @@ describe('InMemoryRBACProvider', () => {
 
   it('registerRole overwrites existing role', () => {
     const rbac = new InMemoryRBACProvider();
-    rbac.registerRole({ name: 'role1', permissions: [{ resource: 'a', action: 'read' }] });
-    rbac.registerRole({ name: 'role1', permissions: [{ resource: 'b', action: 'delete' }] });
+    rbac.registerRole({
+      name: 'role1',
+      permissions: [{ resource: 'a', action: 'read' }],
+    });
+    rbac.registerRole({
+      name: 'role1',
+      permissions: [{ resource: 'b', action: 'delete' }],
+    });
     const roles = rbac.getRoles();
     expect(roles).toHaveLength(1);
     expect(roles[0].permissions[0].resource).toBe('b');
@@ -262,15 +270,24 @@ describe('InMemoryRBACProvider', () => {
 
   it('hasPermission returns false for unknown identity roles', () => {
     const rbac = new InMemoryRBACProvider();
-    rbac.registerRole({ name: 'reader', permissions: [{ resource: 'users', action: 'read' }] });
+    rbac.registerRole({
+      name: 'reader',
+      permissions: [{ resource: 'users', action: 'read' }],
+    });
     const identity: Identity = { id: 'unknown', roles: ['nonexistent'] };
     expect(rbac.hasPermission(identity, { resource: 'users', action: 'read' })).toBe(false);
   });
 
   it('getPermissions deduplicates across roles', () => {
     const rbac = new InMemoryRBACProvider();
-    rbac.registerRole({ name: 'r1', permissions: [{ resource: 'x', action: 'read' }] });
-    rbac.registerRole({ name: 'r2', permissions: [{ resource: 'x', action: 'read' }] });
+    rbac.registerRole({
+      name: 'r1',
+      permissions: [{ resource: 'x', action: 'read' }],
+    });
+    rbac.registerRole({
+      name: 'r2',
+      permissions: [{ resource: 'x', action: 'read' }],
+    });
     const identity: Identity = { id: 'u', roles: ['r1', 'r2'] };
     const perms = rbac.getPermissions(identity);
     expect(perms).toHaveLength(1);
@@ -472,8 +489,22 @@ describe('InMemorySecurityCompliance', () => {
   it('getScore with all PASS returns 100', () => {
     const comp = new InMemorySecurityCompliance();
     comp.registerChecks([
-      { id: 'C1', category: 'test', description: 'd', severity: 'PASS' as const, message: 'ok', timestamp: '' },
-      { id: 'C2', category: 'test', description: 'd', severity: 'PASS' as const, message: 'ok', timestamp: '' },
+      {
+        id: 'C1',
+        category: 'test',
+        description: 'd',
+        severity: 'PASS' as const,
+        message: 'ok',
+        timestamp: '',
+      },
+      {
+        id: 'C2',
+        category: 'test',
+        description: 'd',
+        severity: 'PASS' as const,
+        message: 'ok',
+        timestamp: '',
+      },
     ]);
     expect(comp.getScore()).toBe(100);
   });
@@ -481,8 +512,22 @@ describe('InMemorySecurityCompliance', () => {
   it('getScore with all FAIL returns 0', () => {
     const comp = new InMemorySecurityCompliance();
     comp.registerChecks([
-      { id: 'C1', category: 'test', description: 'd', severity: 'FAIL' as const, message: 'fail', timestamp: '' },
-      { id: 'C2', category: 'test', description: 'd', severity: 'FAIL' as const, message: 'fail', timestamp: '' },
+      {
+        id: 'C1',
+        category: 'test',
+        description: 'd',
+        severity: 'FAIL' as const,
+        message: 'fail',
+        timestamp: '',
+      },
+      {
+        id: 'C2',
+        category: 'test',
+        description: 'd',
+        severity: 'FAIL' as const,
+        message: 'fail',
+        timestamp: '',
+      },
     ]);
     expect(comp.getScore()).toBe(0);
   });
@@ -490,7 +535,14 @@ describe('InMemorySecurityCompliance', () => {
   it('each runCheck produces fresh timestamp', async () => {
     const comp = new InMemorySecurityCompliance();
     comp.registerChecks([
-      { id: 'C1', category: 'test', description: 'd', severity: 'PASS' as const, message: 'ok', timestamp: '' },
+      {
+        id: 'C1',
+        category: 'test',
+        description: 'd',
+        severity: 'PASS' as const,
+        message: 'ok',
+        timestamp: '',
+      },
     ]);
     const results = await comp.runChecks();
     expect(results[0].timestamp).toBeTruthy();

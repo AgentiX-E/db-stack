@@ -19,3 +19,7 @@ core.[0-9]*
 # RaftGroup defaults its snapshot directory to ./data (cwd-relative), so running
 # the cluster suites from the package directory leaves snapshot files behind.
 cluster/data/
+
+# Turbo build cache is a local artefact: committing it shipped stale, machine-specific
+# task outputs and made "cache hit" results unverifiable in review.
+.turbo/

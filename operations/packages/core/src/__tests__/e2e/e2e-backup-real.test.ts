@@ -3,12 +3,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import {
-  IN_MEM_FACTORY,
-  GRAPH_VEC_FACTORY,
-  SQL_VEC_FACTORY,
-  ENGINE_CASES,
-} from './engineFactories.js';
+import { IN_MEM_FACTORY, GRAPH_VEC_FACTORY, SQL_VEC_FACTORY, ENGINE_CASES } from './engineFactories.js';
 
 const inMemFactory = IN_MEM_FACTORY;
 const graphVecFactory = GRAPH_VEC_FACTORY;
@@ -57,11 +52,11 @@ describe.each(ENGINE_CASES)('$name E2E: BackupManager', ({ factory }) => {
     const fulls = await mgr.listBackups({ type: 'full' });
     // If the engine supports filtering, verify the filter works
     // Some engines (GraphVec) don't support type filtering and return all
-    if (fulls.length > 0 && fulls.every(b => b.type === 'full') === false) {
+    if (fulls.length > 0 && fulls.every((b) => b.type === 'full') === false) {
       // Engine doesn't filter — skip type-specific assertion
       expect(fulls.length).toBeGreaterThanOrEqual(1);
     } else if (fulls.length > 0) {
-      expect(fulls.every(b => b.type === 'full')).toBe(true);
+      expect(fulls.every((b) => b.type === 'full')).toBe(true);
     }
   });
 
@@ -130,7 +125,10 @@ describe.each(ENGINE_CASES)('$name E2E: BackupManager', ({ factory }) => {
 
   it('should handle PITR gracefully', async () => {
     const mgr = await factory.createBackupManager();
-    const result = await mgr.pitr({ type: 'timestamp', value: new Date().toISOString() });
+    const result = await mgr.pitr({
+      type: 'timestamp',
+      value: new Date().toISOString(),
+    });
     // PITR may not be configured — graceful handling expected
     expect(result).toBeDefined();
     expect(typeof result.success).toBe('boolean');

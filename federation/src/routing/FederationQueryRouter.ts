@@ -10,7 +10,7 @@
  * and uses cost estimation to prefer cheaper routes when applicable.
  */
 
-import type { TopologyManager } from "../topology/TopologyManager";
+import type { TopologyManager } from '../topology/TopologyManager';
 
 /**
  * Routing strategy for a federation query.

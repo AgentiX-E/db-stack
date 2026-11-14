@@ -1,9 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryEngineFactory } from './InMemoryEngineFactory.js';
 
-describe.each([
-  { name: 'InMemory', factory: new InMemoryEngineFactory() },
-])('$name e2e: Tracing', ({ factory }) => {
+describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$name e2e: Tracing', ({ factory }) => {
   afterAll(async () => {
     await factory.cleanup();
   });
@@ -30,7 +28,7 @@ describe.each([
     child.end();
     parent.end();
     const completed = tracer.getCompletedSpans();
-    const childSpan = completed.find(s => s.name === 'child');
+    const childSpan = completed.find((s) => s.name === 'child');
     expect(childSpan!.parentSpanId).toBe(parent.spanId);
   });
 
@@ -40,7 +38,7 @@ describe.each([
     const child = tracer.startSpan('leaf');
     child.end();
     parent.end();
-    const ids = new Set(tracer.getCompletedSpans().map(s => s.traceId));
+    const ids = new Set(tracer.getCompletedSpans().map((s) => s.traceId));
     expect(ids.size).toBe(1);
   });
 
@@ -96,7 +94,9 @@ describe.each([
 
   it('should handle span with attributes', () => {
     const tracer = factory.createDistributedTracer();
-    const span = tracer.startSpan('with-attrs', { attributes: { db: 'main', query: 'SELECT' } });
+    const span = tracer.startSpan('with-attrs', {
+      attributes: { db: 'main', query: 'SELECT' },
+    });
     span.end('ok');
     expect(tracer.getCompletedSpans()[0].attributes.db).toBe('main');
   });
@@ -116,8 +116,8 @@ describe.each([
     child2.end();
     parent.end();
     const completed = tracer.getCompletedSpans();
-    const c1 = completed.find(s => s.name === 'child1');
-    const c2 = completed.find(s => s.name === 'child2');
+    const c1 = completed.find((s) => s.name === 'child1');
+    const c2 = completed.find((s) => s.name === 'child2');
     expect(c1!.traceId).toBe(c2!.traceId);
   });
 
@@ -149,7 +149,7 @@ describe.each([
     const c2 = tracer.startSpan('c2');
     c2.end();
     parent.end();
-    const traceIds = new Set(tracer.getCompletedSpans().map(s => s.traceId));
+    const traceIds = new Set(tracer.getCompletedSpans().map((s) => s.traceId));
     expect(traceIds.size).toBe(1);
   });
 

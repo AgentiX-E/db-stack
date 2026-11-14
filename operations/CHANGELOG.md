@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mutation Testing Campaign** — Comprehensive mutation score audit across 8 core packages
   - **6/8 packages at ≥95% mutation score**: observability 100%, chaosengine 100%, configwatcher 100%, health 96.3%, security 98.3%, logger 95.2%
-  - Full quality report: `MUTATION_QUALITY_REPORT.md` with survivor classification framework
+  - Full quality report: `db-stack-docs/archive/OPERATIONS-MUTATION-QUALITY-REPORT.md` with survivor classification framework
   - Documented structural ceilings for backup (69.4%) and maintenance (61.5%) — 63 total survivors, all classified as phantom/dead-code type
 
 ### Improved
@@ -121,7 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **memoryguard** package — Memory pressure monitoring (9 tests)
 - **rollingupgrade** package — Zero-downtime upgrades (16 tests)
 - **slacollector** package — SLA tracking (13 tests)
-- **DESIGN.md** — Complete design philosophy and architecture documentation
+- **DESIGN.md** — Complete design philosophy and architecture documentation (now `db-stack-docs/design/OPERATIONS-DESIGN.md`)
 - **Testing Suite**
   - 866 tests, 29 test files (as of cc34297)
   - E2E real engine integration (sqlvec/graphvec)

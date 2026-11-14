@@ -16,7 +16,7 @@
  * @module @agentix-e/db-operations-federation/impl
  */
 
-import type { MigrationDescriptor, MigrationPlan } from "@agentix-e/db-operations-core";
+import type { MigrationDescriptor, MigrationPlan } from '@agentix-e/db-operations-core';
 import type {
   ISchemaFederator,
   SchemaSnapshot,
@@ -34,16 +34,14 @@ import type {
   DriftMonitorStats,
   ReferenceStrategy,
   SchemaRule,
-} from "../interfaces/schema-federation.js";
+} from '../interfaces/schema-federation.js';
 
 // ── Hashing ────────────────────────────────────────────────
 
 function computeChainChecksum(migrations: MigrationDescriptor[]): string {
   // SHA-256 of version:checksum pairs, ordered by version
   const sorted = [...migrations].sort((a, b) => a.version - b.version);
-  const input = sorted
-    .map((m) => `${m.version}:${m.checksum}:${m.state}`)
-    .join("|");
+  const input = sorted.map((m) => `${m.version}:${m.checksum}:${m.state}`).join('|');
   return simpleHash(input);
 }
 
@@ -53,21 +51,21 @@ function simpleHash(input: string): string {
   // never run with `input.length === 0` (which would make a `<`→`>=` boundary
   // mutation loop forever).
   if (input.length === 0) {
-    return "0000000000000000";
+    return '0000000000000000';
   }
   let h = 0;
   for (let i = 0; i < input.length; i++) {
     const c = input.charCodeAt(i);
     h = ((h << 5) - h + c) | 0;
   }
-  const hi = (h >>> 0).toString(16).padStart(8, "0");
+  const hi = (h >>> 0).toString(16).padStart(8, '0');
   // Add a secondary pass for better collision resistance
   let h2 = 0x6a09e667;
   for (let i = 0; i < input.length; i++) {
     h2 = Math.imul(h2 ^ input.charCodeAt(i), 0x5bd1e995);
     h2 = Math.imul(h2 ^ (h2 >>> 13), 0x5bd1e995);
   }
-  const lo = (h2 >>> 0).toString(16).padStart(8, "0");
+  const lo = (h2 >>> 0).toString(16).padStart(8, '0');
   return `${hi}${lo}`;
 }
 
@@ -84,8 +82,8 @@ const DEFAULT_MONITOR_CFG: DriftMonitorConfig = {
   scanIntervalMs: 60000,
   autoResolve: false,
   maxDriftHistory: 500,
-  criticalDriftTypes: ["checksum_divergence", "order_divergence"],
-  referenceStrategy: "primary",
+  criticalDriftTypes: ['checksum_divergence', 'order_divergence'],
+  referenceStrategy: 'primary',
 };
 
 // ── Federation Implementation ──────────────────────────────
@@ -97,7 +95,7 @@ export class SchemaFederator implements ISchemaFederator {
   private drifts = new Map<string, SchemaDrift>();
   private coordinations = new Map<string, CoordinatedMigration>();
   private rules = new Map<string, SchemaRule>();
-  private refStrategy: ReferenceStrategy = "primary";
+  private refStrategy: ReferenceStrategy = 'primary';
   private canonicalShardId: string | undefined;
   private monitorCfg = { ...DEFAULT_MONITOR_CFG };
   private monitorTimer: ReturnType<typeof setInterval> | null = null;
@@ -118,7 +116,13 @@ export class SchemaFederator implements ISchemaFederator {
     // snapshotInject is set by tests to bypass real DB connections
     const snapshot = this._snapshotInject
       ? await this._snapshotInject(shardId)
-      : { shardId, version: 0, migrations: [], chainChecksum: "", capturedAt: Date.now() };
+      : {
+          shardId,
+          version: 0,
+          migrations: [],
+          chainChecksum: '',
+          capturedAt: Date.now(),
+        };
 
     snapshot.capturedAt = Date.now();
     this._ensureChecksum(snapshot);
@@ -229,56 +233,57 @@ export class SchemaFederator implements ISchemaFederator {
 
   planRepair(drift: SchemaDrift): DriftRepair {
     switch (drift.type) {
-      case "version_mismatch":
-      case "missing_migration":
+      case 'version_mismatch':
+      case 'missing_migration':
         return {
           driftId: drift.id,
-          action: "apply_migration",
+          action: 'apply_migration',
           migrationsToApply: drift.migration ? [drift.migration] : [],
-          requiresDowntime: drift.severity === "critical",
-          automatable: drift.severity !== "critical",
+          requiresDowntime: drift.severity === 'critical',
+          automatable: drift.severity !== 'critical',
         };
 
-      case "extra_migration":
+      case 'extra_migration':
         return {
           driftId: drift.id,
-          action: "rollback_migration",
+          action: 'rollback_migration',
           migrationToRollback: drift.migration,
           requiresDowntime: true,
-          automatable: drift.severity !== "critical",
+          automatable: drift.severity !== 'critical',
         };
 
-      case "checksum_divergence":
+      case 'checksum_divergence':
         return {
           driftId: drift.id,
-          action: "resync_snapshot",
+          action: 'resync_snapshot',
           requiresDowntime: true,
           automatable: false,
         };
 
-      case "order_divergence":
+      case 'order_divergence':
         return {
           driftId: drift.id,
-          action: "reorder_migrations",
+          action: 'reorder_migrations',
           requiresDowntime: true,
           automatable: false,
         };
 
-      case "migration_state_mismatch":
+      case 'migration_state_mismatch':
         return {
           driftId: drift.id,
-          action: drift.migration?.state === "failed"
-            ? "rollback_migration" as RepairAction
-            : "resync_snapshot" as RepairAction,
-          requiresDowntime: drift.migration?.state === "failed",
+          action:
+            drift.migration?.state === 'failed'
+              ? ('rollback_migration' as RepairAction)
+              : ('resync_snapshot' as RepairAction),
+          requiresDowntime: drift.migration?.state === 'failed',
           automatable: true,
-          migrationToRollback: drift.migration?.state === "failed" ? drift.migration : undefined,
+          migrationToRollback: drift.migration?.state === 'failed' ? drift.migration : undefined,
         };
 
       default:
         return {
           driftId: drift.id,
-          action: "mark_resolved" as RepairAction,
+          action: 'mark_resolved' as RepairAction,
           requiresDowntime: false,
           automatable: true,
         };
@@ -347,17 +352,13 @@ export class SchemaFederator implements ISchemaFederator {
 
   // ── Migration Coordination ─────────────────────────────
 
-  startCoordinatedMigration(
-    plan: MigrationPlan,
-    mode: CoordinationMode = "all",
-    verify = true,
-  ): CoordinatedMigration {
+  startCoordinatedMigration(plan: MigrationPlan, mode: CoordinationMode = 'all', verify = true): CoordinatedMigration {
     const coord: CoordinatedMigration = {
       id: `coord-${Date.now()}-${plan.targetVersion}`,
       plan,
       shardIds: [],
       mode,
-      state: "preparing",
+      state: 'preparing',
       shardResults: [],
       verifyAfterApply: verify,
       startedAt: Date.now(),
@@ -366,17 +367,17 @@ export class SchemaFederator implements ISchemaFederator {
     // Assign shards based on mode
     const allShardIds = Array.from(this.snapshots.keys());
     switch (mode) {
-      case "all":
+      case 'all':
         coord.shardIds = [...allShardIds];
         break;
-      case "canary":
+      case 'canary':
         coord.canaryShardId = allShardIds[0];
         coord.shardIds = [...allShardIds];
         break;
-      case "batched":
+      case 'batched':
         coord.shardIds = [...allShardIds];
         break;
-      case "manual":
+      case 'manual':
         coord.shardIds = []; // Caller adds via reportShardResult
         break;
     }
@@ -398,16 +399,16 @@ export class SchemaFederator implements ISchemaFederator {
 
     if (anyFailed && !this._hasRolledBack(coord)) {
       // Auto-rollback: mark as rolled back
-      coord.state = "rolled_back";
-      coord.error = "Migration failed on one or more shards";
+      coord.state = 'rolled_back';
+      coord.error = 'Migration failed on one or more shards';
       coord.completedAt = Date.now();
-    } else if (allResults && allSuccess && coord.state !== "verifying" && coord.verifyAfterApply) {
-      coord.state = "verifying";
-    } else if (allResults && allSuccess && (!coord.verifyAfterApply || coord.state === "verifying")) {
-      coord.state = "completed";
+    } else if (allResults && allSuccess && coord.state !== 'verifying' && coord.verifyAfterApply) {
+      coord.state = 'verifying';
+    } else if (allResults && allSuccess && (!coord.verifyAfterApply || coord.state === 'verifying')) {
+      coord.state = 'completed';
       coord.completedAt = Date.now();
     } else {
-      coord.state = "rolling_out";
+      coord.state = 'rolling_out';
     }
   }
 
@@ -418,27 +419,25 @@ export class SchemaFederator implements ISchemaFederator {
   pauseCoordination(coordId: string): CoordinatedMigration {
     const coord = this.coordinations.get(coordId);
     if (!coord) throw new Error(`Coordination ${coordId} not found`);
-    if (coord.state !== "rolling_out" && coord.state !== "preparing") {
+    if (coord.state !== 'rolling_out' && coord.state !== 'preparing') {
       throw new Error(`Cannot pause coordination in state ${coord.state}`);
     }
-    coord.state = "paused";
+    coord.state = 'paused';
     return coord;
   }
 
   resumeCoordination(coordId: string): CoordinatedMigration {
     const coord = this.coordinations.get(coordId);
     if (!coord) throw new Error(`Coordination ${coordId} not found`);
-    if (coord.state !== "paused") {
+    if (coord.state !== 'paused') {
       throw new Error(`Cannot resume coordination in state ${coord.state}`);
     }
-    coord.state = "rolling_out";
+    coord.state = 'rolling_out';
     return coord;
   }
 
   private _hasRolledBack(coord: CoordinatedMigration): boolean {
-    return coord.shardResults.some((r) =>
-      r.error?.includes("rolled back"),
-    );
+    return coord.shardResults.some((r) => r.error?.includes('rolled back'));
   }
 
   // ── Rules ──────────────────────────────────────────────
@@ -458,10 +457,10 @@ export class SchemaFederator implements ISchemaFederator {
         if (!rule.check(snapshot)) {
           const d: SchemaDrift = {
             id: nextDriftId(),
-            type: "version_mismatch",
+            type: 'version_mismatch',
             severity: rule.severity,
             shardId: snapshot.shardId,
-            referenceShardId: "rule:" + rule.name,
+            referenceShardId: 'rule:' + rule.name,
             driftedVersion: snapshot.version,
             referenceVersion: snapshot.version,
             description: `Rule "${rule.name}" failed: ${rule.description}`,
@@ -475,10 +474,10 @@ export class SchemaFederator implements ISchemaFederator {
         // Rule evaluation error — create a drift
         const d: SchemaDrift = {
           id: nextDriftId(),
-          type: "version_mismatch",
+          type: 'version_mismatch',
           severity: rule.severity,
           shardId: snapshot.shardId,
-          referenceShardId: "rule:" + rule.name,
+          referenceShardId: 'rule:' + rule.name,
           driftedVersion: snapshot.version,
           referenceVersion: snapshot.version,
           description: `Rule "${rule.name}" threw an error during evaluation`,
@@ -520,7 +519,7 @@ export class SchemaFederator implements ISchemaFederator {
 
   setCanonicalShard(shardId: string): void {
     this.canonicalShardId = shardId;
-    this.refStrategy = "canonical";
+    this.refStrategy = 'canonical';
   }
 
   // ── Stats ──────────────────────────────────────────────
@@ -557,13 +556,15 @@ export class SchemaFederator implements ISchemaFederator {
     // 1. Version mismatch
     if (shard.version !== reference.version) {
       const sev = this._classifyVersionDiff(shard.version, reference.version);
-      drifts.push(this._makeDrift(shard.shardId, reference.shardId, {
-        type: "version_mismatch",
-        severity: sev,
-        driftedVersion: shard.version,
-        referenceVersion: reference.version,
-        description: messageForVersionMismatch(shard.shardId, shard.version, reference.version),
-      }));
+      drifts.push(
+        this._makeDrift(shard.shardId, reference.shardId, {
+          type: 'version_mismatch',
+          severity: sev,
+          driftedVersion: shard.version,
+          referenceVersion: reference.version,
+          description: messageForVersionMismatch(shard.shardId, shard.version, reference.version),
+        }),
+      );
     }
 
     // 2. Per-migration comparison
@@ -577,48 +578,56 @@ export class SchemaFederator implements ISchemaFederator {
 
       if (sMig && !rMig) {
         // Extra migration on shard
-        drifts.push(this._makeDrift(shard.shardId, reference.shardId, {
-          type: "extra_migration",
-          severity: "warning",
-          driftedVersion: version,
-          referenceVersion: reference.version,
-          migration: sMig,
-          description: descriptionForExtraMigration(shard.shardId, version, sMig.description),
-        }));
+        drifts.push(
+          this._makeDrift(shard.shardId, reference.shardId, {
+            type: 'extra_migration',
+            severity: 'warning',
+            driftedVersion: version,
+            referenceVersion: reference.version,
+            migration: sMig,
+            description: descriptionForExtraMigration(shard.shardId, version, sMig.description),
+          }),
+        );
       } else if (!sMig && rMig) {
         // Missing migration on shard
-        drifts.push(this._makeDrift(shard.shardId, reference.shardId, {
-          type: "missing_migration",
-          severity: "warning",
-          driftedVersion: shard.version,
-          referenceVersion: version,
-          migration: rMig,
-          description: descriptionForMissingMigration(shard.shardId, version, rMig.description),
-        }));
+        drifts.push(
+          this._makeDrift(shard.shardId, reference.shardId, {
+            type: 'missing_migration',
+            severity: 'warning',
+            driftedVersion: shard.version,
+            referenceVersion: version,
+            migration: rMig,
+            description: descriptionForMissingMigration(shard.shardId, version, rMig.description),
+          }),
+        );
       } else if (sMig && rMig) {
         // Both have this version — check checksum
         if (sMig.checksum !== rMig.checksum) {
-          drifts.push(this._makeDrift(shard.shardId, reference.shardId, {
-            type: "checksum_divergence",
-            severity: "critical",
-            driftedVersion: version,
-            referenceVersion: version,
-            migration: sMig,
-            driftedChecksum: sMig.checksum,
-            referenceChecksum: rMig.checksum,
-            description: `Checksum divergence at version ${version}: ${sMig.checksum.slice(0, 8)} vs ${rMig.checksum.slice(0, 8)}`,
-          }));
+          drifts.push(
+            this._makeDrift(shard.shardId, reference.shardId, {
+              type: 'checksum_divergence',
+              severity: 'critical',
+              driftedVersion: version,
+              referenceVersion: version,
+              migration: sMig,
+              driftedChecksum: sMig.checksum,
+              referenceChecksum: rMig.checksum,
+              description: `Checksum divergence at version ${version}: ${sMig.checksum.slice(0, 8)} vs ${rMig.checksum.slice(0, 8)}`,
+            }),
+          );
         }
         // Check state mismatch
         if (sMig.state !== rMig.state) {
-          drifts.push(this._makeDrift(shard.shardId, reference.shardId, {
-            type: "migration_state_mismatch",
-            severity: sMig.state === "failed" || rMig.state === "failed" ? "critical" : "info",
-            driftedVersion: version,
-            referenceVersion: version,
-            migration: sMig,
-            description: `State mismatch at v${version}: ${sMig.state} (${shard.shardId}) vs ${rMig.state} (${reference.shardId})`,
-          }));
+          drifts.push(
+            this._makeDrift(shard.shardId, reference.shardId, {
+              type: 'migration_state_mismatch',
+              severity: sMig.state === 'failed' || rMig.state === 'failed' ? 'critical' : 'info',
+              driftedVersion: version,
+              referenceVersion: version,
+              migration: sMig,
+              description: `State mismatch at v${version}: ${sMig.state} (${shard.shardId}) vs ${rMig.state} (${reference.shardId})`,
+            }),
+          );
         }
       }
     }
@@ -633,13 +642,15 @@ export class SchemaFederator implements ISchemaFederator {
         const common = sOrder.filter((v) => rOrder.includes(v));
         const rCommon = rOrder.filter((v) => sSet.has(v));
         if (JSON.stringify(common) !== JSON.stringify(rCommon)) {
-          drifts.push(this._makeDrift(shard.shardId, reference.shardId, {
-            type: "order_divergence",
-            severity: "critical",
-            driftedVersion: shard.version,
-            referenceVersion: reference.version,
-            description: descriptionForOrderDivergence(shard.shardId, reference.shardId),
-          }));
+          drifts.push(
+            this._makeDrift(shard.shardId, reference.shardId, {
+              type: 'order_divergence',
+              severity: 'critical',
+              driftedVersion: shard.version,
+              referenceVersion: reference.version,
+              description: descriptionForOrderDivergence(shard.shardId, reference.shardId),
+            }),
+          );
         }
       }
     }
@@ -692,9 +703,9 @@ export class SchemaFederator implements ISchemaFederator {
 
   private _classifyVersionDiff(shardVer: number, refVer: number): DriftSeverity {
     const gap = Math.abs(shardVer - refVer);
-    if (gap > 10) return "critical";
-    if (gap > 3) return "warning";
-    return "info";
+    if (gap > 10) return 'critical';
+    if (gap > 3) return 'warning';
+    return 'info';
   }
 
   private _indexMigrations(migrations: MigrationDescriptor[]): Map<number, MigrationDescriptor> {
@@ -707,12 +718,12 @@ export class SchemaFederator implements ISchemaFederator {
 
   private _getReference(): SchemaSnapshot | undefined {
     switch (this.refStrategy) {
-      case "primary":
-        return Array.from(this.snapshots.values()).find((s) =>
-          s.version === Math.max(...Array.from(this.snapshots.values()).map((x) => x.version)),
+      case 'primary':
+        return Array.from(this.snapshots.values()).find(
+          (s) => s.version === Math.max(...Array.from(this.snapshots.values()).map((x) => x.version)),
         );
 
-      case "majority": {
+      case 'majority': {
         const versionCounts = new Map<number, number>();
         for (const s of this.snapshots.values()) {
           versionCounts.set(s.version, (versionCounts.get(s.version) ?? 0) + 1);
@@ -728,10 +739,10 @@ export class SchemaFederator implements ISchemaFederator {
         return Array.from(this.snapshots.values()).find((s) => s.version === majorityVer);
       }
 
-      case "latest":
+      case 'latest':
         return Array.from(this.snapshots.values()).sort((a, b) => b.version - a.version)[0];
 
-      case "canonical":
+      case 'canonical':
         return this.canonicalShardId ? this.snapshots.get(this.canonicalShardId) : undefined;
 
       default:
@@ -767,28 +778,16 @@ export class SchemaFederator implements ISchemaFederator {
 
 // ── Descriptive Helpers ────────────────────────────────────
 
-function messageForVersionMismatch(
-  shardId: string,
-  shardVer: number,
-  refVer: number,
-): string {
-  const direction = shardVer < refVer ? "behind" : "ahead of";
+function messageForVersionMismatch(shardId: string, shardVer: number, refVer: number): string {
+  const direction = shardVer < refVer ? 'behind' : 'ahead of';
   return `Shard ${shardId} at version ${shardVer} is ${direction} reference (v${refVer})`;
 }
 
-function descriptionForExtraMigration(
-  shardId: string,
-  version: number,
-  migrationDescription: string,
-): string {
+function descriptionForExtraMigration(shardId: string, version: number, migrationDescription: string): string {
   return `Extra migration v${version} on shard ${shardId} ("${migrationDescription}") not present on reference`;
 }
 
-function descriptionForMissingMigration(
-  shardId: string,
-  version: number,
-  migrationDescription: string,
-): string {
+function descriptionForMissingMigration(shardId: string, version: number, migrationDescription: string): string {
   return `Missing migration v${version} ("${migrationDescription}") on shard ${shardId}`;
 }
 

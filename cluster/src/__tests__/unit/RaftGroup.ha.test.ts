@@ -100,9 +100,7 @@ describe('RaftGroup — HA, stopped-guards, and fallback branches', () => {
   describe('stopped guards', () => {
     it('propose throws after stop', async () => {
       group.stop();
-      await expect(group.propose({ msgId: 'm', type: 'exec', data: '{}' })).rejects.toThrow(
-        'group already stopped',
-      );
+      await expect(group.propose({ msgId: 'm', type: 'exec', data: '{}' })).rejects.toThrow('group already stopped');
     });
 
     it('proposeBatch throws after stop', async () => {

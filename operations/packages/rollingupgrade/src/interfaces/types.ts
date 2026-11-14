@@ -32,10 +32,10 @@ export interface BatchHealth {
 
 /** Rolling upgrade batch strategy. */
 export type BatchStrategy =
-  | "fixed_size"   // Fixed node count per batch
-  | "percentage"   // Percentage of remaining nodes
-  | "one_by_one"   // Serial, one node at a time
-  | "all_at_once"; // Immediate full rollout (no batches)
+  | 'fixed_size' // Fixed node count per batch
+  | 'percentage' // Percentage of remaining nodes
+  | 'one_by_one' // Serial, one node at a time
+  | 'all_at_once'; // Immediate full rollout (no batches)
 
 /** Canary deployment strategy. */
 export interface CanaryConfig {
@@ -53,11 +53,11 @@ export interface CanaryConfig {
 
 /** Rollback trigger policy. */
 export type RollbackTrigger =
-  | "on_first_failure"      // Any single node failure
-  | "on_batch_threshold"    // >N% of batch fails
-  | "on_canary_failure"     // Canary health check fails
-  | "on_degradation"        // SLO degradation detected
-  | "manual_only";           // Only manual rollback
+  | 'on_first_failure' // Any single node failure
+  | 'on_batch_threshold' // >N% of batch fails
+  | 'on_canary_failure' // Canary health check fails
+  | 'on_degradation' // SLO degradation detected
+  | 'manual_only'; // Only manual rollback
 
 /** Graceful drain configuration for nodes being replaced. */
 export interface DrainConfig {
@@ -108,7 +108,7 @@ export interface RollingUpgradePlan {
 /** State of a single node during the upgrade. */
 export interface NodeUpgradeState {
   nodeId: string;
-  status: "pending" | "draining" | "upgrading" | "health_check" | "completed" | "failed" | "rolled_back";
+  status: 'pending' | 'draining' | 'upgrading' | 'health_check' | 'completed' | 'failed' | 'rolled_back';
   startedAt?: number;
   completedAt?: number;
   error?: string;
@@ -121,45 +121,45 @@ export interface UpgradeBatch {
   /** Node states in this batch. */
   nodes: NodeUpgradeState[];
   /** Overall batch status. */
-  status: "pending" | "running" | "completed" | "failed" | "rolled_back";
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'rolled_back';
   /** If this is the canary batch. */
   isCanary: boolean;
 }
 
 /** Overall phase of the upgrade orchestration. */
 export type UpgradePhase =
-  | "idle"
-  | "validating"
-  | "canary"
-  | "rolling"
-  | "health_checking"
-  | "completing"
-  | "rolling_back"
-  | "completed"
-  | "failed"
-  | "aborted"
-  | "paused";
+  | 'idle'
+  | 'validating'
+  | 'canary'
+  | 'rolling'
+  | 'health_checking'
+  | 'completing'
+  | 'rolling_back'
+  | 'completed'
+  | 'failed'
+  | 'aborted'
+  | 'paused';
 
 // ── Events ──────────────────────────────────────────────────
 
 /** Event emitted during a rolling upgrade lifecycle. */
 export interface RollingUpgradeEvent {
   type:
-    | "plan_validated"
-    | "batch_started"
-    | "batch_health_checked"
-    | "batch_promoted"
-    | "batch_failed"
-    | "canary_started"
-    | "canary_health_checked"
-    | "canary_promoted"
-    | "canary_failed"
-    | "rollback_triggered"
-    | "rollback_completed"
-    | "upgrade_completed"
-    | "upgrade_aborted"
-    | "paused"
-    | "resumed";
+    | 'plan_validated'
+    | 'batch_started'
+    | 'batch_health_checked'
+    | 'batch_promoted'
+    | 'batch_failed'
+    | 'canary_started'
+    | 'canary_health_checked'
+    | 'canary_promoted'
+    | 'canary_failed'
+    | 'rollback_triggered'
+    | 'rollback_completed'
+    | 'upgrade_completed'
+    | 'upgrade_aborted'
+    | 'paused'
+    | 'resumed';
   timestamp: number;
   batchIndex?: number;
   nodeId?: string;

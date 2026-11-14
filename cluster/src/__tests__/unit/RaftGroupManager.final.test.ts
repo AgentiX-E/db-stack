@@ -37,22 +37,51 @@ vi.mock('../../consensus/core/RaftGroup', () => ({
     }
     async init() {}
     stop() {}
-    async isLeader() { return this._isLeader; }
-    async getLeader() { return this._leader; }
-    async getProgress() { return this._progress; }
-    async getTerm() { return this._term; }
-    async propose(e: any) { this._proposeCalls.push(e); return { index: '1', term: '1' }; }
-    async proposeBatch(entries: any[]) { return this._proposeBatch(entries); }
-    removeLearner(nodeId: string) { return this._removeLearnerResult; }
-    async addLearner(nodeId: string) { return this._addLearnerResult; }
-    async requestForLearner(fromIndex: number) { return { ...this._requestLearner, lastIndex: fromIndex }; }
-    updateLearnerProgress(nodeId: string, matchedIndex: number) { this._learnerProgress.push({ nodeId, matchedIndex }); }
+    async isLeader() {
+      return this._isLeader;
+    }
+    async getLeader() {
+      return this._leader;
+    }
+    async getProgress() {
+      return this._progress;
+    }
+    async getTerm() {
+      return this._term;
+    }
+    async propose(e: any) {
+      this._proposeCalls.push(e);
+      return { index: '1', term: '1' };
+    }
+    async proposeBatch(entries: any[]) {
+      return this._proposeBatch(entries);
+    }
+    removeLearner(nodeId: string) {
+      return this._removeLearnerResult;
+    }
+    async addLearner(nodeId: string) {
+      return this._addLearnerResult;
+    }
+    async requestForLearner(fromIndex: number) {
+      return { ...this._requestLearner, lastIndex: fromIndex };
+    }
+    updateLearnerProgress(nodeId: string, matchedIndex: number) {
+      this._learnerProgress.push({ nodeId, matchedIndex });
+    }
     handleRaftMessage(_msg: any) {}
-    getConsensusPhase() { return this._phase; }
-    async getState() { return {}; }
-    getRaftAdapter() { return this._raftAdapter; }
+    getConsensusPhase() {
+      return this._phase;
+    }
+    async getState() {
+      return {};
+    }
+    getRaftAdapter() {
+      return this._raftAdapter;
+    }
     setStorage(_s: any) {}
-    toString() { return `MockRaftGroup(${this.shardId})`; }
+    toString() {
+      return `MockRaftGroup(${this.shardId})`;
+    }
   },
 }));
 
@@ -63,9 +92,16 @@ vi.mock('../../consensus/opt/AdaptiveElectionTimeout', () => ({
     constructor(public cfg: any) {}
     start() {}
     stop() {}
-    recordRtt(r: number) { this.samples++; this.avgRtt = r; }
-    getSampleCount() { return this.samples; }
-    getAvgRtt() { return this.avgRtt; }
+    recordRtt(r: number) {
+      this.samples++;
+      this.avgRtt = r;
+    }
+    getSampleCount() {
+      return this.samples;
+    }
+    getAvgRtt() {
+      return this.avgRtt;
+    }
   },
 }));
 
@@ -101,7 +137,7 @@ describe('RaftGroupManager — final branch completion', () => {
     vi.useRealTimers();
   });
 
-  function registerOne(shardId = 1, raftIndex = 1, peers = [{ nodeId: 'n1', raftIndex: raftIndex }]): any {
+  function registerOne(shardId = 1, raftIndex = 1, peers = [{ nodeId: 'n1', raftIndex }]): any {
     manager.registerShardWithReplica(shardId, new MockReplica(), peers, raftIndex);
     return mockGroups.get(shardId);
   }
@@ -133,7 +169,11 @@ describe('RaftGroupManager — final branch completion', () => {
     it('_attemptReconnect catch logs and schedules retry', async () => {
       manager.setReconnectConfig({ maxRetries: 2, baseMs: 1, maxMs: 1 });
       // isPeerAlive throws → catch → schedule retry
-      manager.setClusterTopology({ isPeerAlive: () => { throw new Error('check fail'); } });
+      manager.setClusterTopology({
+        isPeerAlive: () => {
+          throw new Error('check fail');
+        },
+      });
       manager.peerReconnectState.set('p1', { peerId: 'p1', attempt: 0, timer: null });
       vi.useFakeTimers();
       const p = (manager as any)._attemptReconnect('p1');
@@ -399,7 +439,11 @@ describe('RaftGroupManager — final branch completion', () => {
 
     it('config without localRaftIndex falls back to node-id', () => {
       manager.setClusterTopology({ nodes: [], getNodeId: () => 'node-x' });
-      manager.registerShard('7', { replica: new MockReplica(), peers: [{ nodeId: 'n', raftIndex: 7 }], localRaftIndex: 0 });
+      manager.registerShard('7', {
+        replica: new MockReplica(),
+        peers: [{ nodeId: 'n', raftIndex: 7 }],
+        localRaftIndex: 0,
+      });
       // config.localRaftIndex coerced; no throw
       expect(manager.getGroup(7)).toBeTruthy();
     });
@@ -407,13 +451,21 @@ describe('RaftGroupManager — final branch completion', () => {
     it('registerShard triggers fallback when getNodeId returns null', () => {
       manager.setClusterTopology({ nodes: [], getNodeId: () => null });
       // localRaftIndex undefined → ?? 0; getNodeId null → ?? `node-0`
-      manager.registerShard('8', { replica: new MockReplica(), peers: [{ nodeId: 'n', raftIndex: 8 }], localRaftIndex: undefined });
+      manager.registerShard('8', {
+        replica: new MockReplica(),
+        peers: [{ nodeId: 'n', raftIndex: 8 }],
+        localRaftIndex: undefined,
+      });
       expect(manager.getGroup(8)).toBeTruthy();
     });
 
     it('registerShard triggers fallback when clusterTopology is absent', () => {
       // no clusterTopology → `this.clusterTopology?.getNodeId()` undefined → ?? `node-0`
-      manager.registerShard('9', { replica: new MockReplica(), peers: [{ nodeId: 'n', raftIndex: 9 }], localRaftIndex: 2 });
+      manager.registerShard('9', {
+        replica: new MockReplica(),
+        peers: [{ nodeId: 'n', raftIndex: 9 }],
+        localRaftIndex: 2,
+      });
       expect(manager.getGroup(9)).toBeTruthy();
     });
 
@@ -461,7 +513,15 @@ describe('RaftGroupManager — final branch completion', () => {
     it('_checkReconnections skips peers already reconnecting', async () => {
       manager.setSharedTransport({ send: vi.fn() });
       // group with peer 9, peer 9 already has reconnect state
-      manager.registerShardWithReplica(1, new MockReplica(), [{ nodeId: 'n1', raftIndex: 1 }, { nodeId: 'n2', raftIndex: 9 }], 1);
+      manager.registerShardWithReplica(
+        1,
+        new MockReplica(),
+        [
+          { nodeId: 'n1', raftIndex: 1 },
+          { nodeId: 'n2', raftIndex: 9 },
+        ],
+        1,
+      );
       manager.peerReconnectState.set('9', { peerId: '9', attempt: 0, timer: null });
       manager.setClusterTopology({ isPeerAlive: () => false });
       await (manager as any)._checkReconnections();
@@ -470,7 +530,15 @@ describe('RaftGroupManager — final branch completion', () => {
 
     it('_checkReconnections treats missing topology as alive (?? true)', async () => {
       manager.setSharedTransport({ send: vi.fn() });
-      manager.registerShardWithReplica(1, new MockReplica(), [{ nodeId: 'n1', raftIndex: 1 }, { nodeId: 'n2', raftIndex: 9 }], 1);
+      manager.registerShardWithReplica(
+        1,
+        new MockReplica(),
+        [
+          { nodeId: 'n1', raftIndex: 1 },
+          { nodeId: 'n2', raftIndex: 9 },
+        ],
+        1,
+      );
       // no clusterTopology → ?? true → never disconnected
       await (manager as any)._checkReconnections();
       expect(manager.peerReconnectState.size).toBe(0);

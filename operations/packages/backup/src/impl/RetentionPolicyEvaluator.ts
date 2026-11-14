@@ -37,16 +37,14 @@ export class RetentionPolicyEvaluator implements IBackupRetentionPolicy {
     }
 
     // Sort newest first by createdAt
-    const sorted = [...snapshots].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+    const sorted = [...snapshots].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     // Keep first maxFullSnapshots full snapshots
-    const fullSnapshots = sorted.filter(s => s.type === 'full');
+    const fullSnapshots = sorted.filter((s) => s.type === 'full');
     const remainingFull = fullSnapshots.slice(this.policy.maxFullSnapshots);
 
     // Collect candidates from the remaining full snapshots pool
-    const candidates = sorted.filter(s => remainingFull.includes(s));
+    const candidates = sorted.filter((s) => remainingFull.includes(s));
 
     for (const snap of candidates) {
       // Skip if keepRecent is set and snapshot is younger than the duration
@@ -72,7 +70,7 @@ export class RetentionPolicyEvaluator implements IBackupRetentionPolicy {
 
     // Enforce maxTotalBytes — if total exceeds limit, mark for deletion
     if (this.policy.maxTotalBytes > 0) {
-      const remainingSnapshots = sorted.filter(s => !toDelete.includes(s));
+      const remainingSnapshots = sorted.filter((s) => !toDelete.includes(s));
       const totalBytes = remainingSnapshots.reduce((sum, s) => sum + s.sizeBytes, 0);
       if (totalBytes > this.policy.maxTotalBytes) {
         // Mark oldest non-kept snapshots for deletion until under limit

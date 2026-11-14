@@ -10,13 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  LoggingAdapter,
-  createLogger,
-  RaftMetricsCollector,
-  HealthProbe,
-  traceContext,
-} from '../../observability';
+import { LoggingAdapter, createLogger, RaftMetricsCollector, HealthProbe, traceContext } from '../../observability';
 import type { ILogger } from '../../observability';
 
 // ── LoggingAdapter ──────────────────────────────────────────
@@ -275,7 +269,7 @@ describe('traceContext (OBS4)', () => {
 
   it('OBS4.3: runWithAsync propagates across async boundaries', async () => {
     const result = await traceContext.runWithAsync('trace-async', async () => {
-      await new Promise(r => setTimeout(r, 1));
+      await new Promise((r) => setTimeout(r, 1));
       return traceContext.getTraceId();
     });
     expect(result).toBe('trace-async');
@@ -294,12 +288,14 @@ describe('traceContext (OBS4)', () => {
 
   it('OBS4.5: multiple concurrent traces do not leak', async () => {
     const ids = ['a', 'b', 'c'];
-    const results = await Promise.all(ids.map(id =>
-      traceContext.runWithAsync(id, async () => {
-        await new Promise(r => setTimeout(r, Math.random() * 5));
-        return traceContext.getTraceId();
-      })
-    ));
+    const results = await Promise.all(
+      ids.map((id) =>
+        traceContext.runWithAsync(id, async () => {
+          await new Promise((r) => setTimeout(r, Math.random() * 5));
+          return traceContext.getTraceId();
+        }),
+      ),
+    );
     expect(results.sort()).toEqual(ids.sort());
   });
 });

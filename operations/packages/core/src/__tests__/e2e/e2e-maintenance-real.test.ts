@@ -6,12 +6,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import {
-  IN_MEM_FACTORY,
-  GRAPH_VEC_FACTORY,
-  SQL_VEC_FACTORY,
-  ENGINE_CASES,
-} from './engineFactories.js';
+import { IN_MEM_FACTORY, GRAPH_VEC_FACTORY, SQL_VEC_FACTORY, ENGINE_CASES } from './engineFactories.js';
 
 const inMemFactory = IN_MEM_FACTORY;
 const graphVecFactory = GRAPH_VEC_FACTORY;
@@ -114,10 +109,22 @@ describe.each(ENGINE_CASES)('$name E2E: AlertRuleManager', ({ factory }) => {
   it('should add and evaluate alert rules', async () => {
     const mgr = await factory.createAlertRuleManager();
     const r1 = await mgr.createRule({
-      name: 'high-error-rate', metric: 'errors_per_sec', condition: 'gt', threshold: 10, durationMs: 60000, severity: 'critical', enabled: true,
+      name: 'high-error-rate',
+      metric: 'errors_per_sec',
+      condition: 'gt',
+      threshold: 10,
+      durationMs: 60000,
+      severity: 'critical',
+      enabled: true,
     });
     const r2 = await mgr.createRule({
-      name: 'latency-spike', metric: 'latency_p99', condition: 'gt', threshold: 500, durationMs: 30000, severity: 'warning', enabled: true,
+      name: 'latency-spike',
+      metric: 'latency_p99',
+      condition: 'gt',
+      threshold: 500,
+      durationMs: 30000,
+      severity: 'warning',
+      enabled: true,
     });
     expect(r1).toBeDefined();
     expect(r2).not.toBe(r1);
@@ -126,7 +133,13 @@ describe.each(ENGINE_CASES)('$name E2E: AlertRuleManager', ({ factory }) => {
   it('should evaluate alert rules', async () => {
     const mgr = await factory.createAlertRuleManager();
     await mgr.createRule({
-      name: 'cpu-high', metric: 'cpu_usage', condition: 'gt', threshold: 90, durationMs: 60000, severity: 'warning', enabled: true,
+      name: 'cpu-high',
+      metric: 'cpu_usage',
+      condition: 'gt',
+      threshold: 90,
+      durationMs: 60000,
+      severity: 'warning',
+      enabled: true,
     });
     const results = await mgr.evaluate();
     expect(results).toBeInstanceOf(Array);

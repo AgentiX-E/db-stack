@@ -35,12 +35,12 @@
  *   - No per-peer outbox work partitioning — the store is a shared durable queue
  */
 
-import type { IOutboxStore } from "../interfaces/outbox/IOutboxStore";
-import type { OutboxEntry, OutboxStatus } from "../interfaces/outbox/OutboxEntry";
-import type { OutboxStats } from "../interfaces/types";
-import { open, type Database, type RootDatabase } from "lmdb";
-import * as path from "path";
-import * as fs from "fs";
+import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
+import type { OutboxEntry, OutboxStatus } from '../interfaces/outbox/OutboxEntry';
+import type { OutboxStats } from '../interfaces/types';
+import { open, type Database, type RootDatabase } from 'lmdb';
+import * as path from 'path';
+import * as fs from 'fs';
 
 export interface OutboxStoreConfig {
   /** Path to the LMDB data directory */
@@ -88,16 +88,16 @@ export class OutboxStore implements IOutboxStore {
     fs.mkdirSync(config.dataDir, { recursive: true });
 
     this.root = open({
-      path: path.join(config.dataDir, "outbox.lmdb"),
+      path: path.join(config.dataDir, 'outbox.lmdb'),
       mapSize: this.mapSize,
     });
 
-    this.mainDb = this.root.openDB({ name: "main" }) as Database<OutboxEntry, string>;
-    this.deliveryDb = this.root.openDB({ name: "delivery" }) as Database<number, string>;
-    this.seqDb = this.root.openDB({ name: "seq" }) as Database<number, string>;
-    this.deadLetterDb = this.root.openDB({ name: "dead-letter" }) as Database<DeadLetterEntry, string>;
-    this.pendingDb = this.root.openDB({ name: "pending" }) as Database<number, string>;
-    this.msgIdToSeqDb = this.root.openDB({ name: "msgid-seq" }) as Database<number, string>;
+    this.mainDb = this.root.openDB({ name: 'main' }) as Database<OutboxEntry, string>;
+    this.deliveryDb = this.root.openDB({ name: 'delivery' }) as Database<number, string>;
+    this.seqDb = this.root.openDB({ name: 'seq' }) as Database<number, string>;
+    this.deadLetterDb = this.root.openDB({ name: 'dead-letter' }) as Database<DeadLetterEntry, string>;
+    this.pendingDb = this.root.openDB({ name: 'pending' }) as Database<number, string>;
+    this.msgIdToSeqDb = this.root.openDB({ name: 'msgid-seq' }) as Database<number, string>;
   }
 
   /**
@@ -109,12 +109,12 @@ export class OutboxStore implements IOutboxStore {
    * and missing from another. Callers that need to amortise the commit cost
    * over many entries should use `addBatch()`.
    */
-  async add(entry: Omit<OutboxEntry, "id">): Promise<OutboxEntry> {
+  async add(entry: Omit<OutboxEntry, 'id'>): Promise<OutboxEntry> {
     return this._insert([entry])[0]!;
   }
 
   /** Persist N entries atomically in a single LMDB write transaction. */
-  private _insert(partials: Array<Omit<OutboxEntry, "id">>): OutboxEntry[] {
+  private _insert(partials: Array<Omit<OutboxEntry, 'id'>>): OutboxEntry[] {
     const created: OutboxEntry[] = [];
 
     this.root.transactionSync(() => {
@@ -126,7 +126,7 @@ export class OutboxStore implements IOutboxStore {
         const full: OutboxEntry = {
           ...partial,
           id,
-          status: "pending",
+          status: 'pending',
           createdAt: partial.createdAt ?? now,
           lastAttemptAt: null,
           attemptCount: 0,
@@ -138,7 +138,7 @@ export class OutboxStore implements IOutboxStore {
         this._indexById(full, seq);
         created.push(full);
       }
-      this.seqDb.putSync("seq", seq);
+      this.seqDb.putSync('seq', seq);
     });
 
     return created;
@@ -151,7 +151,7 @@ export class OutboxStore implements IOutboxStore {
   private _indexById(entry: OutboxEntry, seq: number): void {
     this.msgIdToSeqDb.putSync(entry.id, seq);
     const msgId = (entry as EntryWithMsgId).msgId;
-    if (typeof msgId === "string" && msgId.length > 0) {
+    if (typeof msgId === 'string' && msgId.length > 0) {
       this.msgIdToSeqDb.putSync(msgId, seq);
     }
   }
@@ -165,7 +165,7 @@ export class OutboxStore implements IOutboxStore {
    * @param entries — Array of partial entries to persist
    * @returns Array of created OutboxEntry with assigned IDs
    */
-  addBatch(entries: Array<Omit<OutboxEntry, "id">>): OutboxEntry[] {
+  addBatch(entries: Array<Omit<OutboxEntry, 'id'>>): OutboxEntry[] {
     if (entries.length === 0) return [];
     return this._insert(entries);
   }
@@ -185,7 +185,7 @@ export class OutboxStore implements IOutboxStore {
     this.root.transactionSync(() => {
       for (const entry of entries) {
         this.deliveryDb.putSync(`delivered:${entry.id}`, Date.now());
-        entry.status = "delivered";
+        entry.status = 'delivered';
         entry.lastAttemptAt = Date.now();
         this.mainDb.putSync(entry.id, entry);
         this.pendingDb.removeSync(`pending:${entry.id}`);
@@ -202,14 +202,17 @@ export class OutboxStore implements IOutboxStore {
    */
   private fetchOldestPendingSync(count: number): OutboxEntry[] {
     const entries: OutboxEntry[] = [];
-    const range = this.pendingDb.getRange({ start: "pending:", end: "pending:\xff" });
+    const range = this.pendingDb.getRange({
+      start: 'pending:',
+      end: 'pending:\xff',
+    });
 
     for (const item of range) {
       if (entries.length >= count) break;
       const seq = item.value as number;
       const entryKey = `entry:${seq}`;
       const entry = this.mainDb.get(entryKey) as OutboxEntry | undefined;
-      if (entry && entry.status === "pending") {
+      if (entry && entry.status === 'pending') {
         entries.push(entry);
       }
     }
@@ -225,7 +228,10 @@ export class OutboxStore implements IOutboxStore {
    */
   async fetchOldestPending(count: number, limit?: number): Promise<OutboxEntry[]> {
     const entries: OutboxEntry[] = [];
-    const range = this.pendingDb.getRange({ start: "pending:", end: "pending:\xff" });
+    const range = this.pendingDb.getRange({
+      start: 'pending:',
+      end: 'pending:\xff',
+    });
     let scanned = 0;
 
     for (const item of range) {
@@ -235,7 +241,7 @@ export class OutboxStore implements IOutboxStore {
       const seq = item.value as number;
       const entryKey = `entry:${seq}`;
       const entry = this.mainDb.get(entryKey) as OutboxEntry | undefined;
-      if (entry && entry.status === "pending") {
+      if (entry && entry.status === 'pending') {
         entries.push(entry);
       }
     }
@@ -256,7 +262,7 @@ export class OutboxStore implements IOutboxStore {
         const entryKey = `entry:${seq}`;
         const existing = this.mainDb.get(entryKey) as OutboxEntry | undefined;
         if (existing) {
-          existing.status = "delivered";
+          existing.status = 'delivered';
           existing.lastAttemptAt = Date.now();
           this.mainDb.putSync(entryKey, existing);
           this.pendingDb.removeSync(`pending:${entryKey}`);
@@ -265,10 +271,13 @@ export class OutboxStore implements IOutboxStore {
       }
 
       // Fallback: O(n) scan for entries written before the reverse index existed
-      for (const item of this.mainDb.getRange({ start: "entry:", end: "entry:\xff" })) {
+      for (const item of this.mainDb.getRange({
+        start: 'entry:',
+        end: 'entry:\xff',
+      })) {
         const entry = item.value as OutboxEntry;
         if (entry?.id === entryId) {
-          entry.status = "delivered";
+          entry.status = 'delivered';
           entry.lastAttemptAt = Date.now();
           this.mainDb.putSync(item.key as string, entry);
           this.pendingDb.removeSync(`pending:${item.key as string}`);
@@ -290,7 +299,10 @@ export class OutboxStore implements IOutboxStore {
    */
   async getPendingCount(): Promise<number> {
     let count = 0;
-    for (const _ of this.pendingDb.getRange({ start: "pending:", end: "pending:\xff" })) {
+    for (const _ of this.pendingDb.getRange({
+      start: 'pending:',
+      end: 'pending:\xff',
+    })) {
       count++;
     }
     return count;
@@ -302,14 +314,21 @@ export class OutboxStore implements IOutboxStore {
   async getStats(): Promise<OutboxStats> {
     const pendingCount = await this.getPendingCount();
     let deliveredCount = 0;
-    for (const _ of this.deliveryDb.getRange({ start: "delivered:", end: "delivered:\xff" })) {
+    for (const _ of this.deliveryDb.getRange({
+      start: 'delivered:',
+      end: 'delivered:\xff',
+    })) {
       deliveredCount++;
     }
     const totalEntries = pendingCount + deliveredCount;
 
     // Find oldest pending timestamp
     let oldestPendingTimestamp: number | null = null;
-    for (const item of this.pendingDb.getRange({ start: "pending:", end: "pending:\xff", limit: 1 })) {
+    for (const item of this.pendingDb.getRange({
+      start: 'pending:',
+      end: 'pending:\xff',
+      limit: 1,
+    })) {
       const seq = item.value as number;
       const entry = this.mainDb.get(`entry:${seq}`) as OutboxEntry | undefined;
       if (entry) {
@@ -338,7 +357,10 @@ export class OutboxStore implements IOutboxStore {
     const seq = this.msgIdToSeqDb.get(entryId) as number | undefined;
     if (seq === undefined) {
       // Fallback scan
-      for (const item of this.mainDb.getRange({ start: "entry:", end: "entry:\xff" })) {
+      for (const item of this.mainDb.getRange({
+        start: 'entry:',
+        end: 'entry:\xff',
+      })) {
         const entry = item.value as OutboxEntry;
         if (entry?.id === entryId) {
           return this._markFailed(entry, item.key as string, error);
@@ -363,7 +385,7 @@ export class OutboxStore implements IOutboxStore {
       // Move to dead letter queue
       this.deadLetterDb.putSync(`dlq:${entry.id}`, {
         ...entry,
-        status: "failed" as OutboxStatus,
+        status: 'failed' as OutboxStatus,
         deadAt: Date.now(),
       });
       // Remove from main + pending + reverse index
@@ -371,7 +393,7 @@ export class OutboxStore implements IOutboxStore {
       this.pendingDb.removeSync(`pending:${entryKey}`);
       this.msgIdToSeqDb.removeSync(entry.id);
       const msgId = (entry as EntryWithMsgId).msgId;
-      if (typeof msgId === "string" && msgId.length > 0) {
+      if (typeof msgId === 'string' && msgId.length > 0) {
         this.msgIdToSeqDb.removeSync(msgId);
       }
       return true; // moved to dead letter
@@ -397,7 +419,7 @@ export class OutboxStore implements IOutboxStore {
       const revived: OutboxEntry = {
         ...deadEntry,
         id: newKey,
-        status: "pending",
+        status: 'pending',
         attemptCount: 0,
         lastAttemptAt: null,
         lastError: null,
@@ -407,7 +429,7 @@ export class OutboxStore implements IOutboxStore {
       this.mainDb.putSync(newKey, revived);
       this.pendingDb.putSync(`pending:${newKey}`, seq);
       this._indexById(revived, seq);
-      this.seqDb.putSync("seq", seq);
+      this.seqDb.putSync('seq', seq);
 
       // Remove from dead letter
       this.deadLetterDb.removeSync(deadKey);
@@ -420,7 +442,10 @@ export class OutboxStore implements IOutboxStore {
    */
   getDeadLetterEntries(): DeadLetterEntry[] {
     const entries: DeadLetterEntry[] = [];
-    for (const item of this.deadLetterDb.getRange({ start: "dlq:", end: "dlq:\xff" })) {
+    for (const item of this.deadLetterDb.getRange({
+      start: 'dlq:',
+      end: 'dlq:\xff',
+    })) {
       entries.push(item.value as DeadLetterEntry);
     }
     return entries;
@@ -470,10 +495,13 @@ export class OutboxStore implements IOutboxStore {
 
     this.root.transactionSync(() => {
       // Clean up delivered entries
-      for (const item of this.deliveryDb.getRange({ start: "delivered:", end: "delivered:\xff" })) {
+      for (const item of this.deliveryDb.getRange({
+        start: 'delivered:',
+        end: 'delivered:\xff',
+      })) {
         const ts = item.value as number;
         if (ts < cutoff) {
-          const entryId = (item.key as string).slice("delivered:".length);
+          const entryId = (item.key as string).slice('delivered:'.length);
           this.deliveryDb.removeSync(item.key as string);
           // Clean up reverse index
           this.msgIdToSeqDb.removeSync(entryId);
@@ -482,7 +510,10 @@ export class OutboxStore implements IOutboxStore {
 
       // Clean up dead letter entries
       const dlCutoff = now - this.deadLetterTtlMs;
-      for (const item of this.deadLetterDb.getRange({ start: "dlq:", end: "dlq:\xff" })) {
+      for (const item of this.deadLetterDb.getRange({
+        start: 'dlq:',
+        end: 'dlq:\xff',
+      })) {
         const entry = item.value as DeadLetterEntry;
         if (entry.deadAt && entry.deadAt < dlCutoff) {
           this.deadLetterDb.removeSync(item.key as string);
@@ -504,7 +535,7 @@ export class OutboxStore implements IOutboxStore {
 
   /** Current sequence number (call inside a write transaction). */
   private _readSeq(): number {
-    return this._readSync(this.seqDb, "seq") ?? 0;
+    return this._readSync(this.seqDb, 'seq') ?? 0;
   }
 
   /**
@@ -516,7 +547,7 @@ export class OutboxStore implements IOutboxStore {
    */
   private _readSync<T>(db: Database<T, string>, key: string): T | undefined {
     const sync = (db as unknown as { getSync?: (k: string) => T | undefined }).getSync;
-    if (typeof sync === "function") return sync.call(db, key);
+    if (typeof sync === 'function') return sync.call(db, key);
     return db.get(key) as T | undefined;
   }
 }

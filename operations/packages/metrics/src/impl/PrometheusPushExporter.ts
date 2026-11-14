@@ -54,7 +54,9 @@ function snapshotToPrometheus(snapshot: MetricsSnapshot): string {
     const hasSum = points.some((p) => p.name.endsWith('_sum'));
     const type = hasCount && hasSum ? 'histogram' : (points[0]?.type ?? 'gauge');
 
-    lines.push(`# HELP ${baseName} ${type === 'histogram' ? 'Histogram' : type === 'counter' ? 'Counter' : 'Gauge'} metric`);
+    lines.push(
+      `# HELP ${baseName} ${type === 'histogram' ? 'Histogram' : type === 'counter' ? 'Counter' : 'Gauge'} metric`,
+    );
     lines.push(`# TYPE ${baseName} ${type}`);
 
     if (type === 'histogram') {
@@ -64,7 +66,10 @@ function snapshotToPrometheus(snapshot: MetricsSnapshot): string {
         // Extract clean name (strip _count/_sum)
         // Clean name extraction kept for future histogram label grouping
         void (p.name.replace(/_count$/, '').replace(/_sum$/, '') satisfies string);
-        const labelKey = (p.labels ?? []).map((l) => `${l.key}=${l.value}`).sort().join(',');
+        const labelKey = (p.labels ?? [])
+          .map((l) => `${l.key}=${l.value}`)
+          .sort()
+          .join(',');
         if (!labelGroups.has(labelKey)) labelGroups.set(labelKey, []);
         labelGroups.get(labelKey)!.push(p);
       }
@@ -103,9 +108,7 @@ function snapshotToPrometheus(snapshot: MetricsSnapshot): string {
 }
 
 function formatLabels(labels: Record<string, string>): string {
-  const parts = Object.entries(labels).map(
-    ([k, v]) => `${k}="${escapeLabelValue(v)}"`,
-  );
+  const parts = Object.entries(labels).map(([k, v]) => `${k}="${escapeLabelValue(v)}"`);
   return `{${parts.join(',')}}`;
 }
 
@@ -139,9 +142,7 @@ export class PrometheusPushExporter {
       ...config.groupingLabels,
     };
     // PushGateway requires grouping keys in the URL path: /metrics/job/<job>/instance/<instance>/...
-    const parts = Object.entries(labels).map(
-      ([k, v]) => `/${k}/${encodeURIComponent(v)}`,
-    );
+    const parts = Object.entries(labels).map(([k, v]) => `/${k}/${encodeURIComponent(v)}`);
     return `${base}/metrics${parts.join('')}`;
   }
 
@@ -176,10 +177,7 @@ export class PrometheusPushExporter {
     const body = snapshotToPrometheus(snapshot);
 
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      this.config.timeoutMs ?? 10_000,
-    );
+    const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 10_000);
 
     try {
       const response = await fetch(this.baseUrl, {
@@ -190,9 +188,7 @@ export class PrometheusPushExporter {
       });
 
       if (!response.ok) {
-        throw new Error(
-          `PushGateway responded ${response.status}: ${response.statusText}`,
-        );
+        throw new Error(`PushGateway responded ${response.status}: ${response.statusText}`);
       }
     } finally {
       clearTimeout(timeout);

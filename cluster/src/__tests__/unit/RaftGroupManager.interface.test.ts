@@ -47,7 +47,15 @@ vi.mock('../../consensus/core/RaftGroup', () => {
       public _proposeCalls: any[] = [];
       public _raftAdapter = { flushApplyQueue: vi.fn() };
 
-      constructor(shardId: number, config: any, replica: any, outboxManager: any, _snapshotDir?: any, pipelineConfig?: any, flexQuorum?: any) {
+      constructor(
+        shardId: number,
+        config: any,
+        replica: any,
+        outboxManager: any,
+        _snapshotDir?: any,
+        pipelineConfig?: any,
+        flexQuorum?: any,
+      ) {
         this.shardId = shardId;
         this.config = config;
         this.replica = replica;
@@ -56,41 +64,99 @@ vi.mock('../../consensus/core/RaftGroup', () => {
         mockGroups.set(shardId, this);
       }
 
-      async init(_sharedTransport?: any) { this._initArgs.push(_sharedTransport); }
-      stop() { this._stopped = true; }
-      async isLeader() { this._isLeaderCalled++; return this._leader === this.config?.id; }
-      async getLeader() { return this._leader; }
-      async getTerm() { return this._term; }
-      async getProgress() { return this._progress; }
-      async propose(entry: any) { this._proposeCalls.push(entry); return { index: '1', term: '1' }; }
-      async proposeAndWait(entry: any) { this._proposeAndWaitCalls.push(entry); }
-      async proposeBatch(entries: any[]) { this._proposeBatchCalls.push(entries); }
-      async read(_sql: string, _params?: any[]) { return this._readRows; }
-      isReadQuorumReached(...args: any[]) { return this._isReadQuorum(...args); }
-      getLearnerCount() { return this._learnerCount; }
-      setForceLeader(enabled: boolean) { this._forceLeader = enabled; }
+      async init(_sharedTransport?: any) {
+        this._initArgs.push(_sharedTransport);
+      }
+      stop() {
+        this._stopped = true;
+      }
+      async isLeader() {
+        this._isLeaderCalled++;
+        return this._leader === this.config?.id;
+      }
+      async getLeader() {
+        return this._leader;
+      }
+      async getTerm() {
+        return this._term;
+      }
+      async getProgress() {
+        return this._progress;
+      }
+      async propose(entry: any) {
+        this._proposeCalls.push(entry);
+        return { index: '1', term: '1' };
+      }
+      async proposeAndWait(entry: any) {
+        this._proposeAndWaitCalls.push(entry);
+      }
+      async proposeBatch(entries: any[]) {
+        this._proposeBatchCalls.push(entries);
+      }
+      async read(_sql: string, _params?: any[]) {
+        return this._readRows;
+      }
+      isReadQuorumReached(...args: any[]) {
+        return this._isReadQuorum(...args);
+      }
+      getLearnerCount() {
+        return this._learnerCount;
+      }
+      setForceLeader(enabled: boolean) {
+        this._forceLeader = enabled;
+      }
       async campaign() {}
-      getConsensusPhase() { return this._phase; }
-      async rollbackMembershipChange() { return this._rollbackResult; }
-      async addLearner(_nodeId: string) { return this._addLearnerResult; }
-      removeLearner(_nodeId: string) { return this._removeLearnerResult; }
-      async requestForLearner(fromIndex: number) { return { ...this._requestLearner, lastIndex: fromIndex }; }
+      getConsensusPhase() {
+        return this._phase;
+      }
+      async rollbackMembershipChange() {
+        return this._rollbackResult;
+      }
+      async addLearner(_nodeId: string) {
+        return this._addLearnerResult;
+      }
+      removeLearner(_nodeId: string) {
+        return this._removeLearnerResult;
+      }
+      async requestForLearner(fromIndex: number) {
+        return { ...this._requestLearner, lastIndex: fromIndex };
+      }
       updateLearnerProgress(_nodeId: string, _matchedIndex: number) {}
-      async transferLeadership(_target: string) { return this._transferResult; }
-      isLeaderTransferInProgress() { return this._transferInProgress; }
-      async getLeaderHealth() { return this._health; }
-      getPipelineDepth() { return this._pipelineDepth; }
+      async transferLeadership(_target: string) {
+        return this._transferResult;
+      }
+      isLeaderTransferInProgress() {
+        return this._transferInProgress;
+      }
+      async getLeaderHealth() {
+        return this._health;
+      }
+      getPipelineDepth() {
+        return this._pipelineDepth;
+      }
       setPipelineConfig(_config: any) {}
       async forceFlush() {}
       handleRaftMessage(_msg: any) {}
-      async applyFromEventBus(_entry: any) { return this._applyFromEventBusResult; }
+      async applyFromEventBus(_entry: any) {
+        return this._applyFromEventBusResult;
+      }
       startLeaderMonitor(_intervalMs?: number) {}
       stopLeaderMonitor() {}
-      async proposeMembershipChange(_change: any) { return this._membershipResult; }
-      async getState() { return {}; }
-      getRaftAdapter() { return this._raftAdapter; }
-      setStorage(s: any) { this._storage = s; }
-      toString() { return `MockRaftGroup(${this.shardId})`; }
+      async proposeMembershipChange(_change: any) {
+        return this._membershipResult;
+      }
+      async getState() {
+        return {};
+      }
+      getRaftAdapter() {
+        return this._raftAdapter;
+      }
+      setStorage(s: any) {
+        this._storage = s;
+      }
+      toString() {
+        return `MockRaftGroup(${this.shardId})`;
+      }
     },
   };
 });
@@ -101,8 +167,12 @@ vi.mock('../../consensus/opt/AdaptiveElectionTimeout', () => ({
     start() {}
     stop() {}
     recordRtt(_r: number) {}
-    getSampleCount() { return 0; }
-    getAvgRtt() { return 0; }
+    getSampleCount() {
+      return 0;
+    }
+    getAvgRtt() {
+      return 0;
+    }
   },
 }));
 
@@ -139,7 +209,12 @@ describe('RaftGroupManager — interface/health/topology/learner/transfer/pipeli
   });
 
   function registerOne(shardId = 1): any {
-    manager.registerShardWithReplica(shardId, new MockReplica(shardId), [{ nodeId: 'n1', raftIndex: shardId }], shardId);
+    manager.registerShardWithReplica(
+      shardId,
+      new MockReplica(shardId),
+      [{ nodeId: 'n1', raftIndex: shardId }],
+      shardId,
+    );
     return mockGroups.get(shardId);
   }
 
@@ -190,7 +265,11 @@ describe('RaftGroupManager — interface/health/topology/learner/transfer/pipeli
 
     it('registerShard uses topology node id when available', () => {
       manager.setClusterTopology({ nodes: [], getNodeId: () => 'node-77' });
-      manager.registerShard('5', { replica: new MockReplica(5), peers: [{ nodeId: 'x', raftIndex: 5 }], localRaftIndex: 0 });
+      manager.registerShard('5', {
+        replica: new MockReplica(5),
+        peers: [{ nodeId: 'x', raftIndex: 5 }],
+        localRaftIndex: 0,
+      });
       expect(manager.getGroup(5)).toBeTruthy();
     });
   });
@@ -416,9 +495,7 @@ describe('RaftGroupManager — interface/health/topology/learner/transfer/pipeli
 
     it('notifyTopologyChange single-arg (interface) path', async () => {
       registerOne();
-      await expect(
-        manager.notifyTopologyChange({ type: 'add', nodeId: '1', shardId: 1 }),
-      ).resolves.toBeUndefined();
+      await expect(manager.notifyTopologyChange({ type: 'add', nodeId: '1', shardId: 1 })).resolves.toBeUndefined();
     });
 
     it('topology change catches per-group error', async () => {

@@ -105,7 +105,7 @@ describe('Raft Election Benchmark', () => {
   it('AC 29.4: Post-election leader stability', async () => {
     // After election completes, leader should remain stable for
     // at least 10 heartbeat intervals without triggering a new election
-    let currentLeader = 'node-1';
+    const currentLeader = 'node-1';
     const heartbeatsReceived = Array.from({ length: 10 }, (_, i) => ({
       time: i * 50,
       leader: currentLeader,

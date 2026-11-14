@@ -68,7 +68,10 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 function tmpDb(label: string): string {
-  const dir = path.join(os.tmpdir(), `sqlite-storage-test-${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = path.join(
+    os.tmpdir(),
+    `sqlite-storage-test-${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, 'raft.db');
 }
@@ -311,9 +314,7 @@ describe('SqliteStorage — recoverFromCrash / vacuum / pragma / stats', () => {
       if (String(p) === 'integrity_check') {
         call++;
         // First check fails, retry (after checkpoint) passes.
-        return call === 1
-          ? [{ integrity_check: 'malformed database' }]
-          : [{ integrity_check: 'ok' }];
+        return call === 1 ? [{ integrity_check: 'malformed database' }] : [{ integrity_check: 'ok' }];
       }
       return origPragma(p as any);
     });
@@ -429,9 +430,7 @@ describe('SqliteStorage — initialState / persistReady', () => {
 
   it('AC 32.8: persistReady coerces string entry data via String()', async () => {
     await s.persistReady('node-1', {
-      entries: [
-        { index: 1, term: 1, type: 0, data: 'plain-string-data' },
-      ],
+      entries: [{ index: 1, term: 1, type: 0, data: 'plain-string-data' }],
     });
     expect(s.getLogEntry(1)?.data?.toString()).toBe('plain-string-data');
   });
@@ -607,21 +606,39 @@ describe('SqliteStorage — checksum verification', () => {
   it('AC 32.12: verifyLogChecksum returns true when no checksum column value stored', () => {
     // Directly insert a row with NULL checksum via raw db.
     const db = s.getDb()!;
-    db.prepare('INSERT INTO raft_log (entry_index, term, type, data, checksum) VALUES (?, ?, ?, ?, ?)').run(10, 1, 0, null, null);
+    db.prepare('INSERT INTO raft_log (entry_index, term, type, data, checksum) VALUES (?, ?, ?, ?, ?)').run(
+      10,
+      1,
+      0,
+      null,
+      null,
+    );
     expect(s.verifyLogChecksum(10)).toBe(true);
   });
 
   it('AC 32.12: verifyLogChecksum handles null data (checksum 0)', () => {
     const db = s.getDb()!;
     // NULL data with checksum 0 — expected checksum for null data is 0.
-    db.prepare('INSERT INTO raft_log (entry_index, term, type, data, checksum) VALUES (?, ?, ?, ?, ?)').run(11, 1, 0, null, 0);
+    db.prepare('INSERT INTO raft_log (entry_index, term, type, data, checksum) VALUES (?, ?, ?, ?, ?)').run(
+      11,
+      1,
+      0,
+      null,
+      0,
+    );
     expect(s.verifyLogChecksum(11)).toBe(true);
   });
 
   it('AC 32.12: verifyLogChecksums skips rows with NULL checksum', () => {
     const db = s.getDb()!;
     // Row with NULL checksum is skipped (not treated as corrupted).
-    db.prepare('INSERT INTO raft_log (entry_index, term, type, data, checksum) VALUES (?, ?, ?, ?, ?)').run(20, 1, 0, Buffer.from('z'), null);
+    db.prepare('INSERT INTO raft_log (entry_index, term, type, data, checksum) VALUES (?, ?, ?, ?, ?)').run(
+      20,
+      1,
+      0,
+      Buffer.from('z'),
+      null,
+    );
     expect(s.verifyLogChecksums(20, 21)).toEqual([]);
   });
 

@@ -1,9 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryEngineFactory } from './InMemoryEngineFactory.js';
 
-describe.each([
-  { name: 'InMemory', factory: new InMemoryEngineFactory() },
-])('$name e2e: Security', ({ factory }) => {
+describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$name e2e: Security', ({ factory }) => {
   afterAll(async () => {
     await factory.cleanup();
   });
@@ -45,14 +43,24 @@ describe.each([
 
   it('should query audit entries', async () => {
     const store = factory.createAuditStore();
-    await store.write({ operation: 'BACKUP', actor: 'system', resource: 'backup', result: 'success' });
+    await store.write({
+      operation: 'BACKUP',
+      actor: 'system',
+      resource: 'backup',
+      result: 'success',
+    });
     const entries = await store.query({});
     expect(entries.length).toBeGreaterThan(0);
   });
 
   it('should get audit entry by ID', async () => {
     const store = factory.createAuditStore();
-    const id = await store.write({ operation: 'TEST', actor: 'tester', resource: 'test', result: 'success' });
+    const id = await store.write({
+      operation: 'TEST',
+      actor: 'tester',
+      resource: 'test',
+      result: 'success',
+    });
     const entry = await store.get(id);
     expect(entry).not.toBeNull();
     expect(entry!.id).toBe(id);
@@ -60,15 +68,30 @@ describe.each([
 
   it('should count audit entries', async () => {
     const store = factory.createAuditStore();
-    await store.write({ operation: 'OP1', actor: 'a', resource: 'r', result: 'success' });
-    await store.write({ operation: 'OP2', actor: 'b', resource: 'r', result: 'failure' });
+    await store.write({
+      operation: 'OP1',
+      actor: 'a',
+      resource: 'r',
+      result: 'success',
+    });
+    await store.write({
+      operation: 'OP2',
+      actor: 'b',
+      resource: 'r',
+      result: 'failure',
+    });
     const count = await store.count();
     expect(count).toBeGreaterThanOrEqual(2);
   });
 
   it('should prune old audit entries', async () => {
     const store = factory.createAuditStore();
-    await store.write({ operation: 'OLD', actor: 'sys', resource: 'r', result: 'success' });
+    await store.write({
+      operation: 'OLD',
+      actor: 'sys',
+      resource: 'r',
+      result: 'success',
+    });
     const oldDate = new Date('2020-01-01');
     const pruned = await store.pruneOlderThan(oldDate);
     expect(typeof pruned).toBe('number');
@@ -106,8 +129,18 @@ describe.each([
 
   it('should query audit with limit', async () => {
     const audit = factory.createAuditStore();
-    await audit.write({ operation: 'OP1', actor: 'a', resource: 'r', result: 'success' });
-    await audit.write({ operation: 'OP2', actor: 'a', resource: 'r', result: 'success' });
+    await audit.write({
+      operation: 'OP1',
+      actor: 'a',
+      resource: 'r',
+      result: 'success',
+    });
+    await audit.write({
+      operation: 'OP2',
+      actor: 'a',
+      resource: 'r',
+      result: 'success',
+    });
     const entries = await audit.query({ limit: 1 });
     expect(entries.length).toBeLessThanOrEqual(1);
   });

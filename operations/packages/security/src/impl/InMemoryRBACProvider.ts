@@ -11,9 +11,7 @@ export class InMemoryRBACProvider implements IRBACProvider {
     for (const roleName of identity.roles) {
       const perms = this._roles.get(roleName);
       if (!perms) continue;
-      const match = perms.find(
-        (p) => p.resource === permission.resource && p.action === permission.action,
-      );
+      const match = perms.find((p) => p.resource === permission.resource && p.action === permission.action);
       if (match) return true;
     }
     return false;

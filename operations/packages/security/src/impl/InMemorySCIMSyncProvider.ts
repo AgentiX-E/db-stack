@@ -4,7 +4,11 @@ export class InMemorySCIMSyncProvider implements ISCIMSyncProvider {
   private _lastSync: Date | null = null;
   private _users: string[] = [];
 
-  async syncUsers(): Promise<{ added: number; updated: number; removed: number }> {
+  async syncUsers(): Promise<{
+    added: number;
+    updated: number;
+    removed: number;
+  }> {
     this._lastSync = new Date();
     if (this._users.length === 0) {
       this._users = ['user-1', 'user-2', 'user-3'];

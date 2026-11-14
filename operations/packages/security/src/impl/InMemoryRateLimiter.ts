@@ -8,10 +8,7 @@ interface WindowEntry {
 export class InMemoryRateLimiter implements IRateLimiter {
   private _windows: Map<string, WindowEntry> = new Map();
 
-  check(
-    key: string,
-    config?: RateLimitConfig,
-  ): { allowed: boolean; remaining: number; resetMs: number } {
+  check(key: string, config?: RateLimitConfig): { allowed: boolean; remaining: number; resetMs: number } {
     const cfg = config ?? { maxRequests: 10, windowMs: 60000 };
     const now = Date.now();
     const entry = this._windows.get(key);

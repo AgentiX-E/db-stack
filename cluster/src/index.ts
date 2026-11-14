@@ -38,22 +38,14 @@ export type {
 
 // ── Consensus extensions ──────────────────────────────────
 export { InstallSnapshotHandler } from './consensus/extensions/InstallSnapshotHandler';
-export type {
-  InstallSnapshotHandlerConfig,
-  SnapshotChunkResult,
-} from './consensus/extensions/InstallSnapshotHandler';
+export type { InstallSnapshotHandlerConfig, SnapshotChunkResult } from './consensus/extensions/InstallSnapshotHandler';
 export { LeaderTransferHandler } from './consensus/extensions/LeaderTransferHandler';
 export type { LeaderTransferHandlerConfig } from './consensus/extensions/LeaderTransferHandler';
 export { LeaseReadManager } from './consensus/extensions/LeaseReadManager';
 export { ReadIndexManager } from './consensus/extensions/ReadIndexManager';
 export type { ReadIndexRequest } from './consensus/extensions/ReadIndexManager';
 export { FencingManager } from './consensus/fencing/FencingManager';
-export type {
-  FencingConfig,
-  FencingShardStatus,
-  FencingStatus,
-  FenceState,
-} from './consensus/fencing/FencingManager';
+export type { FencingConfig, FencingShardStatus, FencingStatus, FenceState } from './consensus/fencing/FencingManager';
 export { SessionManager } from './consensus/session/SessionManager';
 export type { SessionConfig, SessionEntry, ISessionManager } from './consensus/session/SessionManager';
 export { EventBus } from './consensus/events/EventBus';

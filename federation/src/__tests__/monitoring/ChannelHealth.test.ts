@@ -24,7 +24,11 @@ describe('ChannelHealthCalculator', () => {
   });
 
   it('健康分 = 100 当 lag ≤ 100ms 且 errorRate = 0', () => {
-    const result = calc.calculate({ ...BASE_METRICS, lagMs: 50, throughputOps: 1000 });
+    const result = calc.calculate({
+      ...BASE_METRICS,
+      lagMs: 50,
+      throughputOps: 1000,
+    });
     // 50ms lag: penalty = 50/1000 * 30 = 1.5 → score ≈ 98.5
     expect(result.healthScore).toBeGreaterThan(95);
     expect(result.level).toBe('healthy');
@@ -57,7 +61,7 @@ describe('ChannelHealthCalculator', () => {
   it('ErrorRate = 0.1 惩罚比 Lag=500ms 更重', () => {
     const lagResult = calc.calculate({ ...BASE_METRICS, lagMs: 500 });
     const errorResult = calc.calculate({ ...BASE_METRICS, errorRate: 0.1 });
-    
+
     expect(errorResult.breakdown.errorPenalty).toBeGreaterThan(lagResult.breakdown.lagPenalty);
     expect(errorResult.healthScore).toBeLessThan(lagResult.healthScore);
   });
@@ -142,7 +146,11 @@ describe('ChannelHealthCalculator', () => {
 
   it('健康分 50-79 被标记为 degraded', () => {
     // lag 800ms + reconnect 2: 24 + 10 = 34 扣分 → 健康分 66
-    const result = calc.calculate({ ...BASE_METRICS, lagMs: 800, reconnectCount: 2 });
+    const result = calc.calculate({
+      ...BASE_METRICS,
+      lagMs: 800,
+      reconnectCount: 2,
+    });
     expect(result.healthScore).toBeGreaterThanOrEqual(50);
     expect(result.healthScore).toBeLessThan(80);
     expect(result.level).toBe('degraded');
@@ -165,8 +173,14 @@ describe('ChannelHealthCalculator', () => {
   it('批量计算正确返回所有通道健康分', () => {
     const results = calc.calculateBatch([
       { name: 'us-east', metrics: { ...BASE_METRICS, lagMs: 50 } },
-      { name: 'eu-west', metrics: { ...BASE_METRICS, lagMs: 500, errorRate: 0.02 } },
-      { name: 'ap-south', metrics: { ...BASE_METRICS, lagMs: 2000, reconnectCount: 5 } },
+      {
+        name: 'eu-west',
+        metrics: { ...BASE_METRICS, lagMs: 500, errorRate: 0.02 },
+      },
+      {
+        name: 'ap-south',
+        metrics: { ...BASE_METRICS, lagMs: 2000, reconnectCount: 5 },
+      },
     ]);
     expect(results).toHaveLength(3);
     expect(results[0]!.name).toBe('us-east');

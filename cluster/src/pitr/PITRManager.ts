@@ -13,8 +13,8 @@
  *   - Retention: configurable max age / max count of snapshots + WAL segments
  */
 
-import { IPITRHook } from "../interfaces/IPITRHook";
-import * as crypto from "crypto";
+import { IPITRHook } from '../interfaces/IPITRHook';
+import * as crypto from 'crypto';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -149,20 +149,13 @@ export class PITRManager {
    * @param snapshotTerm — Current term
    * @param snapshotData — Current state machine data
    */
-  createCheckpoint(
-    shardId: string,
-    snapshotIndex: number,
-    snapshotTerm: number,
-    snapshotData: Buffer,
-  ): PITRCheckpoint {
+  createCheckpoint(shardId: string, snapshotIndex: number, snapshotTerm: number, snapshotData: Buffer): PITRCheckpoint {
     const checkpoint: PITRCheckpoint = {
       checkpointId: this.generateCheckpointId(shardId),
       shardId,
       snapshotIndex,
       snapshotTerm,
-      snapshotData: this.config.compressSnapshots
-        ? this.compressSnapshot(snapshotData)
-        : Buffer.from(snapshotData),
+      snapshotData: this.config.compressSnapshots ? this.compressSnapshot(snapshotData) : Buffer.from(snapshotData),
       timestamp: Date.now(),
       compressed: this.config.compressSnapshots,
     };
@@ -196,18 +189,12 @@ export class PITRManager {
    * @param targetTimestamp — Epoch ms timestamp to restore to
    * @returns Restore result with restored data and metadata
    */
-  async restore(
-    shardId: string,
-    targetTimestamp: number,
-  ): Promise<PITRRestoreResult> {
+  async restore(shardId: string, targetTimestamp: number): Promise<PITRRestoreResult> {
     const startTime = Date.now();
 
     const checkpoints = this.checkpoints.get(shardId) ?? [];
     if (checkpoints.length === 0) {
-      throw new Error(
-        `No checkpoints available for shard ${shardId}. ` +
-        `Cannot perform PITR restore.`,
-      );
+      throw new Error(`No checkpoints available for shard ${shardId}. ` + `Cannot perform PITR restore.`);
     }
 
     // 1. Find nearest checkpoint ≤ targetTimestamp
@@ -215,8 +202,8 @@ export class PITRManager {
     if (!checkpoint) {
       throw new Error(
         `No checkpoint found before timestamp ${targetTimestamp} ` +
-        `for shard ${shardId}. The earliest checkpoint is at ` +
-        `${new Date(checkpoints[0]!.timestamp).toISOString()}.`,
+          `for shard ${shardId}. The earliest checkpoint is at ` +
+          `${new Date(checkpoints[0]!.timestamp).toISOString()}.`,
       );
     }
 
@@ -228,9 +215,7 @@ export class PITRManager {
     // 3. Replay WAL entries from checkpoint → targetTimestamp
     const walEntries = this.walEntries.get(shardId) ?? [];
     const entriesToReplay = walEntries.filter(
-      (e) =>
-        e.timestamp > checkpoint.timestamp &&
-        e.timestamp <= targetTimestamp,
+      (e) => e.timestamp > checkpoint.timestamp && e.timestamp <= targetTimestamp,
     );
 
     for (const entry of entriesToReplay) {
@@ -269,9 +254,7 @@ export class PITRManager {
     const entries = this.walEntries.get(shardId) ?? [];
     if (checkpoints.length === 0) return entries.length;
 
-    const latestCheckpointIdx = Math.max(
-      ...checkpoints.map((c) => c.snapshotIndex),
-    );
+    const latestCheckpointIdx = Math.max(...checkpoints.map((c) => c.snapshotIndex));
     return entries.filter((e) => e.index > latestCheckpointIdx).length;
   }
 
@@ -289,7 +272,7 @@ export class PITRManager {
   // ── Internal ─────────────────────────────────────────────
 
   private generateCheckpointId(shardId: string): string {
-    const rand = crypto.randomBytes(8).toString("hex");
+    const rand = crypto.randomBytes(8).toString('hex');
     return `ckpt-${shardId}-${Date.now()}-${rand}`;
   }
 
@@ -297,14 +280,9 @@ export class PITRManager {
    * Find the checkpoint with the highest timestamp that is ≤ target.
    * Binary search on sorted (by timestamp) checkpoints.
    */
-  private findNearestCheckpoint(
-    checkpoints: PITRCheckpoint[],
-    targetTimestamp: number,
-  ): PITRCheckpoint | null {
+  private findNearestCheckpoint(checkpoints: PITRCheckpoint[], targetTimestamp: number): PITRCheckpoint | null {
     // Checkpoints are stored in insertion order, sort by timestamp
-    const sorted = [...checkpoints].sort(
-      (a, b) => a.timestamp - b.timestamp,
-    );
+    const sorted = [...checkpoints].sort((a, b) => a.timestamp - b.timestamp);
 
     let best: PITRCheckpoint | null = null;
     for (const cp of sorted) {
@@ -345,13 +323,8 @@ export class PITRManager {
     if (!checkpoints || checkpoints.length <= this.config.maxCheckpoints) return;
 
     // Sort oldest-first, drop excess
-    const sorted = [...checkpoints].sort(
-      (a, b) => a.timestamp - b.timestamp,
-    );
-    this.checkpoints.set(
-      shardId,
-      sorted.slice(sorted.length - this.config.maxCheckpoints),
-    );
+    const sorted = [...checkpoints].sort((a, b) => a.timestamp - b.timestamp);
+    this.checkpoints.set(shardId, sorted.slice(sorted.length - this.config.maxCheckpoints));
   }
 
   /**
@@ -360,28 +333,28 @@ export class PITRManager {
    */
   private applyWALEntry(currentData: string, entry: WALEntry): string {
     // Strip the entryId prefix and apply the mutation
-    const lines = currentData.split("\n").filter(Boolean);
+    const lines = currentData.split('\n').filter(Boolean);
     const updated = new Map<string, string>();
 
     for (const line of lines) {
-      const eqIdx = line.indexOf("=");
+      const eqIdx = line.indexOf('=');
       if (eqIdx > 0) {
         updated.set(line.slice(0, eqIdx), line.slice(eqIdx + 1));
       }
     }
 
     // Apply this entry's data as a key=value pair or deletion
-    if (entry.data.startsWith("DELETE:")) {
+    if (entry.data.startsWith('DELETE:')) {
       updated.delete(entry.data.slice(7));
-    } else if (entry.data.includes("=")) {
-      const eqIdx = entry.data.indexOf("=");
+    } else if (entry.data.includes('=')) {
+      const eqIdx = entry.data.indexOf('=');
       updated.set(entry.data.slice(0, eqIdx), entry.data.slice(eqIdx + 1));
     }
 
     return [...updated.entries()]
       .map(([k, v]) => `${k}=${v}`)
       .sort()
-      .join("\n");
+      .join('\n');
   }
 
   private compressSnapshot(data: Buffer): Buffer {

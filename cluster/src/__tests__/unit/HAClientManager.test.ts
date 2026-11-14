@@ -169,9 +169,7 @@ describe('HAClientManager — Unit', () => {
   //
   it('onLeaderChange is a no-op log when the shard has no clients', () => {
     // Shard 's-unknown' has no registered clients.
-    expect(() =>
-      clientManager.onLeaderChange('s-unknown', 'leader-9', '10.0.0.9:5432'),
-    ).not.toThrow();
+    expect(() => clientManager.onLeaderChange('s-unknown', 'leader-9', '10.0.0.9:5432')).not.toThrow();
   });
 
   it('onLeaderChange notifies all clients on an active shard', () => {
@@ -180,9 +178,7 @@ describe('HAClientManager — Unit', () => {
     clientManager.registerClient('c3', 's1');
 
     // Should not throw and should iterate the affected shard's clients.
-    expect(() =>
-      clientManager.onLeaderChange('s0', 'leader-new', '10.1.1.1:5432'),
-    ).not.toThrow();
+    expect(() => clientManager.onLeaderChange('s0', 'leader-new', '10.1.1.1:5432')).not.toThrow();
 
     // State is unchanged by notification.
     expect(clientManager.getClientCountForShard('s0')).toBe(2);
@@ -194,9 +190,7 @@ describe('HAClientManager — Unit', () => {
     // the index; the early-return branch should be exercised.
     clientManager.registerClient('c1', 's0');
     clientManager.unregisterClient('c1');
-    expect(() =>
-      clientManager.onLeaderChange('s0', 'leader-x', '10.0.0.1:5432'),
-    ).not.toThrow();
+    expect(() => clientManager.onLeaderChange('s0', 'leader-x', '10.0.0.1:5432')).not.toThrow();
   });
 
   //

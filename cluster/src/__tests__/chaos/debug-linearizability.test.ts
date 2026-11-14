@@ -114,11 +114,11 @@ describe('Linearizability Debug', () => {
     // Three overlapping operations to same key
     const c1 = recorder.recordCall('c1', 'write', 'k', 'v1');
     const c2 = recorder.recordCall('c2', 'write', 'k', 'v2');
-    recorder.recordReturn(c1, 'write', 'k');  // succeeds
-    recorder.recordReturn(c2, 'write', 'k');  // succeeds (overwrite)
+    recorder.recordReturn(c1, 'write', 'k'); // succeeds
+    recorder.recordReturn(c2, 'write', 'k'); // succeeds (overwrite)
 
     const c3 = recorder.recordCall('c3', 'read', 'k');
-    recorder.recordReturn(c3, 'read', 'k', 'v2');  // sees last write
+    recorder.recordReturn(c3, 'read', 'k', 'v2'); // sees last write
 
     const events = recorder.getEvents();
     const result = LinearizabilityChecker.isLinearizable(events, 1_000_000);

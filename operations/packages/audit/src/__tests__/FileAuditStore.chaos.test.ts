@@ -105,7 +105,9 @@ describe('FileAuditStore Chaos (D2)', () => {
     for (const f of files) {
       try {
         unlinkSync(join(dataDir, f));
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     rmSync(dataDir, { recursive: true, force: true });
   }, 30_000);
@@ -122,9 +124,7 @@ describe('FileAuditStore Chaos (D2)', () => {
     });
 
     // Fire 10 concurrent writes
-    const writers = Array.from({ length: 10 }, (_, i) =>
-      store.write(makeWrite(`concurrent-${i}`, `writer-${i}`)),
-    );
+    const writers = Array.from({ length: 10 }, (_, i) => store.write(makeWrite(`concurrent-${i}`, `writer-${i}`)));
     const ids = await Promise.all(writers);
 
     // Read all NDJSON files and verify they are valid

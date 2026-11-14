@@ -30,7 +30,7 @@ import { CompressionConfig } from '../../interfaces/types';
 
 import pino from 'pino';
 import { resolveLogLevel } from '../../observability/logLevel';
-const logger = pino({ level: process.env.VITEST === 'true' ? 'silent' : (resolveLogLevel()) });
+const logger = pino({ level: process.env.VITEST === 'true' ? 'silent' : resolveLogLevel() });
 
 // ──────────────────────────────────────────
 //  Types
@@ -593,15 +593,18 @@ export class RaftTcpTransport extends EventEmitter {
 
     // Register this incoming connection with the connection pool
     if (this.pool) {
-      this.pool.onIncoming(peerId, socket).then((conn) => {
-        if (!conn) {
+      this.pool
+        .onIncoming(peerId, socket)
+        .then((conn) => {
+          if (!conn) {
+            socket.destroy();
+            return;
+          }
+        })
+        .catch((err) => {
+          logger.error(`[RaftTcpTransport] onIncoming error: ${getErrorMessage(err)}`);
           socket.destroy();
-          return;
-        }
-      }).catch((err) => {
-        logger.error(`[RaftTcpTransport] onIncoming error: ${getErrorMessage(err)}`);
-        socket.destroy();
-      });
+        });
 
       // NOTE: Data listener is registered by `this.pool.onConnectionCreated`
       // which fires inside `onIncoming()` for BOTH incoming and outgoing

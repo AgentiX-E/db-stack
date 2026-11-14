@@ -36,9 +36,7 @@ export class NoopMaintenanceExecutor implements IMaintenanceExecutor {
       success: true,
       operation: 'VACUUM',
       target: options.target,
-      message: options.dryRun
-        ? `[dry-run] VACUUM on ${options.target}`
-        : `VACUUM completed on ${options.target}`,
+      message: options.dryRun ? `[dry-run] VACUUM on ${options.target}` : `VACUUM completed on ${options.target}`,
       durationMs: 0,
       details: {
         dryRun: options.dryRun ?? false,

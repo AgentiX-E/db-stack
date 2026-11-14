@@ -401,7 +401,9 @@ describe('InstallSnapshotHandler - Unit', () => {
     fs.writeFileSync(filePath, Buffer.alloc(5000, 'D'));
 
     const raft = createMockRaft(1);
-    raft.step.mockImplementation(() => { throw new Error('transport-down'); });
+    raft.step.mockImplementation(() => {
+      throw new Error('transport-down');
+    });
 
     const result = await handler.sendSnapshot(raft as any, '2', filePath, {
       lastIncludedIndex: 300,
@@ -446,11 +448,7 @@ describe('InstallSnapshotHandler - Unit', () => {
     });
     const raft = createMockRaft(1);
 
-    await shortHandler.handleChunk(
-      makeChunk({ data: 'stale', offset: 0, done: false }),
-      raft as any,
-      vi.fn(),
-    );
+    await shortHandler.handleChunk(makeChunk({ data: 'stale', offset: 0, done: false }), raft as any, vi.fn());
     expect(shortHandler.getAssemblyProgress().length).toBe(1);
 
     // Advance past the timeout, then trigger cleanStaleStates via a new chunk.

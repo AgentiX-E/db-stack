@@ -1,6 +1,6 @@
-import type { TransportMessage } from "./TransportMessage";
-import type { InboundMessage } from "./InboundMessage";
-import type { PeerInfo, TransportStats } from "../types";
+import type { TransportMessage } from './TransportMessage';
+import type { InboundMessage } from './InboundMessage';
+import type { PeerInfo, TransportStats } from '../types';
 
 export interface ITransport {
   /**

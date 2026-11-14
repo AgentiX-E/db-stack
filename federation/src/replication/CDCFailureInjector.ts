@@ -10,16 +10,11 @@
  *   - Reorder injection (out-of-order events)
  */
 
-import type { ICDCSink, CDCEvent } from "../interfaces/replication/ICDCSink";
+import type { ICDCSink, CDCEvent } from '../interfaces/replication/ICDCSink';
 
 // ── Types ──────────────────────────────────────────────────
 
-export type FailureType =
-  | "connection_drop"
-  | "partial_emit"
-  | "latency_spike"
-  | "duplicate_inject"
-  | "reorder_inject";
+export type FailureType = 'connection_drop' | 'partial_emit' | 'latency_spike' | 'duplicate_inject' | 'reorder_inject';
 
 export interface FailureConfig {
   /** Type of failure to inject */
@@ -35,7 +30,7 @@ export interface FailureConfig {
 }
 
 const DEFAULT_FAILURE: FailureConfig = {
-  type: "connection_drop",
+  type: 'connection_drop',
   probability: 0.1,
   latencyMs: 100,
   failEveryN: 0,
@@ -67,7 +62,7 @@ export class CDCFailureInjector implements ICDCSink {
   // ── Lifecycle ─────────────────────────────────────────────
 
   async connect(): Promise<void> {
-    const connFail = this._shouldFail("connection_drop");
+    const connFail = this._shouldFail('connection_drop');
     if (connFail) {
       this._recordFailure();
       throw new Error(`${this.name}: injected connection failure`);
@@ -93,15 +88,15 @@ export class CDCFailureInjector implements ICDCSink {
     this.emitCount++;
 
     // Check for latency injection
-    const latencyFail = this._getFailure("latency_spike");
-    if (latencyFail && this._shouldFail("latency_spike")) {
+    const latencyFail = this._getFailure('latency_spike');
+    if (latencyFail && this._shouldFail('latency_spike')) {
       this._recordFailure();
       await this._delay(latencyFail.latencyMs);
     }
 
     // Check for partial emit failure
-    const partialFail = this._getFailure("partial_emit");
-    if (partialFail && this._shouldFail("partial_emit") && events.length > 1) {
+    const partialFail = this._getFailure('partial_emit');
+    if (partialFail && this._shouldFail('partial_emit') && events.length > 1) {
       this._recordFailure();
       // Emit only the first half, then fail
       const half = Math.ceil(events.length / 2);
@@ -110,8 +105,8 @@ export class CDCFailureInjector implements ICDCSink {
     }
 
     // Check for reorder injection
-    const reorderFail = this._getFailure("reorder_inject");
-    if (reorderFail && this._shouldFail("reorder_inject") && events.length >= 2) {
+    const reorderFail = this._getFailure('reorder_inject');
+    if (reorderFail && this._shouldFail('reorder_inject') && events.length >= 2) {
       this._recordFailure();
       // Reverse the order of events
       await this.sink.emit([...events].reverse());
@@ -119,8 +114,8 @@ export class CDCFailureInjector implements ICDCSink {
     }
 
     // Check for duplicate injection
-    const dupFail = this._getFailure("duplicate_inject");
-    if (dupFail && this._shouldFail("duplicate_inject")) {
+    const dupFail = this._getFailure('duplicate_inject');
+    if (dupFail && this._shouldFail('duplicate_inject')) {
       this._recordFailure();
       // Emit twice
       await this.sink.emit(events);
@@ -129,7 +124,7 @@ export class CDCFailureInjector implements ICDCSink {
     }
 
     // Check for connection drop during emit
-    if (this._shouldFail("connection_drop")) {
+    if (this._shouldFail('connection_drop')) {
       this._recordFailure();
       this._connected = false;
       throw new Error(`${this.name}: injected connection drop during emit`);

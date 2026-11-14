@@ -271,11 +271,11 @@ npm run tla-check          # TLA+ model checking
 
 ## Design Decisions
 
-See [ADR](docs/adr/) for architecture decision records, including:
+See the [architecture decision records](https://github.com/AgentiX-E/db-stack-docs/tree/master/adr) for the reasoning behind each major choice, including:
 
-- [ADR-001: Why @maboke123/raft-core as the consensus engine](docs/adr/001-raft-core.md)
-- [ADR-002: Transport layer — TCP, mTLS, Batched, Shared](docs/adr/002-transport.md)
-- [ADR-003: Snapshot and log compaction strategy](docs/adr/003-snapshots.md)
+- [ADR-001: Why @maboke123/raft-core as the consensus engine](https://github.com/AgentiX-E/db-stack-docs/blob/master/adr/cluster-001-raft-core.md)
+- [ADR-002: Transport layer — TCP, mTLS, Batched, Shared](https://github.com/AgentiX-E/db-stack-docs/blob/master/adr/cluster-002-transport.md)
+- [ADR-003: Snapshot and log compaction strategy](https://github.com/AgentiX-E/db-stack-docs/blob/master/adr/cluster-003-snapshots.md)
 
 ---
 

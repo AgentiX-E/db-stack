@@ -5,11 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type {
-  IAuditStore,
-  WriteAuditEntryOptions,
-  AuditQueryFilter,
-} from '../interfaces/index.js';
+import type { IAuditStore, WriteAuditEntryOptions, AuditQueryFilter } from '../interfaces/index.js';
 import type { AuditEntry } from '@agentix-e/db-operations-core/types';
 
 /**

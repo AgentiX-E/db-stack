@@ -145,10 +145,8 @@ export class AutoTunerWorker {
       if (appliedCount >= this.config.maxRecommendations) break;
 
       // Check cooldown
-      const lastApplied = this.appliedHistory.find(
-        (h) => h.parameter === rec.parameter,
-      );
-      if (lastApplied && (now - lastApplied.appliedAt) < this.config.cooldownMs) {
+      const lastApplied = this.appliedHistory.find((h) => h.parameter === rec.parameter);
+      if (lastApplied && now - lastApplied.appliedAt < this.config.cooldownMs) {
         continue;
       }
 
@@ -179,9 +177,7 @@ export class AutoTunerWorker {
    * Used for learning: was the recommendation effective?
    */
   feedbackEffect(parameter: string, currentMetrics: AutoScalerMetrics): void {
-    const lastApplied = this.appliedHistory.find(
-      (h) => h.parameter === parameter && !h.metricAfter,
-    );
+    const lastApplied = this.appliedHistory.find((h) => h.parameter === parameter && !h.metricAfter);
     if (lastApplied) {
       lastApplied.metricAfter = { ...currentMetrics };
     }

@@ -7,33 +7,33 @@
  *   L196 canDecryptVersion OR-chain
  *   L235 data-too-short guard (12 + 16)
  */
-import { describe, it, expect } from "vitest";
-import { EnvelopeEncryptionProvider } from "../impl/EnvelopeEncryptionProvider.js";
+import { describe, it, expect } from 'vitest';
+import { EnvelopeEncryptionProvider } from '../impl/EnvelopeEncryptionProvider.js';
 
 function makeProvider(autoGenerateKey = true): EnvelopeEncryptionProvider {
   return new EnvelopeEncryptionProvider({
     keyManager: {
-      masterSecret: "envelope-mk-secret",
+      masterSecret: 'envelope-mk-secret',
       iterations: 100000,
       keyLength: 32,
-      hashAlgorithm: "sha256",
+      hashAlgorithm: 'sha256',
     },
-    encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+    encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     autoGenerateKey,
   });
 }
 
-describe("ENC-MK: envelope mutation killers", () => {
-  it("L55: isEnabled() is false before initialize", async () => {
+describe('ENC-MK: envelope mutation killers', () => {
+  it('L55: isEnabled() is false before initialize', async () => {
     const p = makeProvider(false);
     // `private enabled = false` — a `false`→`true` mutant would report enabled.
     expect(p.isEnabled()).toBe(false);
-    await p.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await p.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
   });
 
-  it("L129: rejects an incomplete header (both `+` operators)", async () => {
+  it('L129: rejects an incomplete header (both `+` operators)', async () => {
     const p = makeProvider(true);
-    await p.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await p.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     // Header prefix is 4 bytes (uint32 wrapped-key length). Use a small claimed
     // length (10) so the guard `ciphertext.length < 4 + wrappedKeyLen + 12` is
     // `16 < 26` → true → "incomplete header". Any `+`→`-` mutant collapses the
@@ -44,17 +44,17 @@ describe("ENC-MK: envelope mutation killers", () => {
     await expect(p.decrypt(buf)).rejects.toThrow(/incomplete header/i);
   });
 
-  it("L196: canDecryptVersion is true when the enc provider is enabled (OR short-circuit)", async () => {
+  it('L196: canDecryptVersion is true when the enc provider is enabled (OR short-circuit)', async () => {
     const p = makeProvider(true);
-    await p.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await p.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     // A version that the keyManager does not have (hasKeyVersion = false), but
     // the enc provider is enabled. `||` returns true; `&&` returns false.
     expect(p.canDecryptVersion(999999)).toBe(true);
   });
 
-  it("L235: decrypt rejects AES-GCM data shorter than IV(12)+tag(16)", async () => {
+  it('L235: decrypt rejects AES-GCM data shorter than IV(12)+tag(16)', async () => {
     const p = makeProvider(true);
-    await p.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await p.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     // Encrypt an empty plaintext: the DEK payload is exactly IV(12)+tag(16)=28
     // bytes. Truncate it to 27 bytes so the inner `_encryptWithDEK` guard
     // `data.length < 12 + 16` fires and throws "data too short for AES-GCM".

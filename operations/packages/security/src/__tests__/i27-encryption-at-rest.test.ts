@@ -7,12 +7,12 @@
  * ENC13-ENC15: Integration (large payloads, concurrency, cross-provider compatibility)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import crypto from "crypto";
-import { AES256GCMEncryptionProvider } from "../impl/AES256GCMEncryptionProvider.js";
-import { KeyManager, type WrappedKey } from "../impl/KeyManager.js";
-import { EnvelopeEncryptionProvider } from "../impl/EnvelopeEncryptionProvider.js";
-import type { EncryptionConfig } from "../interfaces/index.js";
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import crypto from 'crypto';
+import { AES256GCMEncryptionProvider } from '../impl/AES256GCMEncryptionProvider.js';
+import { KeyManager, type WrappedKey } from '../impl/KeyManager.js';
+import { EnvelopeEncryptionProvider } from '../impl/EnvelopeEncryptionProvider.js';
+import type { EncryptionConfig } from '../interfaces/index.js';
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -24,10 +24,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function asyncIterate(
-  count: number,
-  fn: (i: number) => Promise<void>,
-): Promise<void> {
+async function asyncIterate(count: number, fn: (i: number) => Promise<void>): Promise<void> {
   const tasks: Promise<void>[] = [];
   for (let i = 0; i < count; i++) {
     tasks.push(fn(i));
@@ -37,24 +34,27 @@ async function asyncIterate(
 
 // ── ENC1-ENC4: AES256GCMEncryptionProvider ─────────────────
 
-describe("ENC1: AES256GCM — basic encrypt/decrypt round-trip", () => {
+describe('ENC1: AES256GCM — basic encrypt/decrypt round-trip', () => {
   let provider: AES256GCMEncryptionProvider;
 
   beforeEach(async () => {
     provider = new AES256GCMEncryptionProvider();
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
   });
 
-  it("encrypts and decrypts plaintext correctly", async () => {
-    const plaintext = Buffer.from("hello, world!", "utf-8");
+  it('encrypts and decrypts plaintext correctly', async () => {
+    const plaintext = Buffer.from('hello, world!', 'utf-8');
     const encrypted = await provider.encrypt(plaintext);
     const decrypted = await provider.decrypt(encrypted);
 
-    expect(decrypted.toString("utf-8")).toBe("hello, world!");
+    expect(decrypted.toString('utf-8')).toBe('hello, world!');
   });
 
-  it("produces different ciphertexts for same plaintext (unique IV)", async () => {
-    const plaintext = Buffer.from("repeat me", "utf-8");
+  it('produces different ciphertexts for same plaintext (unique IV)', async () => {
+    const plaintext = Buffer.from('repeat me', 'utf-8');
     const ct1 = await provider.encrypt(plaintext);
     const ct2 = await provider.encrypt(plaintext);
 
@@ -62,7 +62,7 @@ describe("ENC1: AES256GCM — basic encrypt/decrypt round-trip", () => {
     expect(ct1.equals(ct2)).toBe(false);
   });
 
-  it("round-trip with binary data", async () => {
+  it('round-trip with binary data', async () => {
     const plaintext = randomData(1024);
     const encrypted = await provider.encrypt(plaintext);
     const decrypted = await provider.decrypt(encrypted);
@@ -70,7 +70,7 @@ describe("ENC1: AES256GCM — basic encrypt/decrypt round-trip", () => {
     expect(decrypted.equals(plaintext)).toBe(true);
   });
 
-  it("round-trip with empty buffer", async () => {
+  it('round-trip with empty buffer', async () => {
     const plaintext = Buffer.alloc(0);
     const encrypted = await provider.encrypt(plaintext);
     const decrypted = await provider.decrypt(encrypted);
@@ -78,8 +78,8 @@ describe("ENC1: AES256GCM — basic encrypt/decrypt round-trip", () => {
     expect(decrypted.length).toBe(0);
   });
 
-  it("round-trip with single byte", async () => {
-    const plaintext = Buffer.from([0xAB]);
+  it('round-trip with single byte', async () => {
+    const plaintext = Buffer.from([0xab]);
     const encrypted = await provider.encrypt(plaintext);
     const decrypted = await provider.decrypt(encrypted);
 
@@ -87,25 +87,26 @@ describe("ENC1: AES256GCM — basic encrypt/decrypt round-trip", () => {
   });
 });
 
-describe("ENC2: AES256GCM — context binding and tamper detection", () => {
+describe('ENC2: AES256GCM — context binding and tamper detection', () => {
   let provider: AES256GCMEncryptionProvider;
 
   beforeEach(async () => {
     provider = new AES256GCMEncryptionProvider();
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
   });
 
-  it("context binding: decrypt with wrong context fails", async () => {
-    const plaintext = Buffer.from("classified", "utf-8");
-    const encrypted = await provider.encrypt(plaintext, "table:users");
+  it('context binding: decrypt with wrong context fails', async () => {
+    const plaintext = Buffer.from('classified', 'utf-8');
+    const encrypted = await provider.encrypt(plaintext, 'table:users');
 
-    await expect(
-      provider.decrypt(encrypted, "table:orders"),
-    ).rejects.toThrow();
+    await expect(provider.decrypt(encrypted, 'table:orders')).rejects.toThrow();
   });
 
-  it("context binding: decrypt with correct context succeeds", async () => {
-    const ctx = "shard:3/group:default/table:kv";
+  it('context binding: decrypt with correct context succeeds', async () => {
+    const ctx = 'shard:3/group:default/table:kv';
     const plaintext = randomData(512);
 
     const encrypted = await provider.encrypt(plaintext, ctx);
@@ -114,20 +115,20 @@ describe("ENC2: AES256GCM — context binding and tamper detection", () => {
     expect(decrypted.equals(plaintext)).toBe(true);
   });
 
-  it("detects tampered ciphertext", async () => {
-    const plaintext = Buffer.from("tamper me", "utf-8");
+  it('detects tampered ciphertext', async () => {
+    const plaintext = Buffer.from('tamper me', 'utf-8');
     const encrypted = await provider.encrypt(plaintext);
 
     // Flip a byte in the middle of the ciphertext
     const tampered = Buffer.from(encrypted);
     const midPoint = Math.floor(encrypted.length / 2);
-    tampered[midPoint]! ^= 0xFF; // Flip some bits
+    tampered[midPoint]! ^= 0xff; // Flip some bits
 
     await expect(provider.decrypt(tampered)).rejects.toThrow();
   });
 
-  it("detects truncated ciphertext", async () => {
-    const plaintext = Buffer.from("truncate me", "utf-8");
+  it('detects truncated ciphertext', async () => {
+    const plaintext = Buffer.from('truncate me', 'utf-8');
     const encrypted = await provider.encrypt(plaintext);
 
     // Remove last few bytes (auth tag)
@@ -136,21 +137,24 @@ describe("ENC2: AES256GCM — context binding and tamper detection", () => {
     await expect(provider.decrypt(truncated)).rejects.toThrow();
   });
 
-  it("rejects ciphertext that is too short", async () => {
+  it('rejects ciphertext that is too short', async () => {
     const tooShort = Buffer.from([0x00, 0x00, 0x00, 0x00]);
 
-    await expect(provider.decrypt(tooShort)).rejects.toThrow("too short");
+    await expect(provider.decrypt(tooShort)).rejects.toThrow('too short');
   });
 });
 
-describe("ENC3: AES256GCM — key rotation", () => {
-  it("encrypts with new key after rotation", async () => {
+describe('ENC3: AES256GCM — key rotation', () => {
+  it('encrypts with new key after rotation', async () => {
     const provider = new AES256GCMEncryptionProvider();
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
     expect(provider.getCurrentKeyVersion()).toBe(1);
 
-    const plaintext = Buffer.from("v1 data", "utf-8");
+    const plaintext = Buffer.from('v1 data', 'utf-8');
     const v1Ciphertext = await provider.encrypt(plaintext);
 
     // Rotate key
@@ -160,22 +164,25 @@ describe("ENC3: AES256GCM — key rotation", () => {
 
     // v1 ciphertext should still decrypt (key history preserved)
     const decryptedV1 = await provider.decrypt(v1Ciphertext);
-    expect(decryptedV1.toString("utf-8")).toBe("v1 data");
+    expect(decryptedV1.toString('utf-8')).toBe('v1 data');
 
     // New encrypt uses v2 key (version prefix is v2)
-    const v2Ciphertext = await provider.encrypt(Buffer.from("v2 data"));
+    const v2Ciphertext = await provider.encrypt(Buffer.from('v2 data'));
     const decryptedV2 = await provider.decrypt(v2Ciphertext);
-    expect(decryptedV2.toString("utf-8")).toBe("v2 data");
+    expect(decryptedV2.toString('utf-8')).toBe('v2 data');
 
     // v1 and v2 ciphertexts differ
     expect(v1Ciphertext.equals(v2Ciphertext)).toBe(false);
   });
 
-  it("multiple key rotations preserve all history", async () => {
+  it('multiple key rotations preserve all history', async () => {
     const provider = new AES256GCMEncryptionProvider();
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
-    const plaintext = Buffer.from("persistent", "utf-8");
+    const plaintext = Buffer.from('persistent', 'utf-8');
     const ciphertexts: Buffer[] = [];
 
     for (let i = 0; i < 5; i++) {
@@ -189,32 +196,38 @@ describe("ENC3: AES256GCM — key rotation", () => {
     // All ciphertexts should still decrypt
     for (const ct of ciphertexts) {
       const decrypted = await provider.decrypt(ct);
-      expect(decrypted.toString("utf-8")).toBe("persistent");
+      expect(decrypted.toString('utf-8')).toBe('persistent');
     }
   });
 });
 
-describe("ENC4: AES256GCM — edge cases", () => {
-  it("throws when encrypting before initialize", async () => {
+describe('ENC4: AES256GCM — edge cases', () => {
+  it('throws when encrypting before initialize', async () => {
     const provider = new AES256GCMEncryptionProvider();
-    await expect(provider.encrypt(Buffer.from("data"))).rejects.toThrow("not initialized");
+    await expect(provider.encrypt(Buffer.from('data'))).rejects.toThrow('not initialized');
   });
 
-  it("throws when decrypting before initialize", async () => {
+  it('throws when decrypting before initialize', async () => {
     const provider = new AES256GCMEncryptionProvider();
-    await expect(provider.decrypt(Buffer.from("data"))).rejects.toThrow("not initialized");
+    await expect(provider.decrypt(Buffer.from('data'))).rejects.toThrow('not initialized');
   });
 
-  it("isEnabled reflects state correctly", async () => {
+  it('isEnabled reflects state correctly', async () => {
     const provider = new AES256GCMEncryptionProvider();
     expect(provider.isEnabled()).toBe(false);
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
     expect(provider.isEnabled()).toBe(true);
   });
 
-  it("large payload round-trip (1MB)", async () => {
+  it('large payload round-trip (1MB)', async () => {
     const provider = new AES256GCMEncryptionProvider();
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
     const plaintext = randomData(1024 * 1024); // 1MB
     const encrypted = await provider.encrypt(plaintext);
@@ -226,10 +239,10 @@ describe("ENC4: AES256GCM — edge cases", () => {
 
 // ── ENC5-ENC8: KeyManager ─────────────────────────────────
 
-describe("ENC5: KeyManager — key generation and wrapping", () => {
-  it("generates a key and wraps it", async () => {
+describe('ENC5: KeyManager — key generation and wrapping', () => {
+  it('generates a key and wraps it', async () => {
     const km = new KeyManager({
-      masterSecret: "test-master-secret-42",
+      masterSecret: 'test-master-secret-42',
       iterations: 100000, // Speed up test
     });
 
@@ -248,9 +261,9 @@ describe("ENC5: KeyManager — key generation and wrapping", () => {
     expect(key!.length).toBe(32);
   });
 
-  it("wrapped key unwraps correctly", async () => {
+  it('wrapped key unwraps correctly', async () => {
     const km = new KeyManager({
-      masterSecret: "test-secret-abc",
+      masterSecret: 'test-secret-abc',
       iterations: 100000,
     });
 
@@ -262,25 +275,25 @@ describe("ENC5: KeyManager — key generation and wrapping", () => {
     expect(unwrappedKey.equals(originalKey)).toBe(true);
   });
 
-  it("unwrapping with wrong master secret fails", async () => {
+  it('unwrapping with wrong master secret fails', async () => {
     const km1 = new KeyManager({
-      masterSecret: "secret-A",
+      masterSecret: 'secret-A',
       iterations: 100000,
     });
 
     const wrapped = await km1.generateKey();
 
     const km2 = new KeyManager({
-      masterSecret: "secret-B", // Different!
+      masterSecret: 'secret-B', // Different!
       iterations: 100000,
     });
 
-    await expect(km2.unwrapKey(wrapped)).rejects.toThrow("failed to unwrap key");
+    await expect(km2.unwrapKey(wrapped)).rejects.toThrow('failed to unwrap key');
   });
 
-  it("unwrapping with wrong salt fails", async () => {
+  it('unwrapping with wrong salt fails', async () => {
     const km1 = new KeyManager({
-      masterSecret: "secret-X",
+      masterSecret: 'secret-X',
       salt: crypto.randomBytes(32),
       iterations: 100000,
     });
@@ -297,10 +310,10 @@ describe("ENC5: KeyManager — key generation and wrapping", () => {
   });
 });
 
-describe("ENC6: KeyManager — multi-version management", () => {
-  it("manages multiple key versions", async () => {
+describe('ENC6: KeyManager — multi-version management', () => {
+  it('manages multiple key versions', async () => {
     const km = new KeyManager({
-      masterSecret: "multi-version-secret",
+      masterSecret: 'multi-version-secret',
       iterations: 100000,
     });
 
@@ -318,9 +331,9 @@ describe("ENC6: KeyManager — multi-version management", () => {
     expect(km.getKey(4)).toBeNull();
   });
 
-  it("each version has a unique key", async () => {
+  it('each version has a unique key', async () => {
     const km = new KeyManager({
-      masterSecret: "unique-keys-secret",
+      masterSecret: 'unique-keys-secret',
       iterations: 100000,
     });
 
@@ -332,9 +345,9 @@ describe("ENC6: KeyManager — multi-version management", () => {
     expect(k1.equals(k2)).toBe(false);
   });
 
-  it("hasKeyVersion returns correct results", async () => {
+  it('hasKeyVersion returns correct results', async () => {
     const km = new KeyManager({
-      masterSecret: "check-version-secret",
+      masterSecret: 'check-version-secret',
       iterations: 100000,
     });
 
@@ -347,10 +360,10 @@ describe("ENC6: KeyManager — multi-version management", () => {
   });
 });
 
-describe("ENC7: KeyManager — export and import", () => {
-  it("exports and imports wrapped keys correctly", async () => {
+describe('ENC7: KeyManager — export and import', () => {
+  it('exports and imports wrapped keys correctly', async () => {
     const km1 = new KeyManager({
-      masterSecret: "export-secret",
+      masterSecret: 'export-secret',
       iterations: 100000,
     });
 
@@ -365,7 +378,7 @@ describe("ENC7: KeyManager — export and import", () => {
 
     // Import into new manager
     const km2 = new KeyManager({
-      masterSecret: "export-secret", // Same master secret!
+      masterSecret: 'export-secret', // Same master secret!
       iterations: 100000,
     });
 
@@ -378,9 +391,9 @@ describe("ENC7: KeyManager — export and import", () => {
     expect(km2.getKey(2)!.equals(k2)).toBe(true);
   });
 
-  it("imported keys work with different salt if master secret matches", async () => {
+  it('imported keys work with different salt if master secret matches', async () => {
     const km1 = new KeyManager({
-      masterSecret: "salt-independent",
+      masterSecret: 'salt-independent',
       salt: crypto.randomBytes(32),
       iterations: 100000,
     });
@@ -390,7 +403,7 @@ describe("ENC7: KeyManager — export and import", () => {
 
     // The wrapped key carries its own salt
     const km2 = new KeyManager({
-      masterSecret: "salt-independent",
+      masterSecret: 'salt-independent',
       salt: crypto.randomBytes(32), // Different initial salt, but wrapped key has its own
       iterations: 100000,
     });
@@ -402,10 +415,10 @@ describe("ENC7: KeyManager — export and import", () => {
   });
 });
 
-describe("ENC8: KeyManager — zeroization", () => {
-  it("zeroize clears all key material", async () => {
+describe('ENC8: KeyManager — zeroization', () => {
+  it('zeroize clears all key material', async () => {
     const km = new KeyManager({
-      masterSecret: "zeroize-secret",
+      masterSecret: 'zeroize-secret',
       iterations: 100000,
     });
 
@@ -421,9 +434,9 @@ describe("ENC8: KeyManager — zeroization", () => {
     expect(km.getCurrentKey()).toBeNull();
   });
 
-  it("zeroized keys cannot be used for unwrapping", async () => {
+  it('zeroized keys cannot be used for unwrapping', async () => {
     const km = new KeyManager({
-      masterSecret: "zeroize-unwrap",
+      masterSecret: 'zeroize-unwrap',
       iterations: 100000,
     });
 
@@ -438,33 +451,36 @@ describe("ENC8: KeyManager — zeroization", () => {
 
 // ── ENC9-ENC12: EnvelopeEncryptionProvider ─────────────────
 
-describe("ENC9: Envelope — encrypt/decrypt round-trip", () => {
+describe('ENC9: Envelope — encrypt/decrypt round-trip', () => {
   let provider: EnvelopeEncryptionProvider;
 
   beforeEach(async () => {
     provider = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "envelope-test-secret",
+        masterSecret: 'envelope-test-secret',
         iterations: 100000,
         keyLength: 32,
-        hashAlgorithm: "sha256",
+        hashAlgorithm: 'sha256',
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
       autoGenerateKey: true,
     });
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
   });
 
-  it("encrypts and decrypts plaintext correctly", async () => {
-    const plaintext = Buffer.from("envelope test data", "utf-8");
+  it('encrypts and decrypts plaintext correctly', async () => {
+    const plaintext = Buffer.from('envelope test data', 'utf-8');
     const encrypted = await provider.encrypt(plaintext);
     const decrypted = await provider.decrypt(encrypted);
 
-    expect(decrypted.toString("utf-8")).toBe("envelope test data");
+    expect(decrypted.toString('utf-8')).toBe('envelope test data');
   });
 
-  it("different encryptions produce different ciphertexts", async () => {
-    const plaintext = Buffer.from("same text", "utf-8");
+  it('different encryptions produce different ciphertexts', async () => {
+    const plaintext = Buffer.from('same text', 'utf-8');
     const ct1 = await provider.encrypt(plaintext);
     const ct2 = await provider.encrypt(plaintext);
 
@@ -472,12 +488,12 @@ describe("ENC9: Envelope — encrypt/decrypt round-trip", () => {
     // Both decryptable
     const d1 = await provider.decrypt(ct1);
     const d2 = await provider.decrypt(ct2);
-    expect(d1.toString("utf-8")).toBe("same text");
-    expect(d2.toString("utf-8")).toBe("same text");
+    expect(d1.toString('utf-8')).toBe('same text');
+    expect(d2.toString('utf-8')).toBe('same text');
   });
 
-  it("round-trip with context binding", async () => {
-    const ctx = "file:backup-2024.sql";
+  it('round-trip with context binding', async () => {
+    const ctx = 'file:backup-2024.sql';
     const plaintext = randomData(2048);
 
     const encrypted = await provider.encrypt(plaintext, ctx);
@@ -486,26 +502,29 @@ describe("ENC9: Envelope — encrypt/decrypt round-trip", () => {
     expect(decrypted.equals(plaintext)).toBe(true);
   });
 
-  it("wrong context causes decrypt failure", async () => {
-    const plaintext = Buffer.from("sensitive", "utf-8");
-    const encrypted = await provider.encrypt(plaintext, "ctx:A");
+  it('wrong context causes decrypt failure', async () => {
+    const plaintext = Buffer.from('sensitive', 'utf-8');
+    const encrypted = await provider.encrypt(plaintext, 'ctx:A');
 
-    await expect(provider.decrypt(encrypted, "ctx:B")).rejects.toThrow();
+    await expect(provider.decrypt(encrypted, 'ctx:B')).rejects.toThrow();
   });
 });
 
-describe("ENC10: Envelope — key rotation", () => {
-  it("old ciphertexts decryptable after rotation", async () => {
+describe('ENC10: Envelope — key rotation', () => {
+  it('old ciphertexts decryptable after rotation', async () => {
     const provider = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "rotate-secret",
+        masterSecret: 'rotate-secret',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
-    const plaintext = Buffer.from("pre-rotation data", "utf-8");
+    const plaintext = Buffer.from('pre-rotation data', 'utf-8');
     const v1Ciphertext = await provider.encrypt(plaintext);
 
     expect(provider.getCurrentKeyVersion()).toBe(1);
@@ -516,23 +535,26 @@ describe("ENC10: Envelope — key rotation", () => {
 
     // v1 ciphertext still decryptable
     const decrypted = await provider.decrypt(v1Ciphertext);
-    expect(decrypted.toString("utf-8")).toBe("pre-rotation data");
+    expect(decrypted.toString('utf-8')).toBe('pre-rotation data');
 
     // New encryption uses v2
-    const v2Ciphertext = await provider.encrypt(Buffer.from("post-rotation data"));
+    const v2Ciphertext = await provider.encrypt(Buffer.from('post-rotation data'));
     const decryptedV2 = await provider.decrypt(v2Ciphertext);
-    expect(decryptedV2.toString("utf-8")).toBe("post-rotation data");
+    expect(decryptedV2.toString('utf-8')).toBe('post-rotation data');
   });
 
-  it("ciphertexts from all versions decrypt correctly after multiple rotations", async () => {
+  it('ciphertexts from all versions decrypt correctly after multiple rotations', async () => {
     const provider = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "multi-rotate-secret",
+        masterSecret: 'multi-rotate-secret',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
     const ciphertexts: Buffer[] = [];
     const expected: string[] = [];
@@ -546,23 +568,26 @@ describe("ENC10: Envelope — key rotation", () => {
 
     for (let i = 0; i < ciphertexts.length; i++) {
       const decrypted = await provider.decrypt(ciphertexts[i]!);
-      expect(decrypted.toString("utf-8")).toBe(expected[i]);
+      expect(decrypted.toString('utf-8')).toBe(expected[i]);
     }
   });
 });
 
-describe("ENC11: Envelope — key export and import", () => {
-  it("exports and imports keys with correct version mapping", async () => {
+describe('ENC11: Envelope — key export and import', () => {
+  it('exports and imports keys with correct version mapping', async () => {
     const provider1 = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "export-import-secret",
+        masterSecret: 'export-import-secret',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider1.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider1.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
-    const plaintext = Buffer.from("export me", "utf-8");
+    const plaintext = Buffer.from('export me', 'utf-8');
     const encrypted = await provider1.encrypt(plaintext);
 
     // Export keys
@@ -571,12 +596,15 @@ describe("ENC11: Envelope — key export and import", () => {
     // New provider imports them
     const provider2 = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "export-import-secret",
+        masterSecret: 'export-import-secret',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider2.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider2.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
     for (const wk of exported) {
       await provider2.importKey(wk);
@@ -584,67 +612,79 @@ describe("ENC11: Envelope — key export and import", () => {
 
     // Should decrypt old ciphertext
     const decrypted = await provider2.decrypt(encrypted);
-    expect(decrypted.toString("utf-8")).toBe("export me");
+    expect(decrypted.toString('utf-8')).toBe('export me');
   });
 
-  it("import with wrong master secret fails", async () => {
+  it('import with wrong master secret fails', async () => {
     const provider1 = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "correct-secret-123",
+        masterSecret: 'correct-secret-123',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider1.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider1.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
     const exported = await provider1.exportKeys();
 
     const provider2 = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "wrong-secret-456",
+        masterSecret: 'wrong-secret-456',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider2.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider2.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
-    await expect(provider2.importKey(exported[0]!)).rejects.toThrow("failed to unwrap key");
+    await expect(provider2.importKey(exported[0]!)).rejects.toThrow('failed to unwrap key');
   });
 });
 
-describe("ENC12: Envelope — zeroization and tamper resistance", () => {
-  it("zeroize prevents future decryption", async () => {
+describe('ENC12: Envelope — zeroization and tamper resistance', () => {
+  it('zeroize prevents future decryption', async () => {
     const provider = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "zeroize-env-secret",
+        masterSecret: 'zeroize-env-secret',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
-    const encrypted = await provider.encrypt(Buffer.from("before zeroize"));
+    const encrypted = await provider.encrypt(Buffer.from('before zeroize'));
     const decrypted = await provider.decrypt(encrypted);
-    expect(decrypted.toString("utf-8")).toBe("before zeroize");
+    expect(decrypted.toString('utf-8')).toBe('before zeroize');
 
     provider.zeroize();
     expect(provider.isEnabled()).toBe(false);
 
     // After zeroize, cannot encrypt
-    await expect(provider.encrypt(Buffer.from("after"))).rejects.toThrow("not initialized");
+    await expect(provider.encrypt(Buffer.from('after'))).rejects.toThrow('not initialized');
   });
 
-  it("detects tampered envelope header", async () => {
+  it('detects tampered envelope header', async () => {
     const provider = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "tamper-env-secret",
+        masterSecret: 'tamper-env-secret',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
-    const encrypted = await provider.encrypt(Buffer.from("original"));
+    const encrypted = await provider.encrypt(Buffer.from('original'));
 
     // Tamper with the inner ciphertext (past the header), not the header itself.
     // The header JSON is parseable even with small corruptions.
@@ -652,34 +692,40 @@ describe("ENC12: Envelope — zeroization and tamper resistance", () => {
     const tampered = Buffer.from(encrypted);
     // Find roughly the middle of the ciphertext
     const mid = Math.floor(tampered.length / 2);
-    tampered[mid]! ^= 0xFF;
+    tampered[mid]! ^= 0xff;
 
     await expect(provider.decrypt(tampered)).rejects.toThrow();
   });
 
-  it("detects truncated envelope ciphertext", async () => {
+  it('detects truncated envelope ciphertext', async () => {
     const provider = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "trunc-env-secret",
+        masterSecret: 'trunc-env-secret',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
-    const encrypted = await provider.encrypt(Buffer.from("truncated"));
+    const encrypted = await provider.encrypt(Buffer.from('truncated'));
     const truncated = encrypted.subarray(0, 10);
 
-    await expect(provider.decrypt(truncated)).rejects.toThrow("incomplete header");
+    await expect(provider.decrypt(truncated)).rejects.toThrow('incomplete header');
   });
 });
 
 // ── ENC13-ENC15: Integration ────────────────────────────────
 
-describe("ENC13: Integration — large payloads", () => {
-  it("AES256GCM with 10MB payload", async () => {
+describe('ENC13: Integration — large payloads', () => {
+  it('AES256GCM with 10MB payload', async () => {
     const provider = new AES256GCMEncryptionProvider();
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
     const plaintext = randomData(10 * 1024 * 1024); // 10MB
     const encrypted = await provider.encrypt(plaintext);
@@ -688,15 +734,18 @@ describe("ENC13: Integration — large payloads", () => {
     expect(decrypted.equals(plaintext)).toBe(true);
   }, 30000);
 
-  it("Envelope with 5MB payload", async () => {
+  it('Envelope with 5MB payload', async () => {
     const provider = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "large-payload-secret",
+        masterSecret: 'large-payload-secret',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
     const plaintext = randomData(5 * 1024 * 1024); // 5MB
     const encrypted = await provider.encrypt(plaintext);
@@ -706,17 +755,20 @@ describe("ENC13: Integration — large payloads", () => {
   }, 20000);
 });
 
-describe("ENC14: Integration — concurrent operations", () => {
-  it("AES256GCM concurrent encrypt/decrypt", async () => {
+describe('ENC14: Integration — concurrent operations', () => {
+  it('AES256GCM concurrent encrypt/decrypt', async () => {
     const provider = new AES256GCMEncryptionProvider();
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
     const results = await Promise.all(
       Array.from({ length: 50 }, async (_, i) => {
-        const plaintext = Buffer.from(`concurrent-${i}`, "utf-8");
+        const plaintext = Buffer.from(`concurrent-${i}`, 'utf-8');
         const encrypted = await provider.encrypt(plaintext);
         const decrypted = await provider.decrypt(encrypted);
-        return decrypted.toString("utf-8");
+        return decrypted.toString('utf-8');
       }),
     );
 
@@ -725,22 +777,25 @@ describe("ENC14: Integration — concurrent operations", () => {
     }
   });
 
-  it("Envelope concurrent encrypt/decrypt", async () => {
+  it('Envelope concurrent encrypt/decrypt', async () => {
     const provider = new EnvelopeEncryptionProvider({
       keyManager: {
-        masterSecret: "concurrent-env-secret",
+        masterSecret: 'concurrent-env-secret',
         iterations: 100000,
       },
-      encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
     const results = await Promise.all(
       Array.from({ length: 30 }, async (_, i) => {
-        const plaintext = Buffer.from(`env-concurrent-${i}`, "utf-8");
+        const plaintext = Buffer.from(`env-concurrent-${i}`, 'utf-8');
         const encrypted = await provider.encrypt(plaintext);
         const decrypted = await provider.decrypt(encrypted);
-        return decrypted.toString("utf-8");
+        return decrypted.toString('utf-8');
       }),
     );
 
@@ -750,46 +805,52 @@ describe("ENC14: Integration — concurrent operations", () => {
   });
 });
 
-describe("ENC15: Integration — cross-provider compatibility", () => {
-  it("AES256GCM encrypted data decrypts after re-initialize", async () => {
+describe('ENC15: Integration — cross-provider compatibility', () => {
+  it('AES256GCM encrypted data decrypts after re-initialize', async () => {
     // Simulate restart: different provider instance, same config
     const p1 = new AES256GCMEncryptionProvider();
-    await p1.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await p1.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
-    const plaintext = Buffer.from("restart test", "utf-8");
+    const plaintext = Buffer.from('restart test', 'utf-8');
     const encrypted = await p1.encrypt(plaintext);
 
     // "Restart" — new provider
     const p2 = new AES256GCMEncryptionProvider();
-    await p2.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await p2.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     // Different key → should fail (as expected: keys are ephemeral unless exported)
     await expect(p2.decrypt(encrypted)).rejects.toThrow();
   });
 
-  it("various unicode content survives round-trip", async () => {
+  it('various unicode content survives round-trip', async () => {
     const provider = new AES256GCMEncryptionProvider();
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
-    const content = "日本語 한국어 Español العربية हिन्दी 🚀💻🎯";
-    const encrypted = await provider.encrypt(Buffer.from(content, "utf-8"));
+    const content = '日本語 한국어 Español العربية हिन्दी 🚀💻🎯';
+    const encrypted = await provider.encrypt(Buffer.from(content, 'utf-8'));
     const decrypted = await provider.decrypt(encrypted);
 
-    expect(decrypted.toString("utf-8")).toBe(content);
+    expect(decrypted.toString('utf-8')).toBe(content);
   });
 
-  it("zero-length context binding works (undefined context)", async () => {
+  it('zero-length context binding works (undefined context)', async () => {
     const provider = new AES256GCMEncryptionProvider();
-    await provider.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+    await provider.initialize({
+      algorithm: 'aes-256-gcm',
+      keyDerivation: 'pbkdf2',
+    });
 
-    const plaintext = Buffer.from("no context", "utf-8");
+    const plaintext = Buffer.from('no context', 'utf-8');
 
     // Encrypt without context
     const ct1 = await provider.encrypt(plaintext); // undefined context
     const ct2 = await provider.encrypt(plaintext, undefined);
 
     // Both should decrypt without context
-    expect(await provider.decrypt(ct1).then((b) => b.toString("utf-8"))).toBe("no context");
-    expect(await provider.decrypt(ct2).then((b) => b.toString("utf-8"))).toBe("no context");
+    expect(await provider.decrypt(ct1).then((b) => b.toString('utf-8'))).toBe('no context');
+    expect(await provider.decrypt(ct2).then((b) => b.toString('utf-8'))).toBe('no context');
   });
 });

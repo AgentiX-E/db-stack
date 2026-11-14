@@ -218,18 +218,36 @@ export interface DataCenter {
 // ── In-memory data provider for AntiEntropy ──────────────────
 
 class InMemoryDataProvider {
-  private store: Map<string, { key: string; value: string; hlc: { wallTime: number; logical: number; nodeId: string }; nodeId: string }> = new Map();
+  private store: Map<
+    string,
+    {
+      key: string;
+      value: string;
+      hlc: { wallTime: number; logical: number; nodeId: string };
+      nodeId: string;
+    }
+  > = new Map();
   private data: { key: string; value: string; hlc: any; nodeId: string }[] = [];
 
   async getRange(start: string, end: string): Promise<DataEntry[]> {
     return this.data
       .filter((e) => e.key >= start && e.key <= end)
-      .map((e) => ({ key: e.key, value: e.value, hlc: e.hlc, nodeId: e.nodeId }));
+      .map((e) => ({
+        key: e.key,
+        value: e.value,
+        hlc: e.hlc,
+        nodeId: e.nodeId,
+      }));
   }
 
   async getEntriesAfter(afterKey: string, limit: number): Promise<DataEntry[]> {
     const idx = this.data.findIndex((e) => e.key === afterKey);
-    return this.data.slice(idx + 1, idx + 1 + limit).map((e) => ({ key: e.key, value: e.value, hlc: e.hlc, nodeId: e.nodeId }));
+    return this.data.slice(idx + 1, idx + 1 + limit).map((e) => ({
+      key: e.key,
+      value: e.value,
+      hlc: e.hlc,
+      nodeId: e.nodeId,
+    }));
   }
 
   async apply(key: string, value: string): Promise<void> {
@@ -237,7 +255,12 @@ class InMemoryDataProvider {
     if (existing >= 0) {
       this.data[existing] = { ...this.data[existing], value };
     } else {
-      this.data.push({ key, value, hlc: { wallTime: 0, logical: 0, nodeId: '' }, nodeId: '' });
+      this.data.push({
+        key,
+        value,
+        hlc: { wallTime: 0, logical: 0, nodeId: '' },
+        nodeId: '',
+      });
     }
   }
 
@@ -573,9 +596,21 @@ export class FederationChaosCluster {
   async cleanup(): Promise<void> {
     for (const dc of this.dcs) {
       for (const node of dc.nodes) {
-        try { await node.replication.stop(); } catch { /* ignore */ }
-        try { await node.cdcEngine.stop(); } catch { /* ignore */ }
-        try { node.transport.destroy(); } catch { /* ignore */ }
+        try {
+          await node.replication.stop();
+        } catch {
+          /* ignore */
+        }
+        try {
+          await node.cdcEngine.stop();
+        } catch {
+          /* ignore */
+        }
+        try {
+          node.transport.destroy();
+        } catch {
+          /* ignore */
+        }
       }
     }
     InProcessTransport.resetRegistry('federation-chaos');

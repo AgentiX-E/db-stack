@@ -34,11 +34,7 @@ import { readFile, unlink } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { createGzip, createGunzip } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
-import type {
-  IAuditStore,
-  WriteAuditEntryOptions,
-  AuditQueryFilter,
-} from '../interfaces/index.js';
+import type { IAuditStore, WriteAuditEntryOptions, AuditQueryFilter } from '../interfaces/index.js';
 import type { AuditEntry } from '@agentix-e/db-operations-core/types';
 
 // ── Config ───────────────────────────────────────────────────────
@@ -98,9 +94,7 @@ export class FileAuditStore implements IAuditStore {
     }
 
     this.activeFilePath = this.resolveActiveFile();
-    this.currentSize = existsSync(this.activeFilePath)
-      ? statSync(this.activeFilePath).size
-      : 0;
+    this.currentSize = existsSync(this.activeFilePath) ? statSync(this.activeFilePath).size : 0;
     this.currentCreatedAt = Date.now();
   }
 
@@ -126,7 +120,9 @@ export class FileAuditStore implements IAuditStore {
           maxSeq = Math.max(maxSeq, parseInt(match[1]!, 10));
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return maxSeq + 1;
   }
 
@@ -148,7 +144,9 @@ export class FileAuditStore implements IAuditStore {
         }
       }
       if (active) return active;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return this.generateFilePath();
   }
 
@@ -174,14 +172,18 @@ export class FileAuditStore implements IAuditStore {
         const writeStream = createWriteStream(gzPath);
         const gzip = createGzip();
 
-        pipeline(readStream, gzip, writeStream).then(() => {
-          // Remove original after successful compression
-          unlinkSync(oldPath);
-          return undefined;
-        }).catch(() => {
-          // Compression failed, keep original
-        });
-      } catch { /* ignore compression failure */ }
+        pipeline(readStream, gzip, writeStream)
+          .then(() => {
+            // Remove original after successful compression
+            unlinkSync(oldPath);
+            return undefined;
+          })
+          .catch(() => {
+            // Compression failed, keep original
+          });
+      } catch {
+        /* ignore compression failure */
+      }
     });
   }
 
@@ -197,9 +199,7 @@ export class FileAuditStore implements IAuditStore {
     const tmpPath = this.activeFilePath + '.tmp';
 
     // Drain existing content + append new line
-    const existing = existsSync(this.activeFilePath)
-      ? readFileSync(this.activeFilePath)
-      : Buffer.alloc(0);
+    const existing = existsSync(this.activeFilePath) ? readFileSync(this.activeFilePath) : Buffer.alloc(0);
 
     const fullContent = Buffer.concat([existing, Buffer.from(line + '\n')]);
     writeFileSync(tmpPath, fullContent);
@@ -208,7 +208,9 @@ export class FileAuditStore implements IAuditStore {
       const fd = openSync(tmpPath, 'r');
       fsyncSync(fd);
       closeSync(fd);
-    } catch { /* fsync best-effort */ }
+    } catch {
+      /* fsync best-effort */
+    }
     renameSync(tmpPath, this.activeFilePath);
 
     this.currentSize = fullContent.length;
@@ -274,7 +276,9 @@ export class FileAuditStore implements IAuditStore {
           }
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return removed;
   }
 
@@ -300,7 +304,9 @@ export class FileAuditStore implements IAuditStore {
               results.push(e);
               scanned++;
             }
-          } catch { /* ignore parse errors */ }
+          } catch {
+            /* ignore parse errors */
+          }
         } else if (f.endsWith('.ndjson')) {
           // NDJSON format
           const content = readFileSync(join(this.dataDir, f), 'utf-8');
@@ -311,12 +317,16 @@ export class FileAuditStore implements IAuditStore {
               const entry = JSON.parse(line) as AuditEntry;
               results.push(entry);
               scanned++;
-            } catch { /* skip malformed lines */ }
+            } catch {
+              /* skip malformed lines */
+            }
           }
         }
         // .gz files are not scanned for performance reasons
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     return results;
   }
@@ -332,7 +342,9 @@ export class FileAuditStore implements IAuditStore {
           count += content.split('\n').filter((l) => l.trim().length > 0).length;
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return count;
   }
 }

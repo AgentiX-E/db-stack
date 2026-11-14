@@ -17,10 +17,10 @@
  * AC 45.6 (future) — Periodic syncAll at configurable interval
  */
 
-import { createHash } from "crypto";
-import type { IAntiEntropy, AntiEntropyConfig, SyncResult } from "../interfaces/replication/IAntiEntropy";
-import type { ConflictResult } from "./ConflictResolver";
-import { ConflictResolver, type ConflictValue } from "./ConflictResolver";
+import { createHash } from 'crypto';
+import type { IAntiEntropy, AntiEntropyConfig, SyncResult } from '../interfaces/replication/IAntiEntropy';
+import type { ConflictResult } from './ConflictResolver';
+import { ConflictResolver, type ConflictValue } from './ConflictResolver';
 
 // ── Types ──
 
@@ -64,11 +64,7 @@ export class AntiEntropy implements IAntiEntropy {
   /** Peers we've synced with (for comparison in tests) */
   private readonly syncHistory: SyncResult[] = [];
 
-  constructor(
-    config: AntiEntropyConfig,
-    dataProvider: DataProvider,
-    conflictResolver?: ConflictResolver,
-  ) {
+  constructor(config: AntiEntropyConfig, dataProvider: DataProvider, conflictResolver?: ConflictResolver) {
     this.config = config;
     this.dataProvider = dataProvider;
     this.conflictResolver = conflictResolver ?? new ConflictResolver(config.nodeId);
@@ -101,12 +97,12 @@ export class AntiEntropy implements IAntiEntropy {
    */
   async buildMerkleTree(): Promise<MerkleNode> {
     // Get all entries
-    const entries = await this.dataProvider.getRange("", "\uffff");
+    const entries = await this.dataProvider.getRange('', '\uffff');
     if (entries.length === 0) {
       return {
-        hash: createHash("sha256").digest("hex"),
-        rangeStart: "",
-        rangeEnd: "\uffff",
+        hash: createHash('sha256').digest('hex'),
+        rangeStart: '',
+        rangeEnd: '\uffff',
         left: null,
         leftDepth: 0,
         right: null,
@@ -123,12 +119,7 @@ export class AntiEntropy implements IAntiEntropy {
   /**
    * Build a Merkle tree from a sorted array of entries.
    */
-  private buildTree(
-    entries: DataEntry[],
-    startIdx: number,
-    endIdx: number,
-    depth: number,
-  ): MerkleNode {
+  private buildTree(entries: DataEntry[], startIdx: number, endIdx: number, depth: number): MerkleNode {
     const rangeStart = entries[startIdx]!.key;
     const rangeEnd = entries[endIdx]!.key;
 
@@ -155,9 +146,9 @@ export class AntiEntropy implements IAntiEntropy {
     const rightDepth = depth - 1;
 
     // Internal node: hash = SHA-256(left.hash + right.hash)
-    const hash = createHash("sha256")
+    const hash = createHash('sha256')
       .update(left.hash + right.hash)
-      .digest("hex");
+      .digest('hex');
 
     return {
       hash,
@@ -174,7 +165,7 @@ export class AntiEntropy implements IAntiEntropy {
    * Compute SHA-256 hash of a set of data entries.
    */
   private hashEntries(entries: DataEntry[]): string {
-    const hasher = createHash("sha256");
+    const hasher = createHash('sha256');
     for (const entry of entries) {
       hasher.update(entry.key);
       hasher.update(entry.value);
@@ -182,7 +173,7 @@ export class AntiEntropy implements IAntiEntropy {
       hasher.update(String(entry.hlc.logical));
       hasher.update(entry.hlc.nodeId);
     }
-    return hasher.digest("hex");
+    return hasher.digest('hex');
   }
 
   /**
@@ -239,12 +230,7 @@ export class AntiEntropy implements IAntiEntropy {
             nodeId: entry.nodeId,
           };
 
-          const resolution = await this.conflictResolver.resolve(
-            entry.key,
-            localVal,
-            remoteVal,
-            "lww",
-          );
+          const resolution = await this.conflictResolver.resolve(entry.key, localVal, remoteVal, 'lww');
 
           await this.dataProvider.apply(entry.key, resolution.resolvedValue);
           result.conflictsResolved++;
@@ -270,7 +256,7 @@ export class AntiEntropy implements IAntiEntropy {
   async syncAll(): Promise<SyncResult[]> {
     // For now, sync is self-contained within DataProvider.
     // In production, this iterates over all peers from TopologyManager.
-    const result = await this.syncWith("self");
+    const result = await this.syncWith('self');
     return [result];
   }
 

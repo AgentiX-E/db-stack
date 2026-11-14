@@ -18,10 +18,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  PeerCircuitBreakerWrapper,
-  createPeerCircuitBreaker,
-} from '../../consensus/opt/CircuitBreaker';
+import { PeerCircuitBreakerWrapper, createPeerCircuitBreaker } from '../../consensus/opt/CircuitBreaker';
 
 describe('PeerCircuitBreakerWrapper', () => {
   it('AC 36.1: Constructor creates breaker with peerId', () => {
@@ -196,7 +193,9 @@ describe('createPeerCircuitBreaker', () => {
       b.open();
       // Fire a failing action to drive the failure/close lifecycle.
       try {
-        await b.fire(async () => { throw new Error('failure'); });
+        await b.fire(async () => {
+          throw new Error('failure');
+        });
       } catch {
         // Expected — action fails.
       }
@@ -259,7 +258,9 @@ describe('PeerCircuitBreakerWrapper lifecycle events', () => {
 
     // Drive a failure to trigger the 'failure' listener.
     try {
-      await cb.fire(async () => { throw new Error('boom'); });
+      await cb.fire(async () => {
+        throw new Error('boom');
+      });
     } catch {
       // Expected.
     }

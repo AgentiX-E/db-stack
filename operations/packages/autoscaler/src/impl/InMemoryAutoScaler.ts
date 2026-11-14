@@ -161,9 +161,7 @@ export class InMemoryAutoScaler implements IAutoScaler {
 
     const delta = Math.max(0, amount);
     const target =
-      direction === 'scale_up'
-        ? Math.min(max, this.currentNodes + delta)
-        : Math.max(min, this.currentNodes - delta);
+      direction === 'scale_up' ? Math.min(max, this.currentNodes + delta) : Math.max(min, this.currentNodes - delta);
 
     const action: ScaleAction = {
       action: direction,
@@ -208,9 +206,7 @@ export class InMemoryAutoScaler implements IAutoScaler {
   // ── Internals ──────────────────────────────────────────────
 
   private _bounds(): { min: number; max: number } {
-    return this.policy
-      ? { min: this.policy.minNodes, max: this.policy.maxNodes }
-      : { min: this.min, max: this.max };
+    return this.policy ? { min: this.policy.minNodes, max: this.policy.maxNodes } : { min: this.min, max: this.max };
   }
 
   private _recordEvaluation(now: number): void {

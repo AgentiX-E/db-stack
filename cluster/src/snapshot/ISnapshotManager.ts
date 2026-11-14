@@ -6,7 +6,7 @@
  * and provides operational control over snapshot storage.
  */
 
-import type { SnapshotMeta } from "../interfaces/types";
+import type { SnapshotMeta } from '../interfaces/types';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ export interface SnapshotRetentionPolicy {
 }
 
 /** Compaction strategy for merging snapshots. */
-export type CompactStrategy = "none" | "merge" | "selective";
+export type CompactStrategy = 'none' | 'merge' | 'selective';
 
 export interface CompactOptions {
   /** Strategy for compaction. Default: "none" */
@@ -91,10 +91,7 @@ export interface ISnapshotManager {
 
   // CRUD
   /** Create a new snapshot from raw data. Returns a descriptor. */
-  createSnapshot(
-    data: Buffer,
-    meta: SnapshotMeta,
-  ): Promise<SnapshotDescriptor>;
+  createSnapshot(data: Buffer, meta: SnapshotMeta): Promise<SnapshotDescriptor>;
   /** Delete a specific snapshot by ID. */
   deleteSnapshot(snapshotId: string): Promise<boolean>;
   /** Get descriptor for a specific snapshot. */

@@ -13,9 +13,17 @@
  * Delivery semantics: at-least-once (subscribers ack to advance position).
  */
 
-import type { IWalStreamer, StreamEvent, StreamFilter, StreamAck, StreamSubscription, StreamHandler, WalStreamConfig } from "./IWalStreamer";
-import type { IWalStorage } from "../interfaces/wal/IWalStorage";
-import type { LogEntry } from "../interfaces/types";
+import type {
+  IWalStreamer,
+  StreamEvent,
+  StreamFilter,
+  StreamAck,
+  StreamSubscription,
+  StreamHandler,
+  WalStreamConfig,
+} from './IWalStreamer';
+import type { IWalStorage } from '../interfaces/wal/IWalStorage';
+import type { LogEntry } from '../interfaces/types';
 
 // ── Default Config ─────────────────────────────────────────
 
@@ -54,7 +62,9 @@ export class WalStreamer implements IWalStreamer {
 
   // ── Lifecycle ─────────────────────────────────────────────
 
-  get active(): boolean { return this._active; }
+  get active(): boolean {
+    return this._active;
+  }
 
   async init(storage: IWalStorage, config?: Partial<WalStreamConfig>): Promise<void> {
     this.storage = storage;
@@ -69,7 +79,7 @@ export class WalStreamer implements IWalStreamer {
   }
 
   async start(): Promise<void> {
-    if (!this.storage) throw new Error("WalStreamer: not initialized — call init() first");
+    if (!this.storage) throw new Error('WalStreamer: not initialized — call init() first');
     if (this._active) return;
 
     this._active = true;
@@ -87,11 +97,7 @@ export class WalStreamer implements IWalStreamer {
 
   // ── Subscription ───────────────────────────────────────────
 
-  async subscribe(
-    subscriberId: string,
-    handler: StreamHandler,
-    filter?: StreamFilter,
-  ): Promise<StreamSubscription> {
+  async subscribe(subscriberId: string, handler: StreamHandler, filter?: StreamFilter): Promise<StreamSubscription> {
     const id = `sub-${subscriberId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const internal: InternalSubscription = {
       id,
@@ -118,13 +124,8 @@ export class WalStreamer implements IWalStreamer {
 
   // ── Replay ────────────────────────────────────────────────
 
-  async replay(
-    fromIndex: number,
-    toIndex: number,
-    handler: StreamHandler,
-    filter?: StreamFilter,
-  ): Promise<number> {
-    if (!this.storage) throw new Error("WalStreamer: not initialized");
+  async replay(fromIndex: number, toIndex: number, handler: StreamHandler, filter?: StreamFilter): Promise<number> {
+    if (!this.storage) throw new Error('WalStreamer: not initialized');
 
     let emitted = 0;
     let current = Math.max(1, fromIndex); // Clamp to minimum index 1
@@ -183,11 +184,9 @@ export class WalStreamer implements IWalStreamer {
   // ── Catch-up ──────────────────────────────────────────────
 
   async catchUp(subscriberId: string): Promise<number> {
-    if (!this.storage) throw new Error("WalStreamer: not initialized");
+    if (!this.storage) throw new Error('WalStreamer: not initialized');
 
-    const subs = [...this.subscriptions.values()].filter(
-      (s) => s.subscriberId === subscriberId && s.active,
-    );
+    const subs = [...this.subscriptions.values()].filter((s) => s.subscriberId === subscriberId && s.active);
 
     if (subs.length === 0) return 0;
 
@@ -305,7 +304,7 @@ export class WalStreamer implements IWalStreamer {
       sequence: this._globalSequence,
       entry: this.config.emitData ? entry : { ...entry, data: undefined },
       emittedAt: Date.now(),
-      groupId: (entry as LogEntry & { groupId?: string }).groupId ?? "default",
+      groupId: (entry as LogEntry & { groupId?: string }).groupId ?? 'default',
     };
   }
 

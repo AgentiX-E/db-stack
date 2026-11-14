@@ -37,7 +37,10 @@ describe('InMemoryMaintenanceExecutor', () => {
     const freeSpaceBefore = statsBefore.freeSpaceRatio;
     const deadRowBefore = statsBefore.deadRowCount;
 
-    const result = await executor.vacuum({ target: 'table_orders', dryRun: true });
+    const result = await executor.vacuum({
+      target: 'table_orders',
+      dryRun: true,
+    });
 
     expect(result.success).toBe(true);
     expect(result.operation).toBe('VACUUM');
@@ -275,7 +278,12 @@ describe('InMemoryMaintenanceExecutor', () => {
 
   it('accepts custom initial fragmentation', async () => {
     const customFrag: import('@agentix-e/db-operations-core/types').IndexFragmentation[] = [
-      { indexName: 'idx_custom', tableName: 'custom_tbl', pageCount: 500, fragmentationRatio: 0.9 },
+      {
+        indexName: 'idx_custom',
+        tableName: 'custom_tbl',
+        pageCount: 500,
+        fragmentationRatio: 0.9,
+      },
     ];
     const custom = new InMemoryMaintenanceExecutor(undefined, customFrag);
 
@@ -361,18 +369,14 @@ describe('InMemoryMaintenanceExecutor', () => {
   });
 
   it('vacuum reports exact elapsed milliseconds', async () => {
-    const spy = vi.spyOn(Date, 'now')
-      .mockReturnValueOnce(10_000)
-      .mockReturnValueOnce(10_042);
+    const spy = vi.spyOn(Date, 'now').mockReturnValueOnce(10_000).mockReturnValueOnce(10_042);
     const result = await executor.vacuum({ target: '*' });
     expect(result.durationMs).toBe(42);
     spy.mockRestore();
   });
 
   it('reindex reports exact elapsed milliseconds', async () => {
-    const spy = vi.spyOn(Date, 'now')
-      .mockReturnValueOnce(20_000)
-      .mockReturnValueOnce(20_007);
+    const spy = vi.spyOn(Date, 'now').mockReturnValueOnce(20_000).mockReturnValueOnce(20_007);
     const result = await executor.reindex({ target: 'idx_x' });
     expect(result.durationMs).toBe(7);
     spy.mockRestore();

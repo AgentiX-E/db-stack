@@ -8,10 +8,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { RollingUpgradeOrchestrator } from '../impl/RollingUpgradeOrchestrator.js';
-import type {
-  RollingUpgradePlan,
-  BatchHealth,
-} from '../interfaces/types.js';
+import type { RollingUpgradePlan, BatchHealth } from '../interfaces/types.js';
 
 // Yield to the macrotask queue (setTimeout 0) rather than Promise.resolve().
 // A `while (paused) await sleep()` loop awaits this sleep 100 times per second;
@@ -61,11 +58,13 @@ describe('rollingupgrade precise stats', () => {
   it('reports exact upgraded/failed/rolled-back counts', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b', 'c', 'd'],
-      batchSize: 2,
-      healthCheckNames: ['ok'],
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd'],
+        batchSize: 2,
+        healthCheckNames: ['ok'],
+      }),
+    );
     expect(s.totalNodes).toBe(4);
     expect(s.upgradedNodes).toBe(4);
     expect(s.failedNodes).toBe(0);
@@ -78,12 +77,14 @@ describe('rollingupgrade precise stats', () => {
   it('reports exact failed + rolled-back counts on rollback', async () => {
     const e = engine();
     e.registerHealthCheck('bad', unhealthy);
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b', 'c'],
-      batchSize: 1,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'on_first_failure',
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c'],
+        batchSize: 1,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'on_first_failure',
+      }),
+    );
     // First batch fails → on_first_failure rolls back everything.
     expect(s.phase).toBe('failed');
     expect(s.failedNodes).toBeGreaterThanOrEqual(1);
@@ -93,12 +94,14 @@ describe('rollingupgrade precise stats', () => {
   it('sets failed nodes on manual_only without rollback', async () => {
     const e = engine();
     e.registerHealthCheck('bad', unhealthy);
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 1,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'manual_only',
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 1,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'manual_only',
+      }),
+    );
     expect(s.phase).toBe('failed');
     expect(s.rolledBackNodes).toBe(0);
     expect(s.failedNodes).toBeGreaterThanOrEqual(1);
@@ -107,7 +110,7 @@ describe('rollingupgrade precise stats', () => {
   it('computes durationMs as a non-negative difference (Date.now mocked)', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    let now = 5_000_000;
+    const now = 5_000_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     // execute() reads startTime = Date.now() = 5_000_000.
     const s = await e.execute(makePlan({ nodes: ['a'], batchSize: 1, healthCheckNames: ['ok'] }));
@@ -122,7 +125,13 @@ describe('rollingupgrade batch index and canary flags', () => {
   it('assigns 1-based sequential batch indices', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({ nodes: ['a', 'b', 'c', 'd', 'e'], batchSize: 2, healthCheckNames: ['ok'] }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd', 'e'],
+        batchSize: 2,
+        healthCheckNames: ['ok'],
+      }),
+    );
     // 5 nodes / 2 = 3 batches with indices 1, 2, 3.
     const idx = e.getBatches().map((b) => b.index);
     expect(idx).toEqual([1, 2, 3]);
@@ -138,12 +147,19 @@ describe('rollingupgrade batch index and canary flags', () => {
   it('marks canary batch as isCanary=true and all others false', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['c0', 'c1', 'c2', 'c3', 'c4'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      canary: { fraction: 0.4, bakeTimeMs: 0, requiredChecks: [], autoPromote: true },
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['c0', 'c1', 'c2', 'c3', 'c4'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        canary: {
+          fraction: 0.4,
+          bakeTimeMs: 0,
+          requiredChecks: [],
+          autoPromote: true,
+        },
+      }),
+    );
     const batches = e.getBatches();
     expect(batches[0]!.isCanary).toBe(true);
     expect(batches.slice(1).every((b) => b.isCanary === false)).toBe(true);
@@ -156,12 +172,14 @@ describe('rollingupgrade percentage strategy sizing', () => {
   it('uses batchSize as a percentage when > 0', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'],
-      batchStrategy: 'percentage',
-      batchSize: 50,
-      healthCheckNames: ['ok'],
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'],
+        batchStrategy: 'percentage',
+        batchSize: 50,
+        healthCheckNames: ['ok'],
+      }),
+    );
     // 10 nodes, 50% of the REMAINING set each iteration → 5, 3, 1, 1.
     const sizes = e.getBatches().map((b) => b.nodes.length);
     expect(sizes).toEqual([5, 3, 1, 1]);
@@ -170,12 +188,14 @@ describe('rollingupgrade percentage strategy sizing', () => {
   it('falls back to 20% when batchSize is not positive', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'],
-      batchStrategy: 'percentage',
-      batchSize: 0,
-      healthCheckNames: ['ok'],
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'],
+        batchStrategy: 'percentage',
+        batchSize: 0,
+        healthCheckNames: ['ok'],
+      }),
+    );
     // 10 nodes, fallback 20% of remaining → 2,2,2,1,1,1,1 = 7 batches.
     expect(e.getBatches().length).toBe(7);
   });
@@ -184,14 +204,17 @@ describe('rollingupgrade percentage strategy sizing', () => {
 describe('rollingupgrade validation gates', () => {
   it('rejects fixed_size with batchSize < 1', async () => {
     const e = engine();
-    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: 0 })))
-      .rejects.toThrow('batchSize');
+    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: 0 }))).rejects.toThrow('batchSize');
   });
 
   it('accepts non-fixed_size strategy without batchSize', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    const plan = makePlan({ batchStrategy: 'one_by_one', batchSize: undefined, healthCheckNames: ['ok'] });
+    const plan = makePlan({
+      batchStrategy: 'one_by_one',
+      batchSize: undefined,
+      healthCheckNames: ['ok'],
+    });
     const s = await e.execute(plan);
     expect(s.phase).toBe('completed');
   });
@@ -199,22 +222,44 @@ describe('rollingupgrade validation gates', () => {
 
 describe('rollingupgrade validation & abort', () => {
   it('rejects canary bake time below the safety floor', async () => {
-    const e = new RollingUpgradeOrchestrator({ minBakeMs: 10_000, sleep: instantSleep });
+    const e = new RollingUpgradeOrchestrator({
+      minBakeMs: 10_000,
+      sleep: instantSleep,
+    });
     // bakeTimeMs 9999 < minBakeMs 10000 → reject.
-    await expect(e.execute(makePlan({
-      nodes: ['a'],
-      canary: { fraction: 1, bakeTimeMs: 9_999, requiredChecks: [], autoPromote: true },
-    }))).rejects.toThrow('bake time');
+    await expect(
+      e.execute(
+        makePlan({
+          nodes: ['a'],
+          canary: {
+            fraction: 1,
+            bakeTimeMs: 9_999,
+            requiredChecks: [],
+            autoPromote: true,
+          },
+        }),
+      ),
+    ).rejects.toThrow('bake time');
   });
 
   it('accepts canary bake time at the floor', async () => {
-    const e = new RollingUpgradeOrchestrator({ minBakeMs: 10_000, sleep: instantSleep });
+    const e = new RollingUpgradeOrchestrator({
+      minBakeMs: 10_000,
+      sleep: instantSleep,
+    });
     e.registerHealthCheck('ok', healthy);
-    const s = await e.execute(makePlan({
-      nodes: ['a'],
-      healthCheckNames: ['ok'],
-      canary: { fraction: 1, bakeTimeMs: 10_000, requiredChecks: [], autoPromote: true },
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a'],
+        healthCheckNames: ['ok'],
+        canary: {
+          fraction: 1,
+          bakeTimeMs: 10_000,
+          requiredChecks: [],
+          autoPromote: true,
+        },
+      }),
+    );
     expect(s.phase).toBe('completed');
   });
 
@@ -227,12 +272,14 @@ describe('rollingupgrade validation & abort', () => {
     // To exceed maxDurationMs we need Date.now() to advance past the threshold
     // after startTime is captured. Use a mutable clock that advances per call.
     now = 0;
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b', 'c', 'd'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      maxDurationMs: 1,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        maxDurationMs: 1,
+      }),
+    );
     // With a static mocked clock, duration never exceeds maxDurationMs so it
     // completes normally — this pins the abort predicate isn't reached with
     // a zero-duration clock, distinguishing it from always-abort.
@@ -244,12 +291,14 @@ describe('rollingupgrade drain config', () => {
   it('applies waitForInflight=true by default (node reaches draining)', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      drain: { timeoutMs: 1000, waitForInflight: true, connectionDrainMs: 1 },
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        drain: { timeoutMs: 1000, waitForInflight: true, connectionDrainMs: 1 },
+      }),
+    );
     // After completion nodes are "completed", so drain state isn't observable
     // post-hoc; instead verify the plan's drain was accepted and upgrade completed.
     expect(e.getBatches()[0]!.nodes[0]!.status).toBe('completed');
@@ -258,12 +307,18 @@ describe('rollingupgrade drain config', () => {
   it('skips draining when waitForInflight=false', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      drain: { timeoutMs: 1000, waitForInflight: false, connectionDrainMs: 1 },
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        drain: {
+          timeoutMs: 1000,
+          waitForInflight: false,
+          connectionDrainMs: 1,
+        },
+      }),
+    );
     expect(e.getBatches()[0]!.nodes[0]!.status).toBe('completed');
   });
 });
@@ -273,13 +328,15 @@ describe('rollingupgrade batch failure threshold', () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
     // 1 node, threshold 0.5 → 0 failed initially → below threshold, completes.
-    const s = await e.execute(makePlan({
-      nodes: ['a'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.5,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.5,
+      }),
+    );
     expect(s.phase).toBe('completed');
   });
 
@@ -301,61 +358,87 @@ describe('rollingupgrade rollback count precision', () => {
       calls++;
       // node 'a','b' healthy; 'c' unhealthy.
       return nodeId === 'c'
-        ? { healthy: false, nodes: [{ healthy: false, details: {}, checkedAt: Date.now() }], evaluatedAt: Date.now() }
+        ? {
+            healthy: false,
+            nodes: [{ healthy: false, details: {}, checkedAt: Date.now() }],
+            evaluatedAt: Date.now(),
+          }
         : { healthy: true, nodes: [], evaluatedAt: Date.now() };
     });
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b', 'c'],
-      batchSize: 2,
-      healthCheckNames: ['flaky'],
-      rollbackTrigger: 'on_first_failure',
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c'],
+        batchSize: 2,
+        healthCheckNames: ['flaky'],
+        rollbackTrigger: 'on_first_failure',
+      }),
+    );
     // Batch1 (a,b) completed then batch2 (c) fails → rollback batch1.
     expect(s.phase).toBe('failed');
-    expect(s.upgradedNodes).toBe(0);      // a,b completed then rolled back
-    expect(s.failedNodes).toBe(1);        // c failed
-    expect(s.rolledBackNodes).toBe(2);    // a, b rolled back
+    expect(s.upgradedNodes).toBe(0); // a,b completed then rolled back
+    expect(s.failedNodes).toBe(1); // c failed
+    expect(s.rolledBackNodes).toBe(2); // a, b rolled back
   });
 
   it('manual_only leaves failed nodes as failed and never rolls back', async () => {
     const e = engine();
     e.registerHealthCheck('bad', unhealthy);
-    const s = await e.execute(makePlan({
-      nodes: ['x', 'y'],
-      batchSize: 1,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'manual_only',
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['x', 'y'],
+        batchSize: 1,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'manual_only',
+      }),
+    );
     expect(s.phase).toBe('failed');
-    expect(s.failedNodes).toBe(1);       // first node fails
-    expect(s.rolledBackNodes).toBe(0);   // no rollback
+    expect(s.failedNodes).toBe(1); // first node fails
+    expect(s.rolledBackNodes).toBe(0); // no rollback
     expect(s.upgradedNodes).toBe(0);
   });
 
   it('manual rollback after completion rolls back all completed nodes', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({ nodes: ['a', 'b', 'c'], batchSize: 1, healthCheckNames: ['ok'] }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+      }),
+    );
     const rb = await e.rollback();
     expect(rb.rolledBackNodes).toBe(3);
-    expect(rb.upgradedNodes).toBe(0);   // after rollback no nodes remain "completed"
+    expect(rb.upgradedNodes).toBe(0); // after rollback no nodes remain "completed"
   });
 });
-
-
 
 describe('rollingupgrade batch index per strategy', () => {
   it('one_by_one assigns 1..N indices', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({ nodes: ['a', 'b', 'c'], batchStrategy: 'one_by_one', batchSize: undefined, healthCheckNames: ['ok'] }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c'],
+        batchStrategy: 'one_by_one',
+        batchSize: undefined,
+        healthCheckNames: ['ok'],
+      }),
+    );
     expect(e.getBatches().map((b) => b.index)).toEqual([1, 2, 3]);
   });
 
   it('all_at_once assigns a single batch index 1', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({ nodes: ['a', 'b', 'c'], batchStrategy: 'all_at_once', batchSize: undefined, healthCheckNames: ['ok'] }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c'],
+        batchStrategy: 'all_at_once',
+        batchSize: undefined,
+        healthCheckNames: ['ok'],
+      }),
+    );
     expect(e.getBatches().map((b) => b.index)).toEqual([1]);
     expect(e.getBatches()[0]!.nodes.length).toBe(3);
   });
@@ -363,13 +446,20 @@ describe('rollingupgrade batch index per strategy', () => {
   it('canary batch gets index 1 and remaining batches continue from 2', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['c0', 'c1', 'c2', 'r0', 'r1'],
-      batchStrategy: 'one_by_one',
-      batchSize: undefined,
-      healthCheckNames: ['ok'],
-      canary: { fraction: 0.4, bakeTimeMs: 0, requiredChecks: [], autoPromote: true },
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['c0', 'c1', 'c2', 'r0', 'r1'],
+        batchStrategy: 'one_by_one',
+        batchSize: undefined,
+        healthCheckNames: ['ok'],
+        canary: {
+          fraction: 0.4,
+          bakeTimeMs: 0,
+          requiredChecks: [],
+          autoPromote: true,
+        },
+      }),
+    );
     // canary (2 nodes) + 3 remaining = indices 1..4, first is canary.
     const idx = e.getBatches().map((b) => b.index);
     expect(idx).toEqual([1, 2, 3, 4]);
@@ -381,24 +471,32 @@ describe('rollingupgrade drain observability', () => {
   it('sets startedAt only when waitForInflight is true', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      drain: { timeoutMs: 1000, waitForInflight: true, connectionDrainMs: 1 },
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        drain: { timeoutMs: 1000, waitForInflight: true, connectionDrainMs: 1 },
+      }),
+    );
     expect(e.getBatches()[0]!.nodes[0]!.startedAt).toBeGreaterThan(0);
   });
 
   it('does not set startedAt when waitForInflight is false', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      drain: { timeoutMs: 1000, waitForInflight: false, connectionDrainMs: 1 },
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        drain: {
+          timeoutMs: 1000,
+          waitForInflight: false,
+          connectionDrainMs: 1,
+        },
+      }),
+    );
     expect(e.getBatches()[0]!.nodes[0]!.startedAt).toBeUndefined();
   });
 });
@@ -408,13 +506,15 @@ describe('rollingupgrade batch threshold default + reason', () => {
     const e = engine();
     // Every node healthy except none fail; use small threshold to verify.
     e.registerHealthCheck('ok', healthy);
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b', 'c', 'd'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.9,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.9,
+      }),
+    );
     expect(s.phase).toBe('completed');
   });
 });
@@ -423,12 +523,14 @@ describe('rollingupgrade default drain config', () => {
   it('defaults waitForInflight to true when drain is omitted', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      // drain omitted → DEFAULT_DRAIN with waitForInflight=true
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        // drain omitted → DEFAULT_DRAIN with waitForInflight=true
+      }),
+    );
     // waitForInflight=true → drain sets startedAt.
     expect(e.getBatches()[0]!.nodes[0]!.startedAt).toBeGreaterThan(0);
   });
@@ -439,14 +541,16 @@ describe('rollingupgrade fixed_size batchSize validation', () => {
     const e = engine();
     // batchSize explicitly undefined → !undefined (true) is the only invalid
     // signal; `undefined < 1` is false. `||` rejects, `&&` would accept.
-    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: undefined })))
-      .rejects.toThrow('batchSize');
+    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: undefined }))).rejects.toThrow(
+      'batchSize',
+    );
   });
 
   it('rejects fixed_size when batchSize is a string "0" (non-numeric)', async () => {
     const e = engine();
-    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: ('0' as any) })))
-      .rejects.toThrow('batchSize');
+    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: '0' as any }))).rejects.toThrow(
+      'batchSize',
+    );
   });
 });
 
@@ -455,15 +559,24 @@ describe('rollingupgrade canary bake sleep', () => {
     const sleeps: number[] = [];
     const e = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
-      sleep: async (ms: number) => { sleeps.push(ms); },
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+      },
     });
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a'],
-      healthCheckNames: ['ok'],
-      canary: { fraction: 1, bakeTimeMs: 0, requiredChecks: [], autoPromote: true },
-      drain: { timeoutMs: 1, waitForInflight: false, connectionDrainMs: 1 },
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a'],
+        healthCheckNames: ['ok'],
+        canary: {
+          fraction: 1,
+          bakeTimeMs: 0,
+          requiredChecks: [],
+          autoPromote: true,
+        },
+        drain: { timeoutMs: 1, waitForInflight: false, connectionDrainMs: 1 },
+      }),
+    );
     // waitForInflight=false removes the drain sleep; the only remaining sleep
     // is the drain yield sleep(0). bakeTimeMs=0 must NOT add another sleep.
     expect(sleeps.filter((ms) => ms === 0).length).toBe(1);
@@ -473,20 +586,28 @@ describe('rollingupgrade canary bake sleep', () => {
     const sleeps: number[] = [];
     const e = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
-      sleep: async (ms: number) => { sleeps.push(ms); },
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+      },
     });
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a'],
-      healthCheckNames: ['ok'],
-      canary: { fraction: 1, bakeTimeMs: 123, requiredChecks: [], autoPromote: true },
-      drain: { timeoutMs: 1, waitForInflight: false, connectionDrainMs: 1 },
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a'],
+        healthCheckNames: ['ok'],
+        canary: {
+          fraction: 1,
+          bakeTimeMs: 123,
+          requiredChecks: [],
+          autoPromote: true,
+        },
+        drain: { timeoutMs: 1, waitForInflight: false, connectionDrainMs: 1 },
+      }),
+    );
     // The canary bake sleep of 123ms must fire (beyond the drain yield 0).
     expect(sleeps).toContain(123);
   });
 });
-
 
 describe('rollingupgrade pause/resume state', () => {
   it('pause sets paused=true and resume sets paused=false', async () => {
@@ -513,42 +634,56 @@ describe('rollingupgrade rollback trigger precision', () => {
   it('on_canary_failure rolls back when canary fails', async () => {
     const e = engine();
     e.registerHealthCheck('bad', unhealthy);
-    const s = await e.execute(makePlan({
-      nodes: ['c0', 'c1', 'r0'],
-      batchSize: 1,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'on_canary_failure',
-      canary: { fraction: 0.5, bakeTimeMs: 0, requiredChecks: [], autoPromote: true },
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['c0', 'c1', 'r0'],
+        batchSize: 1,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'on_canary_failure',
+        canary: {
+          fraction: 0.5,
+          bakeTimeMs: 0,
+          requiredChecks: [],
+          autoPromote: true,
+        },
+      }),
+    );
     expect(s.phase).toBe('failed');
   });
 
   it('on_degradation triggers rollback on failure (degradation policy)', async () => {
     const e = engine();
     e.registerHealthCheck('bad', unhealthy);
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 1,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'on_degradation',
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 1,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'on_degradation',
+      }),
+    );
     expect(s.phase).toBe('failed');
   });
 });
-
-
 
 describe('rollingupgrade rollback trigger observable rollback', () => {
   it('on_canary_failure emits rollback_triggered event', async () => {
     const e = engine();
     e.registerHealthCheck('bad', unhealthy);
-    await e.execute(makePlan({
-      nodes: ['c0', 'r0'],
-      batchSize: 1,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'on_canary_failure',
-      canary: { fraction: 0.5, bakeTimeMs: 0, requiredChecks: [], autoPromote: true },
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['c0', 'r0'],
+        batchSize: 1,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'on_canary_failure',
+        canary: {
+          fraction: 0.5,
+          bakeTimeMs: 0,
+          requiredChecks: [],
+          autoPromote: true,
+        },
+      }),
+    );
     const types = e.getEvents().map((ev) => ev.type);
     expect(types).toContain('rollback_triggered');
   });
@@ -561,15 +696,21 @@ describe('rollingupgrade rollback trigger observable rollback', () => {
     // distinguishing the `===`→`!==` mutant on the filter).
     e.registerHealthCheck('flaky', async (nodeId) => {
       return nodeId === 'c'
-        ? { healthy: false, nodes: [{ healthy: false, details: {}, checkedAt: Date.now() }], evaluatedAt: Date.now() }
+        ? {
+            healthy: false,
+            nodes: [{ healthy: false, details: {}, checkedAt: Date.now() }],
+            evaluatedAt: Date.now(),
+          }
         : { healthy: true, nodes: [], evaluatedAt: Date.now() };
     });
-    await e.execute(makePlan({
-      nodes: ['a', 'b', 'c'],
-      batchSize: 1,
-      healthCheckNames: ['flaky'],
-      rollbackTrigger: 'on_first_failure',
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c'],
+        batchSize: 1,
+        healthCheckNames: ['flaky'],
+        rollbackTrigger: 'on_first_failure',
+      }),
+    );
     const ev = e.getEvents().find((x) => x.type === 'rollback_completed');
     expect(ev).toBeDefined();
     expect((ev!.details as any).rolledBackBatches).toBe(2);
@@ -578,12 +719,14 @@ describe('rollingupgrade rollback trigger observable rollback', () => {
   it('on_degradation emits rollback_triggered event', async () => {
     const e = engine();
     e.registerHealthCheck('bad', unhealthy);
-    await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 1,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'on_degradation',
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 1,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'on_degradation',
+      }),
+    );
     expect(e.getEvents().map((ev) => ev.type)).toContain('rollback_triggered');
   });
 });
@@ -591,15 +734,23 @@ describe('rollingupgrade rollback trigger observable rollback', () => {
 describe('rollingupgrade validation short-circuit', () => {
   it('rejects when id is empty but nodes are present', async () => {
     const e = engine();
-    await expect(e.execute(makePlan({ id: '', nodes: ['a', 'b'] })))
-      .rejects.toThrow();
+    await expect(e.execute(makePlan({ id: '', nodes: ['a', 'b'] }))).rejects.toThrow();
   });
 
   it('rejects when canary fraction is zero (not positive)', async () => {
     const e = engine();
-    await expect(e.execute(makePlan({
-      canary: { fraction: 0, bakeTimeMs: 100, requiredChecks: [], autoPromote: true },
-    }))).rejects.toThrow();
+    await expect(
+      e.execute(
+        makePlan({
+          canary: {
+            fraction: 0,
+            bakeTimeMs: 100,
+            requiredChecks: [],
+            autoPromote: true,
+          },
+        }),
+      ),
+    ).rejects.toThrow();
   });
 });
 
@@ -607,8 +758,7 @@ describe('rollingupgrade fractional batchSize', () => {
   it('rejects fixed_size with a fractional batchSize below 1', async () => {
     const e = engine();
     // 0.5 < 1 is true → invalid. Mutating < to >= would accept 0.5.
-    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: 0.5 })))
-      .rejects.toThrow('batchSize');
+    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: 0.5 }))).rejects.toThrow('batchSize');
   });
 });
 
@@ -622,12 +772,14 @@ describe('rollingupgrade maxDurationMs abort', () => {
       // elapsed 1000 > maxDurationMs(1) → abort.
       return tick++ === 0 ? 0 : 1000;
     });
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      maxDurationMs: 1,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        maxDurationMs: 1,
+      }),
+    );
     expect(s.phase).toBe('aborted');
     expect(s.events.some((ev) => ev.type === 'upgrade_aborted')).toBe(true);
   });
@@ -642,12 +794,14 @@ describe('rollingupgrade maxDurationMs abort', () => {
       // now + start = 2_000_000_000 which is > maxDurationMs → spurious abort.
       return tick++ === 0 ? 1_000_000_000 : 1_000_000_000;
     });
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      maxDurationMs: 1,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        maxDurationMs: 1,
+      }),
+    );
     expect(s.phase).toBe('completed');
     expect(s.events.some((ev) => ev.type === 'upgrade_aborted')).toBe(false);
   });
@@ -657,12 +811,14 @@ describe('rollingupgrade maxDurationMs abort', () => {
     e.registerHealthCheck('ok', healthy);
     // Static clock: Date.now() - startTime === 0, never exceeds the limit.
     vi.spyOn(Date, 'now').mockImplementation(() => 0);
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      maxDurationMs: 1,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        maxDurationMs: 1,
+      }),
+    );
     expect(s.phase).toBe('completed');
   });
 });
@@ -692,7 +848,13 @@ describe('rollingupgrade percentage + one_by_one + all_at_once sizing', () => {
 
   it('percentage uses batchSize as a percentage (batchSize 50 → ceil halves)', async () => {
     const e = engine();
-    await e.execute(makePlan({ nodes: ['a', 'b', 'c', 'd', 'e'], batchStrategy: 'percentage', batchSize: 50 }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd', 'e'],
+        batchStrategy: 'percentage',
+        batchSize: 50,
+      }),
+    );
     const batches = e.getBatches();
     // 5 * 0.5 = 2.5 → ceil 3; 2 * 0.5 = 1; 1 * 0.5 = 0.5 → ceil 1.
     expect(batches.map((b) => b.nodes.length)).toEqual([3, 1, 1]);
@@ -703,7 +865,13 @@ describe('rollingupgrade percentage + one_by_one + all_at_once sizing', () => {
 
   it('percentage uses zero batchSize as the 20% fallback denominator', async () => {
     const e = engine();
-    await e.execute(makePlan({ nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'], batchStrategy: 'percentage', batchSize: 0 }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'],
+        batchStrategy: 'percentage',
+        batchSize: 0,
+      }),
+    );
     const batches = e.getBatches();
     // 10 * 0.2 = 2 (exactly, no ceiling).
     expect(batches[0]!.nodes.length).toBe(2);
@@ -715,7 +883,13 @@ describe('rollingupgrade percentage + one_by_one + all_at_once sizing', () => {
     // batchSize = -5. `batchSize && batchSize > 0` is `-5 && false` = false → 20%.
     // A `&&`→`||` mutant yields `-5 || false` = -5 (truthy) → pct = -5, which
     // collapses every batch to size 1 instead of 20%.
-    await e.execute(makePlan({ nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'], batchStrategy: 'percentage', batchSize: -5 }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'],
+        batchStrategy: 'percentage',
+        batchSize: -5,
+      }),
+    );
     const batches = e.getBatches();
     expect(batches[0]!.nodes.length).toBe(2); // 20% of 10 = 2, not 1
   });
@@ -730,12 +904,14 @@ describe('rollingupgrade partial-failure node marking', () => {
       if (nodeId === 'b') throw new Error('boom');
       return { healthy: true, nodes: [], evaluatedAt: Date.now() };
     });
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 2,
-      healthCheckNames: ['flaky'],
-      rollbackTrigger: 'on_first_failure',
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 2,
+        healthCheckNames: ['flaky'],
+        rollbackTrigger: 'on_first_failure',
+      }),
+    );
     // Batch failed; the throwing node is failed; rollback (on_first_failure)
     // rolls back the healthy in-flight node.
     expect(s.failedNodes).toBeGreaterThanOrEqual(1);
@@ -745,12 +921,14 @@ describe('rollingupgrade partial-failure node marking', () => {
   it('marks all non-completed nodes failed when a check returns unhealthy', async () => {
     const e = engine();
     e.registerHealthCheck('bad', unhealthy);
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 2,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'manual_only',
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 2,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'manual_only',
+      }),
+    );
     // unhealthy returns healthy:false (no throw) → _checkBatchHealth marks every
     // non-completed node failed via the `node.status !== "completed" && ...`
     // guard, then manual_only leaves them failed (no rollback).
@@ -763,7 +941,14 @@ describe('rollingupgrade in-flight rollback (draining/upgrading/health_check)', 
   it('rollback() rolls back all nodes that have progressed past pending', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({ nodes: ['a', 'b'], batchSize: 1, healthCheckNames: ['ok'], rollbackTrigger: 'manual_only' }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        rollbackTrigger: 'manual_only',
+      }),
+    );
     const rb = await e.rollback();
     // Both completed nodes → rolled_back.
     expect(rb.rolledBackNodes).toBe(2);
@@ -774,7 +959,14 @@ describe('rollingupgrade in-flight rollback (draining/upgrading/health_check)', 
   it('rollback() emits rollback_completed with the rolled-back node count', async () => {
     const e = engine();
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({ nodes: ['a', 'b'], batchSize: 1, healthCheckNames: ['ok'], rollbackTrigger: 'manual_only' }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 1,
+        healthCheckNames: ['ok'],
+        rollbackTrigger: 'manual_only',
+      }),
+    );
     await e.rollback();
     const ev = e.getEvents().find((x) => x.type === 'rollback_completed');
     expect(ev).toBeDefined();
@@ -782,26 +974,34 @@ describe('rollingupgrade in-flight rollback (draining/upgrading/health_check)', 
   });
 });
 
-
 describe('rollingupgrade on_batch_threshold tolerance', () => {
   it('tolerates partial failure below threshold and promotes healthy nodes', async () => {
     const e = engine();
     // node 'a' fails, 'b' and 'c' healthy → failure ratio 1/3 ≈ 0.33 < 0.5.
     e.registerHealthCheck('mixed', async (nodeId) => {
       return nodeId === 'a'
-        ? { healthy: false, nodes: [{ healthy: false, details: {}, checkedAt: Date.now() }], evaluatedAt: Date.now() }
+        ? {
+            healthy: false,
+            nodes: [{ healthy: false, details: {}, checkedAt: Date.now() }],
+            evaluatedAt: Date.now(),
+          }
         : { healthy: true, nodes: [], evaluatedAt: Date.now() };
     });
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b', 'c'],
-      batchSize: 3,
-      healthCheckNames: ['mixed'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.5,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c'],
+        batchSize: 3,
+        healthCheckNames: ['mixed'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.5,
+      }),
+    );
     expect(s.phase).toBe('completed');
     // Healthy nodes promoted, failed node kept failed.
-    const statuses = e.getBatches()[0]!.nodes.map((n) => n.status).sort();
+    const statuses = e
+      .getBatches()[0]!
+      .nodes.map((n) => n.status)
+      .sort();
     expect(statuses).toEqual(['completed', 'completed', 'failed']);
     expect(s.failedNodes).toBe(1);
     expect(s.upgradedNodes).toBe(2);
@@ -811,13 +1011,15 @@ describe('rollingupgrade on_batch_threshold tolerance', () => {
     const e = engine();
     // Both nodes fail → ratio 2/2 = 1.0 >= 0.5 → rollback.
     e.registerHealthCheck('bad', unhealthy);
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 2,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.5,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 2,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.5,
+      }),
+    );
     expect(s.phase).toBe('failed');
     // The failing batch is marked failed (not rolled back); every node failed.
     expect(s.failedNodes).toBe(2);
@@ -829,13 +1031,15 @@ describe('rollingupgrade on_batch_threshold tolerance', () => {
       if (nodeId === 'a') throw new Error('boom');
       return { healthy: true, nodes: [], evaluatedAt: Date.now() };
     });
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 2,
-      healthCheckNames: ['flaky'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.51,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 2,
+        healthCheckNames: ['flaky'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.51,
+      }),
+    );
     // One throwing node → ratio 1/2 = 0.5 < 0.51 → tolerated.
     expect(s.phase).toBe('completed');
     expect(s.failedNodes).toBe(1);
@@ -847,13 +1051,15 @@ describe('rollingupgrade batch_threshold failure reason precision', () => {
   it('reports the exact threshold percentage in the failure reason', async () => {
     const e = engine();
     e.registerHealthCheck('bad', unhealthy);
-    await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 2,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.5,
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 2,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.5,
+      }),
+    );
     const ev = e.getEvents().find((x) => x.type === 'batch_failed');
     expect(ev).toBeDefined();
     // `threshold * 100` renders "50" (mutant `*`->`/` would render "0.005").
@@ -877,13 +1083,23 @@ describe('rollingupgrade rollback of in-flight draining nodes', () => {
       },
     });
     e.registerHealthCheck('ok', healthy);
-    await e.execute(makePlan({
-      nodes: ['a'],
-      batchSize: 1,
-      healthCheckNames: ['ok'],
-      rollbackTrigger: 'manual_only',
-      drain: { timeoutMs: 1000, waitForInflight: true, connectionDrainMs: 5000 },
-    })).catch((err) => { void err; });
+    await e
+      .execute(
+        makePlan({
+          nodes: ['a'],
+          batchSize: 1,
+          healthCheckNames: ['ok'],
+          rollbackTrigger: 'manual_only',
+          drain: {
+            timeoutMs: 1000,
+            waitForInflight: true,
+            connectionDrainMs: 5000,
+          },
+        }),
+      )
+      .catch((err) => {
+        void err;
+      });
 
     const nodeBefore = e.getBatches()[0]!.nodes[0]!;
     expect(nodeBefore.status).toBe('draining');
@@ -902,23 +1118,32 @@ describe('rollingupgrade rollback excludes failed nodes', () => {
     // leaving 'a' failed and 'b'/'c' completed.
     e.registerHealthCheck('mixed', async (nodeId) => {
       return nodeId === 'a'
-        ? { healthy: false, nodes: [{ healthy: false, details: {}, checkedAt: Date.now() }], evaluatedAt: Date.now() }
+        ? {
+            healthy: false,
+            nodes: [{ healthy: false, details: {}, checkedAt: Date.now() }],
+            evaluatedAt: Date.now(),
+          }
         : { healthy: true, nodes: [], evaluatedAt: Date.now() };
     });
-    await e.execute(makePlan({
-      nodes: ['a', 'b', 'c'],
-      batchSize: 3,
-      healthCheckNames: ['mixed'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.5,
-    }));
+    await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c'],
+        batchSize: 3,
+        healthCheckNames: ['mixed'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.5,
+      }),
+    );
 
     // Manual rollback must roll back only the two completed nodes; the failed
     // node stays failed and is NOT counted (exercises _rollbackNode's `return
     // false` for non-in-flight nodes — the event's rolledBackNodes comes from
     // the local counter, which the mutant `return true` would inflate to 3).
     await e.rollback();
-    const statuses = e.getBatches()[0]!.nodes.map((n) => n.status).sort();
+    const statuses = e
+      .getBatches()[0]!
+      .nodes.map((n) => n.status)
+      .sort();
     expect(statuses).toEqual(['failed', 'rolled_back', 'rolled_back']);
     const ev = e.getEvents().find((x) => x.type === 'rollback_completed');
     expect(ev).toBeDefined();
@@ -935,13 +1160,15 @@ describe('rollingupgrade multi-batch threshold control flow', () => {
       nodes: [],
       evaluatedAt: Date.now(),
     }));
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b', 'c', 'd', 'e', 'f'],
-      batchSize: 2,
-      healthCheckNames: ['sel'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.5,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd', 'e', 'f'],
+        batchSize: 2,
+        healthCheckNames: ['sel'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.5,
+      }),
+    );
     // Batch 2 breaches → on_batch_threshold triggers _rollbackAll: batch 1's
     // completed a,b are rolled back, c,d fail, and batch 3 ([e,f]) never runs.
     expect(s.phase).toBe('failed');
@@ -961,13 +1188,15 @@ describe('rollingupgrade multi-batch threshold control flow', () => {
       nodes: [],
       evaluatedAt: Date.now(),
     }));
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b', 'c', 'd', 'e', 'f'],
-      batchSize: 2,
-      healthCheckNames: ['sel'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.6,
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c', 'd', 'e', 'f'],
+        batchSize: 2,
+        healthCheckNames: ['sel'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.6,
+      }),
+    );
     expect(s.phase).toBe('completed');
     expect(s.upgradedNodes).toBe(5); // all but c
     expect(s.failedNodes).toBe(1);
@@ -988,15 +1217,20 @@ describe('rollingupgrade _handleFailure marks non-completed nodes failed', () =>
       nodes: [],
       evaluatedAt: Date.now(),
     }));
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b'],
-      batchSize: 2,
-      healthCheckNames: ['mixed'],
-      rollbackTrigger: 'manual_only',
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b'],
+        batchSize: 2,
+        healthCheckNames: ['mixed'],
+        rollbackTrigger: 'manual_only',
+      }),
+    );
     expect(s.phase).toBe('failed');
     expect(s.failedNodes).toBe(2); // both a and b
-    const statuses = e.getBatches()[0]!.nodes.map((n) => n.status).sort();
+    const statuses = e
+      .getBatches()[0]!
+      .nodes.map((n) => n.status)
+      .sort();
     expect(statuses).toEqual(['failed', 'failed']);
   });
 });
@@ -1009,22 +1243,23 @@ describe('rollingupgrade canary failure with on_batch_threshold policy', () => {
     // must stay false and no rollback may occur. The mutant `&&` → `||` would
     // wrongly roll back here.
     e.registerHealthCheck('bad', unhealthy);
-    const s = await e.execute(makePlan({
-      nodes: ['a', 'b', 'c'],
-      batchSize: 3,
-      healthCheckNames: ['bad'],
-      rollbackTrigger: 'on_batch_threshold',
-      batchFailureThreshold: 0.5,
-      canary: { fraction: 0.34, bakeTimeMs: 0, requiredChecks: ['bad'] },
-    }));
+    const s = await e.execute(
+      makePlan({
+        nodes: ['a', 'b', 'c'],
+        batchSize: 3,
+        healthCheckNames: ['bad'],
+        rollbackTrigger: 'on_batch_threshold',
+        batchFailureThreshold: 0.5,
+        canary: { fraction: 0.34, bakeTimeMs: 0, requiredChecks: ['bad'] },
+      }),
+    );
     expect(s.phase).toBe('failed');
     expect(s.rolledBackNodes).toBe(0);
     expect(s.failedNodes).toBeGreaterThanOrEqual(1);
     // Crucially, no rollback must have been triggered (the `&&`→`||` mutant
     // would emit rollback_triggered/rollback_completed events even though the
     // failed canary node itself cannot be rolled back).
-    const rbEvents = e.getEvents().filter((x) =>
-      x.type === 'rollback_triggered' || x.type === 'rollback_completed');
+    const rbEvents = e.getEvents().filter((x) => x.type === 'rollback_triggered' || x.type === 'rollback_completed');
     expect(rbEvents).toHaveLength(0);
   });
 });

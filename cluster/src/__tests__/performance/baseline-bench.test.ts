@@ -25,10 +25,7 @@ const BENCH_TIMEOUT = 300_000;
 /**
  * Run N sequential proposals on a leader, return [latencies, totalTimeMs].
  */
-async function benchSequential(
-  cluster: TestCluster,
-  n: number,
-): Promise<{ latencies: number[]; totalMs: number }> {
+async function benchSequential(cluster: TestCluster, n: number): Promise<{ latencies: number[]; totalMs: number }> {
   await cluster.start();
   const leader = await cluster.findLeader();
   const latencies: number[] = [];
@@ -64,10 +61,7 @@ describe('Performance Baseline (P)', () => {
         const { latencies, totalMs } = await benchSequential(cluster, 1_000);
         const throughput = totalMs > 0 ? (1_000 / totalMs) * 1000 : 0;
 
-        console.log(
-          `\n  [P.1] 1,000 proposals: ${totalMs}ms, ` +
-            `${throughput.toFixed(1)} ops/sec`,
-        );
+        console.log(`\n  [P.1] 1,000 proposals: ${totalMs}ms, ` + `${throughput.toFixed(1)} ops/sec`);
 
         // Minimum bar: at least 1 ops/sec on a 3-node TCP cluster
         expect(throughput).toBeGreaterThan(1);
@@ -101,9 +95,7 @@ describe('Performance Baseline (P)', () => {
         const p95 = sorted[Math.floor(0.95 * sorted.length)];
         const p99 = sorted[Math.floor(0.99 * sorted.length)];
 
-        console.log(
-          `\n  [P.2] 500 proposals: P50=${p50}ms P95=${p95}ms P99=${p99}ms`,
-        );
+        console.log(`\n  [P.2] 500 proposals: P50=${p50}ms P95=${p95}ms P99=${p99}ms`);
 
         // Actual observed: P50=5ms, P95=6ms, P99=7ms (far below thresholds)
         // Thresholds are generous for CI variance
@@ -197,10 +189,7 @@ describe('Performance Baseline (P)', () => {
           await newLeader.adapter.proposeAndWait(`recovery-${i}`);
         }
 
-        console.log(
-          `\n  [P.4] Leader ${leaderId} → ${newLeader.id}: ` +
-            `${recoveryMs}ms recovery, verified`,
-        );
+        console.log(`\n  [P.4] Leader ${leaderId} → ${newLeader.id}: ` + `${recoveryMs}ms recovery, verified`);
 
         expect(recoveryMs).toBeLessThan(30_000);
       } finally {

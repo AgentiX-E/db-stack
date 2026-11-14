@@ -353,7 +353,9 @@ describe('HAConsistencyVerifier — Unit', () => {
 
   it('verifyNewLeaderConsistency — no replicas for shard in health status', async () => {
     const consensus = createMockConsensusLayer({
-      getHealthStatus: () => [{ shardId: 's1', nodeId: 'node-1', isLeader: true, commitIndex: 42, lastLogIndex: 42, term: 3 }],
+      getHealthStatus: () => [
+        { shardId: 's1', nodeId: 'node-1', isLeader: true, commitIndex: 42, lastLogIndex: 42, term: 3 },
+      ],
     });
     const verifier = new HAConsistencyVerifier();
     const result = await verifier.verifyNewLeaderConsistency('node-1', 's0', consensus);

@@ -7,12 +7,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import {
-  IN_MEM_FACTORY,
-  GRAPH_VEC_FACTORY,
-  SQL_VEC_FACTORY,
-  ENGINE_CASES,
-} from './engineFactories.js';
+import { IN_MEM_FACTORY, GRAPH_VEC_FACTORY, SQL_VEC_FACTORY, ENGINE_CASES } from './engineFactories.js';
 
 const inMemFactory = IN_MEM_FACTORY;
 const graphVecFactory = GRAPH_VEC_FACTORY;

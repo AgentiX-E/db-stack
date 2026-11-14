@@ -31,16 +31,11 @@ import type {
   ReloadResult,
   ConfigCheckpoint,
   ConfigWatcherStats,
-} from "../interfaces/index.js";
+} from '../interfaces/index.js';
 
 // ── Schema Validator ─────────────────────────────────────────
 
-function _validateField(
-  key: string,
-  value: unknown,
-  field: SchemaField,
-  path: string = key,
-): ValidationError[] {
+function _validateField(key: string, value: unknown, field: SchemaField, path: string = key): ValidationError[] {
   const errors: ValidationError[] = [];
   const fullPath = path;
 
@@ -60,64 +55,64 @@ function _validateField(
   }
 
   // Type check
-  const actualType = Array.isArray(value) ? "array" : typeof value;
+  const actualType = Array.isArray(value) ? 'array' : typeof value;
   switch (field.type) {
-    case "string":
-      if (typeof value !== "string") {
+    case 'string':
+      if (typeof value !== 'string') {
         errors.push({
           key: fullPath,
           message: `Expected string for "${fullPath}", got ${typeof value}`,
-          expected: "string",
+          expected: 'string',
           actual: String(value),
         });
       }
       break;
-    case "number":
-      if (typeof value !== "number") {
+    case 'number':
+      if (typeof value !== 'number') {
         errors.push({
           key: fullPath,
           message: `Expected number for "${fullPath}", got ${typeof value}`,
-          expected: "number",
+          expected: 'number',
           actual: String(value),
         });
       }
       break;
-    case "integer":
-      if (typeof value !== "number" || !Number.isInteger(value)) {
+    case 'integer':
+      if (typeof value !== 'number' || !Number.isInteger(value)) {
         errors.push({
           key: fullPath,
           message: `Expected integer for "${fullPath}", got ${typeof value}`,
-          expected: "integer",
+          expected: 'integer',
           actual: String(value),
         });
       }
       break;
-    case "boolean":
-      if (typeof value !== "boolean") {
+    case 'boolean':
+      if (typeof value !== 'boolean') {
         errors.push({
           key: fullPath,
           message: `Expected boolean for "${fullPath}", got ${typeof value}`,
-          expected: "boolean",
+          expected: 'boolean',
           actual: String(value),
         });
       }
       break;
-    case "array":
+    case 'array':
       if (!Array.isArray(value)) {
         errors.push({
           key: fullPath,
           message: `Expected array for "${fullPath}", got ${typeof value}`,
-          expected: "array",
+          expected: 'array',
           actual: String(value),
         });
       }
       break;
-    case "object":
-      if (typeof value !== "object" || value === null) {
+    case 'object':
+      if (typeof value !== 'object' || value === null) {
         errors.push({
           key: fullPath,
           message: `Expected object for "${fullPath}", got ${typeof value}`,
-          expected: "object",
+          expected: 'object',
           actual: String(value),
         });
       }
@@ -126,19 +121,19 @@ function _validateField(
   if (errors.length > 0) return errors;
 
   // Enum check (string)
-  if (field.enum && typeof value === "string") {
+  if (field.enum && typeof value === 'string') {
     if (!field.enum.includes(value)) {
       errors.push({
         key: fullPath,
-        message: `"${fullPath}" must be one of [${field.enum.join(", ")}], got "${value}"`,
-        expected: field.enum.join(" | "),
+        message: `"${fullPath}" must be one of [${field.enum.join(', ')}], got "${value}"`,
+        expected: field.enum.join(' | '),
         actual: String(value),
       });
     }
   }
 
   // Range check (number/integer)
-  if (typeof value === "number" && !isNaN(value)) {
+  if (typeof value === 'number' && !isNaN(value)) {
     if (field.min !== undefined && value < field.min) {
       errors.push({
         key: fullPath,
@@ -158,7 +153,7 @@ function _validateField(
   }
 
   // Pattern check (string)
-  if (field.pattern && typeof value === "string") {
+  if (field.pattern && typeof value === 'string') {
     try {
       const re = new RegExp(field.pattern);
       if (!re.test(value)) {
@@ -175,7 +170,7 @@ function _validateField(
   }
 
   // Nested object check
-  if (field.type === "object" && field.properties) {
+  if (field.type === 'object' && field.properties) {
     const obj = value as Record<string, unknown>;
     for (const [propKey, propField] of Object.entries(field.properties)) {
       const propValue = obj[propKey];
@@ -184,7 +179,7 @@ function _validateField(
           key: `${fullPath}.${propKey}`,
           message: `Required property "${propKey}" is missing`,
           expected: propField.type,
-          actual: "undefined",
+          actual: 'undefined',
         });
       } else if (propValue !== undefined) {
         errors.push(..._validateField(propKey, propValue, propField, `${fullPath}.${propKey}`));
@@ -193,7 +188,7 @@ function _validateField(
   }
 
   // Array items check
-  if (field.type === "array" && field.items && Array.isArray(value)) {
+  if (field.type === 'array' && field.items && Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
       errors.push(..._validateField(`[${i}]`, value[i], field.items, `${fullPath}[${i}]`));
     }
@@ -204,10 +199,7 @@ function _validateField(
 
 // ── Diff Engine ──────────────────────────────────────────────
 
-function _computeDiff(
-  oldObj: Record<string, unknown>,
-  newObj: Record<string, unknown>,
-): KeyDiff[] {
+function _computeDiff(oldObj: Record<string, unknown>, newObj: Record<string, unknown>): KeyDiff[] {
   const diffs: KeyDiff[] = [];
   const allKeys = new Set([...Object.keys(oldObj), ...Object.keys(newObj)]);
 
@@ -216,26 +208,42 @@ function _computeDiff(
     const newVal = newObj[key];
 
     if (oldVal === undefined && newVal !== undefined) {
-      diffs.push({ key, op: "added", newSnapshot: newVal });
+      diffs.push({ key, op: 'added', newSnapshot: newVal });
     } else if (newVal === undefined && oldVal !== undefined) {
-      diffs.push({ key, op: "removed", oldSnapshot: oldVal });
-    } else if (typeof oldVal === "object" && typeof newVal === "object" &&
-               oldVal !== null && newVal !== null &&
-               !Array.isArray(oldVal) && !Array.isArray(newVal)) {
+      diffs.push({ key, op: 'removed', oldSnapshot: oldVal });
+    } else if (
+      typeof oldVal === 'object' &&
+      typeof newVal === 'object' &&
+      oldVal !== null &&
+      newVal !== null &&
+      !Array.isArray(oldVal) &&
+      !Array.isArray(newVal)
+    ) {
       const fieldChanges = _computeFieldChanges(
         key,
         oldVal as Record<string, unknown>,
         newVal as Record<string, unknown>,
       );
       if (fieldChanges.length > 0) {
-        diffs.push({ key, op: "changed", changes: fieldChanges, oldSnapshot: oldVal, newSnapshot: newVal });
+        diffs.push({
+          key,
+          op: 'changed',
+          changes: fieldChanges,
+          oldSnapshot: oldVal,
+          newSnapshot: newVal,
+        });
       } else {
-        diffs.push({ key, op: "unchanged" });
+        diffs.push({ key, op: 'unchanged' });
       }
     } else if (oldVal !== newVal) {
-      diffs.push({ key, op: "changed", oldSnapshot: oldVal, newSnapshot: newVal });
+      diffs.push({
+        key,
+        op: 'changed',
+        oldSnapshot: oldVal,
+        newSnapshot: newVal,
+      });
     } else {
-      diffs.push({ key, op: "unchanged" });
+      diffs.push({ key, op: 'unchanged' });
     }
   }
 
@@ -292,9 +300,9 @@ function _matchesFilter(event: ConfigChangeEvent, filter: NotificationFilter): b
 function _globMatch(pattern: string, str: string): boolean {
   // Convert glob to regex: * → .*, ? → .
   const regexStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*")
-    .replace(/\?/g, ".");
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.');
   try {
     return new RegExp(`^${regexStr}$`).test(str);
   } catch {
@@ -302,10 +310,7 @@ function _globMatch(pattern: string, str: string): boolean {
   }
 }
 
-function _eventPassesAllFilters(
-  event: ConfigChangeEvent,
-  filters: NotificationFilter[],
-): boolean {
+function _eventPassesAllFilters(event: ConfigChangeEvent, filters: NotificationFilter[]): boolean {
   if (filters.length === 0) return true;
   // Filters are OR: event passes if any filter matches
   return filters.some((f) => _matchesFilter(event, f));
@@ -341,9 +346,15 @@ export class ConfigWatcher implements IConfigWatcherV2 {
   }
 
   unwatch(key: string, handler?: ConfigChangeHandlerV2): void {
-    if (!handler) { this.handlers.delete(key); return; }
+    if (!handler) {
+      this.handlers.delete(key);
+      return;
+    }
     const hs = this.handlers.get(key);
-    if (hs) { hs.delete(handler); if (hs.size === 0) this.handlers.delete(key); }
+    if (hs) {
+      hs.delete(handler);
+      if (hs.size === 0) this.handlers.delete(key);
+    }
   }
 
   async set(key: string, value: unknown): Promise<void> {
@@ -353,8 +364,8 @@ export class ConfigWatcher implements IConfigWatcherV2 {
     this.store.set(key, value);
     this.lastChangeTimestamp = Date.now();
 
-    const event = this._buildEvent(key, oldValue, value, "programmatic", validation);
-    this._checkpoint("set");
+    const event = this._buildEvent(key, oldValue, value, 'programmatic', validation);
+    this._checkpoint('set');
 
     if (_eventPassesAllFilters(event, this.notificationFilters)) {
       this._notify(key, event);
@@ -392,7 +403,7 @@ export class ConfigWatcher implements IConfigWatcherV2 {
           key,
           message: `Required key "${key}" is missing`,
           expected: field.type,
-          actual: "undefined",
+          actual: 'undefined',
         });
       } else if (value === undefined && !isNullable && !hasDefault) {
         // Optional key with no value and no default: warn but don't block
@@ -408,7 +419,10 @@ export class ConfigWatcher implements IConfigWatcherV2 {
     // Warn about store keys not in schema
     for (const key of this.store.keys()) {
       if (!(key in this.schema)) {
-        warnings.push({ key, message: `Key "${key}" has no schema definition` });
+        warnings.push({
+          key,
+          message: `Key "${key}" has no schema definition`,
+        });
       }
     }
 
@@ -432,10 +446,10 @@ export class ConfigWatcher implements IConfigWatcherV2 {
 
   startFileWatch(options: FileWatchOptions): void {
     this.stopFileWatch();
-    const mode = options.mode || "poll";
+    const mode = options.mode || 'poll';
     const interval = options.pollIntervalMs || 5000;
 
-    if (mode === "none") return;
+    if (mode === 'none') return;
 
     this.watchState = {
       intervalId: setInterval(() => this._pollFiles(), interval),
@@ -463,16 +477,12 @@ export class ConfigWatcher implements IConfigWatcherV2 {
   // ── Atomic Reload ─────────────────────────────────────────
 
   reload(newValues: Record<string, unknown>, dryRun = false): ReloadResult {
-    return this._reloadInternal(newValues, "reload", dryRun);
+    return this._reloadInternal(newValues, 'reload', dryRun);
   }
 
   // ── Internal Reload ──────────────────────────────────────
 
-  private _reloadInternal(
-    newValues: Record<string, unknown>,
-    source: ChangeSource,
-    dryRun = false,
-  ): ReloadResult {
+  private _reloadInternal(newValues: Record<string, unknown>, source: ChangeSource, dryRun = false): ReloadResult {
     const previousSnapshot = this.snapshot();
     const validationResults: Record<string, ValidationResult> = {};
     const changedKeys: string[] = [];
@@ -542,7 +552,7 @@ export class ConfigWatcher implements IConfigWatcherV2 {
         previousSnapshot: this.snapshot(),
         validationResults: {},
         changedKeys: [],
-        failedKeys: ["no checkpoint available"],
+        failedKeys: ['no checkpoint available'],
         dryRun: false,
       };
     }
@@ -552,7 +562,7 @@ export class ConfigWatcher implements IConfigWatcherV2 {
 
     // Find the most recent non-rollback checkpoint as target
     let targetIdx = this.checkpointList.length - 1;
-    while (targetIdx >= 0 && this.checkpointList[targetIdx]!.source === "rollback") {
+    while (targetIdx >= 0 && this.checkpointList[targetIdx]!.source === 'rollback') {
       targetIdx--;
     }
 
@@ -562,7 +572,7 @@ export class ConfigWatcher implements IConfigWatcherV2 {
         previousSnapshot: this.snapshot(),
         validationResults: {},
         changedKeys: [],
-        failedKeys: ["no checkpoint available"],
+        failedKeys: ['no checkpoint available'],
         dryRun: false,
       };
     }
@@ -594,7 +604,7 @@ export class ConfigWatcher implements IConfigWatcherV2 {
       validationResults[key] = vr;
 
       if (oldValue !== value) {
-        const event = this._buildEvent(key, oldValue, value, "rollback", vr);
+        const event = this._buildEvent(key, oldValue, value, 'rollback', vr);
         if (_eventPassesAllFilters(event, this.notificationFilters)) {
           this._notify(key, event);
         }
@@ -649,7 +659,7 @@ export class ConfigWatcher implements IConfigWatcherV2 {
       totalKeys: this.store.size,
       totalWatchers,
       totalFilFilters: this.notificationFilters.length,
-      fileWatchActive: this.watchState !== null && this.watchState.options.mode !== "none",
+      fileWatchActive: this.watchState !== null && this.watchState.options.mode !== 'none',
       checkpoints: this.checkpointList.length,
       reloadCount: this.reloadCount,
       rollbackCount: this.rollbackCount,
@@ -686,7 +696,11 @@ export class ConfigWatcher implements IConfigWatcherV2 {
     const hs = this.handlers.get(key);
     if (!hs) return;
     for (const handler of hs) {
-      try { handler(event); } catch { /* isolate handler failures */ }
+      try {
+        handler(event);
+      } catch {
+        /* isolate handler failures */
+      }
     }
   }
 

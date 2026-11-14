@@ -32,7 +32,15 @@ vi.mock('../../consensus/core/RaftGroup', () => {
       public _readRows: any[] = [];
       public _applyFromEventBusResult = true;
 
-      constructor(shardId: number, config: any, replica: any, outboxManager: any, _snapshotDir?: any, pipelineConfig?: any, flexQuorum?: any) {
+      constructor(
+        shardId: number,
+        config: any,
+        replica: any,
+        outboxManager: any,
+        _snapshotDir?: any,
+        pipelineConfig?: any,
+        flexQuorum?: any,
+      ) {
         this.shardId = shardId;
         this.config = config;
         this.replica = replica;
@@ -41,37 +49,83 @@ vi.mock('../../consensus/core/RaftGroup', () => {
         mockGroups.set(shardId, this);
       }
 
-      async init(_sharedTransport?: any) { this._initCalled = true; }
-      stop() { this._stopped = true; }
-      async isLeader() { return this._leader === this.config?.id; }
-      async getLeader() { return this._leader; }
-      async getTerm() { return this._term; }
-      async getProgress() { return this._progress; }
-      async propose(_data: any) { return { index: '1', term: '1' }; }
+      async init(_sharedTransport?: any) {
+        this._initCalled = true;
+      }
+      stop() {
+        this._stopped = true;
+      }
+      async isLeader() {
+        return this._leader === this.config?.id;
+      }
+      async getLeader() {
+        return this._leader;
+      }
+      async getTerm() {
+        return this._term;
+      }
+      async getProgress() {
+        return this._progress;
+      }
+      async propose(_data: any) {
+        return { index: '1', term: '1' };
+      }
       async proposeBatch(_entries: any[]) {}
-      async read(_sql: string, _params?: any[]) { return this._readRows; }
-      isReadQuorumReached(a: number, b: number) { return { required: a, quorumMet: a <= b } as any; }
-      getLearnerCount() { return this._learnerCount; }
-      setForceLeader(enabled: boolean) { this._forceLeader = enabled; }
+      async read(_sql: string, _params?: any[]) {
+        return this._readRows;
+      }
+      isReadQuorumReached(a: number, b: number) {
+        return { required: a, quorumMet: a <= b } as any;
+      }
+      getLearnerCount() {
+        return this._learnerCount;
+      }
+      setForceLeader(enabled: boolean) {
+        this._forceLeader = enabled;
+      }
       async campaign() {}
-      getConsensusPhase() { return this._phase; }
-      async rollbackMembershipChange() { return true; }
-      async addLearner(_nodeId: string) { return true; }
-      removeLearner(_nodeId: string) { return true; }
-      async requestForLearner(fromIndex: number) { return { entries: [], snapshotAvailable: false, lastIndex: fromIndex, lastTerm: 0 }; }
+      getConsensusPhase() {
+        return this._phase;
+      }
+      async rollbackMembershipChange() {
+        return true;
+      }
+      async addLearner(_nodeId: string) {
+        return true;
+      }
+      removeLearner(_nodeId: string) {
+        return true;
+      }
+      async requestForLearner(fromIndex: number) {
+        return { entries: [], snapshotAvailable: false, lastIndex: fromIndex, lastTerm: 0 };
+      }
       updateLearnerProgress(_nodeId: string, _matchedIndex: number) {}
-      async transferLeadership(_target: string) { return { success: true, newLeader: '1', durationMs: 10 }; }
-      isLeaderTransferInProgress() { return this._transferInProgress; }
-      async getLeaderHealth() { return this._health; }
-      getPipelineDepth() { return this._pipelineDepth; }
+      async transferLeadership(_target: string) {
+        return { success: true, newLeader: '1', durationMs: 10 };
+      }
+      isLeaderTransferInProgress() {
+        return this._transferInProgress;
+      }
+      async getLeaderHealth() {
+        return this._health;
+      }
+      getPipelineDepth() {
+        return this._pipelineDepth;
+      }
       setPipelineConfig(_config: any) {}
       async forceFlush() {}
       handleRaftMessage(_msg: any) {}
-      async applyFromEventBus(_entry: any) { return this._applyFromEventBusResult; }
+      async applyFromEventBus(_entry: any) {
+        return this._applyFromEventBusResult;
+      }
       startLeaderMonitor(_intervalMs?: number) {}
       stopLeaderMonitor() {}
-      async proposeMembershipChange(_change: any) { return { success: true, phase: 'NORMAL' }; }
-      async getState() { return {}; }
+      async proposeMembershipChange(_change: any) {
+        return { success: true, phase: 'NORMAL' };
+      }
+      async getState() {
+        return {};
+      }
     },
   };
 });
@@ -82,14 +136,25 @@ vi.mock('../../consensus/opt/AdaptiveElectionTimeout', () => {
       public config: any;
       public _samples = 0;
       public _avgRtt = 0;
-      constructor(config: any) { this.config = config; }
+      constructor(config: any) {
+        this.config = config;
+      }
       start() {}
       stop() {}
       recalculate() {}
-      recordRtt(_rttMs: number) { this._samples++; this._avgRtt = 50; }
-      getSampleCount() { return this._samples; }
-      getAvgRtt() { return this._avgRtt; }
-      getCurrentTick(base: number, _tickMs: number) { return base; }
+      recordRtt(_rttMs: number) {
+        this._samples++;
+        this._avgRtt = 50;
+      }
+      getSampleCount() {
+        return this._samples;
+      }
+      getAvgRtt() {
+        return this._avgRtt;
+      }
+      getCurrentTick(base: number, _tickMs: number) {
+        return base;
+      }
     },
   };
 });

@@ -54,7 +54,7 @@ describe('Logger (OBS6)', () => {
     logger.fatal('f');
     const entries = logger.getEntries();
     expect(entries.length).toBeGreaterThanOrEqual(6);
-    const levels = entries.map(e => e.level);
+    const levels = entries.map((e) => e.level);
     expect(levels).toContain('trace');
     expect(levels).toContain('error');
     expect(levels).toContain('fatal');
@@ -99,13 +99,25 @@ class MockProbe implements IHealthProbe {
     this.componentName = id;
   }
 
-  setLiveness(r: ProbeResult) { this._liveness = r; }
-  setReadiness(r: ProbeResult) { this._readiness = r; }
-  setStartup(r: ProbeResult) { this._startup = r; }
+  setLiveness(r: ProbeResult) {
+    this._liveness = r;
+  }
+  setReadiness(r: ProbeResult) {
+    this._readiness = r;
+  }
+  setStartup(r: ProbeResult) {
+    this._startup = r;
+  }
 
-  liveness(): ProbeResult { return this._liveness; }
-  readiness(): ProbeResult { return this._readiness; }
-  startup(): ProbeResult { return this._startup; }
+  liveness(): ProbeResult {
+    return this._liveness;
+  }
+  readiness(): ProbeResult {
+    return this._readiness;
+  }
+  startup(): ProbeResult {
+    return this._startup;
+  }
 }
 
 describe('HealthOrchestrator (OBS7)', () => {

@@ -7,7 +7,7 @@
  *   - Benchmarking CDC throughput without I/O
  */
 
-import type { ICDCSink, CDCEvent } from "../interfaces/replication/ICDCSink";
+import type { ICDCSink, CDCEvent } from '../interfaces/replication/ICDCSink';
 
 export class InMemoryCDCSink implements ICDCSink {
   readonly name: string;
@@ -16,7 +16,7 @@ export class InMemoryCDCSink implements ICDCSink {
   private _connected = false;
 
   constructor(name?: string) {
-    this.name = name ?? "in-memory-cdc-sink";
+    this.name = name ?? 'in-memory-cdc-sink';
   }
 
   /** Check if the sink is connected */
@@ -34,7 +34,7 @@ export class InMemoryCDCSink implements ICDCSink {
 
   async emit(events: CDCEvent[]): Promise<void> {
     if (!this._connected) {
-      throw new Error("InMemoryCDCSink: cannot emit when disconnected");
+      throw new Error('InMemoryCDCSink: cannot emit when disconnected');
     }
     this._events.push(...events);
   }

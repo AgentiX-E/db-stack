@@ -55,7 +55,7 @@ export class DedupRing {
   constructor(config?: DedupRingConfig) {
     this.ttlMs = config?.ttlMs ?? 60_000;
     this.maxCapacity = config?.maxCapacity ?? 100_000;
-    this.nodeId = config?.nodeId ?? "anon";
+    this.nodeId = config?.nodeId ?? 'anon';
   }
 
   /**

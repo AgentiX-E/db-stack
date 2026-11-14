@@ -19,30 +19,30 @@
  */
 
 /**
- * FuzzyRegisterChecker — 允许 write→ok 后值不立即可见的一致性验证器。
+ * FuzzyRegisterChecker — a consistency checker that tolerates values not being visible the instant a write returns.
  *
- * 设计原理（与 Jepsen 标准 register 模型的区别）：
+ * Design rationale (and where it differs from the Jepsen register model):
  *
- * 标准 register 模型（WG/WGL）:
- *   write(k, v) → ok  ⇒  后续 read(k) 必须返回 v
- *   read(k) → v       ⇒  系统 state machine 中 k 的值必须是 v
+ * Standard register models (WG/WGL):
+ *   write(k, v) → ok  ⇒  any later read(k) must return v
+ *   read(k) → v       ⇒  the state machine value for k must be v
  *
- * 模糊 register 模型（本 checker）:
- *   write(k, v) → ok  ⇒  值 v 被记录在写入历史中
- *   read(k) → v       ⇒  v 必须是某个曾经被 write(k,*) 写入过的值（不能伪造）
- *   read(k) → null    ⇒  允许 read 返回 null（系统尚未 apply）
+ * Fuzzy register model (this checker):
+ *   write(k, v) → ok  ⇒  v is recorded in the write history
+ *   read(k) → v       ⇒  v must be a value previously written by write(k,*) (no fabrication)
+ *   read(k) → null    ⇒  null is allowed while the system has not applied the entry yet
  *
- * 为什么需要模糊模型：
- *   Raft 保证 committed 日志最终被 apply，但不保证 propose 返回时已经 apply。
- *   Jepsen 标准 register 模型要求立即可见性，与 Raft 的 async apply 冲突。
- *   模糊模型移除了"最新值"约束，只防止"伪造值"——这正是系统能保证的。
+ * Why the fuzzy model is needed:
+ *   Raft guarantees that committed entries are eventually applied, not that they are applied
+ *   when propose() returns. The standard Jepsen register model demands immediate visibility,
+ *   which contradicts asynchronous apply. The fuzzy model drops the "latest value" clause and
+ *   only rejects fabricated values — exactly what the system can promise.
+ * Verification algorithm (simplified WG):
+ *   1. Build the set of written values per key (write set)
+ *   2. For every read(k) → v, check v ∈ writeSeen(k) (or v === null while k was written)
+ *   3. Pass condition: every value a read returned is legitimate
  *
- * 验证算法（简化 WG）：
- *   1. 构建所有 key 的写入值集合（write set）
- *   2. 对每个 read(k) → v，检查 v ∈ writeSeen(k) 或 (v === null 且 k 被写过)
- *   3. 通过条件：所有 read 返回的值都是合法的
- *
- * 这个模型在丢失了时序信息，但捕获了"数据伪造"这个更严重的 violation。
+ * The model gives up timing information but catches the more serious violation: fabricated data.
  */
 
 export interface FuzzyCheckResult {
@@ -148,10 +148,7 @@ export class LinearizabilityChecker {
    * @param maxStates — Maximum number of states to explore (default 1_000_000)
    * @returns true if linearizable, false if violation found, 'unknown' if search bound exceeded
    */
-  static isLinearizable(
-    events: Event[],
-    maxStates: number = 1_000_000,
-  ): boolean | 'unknown' {
+  static isLinearizable(events: Event[], maxStates: number = 1_000_000): boolean | 'unknown' {
     // Step 1: Pair calls with returns
     const operations = LinearizabilityChecker.pairEvents(events);
 
@@ -165,10 +162,7 @@ export class LinearizabilityChecker {
     const used = new Array(n).fill(false);
     let stateCount = 0;
 
-    function dfs(
-      seq: Operation[],
-      state: RegisterState,
-    ): boolean {
+    function dfs(seq: Operation[], state: RegisterState): boolean {
       if (stateCount > maxStates) return false; // bound exceeded
       stateCount++;
 
@@ -199,7 +193,7 @@ export class LinearizabilityChecker {
         used[i] = true;
 
         let legal = false;
-        let newState: RegisterState = { ...state };
+        const newState: RegisterState = { ...state };
 
         if (op.call.operation === 'write') {
           // write always legal
@@ -334,12 +328,7 @@ export class OperationRecorder {
    * Record a call event in real time.
    * Returns a unique callId that must be passed to recordReturn.
    */
-  recordCall(
-    clientId: string,
-    operation: 'read' | 'write',
-    key: string,
-    value?: string,
-  ): string {
+  recordCall(clientId: string, operation: 'read' | 'write', key: string, value?: string): string {
     const callId = `${clientId}:${this.callSeq++}`;
     const now = Date.now();
 
@@ -359,12 +348,7 @@ export class OperationRecorder {
   /**
    * Record a return event matching a prior call.
    */
-  recordReturn(
-    callId: string,
-    operation: 'read' | 'write',
-    key: string,
-    value?: string,
-  ): void {
+  recordReturn(callId: string, operation: 'read' | 'write', key: string, value?: string): void {
     const now = Date.now();
     this.events.push({
       type: 'return',

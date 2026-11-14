@@ -20,7 +20,7 @@ import os from 'node:os';
 
 // ── Helpers ────────────────────────────────────────────────────
 
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Wait for a condition to become true.
@@ -105,7 +105,7 @@ describe('Joint Consensus — 3 节点集成测试', () => {
     expect(leaderCommitted).toBe(true);
 
     // 等待 follower 复制（通过心跳传播，通常 <200ms）
-    const followers = cluster.nodes.filter(n => n.id !== leader.id);
+    const followers = cluster.nodes.filter((n) => n.id !== leader.id);
     for (const f of followers) {
       let committed = false;
       for (let i = 0; i < 50; i++) {
@@ -122,7 +122,7 @@ describe('Joint Consensus — 3 节点集成测试', () => {
 
   it('AC-D1-18b: 只有 leader 可以 propose', async () => {
     const leader = await cluster.findLeader();
-    const followers = cluster.nodes.filter(n => n.id !== leader.id);
+    const followers = cluster.nodes.filter((n) => n.id !== leader.id);
 
     for (const f of followers) {
       const isLeader = await f.adapter.isLeader();
@@ -131,10 +131,8 @@ describe('Joint Consensus — 3 节点集成测试', () => {
   });
 
   it('AC-D1-18c: 日志在各个节点上一致', async () => {
-    const statuses = await Promise.all(
-      cluster.nodes.map(n => n.adapter.getStatus())
-    );
-    const commitIndices = statuses.map(s => Number(s.commit ?? 0));
+    const statuses = await Promise.all(cluster.nodes.map((n) => n.adapter.getStatus()));
+    const commitIndices = statuses.map((s) => Number(s.commit ?? 0));
     // All nodes should have similar commit indices
     const minCommit = Math.min(...commitIndices);
     const maxCommit = Math.max(...commitIndices);

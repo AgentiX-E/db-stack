@@ -18,10 +18,10 @@ import {
   type AuditSeverity,
   type AuditCategory,
   type AuditRetentionPolicy,
-} from "../interfaces/IAuditLogger.js";
-import crypto from "crypto";
-import fs from "fs";
-import path from "path";
+} from '../interfaces/IAuditLogger.js';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 // ── Constants ──────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ const MAX_BUFFER_SIZE = 100;
 const AUTO_FLUSH_INTERVAL_MS = 10_000; // 10s
 const DEFAULT_RETENTION_MAX_AGE_MS = 90 * 24 * 3600 * 1000; // 90 days
 const DEFAULT_RETENTION_MAX_EVENTS = 1_000_000;
-const GENESIS_HASH = crypto.createHash("sha256").update("audit-genesis").digest("hex");
+const GENESIS_HASH = crypto.createHash('sha256').update('audit-genesis').digest('hex');
 
 // ── AuditLogManager ─────────────────────────────────────────
 
@@ -41,12 +41,8 @@ export class AuditLogManager implements IAuditLogger {
   private logFilePath: string;
   private retention: AuditRetentionPolicy;
 
-  constructor(options?: {
-    logFilePath?: string;
-    retention?: AuditRetentionPolicy;
-    autoStart?: boolean;
-  }) {
-    this.logFilePath = options?.logFilePath ?? path.join(process.cwd(), "audit.jsonl");
+  constructor(options?: { logFilePath?: string; retention?: AuditRetentionPolicy; autoStart?: boolean }) {
+    this.logFilePath = options?.logFilePath ?? path.join(process.cwd(), 'audit.jsonl');
     this.retention = {
       maxEvents: options?.retention?.maxEvents ?? DEFAULT_RETENTION_MAX_EVENTS,
       maxAgeMs: options?.retention?.maxAgeMs ?? DEFAULT_RETENTION_MAX_AGE_MS,
@@ -60,16 +56,14 @@ export class AuditLogManager implements IAuditLogger {
 
   // ── Logging ───────────────────────────────────────────────
 
-  async log(
-    partial: Omit<AuditEvent, "id" | "seq" | "timestamp" | "hash" | "prevHash">,
-  ): Promise<AuditEvent> {
+  async log(partial: Omit<AuditEvent, 'id' | 'seq' | 'timestamp' | 'hash' | 'prevHash'>): Promise<AuditEvent> {
     const event = this._buildEvent(partial);
     this._append(event);
     return event;
   }
 
   async logBatch(
-    partials: Omit<AuditEvent, "id" | "seq" | "timestamp" | "hash" | "prevHash">[],
+    partials: Omit<AuditEvent, 'id' | 'seq' | 'timestamp' | 'hash' | 'prevHash'>[],
   ): Promise<AuditEvent[]> {
     const results: AuditEvent[] = [];
     for (const partial of partials) {
@@ -92,9 +86,7 @@ export class AuditLogManager implements IAuditLogger {
 
     // Time range
     if (q.timeRange) {
-      results = results.filter(
-        (e) => e.timestamp >= q.timeRange!.from && e.timestamp <= q.timeRange!.to,
-      );
+      results = results.filter((e) => e.timestamp >= q.timeRange!.from && e.timestamp <= q.timeRange!.to);
     }
 
     // Categories
@@ -135,16 +127,16 @@ export class AuditLogManager implements IAuditLogger {
     }
 
     // Sort
-    const sortBy = q.sortBy ?? "timestamp";
-    const sortDir = q.sortDir ?? "asc";
+    const sortBy = q.sortBy ?? 'timestamp';
+    const sortDir = q.sortDir ?? 'asc';
     results.sort((a, b) => {
-      let cmp = 0;
-      if (sortBy === "seq") cmp = a.seq - b.seq;
-      else if (sortBy === "severity") cmp = severityWeight(a.severity) - severityWeight(b.severity);
-      else if (sortBy === "category") cmp = a.category.localeCompare(b.category);
+      let cmp: number;
+      if (sortBy === 'seq') cmp = a.seq - b.seq;
+      else if (sortBy === 'severity') cmp = severityWeight(a.severity) - severityWeight(b.severity);
+      else if (sortBy === 'category') cmp = a.category.localeCompare(b.category);
       else cmp = a.timestamp - b.timestamp;
 
-      return sortDir === "desc" ? -cmp : cmp;
+      return sortDir === 'desc' ? -cmp : cmp;
     });
 
     // Pagination
@@ -167,12 +159,9 @@ export class AuditLogManager implements IAuditLogger {
     };
 
     for (const event of this.events) {
-      stats.eventsByCategory[event.category] =
-        (stats.eventsByCategory[event.category] || 0) + 1;
-      stats.eventsBySeverity[event.severity] =
-        (stats.eventsBySeverity[event.severity] || 0) + 1;
-      stats.eventsByActor[event.actor.id] =
-        (stats.eventsByActor[event.actor.id] || 0) + 1;
+      stats.eventsByCategory[event.category] = (stats.eventsByCategory[event.category] || 0) + 1;
+      stats.eventsBySeverity[event.severity] = (stats.eventsBySeverity[event.severity] || 0) + 1;
+      stats.eventsByActor[event.actor.id] = (stats.eventsByActor[event.actor.id] || 0) + 1;
       if (!event.success) stats.failedEvents++;
     }
 
@@ -195,9 +184,7 @@ export class AuditLogManager implements IAuditLogger {
 
       // Chain check
       if (event.prevHash !== prevHash) {
-        errors.push(
-          `chain broken at seq ${event.seq}: prevHash mismatch`,
-        );
+        errors.push(`chain broken at seq ${event.seq}: prevHash mismatch`);
       }
 
       // Hash check
@@ -216,7 +203,7 @@ export class AuditLogManager implements IAuditLogger {
 
   async exportJSONL(query?: AuditQuery): Promise<string> {
     const events = query ? await this.query(query) : this.events;
-    return events.map((e) => JSON.stringify(e)).join("\n");
+    return events.map((e) => JSON.stringify(e)).join('\n');
   }
 
   // ── Pruning ───────────────────────────────────────────────
@@ -249,8 +236,8 @@ export class AuditLogManager implements IAuditLogger {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    const lines = this.buffer.map((e) => JSON.stringify(e)).join("\n") + "\n";
-    fs.appendFileSync(this.logFilePath, lines, "utf-8");
+    const lines = this.buffer.map((e) => JSON.stringify(e)).join('\n') + '\n';
+    fs.appendFileSync(this.logFilePath, lines, 'utf-8');
     this.buffer = [];
 
     // Auto-prune after flush
@@ -287,14 +274,9 @@ export class AuditLogManager implements IAuditLogger {
 
   // ── Internal ─────────────────────────────────────────────
 
-  private _buildEvent(
-    partial: Omit<AuditEvent, "id" | "seq" | "timestamp" | "hash" | "prevHash">,
-  ): AuditEvent {
+  private _buildEvent(partial: Omit<AuditEvent, 'id' | 'seq' | 'timestamp' | 'hash' | 'prevHash'>): AuditEvent {
     this.seqCounter++;
-    const prevHash: string =
-      this.events.length > 0
-        ? (this.events[this.events.length - 1]!.hash ?? "")
-        : GENESIS_HASH;
+    const prevHash: string = this.events.length > 0 ? (this.events[this.events.length - 1]!.hash ?? '') : GENESIS_HASH;
 
     const event: AuditEvent = {
       ...partial,
@@ -328,7 +310,7 @@ export class AuditLogManager implements IAuditLogger {
     }
   }
 
-  private _computeHash(event: Omit<AuditEvent, "hash">): string {
+  private _computeHash(event: Omit<AuditEvent, 'hash'>): string {
     const content = JSON.stringify({
       id: event.id,
       seq: event.seq,
@@ -344,7 +326,7 @@ export class AuditLogManager implements IAuditLogger {
       metadata: event.metadata,
       prevHash: event.prevHash,
     });
-    return crypto.createHash("sha256").update(content, "utf-8").digest("hex");
+    return crypto.createHash('sha256').update(content, 'utf-8').digest('hex');
   }
 
   private _startAutoFlush(): void {
@@ -359,11 +341,17 @@ export class AuditLogManager implements IAuditLogger {
 
 function severityWeight(s: AuditSeverity): number {
   switch (s) {
-    case "debug": return 0;
-    case "info": return 1;
-    case "warning": return 2;
-    case "error": return 3;
-    case "critical": return 4;
-    default: return -1;
+    case 'debug':
+      return 0;
+    case 'info':
+      return 1;
+    case 'warning':
+      return 2;
+    case 'error':
+      return 3;
+    case 'critical':
+      return 4;
+    default:
+      return -1;
   }
 }

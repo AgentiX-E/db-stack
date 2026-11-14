@@ -546,7 +546,12 @@ export class ChaosCluster {
 /**
  * Wait for stability: no leader changes for N consecutive checks.
  */
-export async function waitForStability(cluster: ChaosCluster, checks: number = 3, intervalMs: number = 1000, timeoutMs?: number): Promise<void> {
+export async function waitForStability(
+  cluster: ChaosCluster,
+  checks: number = 3,
+  intervalMs: number = 1000,
+  timeoutMs?: number,
+): Promise<void> {
   let stableCount = 0;
   let lastLeader: number | null = null;
   const deadline = timeoutMs ? Date.now() + timeoutMs : Infinity;

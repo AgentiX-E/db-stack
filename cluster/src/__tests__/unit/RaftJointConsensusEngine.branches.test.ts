@@ -49,10 +49,20 @@ function createMockRaftGroup() {
 
 function createMockConsensusLayer(): IConsensusLayer {
   return {
-    start: vi.fn(), stop: vi.fn(), propose: vi.fn(), isLeader: vi.fn(),
-    getLeader: vi.fn(), getCommitIndex: vi.fn(), registerShard: vi.fn(),
-    removeShard: vi.fn(), notifyTopologyChange: vi.fn(), getHealthStatus: vi.fn(),
-    campaign: vi.fn(), on: vi.fn(), off: vi.fn(), setForceLeader: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(),
+    propose: vi.fn(),
+    isLeader: vi.fn(),
+    getLeader: vi.fn(),
+    getCommitIndex: vi.fn(),
+    registerShard: vi.fn(),
+    removeShard: vi.fn(),
+    notifyTopologyChange: vi.fn(),
+    getHealthStatus: vi.fn(),
+    campaign: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    setForceLeader: vi.fn(),
   } as any;
 }
 
@@ -70,7 +80,9 @@ describe('RaftJointConsensusEngine — branch completion', () => {
       // getCurrentMembership -> null, getLeader throws → logger.debug path.
       const group = createMockRaftGroup();
       group.getCurrentMembership = vi.fn(() => null);
-      group.getLeader = vi.fn(async () => { throw new Error('no leader'); });
+      group.getLeader = vi.fn(async () => {
+        throw new Error('no leader');
+      });
 
       // A second group supplies membership so peers resolve.
       const groupB = createMockRaftGroup();
@@ -160,7 +172,9 @@ describe('RaftJointConsensusEngine — branch completion', () => {
       // First transitionTo stalls inside _getCurrentPeers (getLeader never resolves)
       // so _lock is true but _state is still null. Second call hits the lock branch.
       let resolveLeader: (v: string | null) => void;
-      const leaderGate = new Promise<string | null>((r) => { resolveLeader = r; });
+      const leaderGate = new Promise<string | null>((r) => {
+        resolveLeader = r;
+      });
 
       const group = createMockRaftGroup();
       group.getCurrentMembership = vi.fn(() => null);

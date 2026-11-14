@@ -12,8 +12,8 @@
  *   - Constant-time decryption: verifies tag before plaintext release
  */
 
-import crypto from "crypto";
-import type { IEncryptionManager, EncryptionConfig } from "../interfaces/index.js";
+import crypto from 'crypto';
+import type { IEncryptionManager, EncryptionConfig } from '../interfaces/index.js';
 
 // ── Constants ──────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
     const iv = crypto.randomBytes(IV_LENGTH);
     const aad = this._buildAAD(context);
 
-    const cipher = crypto.createCipheriv("aes-256-gcm", this.masterKey, iv, {
+    const cipher = crypto.createCipheriv('aes-256-gcm', this.masterKey, iv, {
       authTagLength: TAG_LENGTH,
     });
 
@@ -66,10 +66,7 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
       cipher.setAAD(aad);
     }
 
-    const encrypted = Buffer.concat([
-      cipher.update(plaintext),
-      cipher.final(),
-    ]);
+    const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     const authTag = cipher.getAuthTag();
 
     // Assemble: [version(4B BE)] [IV(12B)] [ciphertext] [authTag(16B)]
@@ -111,7 +108,7 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
     const aad = this._buildAAD(context);
 
     try {
-      const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv, {
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, {
         authTagLength: TAG_LENGTH,
       });
 
@@ -122,9 +119,7 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
 
       return Buffer.concat([decipher.update(encrypted), decipher.final()]);
     } catch (error) {
-      throw new Error(
-        `AES256GCM: decryption failed — tag mismatch or corrupted data: ${String(error)}`,
-      );
+      throw new Error(`AES256GCM: decryption failed — tag mismatch or corrupted data: ${String(error)}`);
     }
   }
 
@@ -163,12 +158,12 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
 
   private _buildAAD(context?: string): Buffer | undefined {
     if (!context) return undefined;
-    return Buffer.from(context, "utf-8");
+    return Buffer.from(context, 'utf-8');
   }
 
   private _ensureInitialized(): void {
     if (!this.enabled || !this.masterKey || this.masterKey.length === 0) {
-      throw new Error("AES256GCM: not initialized. Call initialize() first.");
+      throw new Error('AES256GCM: not initialized. Call initialize() first.');
     }
   }
 }

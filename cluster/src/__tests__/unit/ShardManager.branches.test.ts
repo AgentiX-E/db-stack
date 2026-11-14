@@ -127,7 +127,7 @@ describe('ShardManager — branch completion', () => {
   describe('nullish-coalescing default error fallbacks', () => {
     it('rebalance falls back to a default error when strategy omits error', async () => {
       const mock = failingStrategy();
-      mock.computeAssignments = vi.fn(async () => ({ success: false } as any));
+      mock.computeAssignments = vi.fn(async () => ({ success: false }) as any);
       await manager.initialize(mock);
       await manager.assignShard('s0', ['n1']);
 
@@ -138,7 +138,7 @@ describe('ShardManager — branch completion', () => {
 
     it('addNode falls back to a default error when strategy omits error', async () => {
       const mock = failingStrategy();
-      mock.onNodeAdded = vi.fn(async () => ({ success: false } as any));
+      mock.onNodeAdded = vi.fn(async () => ({ success: false }) as any);
       await manager.initialize(mock);
       await manager.assignShard('s0', ['n1']);
 
@@ -149,7 +149,7 @@ describe('ShardManager — branch completion', () => {
 
     it('removeNode falls back to a default error when strategy omits error', async () => {
       const mock = failingStrategy();
-      mock.onNodeRemoved = vi.fn(async () => ({ success: false } as any));
+      mock.onNodeRemoved = vi.fn(async () => ({ success: false }) as any);
       await manager.initialize(mock);
       await manager.assignShard('s0', ['n1', 'n2']);
 

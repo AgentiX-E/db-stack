@@ -35,7 +35,7 @@ export interface YCSBTarget<T> {
 
 function computeLatencyStats(sortedLatencies: number[]): LatencyStats {
   if (sortedLatencies.length === 0) return { p50: 0, p95: 0, p99: 0, max: 0 };
-  const p50Index = Math.floor(sortedLatencies.length * 0.50);
+  const p50Index = Math.floor(sortedLatencies.length * 0.5);
   const p95Index = Math.floor(sortedLatencies.length * 0.95);
   const p99Index = Math.floor(sortedLatencies.length * 0.99);
   const last = sortedLatencies[sortedLatencies.length - 1];
@@ -80,9 +80,12 @@ type DistributionGenerator = Generator<number>;
 
 function createDistribution(type: 'uniform' | 'zipfian' | 'latest', seed: number): DistributionGenerator {
   switch (type) {
-    case 'uniform': return uniformGenerator(seed);
-    case 'zipfian': return zipfianGenerator(0.99, seed);
-    case 'latest': return latestGenerator(seed);
+    case 'uniform':
+      return uniformGenerator(seed);
+    case 'zipfian':
+      return zipfianGenerator(0.99, seed);
+    case 'latest':
+      return latestGenerator(seed);
   }
 }
 
@@ -106,8 +109,7 @@ export class YCSBExecutor<T = string> {
     const cooldownCut = Math.floor(measureOps.length * 0.1);
     const trimmedOps = measureOps.slice(cooldownCut, measureOps.length - cooldownCut);
 
-    const { readLatencies, updateLatencies, errorCount, durationMs } =
-      await this.executeBatch(target, trimmedOps);
+    const { readLatencies, updateLatencies, errorCount, durationMs } = await this.executeBatch(target, trimmedOps);
 
     const readSorted = [...readLatencies].sort((a, b) => a - b);
     const updateSorted = [...updateLatencies].sort((a, b) => a - b);
@@ -144,25 +146,49 @@ export class YCSBExecutor<T = string> {
     return result as unknown as T;
   }
 
-  private generateOperations(): Array<{ type: 'read' | 'update' | 'insert' | 'scan' | 'readModifyWrite'; key: string }> {
-    const { operationCount, recordCount, readProportion, updateProportion, insertProportion, scanProportion, readModifyWriteProportion, requestDistribution } = this.config;
+  private generateOperations(): Array<{
+    type: 'read' | 'update' | 'insert' | 'scan' | 'readModifyWrite';
+    key: string;
+  }> {
+    const {
+      operationCount,
+      recordCount,
+      readProportion,
+      updateProportion,
+      insertProportion,
+      scanProportion,
+      readModifyWriteProportion,
+      requestDistribution,
+    } = this.config;
     const dist = createDistribution(requestDistribution, 42);
     const typeDist = uniformGenerator(12345);
-    const ops: Array<{ type: 'read' | 'update' | 'insert' | 'scan' | 'readModifyWrite'; key: string }> = [];
+    const ops: Array<{
+      type: 'read' | 'update' | 'insert' | 'scan' | 'readModifyWrite';
+      key: string;
+    }> = [];
     let insertCounter = recordCount;
 
     for (let i = 0; i < operationCount; i++) {
       const u = typeDist.next().value ?? 0.5;
       if (u < readProportion) {
-        ops.push({ type: 'read', key: `user${Math.floor((dist.next().value ?? 0.5) * recordCount)}` });
+        ops.push({
+          type: 'read',
+          key: `user${Math.floor((dist.next().value ?? 0.5) * recordCount)}`,
+        });
       } else if (u < readProportion + updateProportion) {
-        ops.push({ type: 'update', key: `user${Math.floor((dist.next().value ?? 0.5) * recordCount)}` });
+        ops.push({
+          type: 'update',
+          key: `user${Math.floor((dist.next().value ?? 0.5) * recordCount)}`,
+        });
       } else if (u < readProportion + updateProportion + insertProportion) {
         ops.push({ type: 'insert', key: `user${insertCounter++}` });
       } else if (u < readProportion + updateProportion + insertProportion + scanProportion) {
         ops.push({ type: 'scan', key: `scan-${i}` });
       } else {
-        ops.push({ type: 'readModifyWrite', key: `user${Math.floor((dist.next().value ?? 0.5) * recordCount)}` });
+        ops.push({
+          type: 'readModifyWrite',
+          key: `user${Math.floor((dist.next().value ?? 0.5) * recordCount)}`,
+        });
       }
     }
 
@@ -172,7 +198,12 @@ export class YCSBExecutor<T = string> {
   private async executeBatch(
     target: YCSBTarget<T>,
     operations: Array<{ type: string; key: string }>,
-  ): Promise<{ readLatencies: number[]; updateLatencies: number[]; errorCount: number; durationMs: number }> {
+  ): Promise<{
+    readLatencies: number[];
+    updateLatencies: number[];
+    errorCount: number;
+    durationMs: number;
+  }> {
     const readLatencies: number[] = [];
     const updateLatencies: number[] = [];
     let errorCount = 0;
@@ -219,6 +250,11 @@ export class YCSBExecutor<T = string> {
       }
     }
 
-    return { readLatencies, updateLatencies, errorCount, durationMs: Date.now() - start };
+    return {
+      readLatencies,
+      updateLatencies,
+      errorCount,
+      durationMs: Date.now() - start,
+    };
   }
 }

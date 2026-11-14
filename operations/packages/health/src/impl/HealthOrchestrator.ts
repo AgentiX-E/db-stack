@@ -13,11 +13,7 @@
 
 import type { IHealthOrchestrator } from '../interfaces/IHealthOrchestrator.js';
 import type { IHealthProbe } from '../interfaces/IHealthProbe.js';
-import type {
-  ComponentHealth,
-  ComponentRegistrationOptions,
-  HealthStatus,
-} from '@agentix-e/db-operations-core/types';
+import type { ComponentHealth, ComponentRegistrationOptions, HealthStatus } from '@agentix-e/db-operations-core/types';
 import { componentProbe } from './ComponentProbe.js';
 
 interface ProbeEntry {
@@ -37,10 +33,7 @@ export class HealthOrchestrator implements IHealthOrchestrator {
 
   // ── Component Registration ─────────────────────────────────
 
-  registerComponent(
-    probe: IHealthProbe,
-    options?: ComponentRegistrationOptions,
-  ): void {
+  registerComponent(probe: IHealthProbe, options?: ComponentRegistrationOptions): void {
     this._probes.set(probe.probeId, {
       probe,
       registeredAt: Date.now(),
@@ -53,9 +46,21 @@ export class HealthOrchestrator implements IHealthOrchestrator {
     probeId: string,
     componentName: string,
     checks: {
-      liveness: () => { ok: boolean; message?: string; details?: Record<string, unknown> };
-      readiness?: () => { ok: boolean; message?: string; details?: Record<string, unknown> };
-      startup?: () => { ok: boolean; message?: string; details?: Record<string, unknown> };
+      liveness: () => {
+        ok: boolean;
+        message?: string;
+        details?: Record<string, unknown>;
+      };
+      readiness?: () => {
+        ok: boolean;
+        message?: string;
+        details?: Record<string, unknown>;
+      };
+      startup?: () => {
+        ok: boolean;
+        message?: string;
+        details?: Record<string, unknown>;
+      };
     },
     options?: ComponentRegistrationOptions,
   ): void {
@@ -155,7 +160,7 @@ export class HealthOrchestrator implements IHealthOrchestrator {
       const livenessResult = this._safeProbe(entry.probe.liveness);
       const readinessResult = this._safeProbe(entry.probe.readiness);
       const elapsedMs = Date.now() - entry.registeredAt;
-    const componentUptimeS = Math.trunc(elapsedMs / 1000);
+      const componentUptimeS = Math.trunc(elapsedMs / 1000);
       results.push({
         componentId: entry.probe.probeId,
         componentName: entry.probe.componentName,
@@ -168,15 +173,16 @@ export class HealthOrchestrator implements IHealthOrchestrator {
     return results;
   }
 
-  getAggregateStatus(): { status: 'healthy' | 'degraded' | 'unhealthy'; count: number } {
+  getAggregateStatus(): {
+    status: 'healthy' | 'degraded' | 'unhealthy';
+    count: number;
+  } {
     const components = this.getComponentHealth();
     const total = components.length;
     if (total === 0) return { status: 'healthy', count: 0 };
 
-    const healthy = components.filter(
-      c => c.liveness.ok && c.readiness.ok,
-    ).length;
-    const allUnhealthy = components.every(c => !(c.liveness.ok || c.readiness.ok));
+    const healthy = components.filter((c) => c.liveness.ok && c.readiness.ok).length;
+    const allUnhealthy = components.every((c) => !(c.liveness.ok || c.readiness.ok));
 
     if (allUnhealthy) return { status: 'unhealthy', count: total };
     if (healthy === total) return { status: 'healthy', count: total };
@@ -186,16 +192,13 @@ export class HealthOrchestrator implements IHealthOrchestrator {
   getHealthStatus(): HealthStatus {
     const components = this.getComponentHealth();
     const total = components.length;
-    const healthy = components.filter(c => c.liveness.ok && c.readiness.ok).length;
-    const allUnhealthy = total > 0 && components.every(c => !(c.liveness.ok || c.readiness.ok));
+    const healthy = components.filter((c) => c.liveness.ok && c.readiness.ok).length;
+    const allUnhealthy = total > 0 && components.every((c) => !(c.liveness.ok || c.readiness.ok));
 
     const status: 'healthy' | 'degraded' | 'unhealthy' =
-      total === 0 ? 'healthy'
-        : allUnhealthy ? 'unhealthy'
-          : healthy === total ? 'healthy'
-            : 'degraded';
+      total === 0 ? 'healthy' : allUnhealthy ? 'unhealthy' : healthy === total ? 'healthy' : 'degraded';
 
-    const errored = components.find(c => c.lastError !== null);
+    const errored = components.find((c) => c.lastError !== null);
     const lastError = errored ? errored.lastError : null;
     const systemElapsedMs = Date.now() - this._startTime;
     const systemUptimeS = Math.trunc(systemElapsedMs / 1000);
@@ -211,7 +214,7 @@ export class HealthOrchestrator implements IHealthOrchestrator {
   getSummary(): string {
     const status = this.getHealthStatus();
     const total = status.components.length;
-    const healthy = status.components.filter(c => c.liveness.ok && c.readiness.ok).length;
+    const healthy = status.components.filter((c) => c.liveness.ok && c.readiness.ok).length;
     const failing = total - healthy;
 
     return [
@@ -227,7 +230,13 @@ export class HealthOrchestrator implements IHealthOrchestrator {
 
   // ── Private ────────────────────────────────────────────────
 
-  private _safeProbe(fn: () => { ok: boolean; message?: string; details?: Record<string, unknown> }): {
+  private _safeProbe(
+    fn: () => {
+      ok: boolean;
+      message?: string;
+      details?: Record<string, unknown>;
+    },
+  ): {
     ok: boolean;
     message?: string;
     details?: Record<string, unknown>;
@@ -235,7 +244,10 @@ export class HealthOrchestrator implements IHealthOrchestrator {
     try {
       return fn();
     } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 }

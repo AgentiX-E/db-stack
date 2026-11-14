@@ -9,14 +9,14 @@
 
 /** Recurrence mode for a maintenance window. */
 export type RecurrenceMode =
-  | "once"          // One-shot window
-  | "daily"         // Every day at specified time
-  | "weekly"        // Specific days of week
-  | "monthly"       // Specific day(s) of month
-  | "cron";         // Raw cron expression
+  | 'once' // One-shot window
+  | 'daily' // Every day at specified time
+  | 'weekly' // Specific days of week
+  | 'monthly' // Specific day(s) of month
+  | 'cron'; // Raw cron expression
 
 /** Weekly day selectors. */
-export type DayOfWeek = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+export type DayOfWeek = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
 /** A single maintenance window definition. */
 export interface MaintenanceWindow {
@@ -60,14 +60,14 @@ export interface MaintenanceWindow {
 
 /** Lifecycle state of a maintenance window instance. */
 export type WindowState =
-  | "pending"         // Awaiting approval
-  | "approved"        // Approved, not yet active
-  | "scheduled"       // Scheduled for a specific slot
-  | "in_progress"     // Currently executing
-  | "completed"       // Finished successfully
-  | "failed"          // Failed during execution
-  | "cancelled"       // Cancelled before execution
-  | "force_override";  // Executed via emergency override
+  | 'pending' // Awaiting approval
+  | 'approved' // Approved, not yet active
+  | 'scheduled' // Scheduled for a specific slot
+  | 'in_progress' // Currently executing
+  | 'completed' // Finished successfully
+  | 'failed' // Failed during execution
+  | 'cancelled' // Cancelled before execution
+  | 'force_override'; // Executed via emergency override
 
 /** A concrete instance of a window scheduled at a specific time. */
 export interface WindowInstance {
@@ -104,7 +104,7 @@ export interface WindowConflict {
   /** Overlap description. */
   description: string;
   /** Resolution recommendation. */
-  recommendation: "defer" | "override" | "split" | "coexist";
+  recommendation: 'defer' | 'override' | 'split' | 'coexist';
 }
 
 // ── Schedule ────────────────────────────────────────────────
@@ -180,7 +180,7 @@ export interface IMaintenanceScheduler {
   detectConflicts(fromMs: number, toMs: number): WindowConflict[];
 
   /** Resolve a conflict by deferring the lower-priority window. */
-  resolveConflict(conflict: WindowConflict, strategy: "defer_lower" | "defer_newer" | "allow_both"): void;
+  resolveConflict(conflict: WindowConflict, strategy: 'defer_lower' | 'defer_newer' | 'allow_both'): void;
 
   /** Get the lifecycle state of an instance. */
   getInstanceState(instanceId: string): WindowInstance | null;

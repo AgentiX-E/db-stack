@@ -18,28 +18,38 @@
  * break downstream autoscaling logic.
  */
 
-import { describe, it, expect } from "vitest";
-import { InMemoryAutoScaler } from "../impl/InMemoryAutoScaler.js";
+import { describe, it, expect } from 'vitest';
+import { InMemoryAutoScaler } from '../impl/InMemoryAutoScaler.js';
 
-describe("IAS-branch: scale-up amount || 1 fallback", () => {
-  it("coerces a NaN amount back to 1 when scaleUpThreshold is NaN", async () => {
+describe('IAS-branch: scale-up amount || 1 fallback', () => {
+  it('coerces a NaN amount back to 1 when scaleUpThreshold is NaN', async () => {
     const scaler = new InMemoryAutoScaler();
     // NaN threshold makes every `cpu > threshold` comparison false, so the
     // scale_up branch is entered through the `qps >= 10000` disjunct instead.
     scaler.configure(1, 10, NaN, 0.2);
 
-    const result = await scaler.evaluate({ cpu: 0.3, qps: 15000, latency: 50, connectionCount: 5 });
+    const result = await scaler.evaluate({
+      cpu: 0.3,
+      qps: 15000,
+      latency: 50,
+      connectionCount: 5,
+    });
 
     expect(result).not.toBeNull();
-    expect(result!.action).toBe("scale_up");
+    expect(result!.action).toBe('scale_up');
     // Math.ceil((0.3 + NaN) * 10) === NaN; NaN || 1 === 1.
     expect(result!.amount).toBe(1);
     expect(Number.isFinite(result!.amount)).toBe(true);
   });
 
-  it("keeps a normal positive amount intact (no spurious fallback)", async () => {
+  it('keeps a normal positive amount intact (no spurious fallback)', async () => {
     const scaler = new InMemoryAutoScaler();
-    const result = await scaler.evaluate({ cpu: 0.9, qps: 1000, latency: 50, connectionCount: 5 });
+    const result = await scaler.evaluate({
+      cpu: 0.9,
+      qps: 1000,
+      latency: 50,
+      connectionCount: 5,
+    });
 
     // (0.9 + 0.8) * 10 = 17 → ceil = 17, which is truthy, so `|| 1` is a no-op.
     expect(result!.amount).toBe(17);

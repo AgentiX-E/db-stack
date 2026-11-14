@@ -209,7 +209,9 @@ describe('RaftGroup — joint consensus, learner, and query completion', () => {
     });
 
     it('transitions to C_NEW when C_JOINT commits (multi-node, progress advances)', async () => {
-      mockRaftAdapter.propose.mockResolvedValueOnce({ index: '10', term: '1' }).mockResolvedValueOnce({ index: '11', term: '1' });
+      mockRaftAdapter.propose
+        .mockResolvedValueOnce({ index: '10', term: '1' })
+        .mockResolvedValueOnce({ index: '11', term: '1' });
       mockRaftAdapter.getProgress.mockResolvedValue({ commit: 10, applied: 10, lastLog: 10 });
       const result = await group.proposeMembershipChange({
         changeId: 'c3',

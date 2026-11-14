@@ -208,7 +208,10 @@ describe('MetricsRegistry', () => {
       expect(snapshot.points[0].name).toBe('http_requests');
       expect(snapshot.points[0].type).toBe('counter');
       expect(snapshot.points[0].value).toBe(10);
-      expect(snapshot.points[0].labels).toContainEqual({ key: 'method', value: 'GET' });
+      expect(snapshot.points[0].labels).toContainEqual({
+        key: 'method',
+        value: 'GET',
+      });
     });
 
     it('snapshot() returns correct MetricPoints for gauges', () => {
@@ -217,8 +220,8 @@ describe('MetricsRegistry', () => {
       g.set(75.5);
 
       const snapshot = registry.snapshot();
-      const gaugePoints = snapshot.points.filter(p => p.type === 'gauge');
-      const cpuPoint = gaugePoints.find(p => p.name === 'cpu_usage');
+      const gaugePoints = snapshot.points.filter((p) => p.type === 'gauge');
+      const cpuPoint = gaugePoints.find((p) => p.name === 'cpu_usage');
       expect(cpuPoint).toBeDefined();
       expect(cpuPoint!.value).toBe(75.5);
     });
@@ -230,12 +233,12 @@ describe('MetricsRegistry', () => {
       h.observe(200);
 
       const snapshot = registry.snapshot();
-      const names = snapshot.points.map(p => p.name);
+      const names = snapshot.points.map((p) => p.name);
       expect(names).toContain('latency_ms_count');
       expect(names).toContain('latency_ms_sum');
 
-      const countPoint = snapshot.points.find(p => p.name === 'latency_ms_count')!;
-      const sumPoint = snapshot.points.find(p => p.name === 'latency_ms_sum')!;
+      const countPoint = snapshot.points.find((p) => p.name === 'latency_ms_count')!;
+      const sumPoint = snapshot.points.find((p) => p.name === 'latency_ms_sum')!;
       expect(countPoint.value).toBe(2);
       expect(sumPoint.value).toBe(300);
     });

@@ -691,34 +691,27 @@ export class HAFailoverCoordinator {
    * Falls back to campaign-based election if direct transfer is unavailable.
    */
   private async executeTransfer(shardId: string, targetNodeId: string): Promise<boolean> {
-    try {
-      // Notify consensus layer of the transfer request
-      const topologyChange: TopologyChange = {
-        type: 'leader_changed',
-        nodeId: targetNodeId,
-        shardId,
-        timestamp: Date.now(),
-      };
-      await this.consensusLayer.notifyTopologyChange(topologyChange);
+    // Notify consensus layer of the transfer request
+    const topologyChange: TopologyChange = {
+      type: 'leader_changed',
+      nodeId: targetNodeId,
+      shardId,
+      timestamp: Date.now(),
+    };
+    await this.consensusLayer.notifyTopologyChange(topologyChange);
 
-      // Wait briefly for the transfer to take effect (leader change)
-      await this.sleep(500);
+    // Wait briefly for the transfer to take effect (leader change)
+    await this.sleep(500);
 
-      // Verify the new leader is actually the target
-      const newLeader = await this.consensusLayer.getLeader(shardId);
-      if (newLeader === targetNodeId) {
-        logger.info({ shardId, newLeader: targetNodeId }, 'Leadership transferred successfully');
-        return true;
-      }
-
-      logger.warn(
-        { shardId, targetNodeId, actualLeader: newLeader },
-        'Transfer completed but target is not the leader',
-      );
-      return false;
-    } catch (err) {
-      throw err;
+    // Verify the new leader is actually the target
+    const newLeader = await this.consensusLayer.getLeader(shardId);
+    if (newLeader === targetNodeId) {
+      logger.info({ shardId, newLeader: targetNodeId }, 'Leadership transferred successfully');
+      return true;
     }
+
+    logger.warn({ shardId, targetNodeId, actualLeader: newLeader }, 'Transfer completed but target is not the leader');
+    return false;
   }
 
   /**

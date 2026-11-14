@@ -65,7 +65,12 @@ class MockTopology {
 
 /** Real TopologyManager from the federation package for benchmark routing */
 function createRouterWithPeers(count: number): FederationQueryRouter {
-  const peers: Array<{ nodeId: string; host: string; port: number; dc: string }> = [];
+  const peers: Array<{
+    nodeId: string;
+    host: string;
+    port: number;
+    dc: string;
+  }> = [];
   for (let i = 0; i < count; i++) {
     peers.push({
       nodeId: `node-${i}`,
@@ -89,19 +94,12 @@ function bench(label: string, fn: () => void, limitNs: number): void {
     const start = process.hrtime.bigint();
     fn();
     const elapsed = Number(process.hrtime.bigint() - start);
-    process.stdout.write(
-      `\n  [${label}] ${(elapsed / 1e6).toFixed(3)}ms (${elapsed}ns, limit=${limitNs}ns)`,
-    );
+    process.stdout.write(`\n  [${label}] ${(elapsed / 1e6).toFixed(3)}ms (${elapsed}ns, limit=${limitNs}ns)`);
     expect(elapsed).toBeLessThan(limitNs);
   });
 }
 
-function benchThroughput(
-  label: string,
-  fn: () => void,
-  iterations: number,
-  minOpsPerSec: number,
-): void {
+function benchThroughput(label: string, fn: () => void, iterations: number, minOpsPerSec: number): void {
   it(label, () => {
     const start = process.hrtime.bigint();
     for (let i = 0; i < iterations; i++) {
@@ -127,7 +125,10 @@ describe('Federation — Latency', () => {
     'cross-shard query routing latency (P50 < 1ms)',
     () => {
       const router = createRouterWithPeers(3);
-      const routes = router.resolveRoute({ filters: { status: 'active' }, limit: 100 });
+      const routes = router.resolveRoute({
+        filters: { status: 'active' },
+        limit: 100,
+      });
       expect(routes.length).toBeGreaterThan(0);
     },
     1_000_000,
@@ -177,7 +178,10 @@ describe('Federation — Throughput', () => {
   benchThroughput(
     'CDC event emit throughput (> 1000 events/s)',
     () => {
-      const engine = new CDCEngine({ nodeId: 'node-1', hlc: new HLC('node-1') });
+      const engine = new CDCEngine({
+        nodeId: 'node-1',
+        hlc: new HLC('node-1'),
+      });
       engine.watchTable('users');
       engine.appendChange({
         table: 'users',
@@ -226,7 +230,11 @@ describe('Federation — Throughput', () => {
       const entries: Array<{ id: string; payload: string; timestamp: number }> = [];
       const entry = {
         id: `msg-${Date.now()}-${Math.random()}`,
-        payload: JSON.stringify({ table: 'users', op: 'insert', data: { id: 1 } }),
+        payload: JSON.stringify({
+          table: 'users',
+          op: 'insert',
+          data: { id: 1 },
+        }),
         timestamp: Date.now(),
       };
       entries.push(entry);

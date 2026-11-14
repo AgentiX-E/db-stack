@@ -1,4 +1,4 @@
-import type { TransportMessage } from "./TransportMessage";
+import type { TransportMessage } from './TransportMessage';
 
 /**
  * An inbound message that has been received from the transport layer.

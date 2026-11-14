@@ -13,7 +13,7 @@
  *   - Immutable state after construction (mutations via replaceAll)
  */
 
-import type { TopologyType, ReplicationTarget } from "../interfaces/replication/IMultiLeaderReplication";
+import type { TopologyType, ReplicationTarget } from '../interfaces/replication/IMultiLeaderReplication';
 
 export interface TopologyConfig {
   /** Node ID of the local node */
@@ -27,7 +27,7 @@ export interface TopologyConfig {
 }
 
 export interface TopologyChangeEvent {
-  type: "peer-added" | "peer-removed" | "peer-changed";
+  type: 'peer-added' | 'peer-removed' | 'peer-changed';
   peer: ReplicationTarget;
 }
 
@@ -84,7 +84,7 @@ export class TopologyManager {
 
   /** Get all peers with edge topology */
   getEdgePeers(): ReplicationTarget[] {
-    return this.peers.filter((p) => p.topology === "edge");
+    return this.peers.filter((p) => p.topology === 'edge');
   }
 
   /** Get the topology type for a peer */
@@ -129,7 +129,7 @@ export class TopologyManager {
     // Detect removals
     for (const [id, peer] of oldPeers) {
       if (!newPeersMap.has(id) && id !== this.localNodeId) {
-        this.emit("peer-removed", peer);
+        this.emit('peer-removed', peer);
       }
     }
 
@@ -138,9 +138,9 @@ export class TopologyManager {
       if (peer.nodeId === this.localNodeId) continue;
       const existing = oldPeers.get(peer.nodeId);
       if (!existing) {
-        this.emit("peer-added", peer);
+        this.emit('peer-added', peer);
       } else if (!shallowEqual(existing, peer)) {
-        this.emit("peer-changed", peer);
+        this.emit('peer-changed', peer);
       }
     }
 
@@ -149,7 +149,7 @@ export class TopologyManager {
 
   // ── Events ─────────────────────────────────────
 
-  on(event: "change", callback: (event: TopologyChangeEvent) => void): () => void {
+  on(event: 'change', callback: (event: TopologyChangeEvent) => void): () => void {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, []);
     }
@@ -163,9 +163,9 @@ export class TopologyManager {
     };
   }
 
-  private emit(type: TopologyChangeEvent["type"], peer: ReplicationTarget): void {
+  private emit(type: TopologyChangeEvent['type'], peer: ReplicationTarget): void {
     const event: TopologyChangeEvent = { type, peer };
-    const listeners = this.listeners.get("change");
+    const listeners = this.listeners.get('change');
     if (listeners) {
       for (const cb of listeners) {
         cb(event);

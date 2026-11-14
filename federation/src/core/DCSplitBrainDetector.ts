@@ -21,9 +21,9 @@
  *   MA9 — Consumers notified of split-brain resolution
  */
 
-import type { IHLCTimestamp } from "../interfaces/hlc/IHLCTimestamp";
-import { HLC, compareHLC } from "../hlc/HLC";
-import { EventEmitter } from "events";
+import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
+import { HLC, compareHLC } from '../hlc/HLC';
+import { EventEmitter } from 'events';
 
 export interface DCHeartbeat {
   dcId: string;
@@ -39,7 +39,7 @@ export interface SplitBrainEvent {
   winningDc: string;
   losingDcs: string[];
   conflictCount: number;
-  resolution: "fenced" | "merged" | "manual";
+  resolution: 'fenced' | 'merged' | 'manual';
 }
 
 export interface DCSplitBrainConfig {
@@ -123,7 +123,10 @@ export class DCSplitBrainDetector {
       this.dcHlcChains.set(heartbeat.dcId, chain);
     }
 
-    chain.push({ wallTime: heartbeat.hlc.wallTime, logical: heartbeat.hlc.logical });
+    chain.push({
+      wallTime: heartbeat.hlc.wallTime,
+      logical: heartbeat.hlc.logical,
+    });
     if (chain.length > this.maxHlcChainLength) {
       chain.splice(0, chain.length - this.maxHlcChainLength);
     }
@@ -186,9 +189,9 @@ export class DCSplitBrainDetector {
           ...event,
           winningDc,
           losingDcs,
-          resolution: this.config.autoRecover ? "fenced" : "manual",
+          resolution: this.config.autoRecover ? 'fenced' : 'manual',
         };
-        this.emitter.emit("split-brain-resolved", resolution);
+        this.emitter.emit('split-brain-resolved', resolution);
 
         // MA7: Remove from active — losing DCs are fenced
         this.activeSplitBrains.delete(winningDc);
@@ -207,16 +210,20 @@ export class DCSplitBrainDetector {
    * Register split-brain detection callback.
    */
   onSplitBrainDetected(callback: (event: SplitBrainEvent) => void): () => void {
-    this.emitter.on("split-brain-detected", callback);
-    return () => { this.emitter.off("split-brain-detected", callback); };
+    this.emitter.on('split-brain-detected', callback);
+    return () => {
+      this.emitter.off('split-brain-detected', callback);
+    };
   }
 
   /**
    * Register split-brain resolution callback.
    */
   onSplitBrainResolved(callback: (event: SplitBrainEvent) => void): () => void {
-    this.emitter.on("split-brain-resolved", callback);
-    return () => { this.emitter.off("split-brain-resolved", callback); };
+    this.emitter.on('split-brain-resolved', callback);
+    return () => {
+      this.emitter.off('split-brain-resolved', callback);
+    };
   }
 
   // ── Private ──────────────────────────────────────────────
@@ -224,14 +231,17 @@ export class DCSplitBrainDetector {
   private broadcastHeartbeat(): void {
     if (!this.started) return;
     const heartbeat = this.generateHeartbeat();
-    this.emitter.emit("heartbeat", heartbeat);
+    this.emitter.emit('heartbeat', heartbeat);
 
     // Check for expired heartbeats (MA6)
     const now = Date.now();
     const timeout = this.config.heartbeatIntervalMs * this.config.missedHeartbeatThreshold;
     for (const [dcId, lastHb] of this.remoteHeartbeats) {
       if (now - lastHb.timestamp > timeout) {
-        this.emitter.emit("heartbeat-expired", { dcId, lastSeen: lastHb.timestamp });
+        this.emitter.emit('heartbeat-expired', {
+          dcId,
+          lastSeen: lastHb.timestamp,
+        });
       }
     }
   }
@@ -279,7 +289,7 @@ export class DCSplitBrainDetector {
         winningDc,
         losingDcs: divergedList.filter((d) => d !== winningDc),
         conflictCount: Math.abs(divergedList.length - 1),
-        resolution: this.config.autoRecover ? "fenced" : "manual",
+        resolution: this.config.autoRecover ? 'fenced' : 'manual',
       };
 
       // Store the event (keyed by winningDc for resolution)
@@ -288,7 +298,7 @@ export class DCSplitBrainDetector {
         this.activeSplitBrains.set(dc, event);
       }
 
-      this.emitter.emit("split-brain-detected", event);
+      this.emitter.emit('split-brain-detected', event);
 
       // MA9: Auto-recover if configured
       if (this.config.autoRecover) {

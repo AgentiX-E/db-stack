@@ -11,21 +11,21 @@
  * returns early. This must not throw and must not double-record the span.
  */
 
-import { describe, it, expect } from "vitest";
-import { InMemoryOTELBridge } from "../impl/InMemoryOTELBridge.js";
+import { describe, it, expect } from 'vitest';
+import { InMemoryOTELBridge } from '../impl/InMemoryOTELBridge.js';
 
-describe("IOTEL-branch: idempotent span end", () => {
-  it("calling end() twice records the span only once", () => {
+describe('IOTEL-branch: idempotent span end', () => {
+  it('calling end() twice records the span only once', () => {
     const otel = new InMemoryOTELBridge();
-    const s = otel.startSpan("once");
+    const s = otel.startSpan('once');
 
-    s.end("ok");
+    s.end('ok');
     // Second call finds no active span → early return without throwing.
-    expect(() => s.end("error")).not.toThrow();
+    expect(() => s.end('error')).not.toThrow();
 
     const spans = otel.getSpans();
     expect(spans).toHaveLength(1);
     // Status remains 'ok' (first end) — the second call must be a no-op.
-    expect(spans[0].status).toBe("ok");
+    expect(spans[0].status).toBe('ok');
   });
 });

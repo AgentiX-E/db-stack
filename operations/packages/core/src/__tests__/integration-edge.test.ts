@@ -9,12 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  token,
-  ProviderRegistry,
-  InterfaceToken,
-  ProviderNotFoundError,
-} from '../provider.js';
+import { token, ProviderRegistry, InterfaceToken, ProviderNotFoundError } from '../provider.js';
 import type { IProviderLifecycle } from '../provider.js';
 import type {
   LifecyclePhase,
@@ -60,7 +55,11 @@ class HealthOrchestrator {
   private _startTime = Date.now();
 
   registerComponent(probe: IHealthProbeLike): void {
-    this._probes.set(probe.probeId, { probe, registeredAt: Date.now(), lastError: null });
+    this._probes.set(probe.probeId, {
+      probe,
+      registeredAt: Date.now(),
+      lastError: null,
+    });
   }
   unregisterComponent(probeId: string): void {
     this._probes.delete(probeId);
@@ -110,27 +109,39 @@ class HealthOrchestrator {
     }
     return results;
   }
-  getAggregateStatus(): { status: 'healthy' | 'degraded' | 'unhealthy'; count: number } {
+  getAggregateStatus(): {
+    status: 'healthy' | 'degraded' | 'unhealthy';
+    count: number;
+  } {
     const comps = this.getComponentHealth();
     const total = comps.length;
     if (total === 0) return { status: 'healthy', count: 0 };
-    const healthy = comps.filter(c => c.liveness.ok && c.readiness.ok).length;
-    const allUnhealthy = comps.every(c => !c.liveness.ok || !c.readiness.ok);
+    const healthy = comps.filter((c) => c.liveness.ok && c.readiness.ok).length;
+    const allUnhealthy = comps.every((c) => !c.liveness.ok || !c.readiness.ok);
     if (allUnhealthy) return { status: 'unhealthy', count: total };
     return healthy === total ? { status: 'healthy', count: total } : { status: 'degraded', count: total };
   }
   getHealthStatus(): HealthStatus {
     const comps = this.getComponentHealth();
     const total = comps.length;
-    const healthy = comps.filter(c => c.liveness.ok && c.readiness.ok).length;
-    const allUnhealthy = total > 0 && comps.every(c => !c.liveness.ok || !c.readiness.ok);
+    const healthy = comps.filter((c) => c.liveness.ok && c.readiness.ok).length;
+    const allUnhealthy = total > 0 && comps.every((c) => !c.liveness.ok || !c.readiness.ok);
     const status: 'healthy' | 'degraded' | 'unhealthy' =
       total === 0 ? 'healthy' : allUnhealthy ? 'unhealthy' : healthy === total ? 'healthy' : 'degraded';
-    const lastError = comps.find(c => c.lastError !== null)?.lastError ?? null;
-    return { status, uptimeSeconds: Math.floor((Date.now() - this._startTime) / 1000), components: comps, lastError };
+    const lastError = comps.find((c) => c.lastError !== null)?.lastError ?? null;
+    return {
+      status,
+      uptimeSeconds: Math.floor((Date.now() - this._startTime) / 1000),
+      components: comps,
+      lastError,
+    };
   }
   private _safe(fn: () => ProbeResult): ProbeResult {
-    try { return fn(); } catch (err: any) { return { ok: false, message: err.message }; }
+    try {
+      return fn();
+    } catch (err: any) {
+      return { ok: false, message: err.message };
+    }
   }
 }
 
@@ -196,7 +207,7 @@ function _genId(): string {
   _idCounter += 1;
   return `snap-${Date.now().toString(36)}-${_idCounter.toString(36)}`;
 }
-const _simMs = (ms = 5): Promise<void> => new Promise(r => setTimeout(r, ms));
+const _simMs = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 class InMemoryStorageBackend implements IStorageBackendLike {
   readonly name = 'in-memory';
@@ -204,7 +215,11 @@ class InMemoryStorageBackend implements IStorageBackendLike {
   async upload(source: string, dest: string): Promise<void> {
     const fs = await import('node:fs/promises');
     const data = await fs.readFile(source);
-    this._objects.set(dest, { data, size: data.length, lastModified: new Date().toISOString() });
+    this._objects.set(dest, {
+      data,
+      size: data.length,
+      lastModified: new Date().toISOString(),
+    });
   }
   async download(key: string, dest: string): Promise<void> {
     const entry = this._objects.get(key);
@@ -215,10 +230,18 @@ class InMemoryStorageBackend implements IStorageBackendLike {
   async list(prefix: string): Promise<Array<{ key: string; size: number; lastModified: string }>> {
     return Array.from(this._objects.entries())
       .filter(([k]) => k.startsWith(prefix))
-      .map(([k, v]) => ({ key: k, size: v.size, lastModified: v.lastModified }));
+      .map(([k, v]) => ({
+        key: k,
+        size: v.size,
+        lastModified: v.lastModified,
+      }));
   }
-  async delete(key: string): Promise<void> { this._objects.delete(key); }
-  async health(): Promise<{ ok: boolean; message?: string }> { return { ok: true }; }
+  async delete(key: string): Promise<void> {
+    this._objects.delete(key);
+  }
+  async health(): Promise<{ ok: boolean; message?: string }> {
+    return { ok: true };
+  }
   async getUsageBytes(): Promise<number> {
     let total = 0;
     for (const e of this._objects.values()) total += e.size;
@@ -228,16 +251,22 @@ class InMemoryStorageBackend implements IStorageBackendLike {
 
 class RetentionPolicyEvaluator implements IBackupRetentionPolicyLike {
   private _policy: RetentionPolicy;
-  constructor(p: RetentionPolicy) { this._policy = { ...p }; }
+  constructor(p: RetentionPolicy) {
+    this._policy = { ...p };
+  }
   evaluate(snapshots: BackupMetadata[]): BackupMetadata[] {
     if (snapshots.length === 0) return [];
     const sorted = [...snapshots].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    const full = sorted.filter(s => s.type === 'full');
+    const full = sorted.filter((s) => s.type === 'full');
     const excess = full.slice(this._policy.maxFullSnapshots);
-    return sorted.filter(s => excess.includes(s));
+    return sorted.filter((s) => excess.includes(s));
   }
-  getConfig(): RetentionPolicy { return { ...this._policy }; }
-  updateConfig(c: Partial<RetentionPolicy>): void { this._policy = { ...this._policy, ...c }; }
+  getConfig(): RetentionPolicy {
+    return { ...this._policy };
+  }
+  updateConfig(c: Partial<RetentionPolicy>): void {
+    this._policy = { ...this._policy, ...c };
+  }
 }
 
 class InMemoryBackupManager {
@@ -246,12 +275,19 @@ class InMemoryBackupManager {
     private _storage: IStorageBackendLike,
     private _retention: IBackupRetentionPolicyLike,
   ) {}
-  async createBackup(options: CreateBackupOptionsLike): Promise<{ success: boolean; snapshot?: BackupMetadata; error?: string }> {
+  async createBackup(
+    options: CreateBackupOptionsLike,
+  ): Promise<{ success: boolean; snapshot?: BackupMetadata; error?: string }> {
     const id = _genId();
     const now = new Date().toISOString();
     const snap: BackupMetadata = {
-      snapshotId: id, type: options.type, state: 'completed', createdAt: now,
-      completedAt: new Date(Date.now() + 50).toISOString(), sizeBytes: 1024, fileCount: 1,
+      snapshotId: id,
+      type: options.type,
+      state: 'completed',
+      createdAt: now,
+      completedAt: new Date(Date.now() + 50).toISOString(),
+      sizeBytes: 1024,
+      fileCount: 1,
       location: `/backups/${id}`,
     };
     this._snapshots.set(id, snap);
@@ -260,14 +296,23 @@ class InMemoryBackupManager {
   }
   async listBackups(options?: ListBackupsOptionsLike): Promise<BackupMetadata[]> {
     let r = Array.from(this._snapshots.values());
-    if (options?.type) r = r.filter(s => s.type === options.type);
+    if (options?.type) r = r.filter((s) => s.type === options.type);
     r.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     if (options?.limit && options.limit > 0) r = r.slice(0, options.limit);
     return r;
   }
-  async getBackup(id: string): Promise<BackupMetadata | null> { return this._snapshots.get(id) ?? null; }
-  async deleteBackup(id: string): Promise<boolean> { return this._snapshots.delete(id); }
-  async restoreFromSnapshot(id: string): Promise<{ success: boolean; error?: string; durationMs: number; recoveryPoint?: string }> {
+  async getBackup(id: string): Promise<BackupMetadata | null> {
+    return this._snapshots.get(id) ?? null;
+  }
+  async deleteBackup(id: string): Promise<boolean> {
+    return this._snapshots.delete(id);
+  }
+  async restoreFromSnapshot(id: string): Promise<{
+    success: boolean;
+    error?: string;
+    durationMs: number;
+    recoveryPoint?: string;
+  }> {
     if (!this._snapshots.has(id)) return { success: false, error: 'not found', durationMs: 0 };
     return { success: true, durationMs: 10, recoveryPoint: id };
   }
@@ -292,7 +337,14 @@ interface SlowQueryRecordLike {
 }
 
 class InMemorySlowQueryRecorder {
-  private _entries: Array<{ query: string; durationMs: number; startTime: string; actor?: string; shardId?: string; completed: boolean }> = [];
+  private _entries: Array<{
+    query: string;
+    durationMs: number;
+    startTime: string;
+    actor?: string;
+    shardId?: string;
+    completed: boolean;
+  }> = [];
   private _thresholdMs: number;
   private _maxEntries: number;
   private _count = 0;
@@ -321,7 +373,7 @@ class InMemorySlowQueryRecorder {
 
   getRecentSlowQueries(limit?: number): SlowQueryRecordLike[] {
     const e = limit ? this._entries.slice(-limit) : [...this._entries];
-    return e.map(e => ({
+    return e.map((e) => ({
       query: e.query,
       durationMs: e.durationMs,
       timestamp: new Date(e.startTime),
@@ -330,10 +382,19 @@ class InMemorySlowQueryRecorder {
     }));
   }
 
-  setThreshold(ms: number): void { this._thresholdMs = ms; }
-  getThreshold(): number { return this._thresholdMs; }
-  clear(): void { this._entries = []; this._count = 0; }
-  getSlowQueryCount(): number { return this._count; }
+  setThreshold(ms: number): void {
+    this._thresholdMs = ms;
+  }
+  getThreshold(): number {
+    return this._thresholdMs;
+  }
+  clear(): void {
+    this._entries = [];
+    this._count = 0;
+  }
+  getSlowQueryCount(): number {
+    return this._count;
+  }
 }
 
 interface DeadlockEventLike {
@@ -354,8 +415,12 @@ class InMemoryDeadlockDetector {
   private _deadlocks: DeadlockEventLike[] = [];
   private _callbacks: Array<(info: IDeadlockInfoLike) => void> = [];
 
-  start(): Promise<void> { return Promise.resolve(); }
-  stop(): Promise<void> { return Promise.resolve(); }
+  start(): Promise<void> {
+    return Promise.resolve();
+  }
+  stop(): Promise<void> {
+    return Promise.resolve();
+  }
 
   onDeadlock(cb: (info: IDeadlockInfoLike) => void): void {
     this._callbacks.push(cb);
@@ -387,13 +452,15 @@ class InMemoryDeadlockDetector {
         const neighbors = graph.get(node);
         if (neighbors) {
           for (const neighbor of neighbors) {
-            if (!visited.has(neighbor)) { if (dfs(neighbor)) return true; }
-            else if (recStack.has(neighbor)) {
+            if (!visited.has(neighbor)) {
+              if (dfs(neighbor)) return true;
+            } else if (recStack.has(neighbor)) {
               const start = path.indexOf(neighbor);
               const cycle = path.slice(start);
               const res: string[] = [];
               for (const tx of cycle) {
-                const h = this._acquired.get(tx); const w = this._waitFor.get(tx);
+                const h = this._acquired.get(tx);
+                const w = this._waitFor.get(tx);
                 if (h) for (const r of h) res.push(r);
                 if (w) for (const r of w) res.push(r);
               }
@@ -408,7 +475,11 @@ class InMemoryDeadlockDetector {
               this._deadlocks.push(event);
               this._waitFor.delete(victim);
               graph.delete(victim);
-              this._notify({ cycle: [...cycle], victimTransaction: victim, detectedAt: new Date(event.timestamp) });
+              this._notify({
+                cycle: [...cycle],
+                victimTransaction: victim,
+                detectedAt: new Date(event.timestamp),
+              });
               return true;
             }
           }
@@ -418,12 +489,16 @@ class InMemoryDeadlockDetector {
         return false;
       };
       for (const node of graph.keys()) {
-        if (!visited.has(node)) { if (dfs(node)) return true; }
+        if (!visited.has(node)) {
+          if (dfs(node)) return true;
+        }
       }
       return false;
     };
 
-    while (findAllCycles()) { /* continue */ }
+    while (findAllCycles()) {
+      /* continue */
+    }
     return events;
   }
 
@@ -441,18 +516,30 @@ class InMemoryDeadlockDetector {
   }
 
   getDeadlockHistory(): Promise<IDeadlockInfoLike[]> {
-    return Promise.resolve(this._deadlocks.map(e => ({
-      cycle: e.transactions,
-      victimTransaction: e.resolvedBy.replace(/^timeout:/, ''),
-      detectedAt: new Date(e.timestamp),
-    })));
+    return Promise.resolve(
+      this._deadlocks.map((e) => ({
+        cycle: e.transactions,
+        victimTransaction: e.resolvedBy.replace(/^timeout:/, ''),
+        detectedAt: new Date(e.timestamp),
+      })),
+    );
   }
 
-  getRawDeadlockEvents(): DeadlockEventLike[] { return [...this._deadlocks]; }
-  getDeadlockCount(): number { return this._deadlocks.length; }
+  getRawDeadlockEvents(): DeadlockEventLike[] {
+    return [...this._deadlocks];
+  }
+  getDeadlockCount(): number {
+    return this._deadlocks.length;
+  }
 
   private _notify(info: IDeadlockInfoLike): void {
-    for (const cb of this._callbacks) { try { cb(info); } catch { /* ignore */ } }
+    for (const cb of this._callbacks) {
+      try {
+        cb(info);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }
 
@@ -483,7 +570,10 @@ class InMemoryAlertRuleManager {
 
   addRule(rule: MonitorAlertRule): Promise<string> {
     const id = rule.id ?? `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    this._rules.set(id, { rule: { ...rule, id }, enabled: rule.enabled !== false });
+    this._rules.set(id, {
+      rule: { ...rule, id },
+      enabled: rule.enabled !== false,
+    });
     return Promise.resolve(id);
   }
 
@@ -504,24 +594,48 @@ class InMemoryAlertRuleManager {
       const rule = entry.rule;
       const val = snapshot[rule.metric];
       if (val === undefined) continue;
-      let trig = false;
+      let trig: boolean;
       switch (rule.condition) {
-        case 'gt': trig = val > rule.threshold; break;
-        case 'lt': trig = val < rule.threshold; break;
-        case 'eq': trig = val === rule.threshold; break;
-        case 'gte': trig = val >= rule.threshold; break;
-        case 'lte': trig = val <= rule.threshold; break;
-        default: trig = val >= rule.threshold;
+        case 'gt':
+          trig = val > rule.threshold;
+          break;
+        case 'lt':
+          trig = val < rule.threshold;
+          break;
+        case 'eq':
+          trig = val === rule.threshold;
+          break;
+        case 'gte':
+          trig = val >= rule.threshold;
+          break;
+        case 'lte':
+          trig = val <= rule.threshold;
+          break;
+        default:
+          trig = val >= rule.threshold;
       }
       if (trig) {
-        triggered.push({ ruleId: id, ruleName: rule.name, severity: rule.severity, value: val, threshold: rule.threshold, triggeredAt: now, message: `${rule.name}: trigger` });
+        triggered.push({
+          ruleId: id,
+          ruleName: rule.name,
+          severity: rule.severity,
+          value: val,
+          threshold: rule.threshold,
+          triggeredAt: now,
+          message: `${rule.name}: trigger`,
+        });
       }
     }
     return triggered;
   }
 
-  getRules(): MonitorAlertRule[] { return Array.from(this._rules.values()).map(e => ({ ...e.rule })); }
-  clearRules(): void { this._rules.clear(); this._silencedUntil.clear(); }
+  getRules(): MonitorAlertRule[] {
+    return Array.from(this._rules.values()).map((e) => ({ ...e.rule }));
+  }
+  clearRules(): void {
+    this._rules.clear();
+    this._silencedUntil.clear();
+  }
 }
 
 // ── Audit ───────────────────────────────────────────────────────────
@@ -536,9 +650,14 @@ interface WriteAuditEntryOptionsLike {
   traceId?: string;
 }
 interface AuditQueryFilterLike {
-  startTime?: Date; endTime?: Date; operation?: string; actor?: string;
-  result?: 'success' | 'failure' | 'denied'; severity?: 'info' | 'warning' | 'error' | 'critical';
-  limit?: number; offset?: number;
+  startTime?: Date;
+  endTime?: Date;
+  operation?: string;
+  actor?: string;
+  result?: 'success' | 'failure' | 'denied';
+  severity?: 'info' | 'warning' | 'error' | 'critical';
+  limit?: number;
+  offset?: number;
 }
 
 class InMemoryAuditStore {
@@ -548,31 +667,43 @@ class InMemoryAuditStore {
   async write(opts: WriteAuditEntryOptionsLike): Promise<string> {
     const id = randomUUID();
     const entry: AuditEntry = {
-      id, timestamp: new Date().toISOString(), operation: opts.operation,
-      actor: opts.actor, resource: opts.resource, result: opts.result,
-      severity: opts.severity ?? 'info', details: opts.details, traceId: opts.traceId,
+      id,
+      timestamp: new Date().toISOString(),
+      operation: opts.operation,
+      actor: opts.actor,
+      resource: opts.resource,
+      result: opts.result,
+      severity: opts.severity ?? 'info',
+      details: opts.details,
+      traceId: opts.traceId,
     };
     this._entries.set(id, entry);
     this._ordered.push(entry);
     return id;
   }
-  async get(id: string): Promise<AuditEntry | null> { return this._entries.get(id) ?? null; }
-  async query(filter: AuditQueryFilterLike): Promise<AuditEntry[]> {
-    return this._ordered.filter(e => {
-      if (filter.startTime && e.timestamp < filter.startTime.toISOString()) return false;
-      if (filter.endTime && e.timestamp > filter.endTime.toISOString()) return false;
-      if (filter.operation && e.operation !== filter.operation) return false;
-      if (filter.actor && e.actor !== filter.actor) return false;
-      if (filter.result && e.result !== filter.result) return false;
-      if (filter.severity && e.severity !== filter.severity) return false;
-      return true;
-    }).slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 100));
+  async get(id: string): Promise<AuditEntry | null> {
+    return this._entries.get(id) ?? null;
   }
-  async count(): Promise<number> { return this._ordered.length; }
+  async query(filter: AuditQueryFilterLike): Promise<AuditEntry[]> {
+    return this._ordered
+      .filter((e) => {
+        if (filter.startTime && e.timestamp < filter.startTime.toISOString()) return false;
+        if (filter.endTime && e.timestamp > filter.endTime.toISOString()) return false;
+        if (filter.operation && e.operation !== filter.operation) return false;
+        if (filter.actor && e.actor !== filter.actor) return false;
+        if (filter.result && e.result !== filter.result) return false;
+        if (filter.severity && e.severity !== filter.severity) return false;
+        return true;
+      })
+      .slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 100));
+  }
+  async count(): Promise<number> {
+    return this._ordered.length;
+  }
   async pruneOlderThan(ts: Date): Promise<number> {
     const before = this._ordered.length;
-    const keep = this._ordered.filter(e => new Date(e.timestamp) >= ts);
-    const removed = this._ordered.filter(e => new Date(e.timestamp) < ts);
+    const keep = this._ordered.filter((e) => new Date(e.timestamp) >= ts);
+    const removed = this._ordered.filter((e) => new Date(e.timestamp) < ts);
     for (const r of removed) this._entries.delete(r.id);
     this._ordered = keep;
     return before - keep.length;
@@ -596,22 +727,29 @@ class JsonAuditExporter {
 // ── Security ────────────────────────────────────────────────────────
 
 interface TLSConfigLike {
-  certPath: string; keyPath: string; caPath?: string;
+  certPath: string;
+  keyPath: string;
+  caPath?: string;
 }
 interface EncryptionConfigLike {
-  algorithm: string; keyDerivation: string;
+  algorithm: string;
+  keyDerivation: string;
 }
 interface IdentityLike {
-  id: string; roles: string[];
+  id: string;
+  roles: string[];
 }
 interface PermissionLike {
-  resource: string; action: 'create' | 'read' | 'update' | 'delete' | 'admin';
+  resource: string;
+  action: 'create' | 'read' | 'update' | 'delete' | 'admin';
 }
 interface RoleLike {
-  name: string; permissions: PermissionLike[];
+  name: string;
+  permissions: PermissionLike[];
 }
 interface RateLimitConfigLike {
-  maxRequests: number; windowMs: number;
+  maxRequests: number;
+  windowMs: number;
 }
 
 class InMemoryTLSManager {
@@ -621,10 +759,14 @@ class InMemoryTLSManager {
   async loadConfig(config: TLSConfigLike): Promise<void> {
     this._config = config;
     this._certInfo = {
-      subject: 'CN=localhost', issuer: 'CN=TestCA', serialNumber: 'ABCDEF123456',
+      subject: 'CN=localhost',
+      issuer: 'CN=TestCA',
+      serialNumber: 'ABCDEF123456',
       validFrom: new Date(Date.now() - 864e5 * 60).toISOString(),
       validTo: new Date(Date.now() + 864e5 * 30).toISOString(),
-      daysRemaining: 30, path: config.certPath, fingerprint: 'sha256$$deadbeef',
+      daysRemaining: 30,
+      path: config.certPath,
+      fingerprint: 'sha256$$deadbeef',
     };
   }
   async getCertInfo(): Promise<CertInfo> {
@@ -634,10 +776,14 @@ class InMemoryTLSManager {
   async reloadCerts(): Promise<void> {
     if (!this._config) throw new Error('TLSManager: no config loaded');
     this._certInfo = {
-      subject: 'CN=localhost', issuer: 'CN=TestCA', serialNumber: 'FEDCBA987654',
+      subject: 'CN=localhost',
+      issuer: 'CN=TestCA',
+      serialNumber: 'FEDCBA987654',
       validFrom: new Date(Date.now() - 864e5 * 30).toISOString(),
       validTo: new Date(Date.now() + 864e5 * 60).toISOString(),
-      daysRemaining: 60, path: this._config.certPath, fingerprint: 'sha256$$reloaded',
+      daysRemaining: 60,
+      path: this._config.certPath,
+      fingerprint: 'sha256$$reloaded',
     };
   }
 }
@@ -656,7 +802,10 @@ class InMemoryCertMonitor {
     }, intervalMs);
   }
   stop(): void {
-    if (this._handle !== null) { clearInterval(this._handle); this._handle = null; }
+    if (this._handle !== null) {
+      clearInterval(this._handle);
+      this._handle = null;
+    }
     this._expiryStatus.clear();
   }
   getExpiryStatus(): Array<{ cert: CertInfo; level: CertWarningLevel }> {
@@ -664,7 +813,9 @@ class InMemoryCertMonitor {
   }
   onWarning(cb: (cert: CertInfo, level: CertWarningLevel) => void): () => void {
     this._callbacks.add(cb);
-    return () => { this._callbacks.delete(cb); };
+    return () => {
+      this._callbacks.delete(cb);
+    };
   }
   addExpiryStatus(cert: CertInfo, level: CertWarningLevel): void {
     this._expiryStatus.set(cert.serialNumber, { cert, level });
@@ -705,15 +856,29 @@ class InMemoryRateLimiter {
     const entry = this._windows.get(key);
     if (!entry || now - entry.windowStart >= cfg.windowMs) {
       this._windows.set(key, { count: 1, windowStart: now });
-      return { allowed: true, remaining: cfg.maxRequests - 1, resetMs: cfg.windowMs };
+      return {
+        allowed: true,
+        remaining: cfg.maxRequests - 1,
+        resetMs: cfg.windowMs,
+      };
     }
     if (entry.count >= cfg.maxRequests) {
-      return { allowed: false, remaining: 0, resetMs: Math.max(0, cfg.windowMs - (now - entry.windowStart)) };
+      return {
+        allowed: false,
+        remaining: 0,
+        resetMs: Math.max(0, cfg.windowMs - (now - entry.windowStart)),
+      };
     }
     entry.count++;
-    return { allowed: true, remaining: cfg.maxRequests - entry.count, resetMs: Math.max(0, cfg.windowMs - (now - entry.windowStart)) };
+    return {
+      allowed: true,
+      remaining: cfg.maxRequests - entry.count,
+      resetMs: Math.max(0, cfg.windowMs - (now - entry.windowStart)),
+    };
   }
-  reset(key: string): void { this._windows.delete(key); }
+  reset(key: string): void {
+    this._windows.delete(key);
+  }
 }
 
 class InMemoryRBACProvider {
@@ -725,7 +890,7 @@ class InMemoryRBACProvider {
     for (const roleName of identity.roles) {
       const perms = this._roles.get(roleName);
       if (!perms) continue;
-      if (perms.some(p => p.resource === permission.resource && p.action === permission.action)) return true;
+      if (perms.some((p) => p.resource === permission.resource && p.action === permission.action)) return true;
     }
     return false;
   }
@@ -742,18 +907,29 @@ class InMemoryRBACProvider {
 
 class InMemorySCIMSyncProvider {
   private _lastSync: Date | null = null;
-  async syncUsers(): Promise<{ added: number; updated: number; removed: number }> {
+  async syncUsers(): Promise<{
+    added: number;
+    updated: number;
+    removed: number;
+  }> {
     this._lastSync = new Date();
     return { added: 3, updated: 0, removed: 0 };
   }
-  getLastSyncTime(): Date | null { return this._lastSync; }
+  getLastSyncTime(): Date | null {
+    return this._lastSync;
+  }
 }
 
 class InMemorySecurityCompliance {
   private _checks: SecurityCheck[] = [];
-  registerChecks(checks: SecurityCheck[]): void { this._checks.push(...checks); }
+  registerChecks(checks: SecurityCheck[]): void {
+    this._checks.push(...checks);
+  }
   async runChecks(): Promise<SecurityCheck[]> {
-    return this._checks.map(c => ({ ...c, timestamp: new Date().toISOString() }));
+    return this._checks.map((c) => ({
+      ...c,
+      timestamp: new Date().toISOString(),
+    }));
   }
   getScore(): number {
     if (this._checks.length === 0) return 100;
@@ -769,9 +945,15 @@ class InMemorySecurityCompliance {
 // ── Observability ───────────────────────────────────────────────────
 
 interface SpanLike {
-  spanId: string; traceId: string; parentSpanId?: string; name: string;
-  startTime: number; endTime?: number; attributes: Record<string, string | number | boolean>;
-  status: 'ok' | 'error'; errorMessage?: string;
+  spanId: string;
+  traceId: string;
+  parentSpanId?: string;
+  name: string;
+  startTime: number;
+  endTime?: number;
+  attributes: Record<string, string | number | boolean>;
+  status: 'ok' | 'error';
+  errorMessage?: string;
 }
 
 class InMemoryDistributedTracer {
@@ -779,12 +961,30 @@ class InMemoryDistributedTracer {
   private _active = new Map<string, SpanLike>();
   private _currentSpanId: string | null = null;
 
-  startSpan(name: string, options?: { parentSpanId?: string; traceId?: string; attributes?: Record<string, string | number | boolean> }): { spanId: string; end: (status?: 'ok' | 'error', errorMessage?: string) => void } {
+  startSpan(
+    name: string,
+    options?: {
+      parentSpanId?: string;
+      traceId?: string;
+      attributes?: Record<string, string | number | boolean>;
+    },
+  ): {
+    spanId: string;
+    end: (status?: 'ok' | 'error', errorMessage?: string) => void;
+  } {
     const spanId = randomUUID();
     const current = this._currentSpanId ? this._active.get(this._currentSpanId) : undefined;
     const traceId = options?.traceId ?? current?.traceId ?? randomUUID();
     const parentSpanId = options?.parentSpanId ?? this._currentSpanId;
-    const span: SpanLike = { spanId, traceId, parentSpanId, name, startTime: Date.now(), attributes: options?.attributes ?? {}, status: 'ok' };
+    const span: SpanLike = {
+      spanId,
+      traceId,
+      parentSpanId,
+      name,
+      startTime: Date.now(),
+      attributes: options?.attributes ?? {},
+      status: 'ok',
+    };
     this._active.set(spanId, span);
     this._currentSpanId = spanId;
     return {
@@ -809,8 +1009,12 @@ class InMemoryDistributedTracer {
     return { traceId: s.traceId, spanId: s.spanId };
   }
 
-  getCompletedSpans(): SpanLike[] { return [...this._spans]; }
-  clearCompletedSpans(): void { this._spans = []; }
+  getCompletedSpans(): SpanLike[] {
+    return [...this._spans];
+  }
+  clearCompletedSpans(): void {
+    this._spans = [];
+  }
 
   inject(carrier: Record<string, string>): void {
     const current = this.getCurrentSpan();
@@ -832,20 +1036,32 @@ class InMemoryTelemetryExporter {
   async export(spans: SpanLike[]): Promise<void> {
     this._exported.push([...spans]);
   }
-  isConnected(): boolean { return this._connected; }
-  getFormat(): string { return 'json'; }
-  async shutdown(): Promise<void> { this._connected = false; }
-  getExported(): SpanLike[][] { return this._exported; }
+  isConnected(): boolean {
+    return this._connected;
+  }
+  getFormat(): string {
+    return 'json';
+  }
+  async shutdown(): Promise<void> {
+    this._connected = false;
+  }
+  getExported(): SpanLike[][] {
+    return this._exported;
+  }
 }
 
 // ── Metrics ─────────────────────────────────────────────────────────
 
 interface MetricPointLike {
-  name: string; type: string; value: number;
-  labels?: Array<{ key: string; value: string }>; timestamp: number;
+  name: string;
+  type: string;
+  value: number;
+  labels?: Array<{ key: string; value: string }>;
+  timestamp: number;
 }
 interface MetricsSnapshotLike {
-  points: MetricPointLike[]; capturedAt: number;
+  points: MetricPointLike[];
+  capturedAt: number;
 }
 
 class MetricsRegistry {
@@ -858,53 +1074,116 @@ class MetricsRegistry {
 
   private _key(name: string, labels?: Record<string, string>): string {
     const l = labels ?? {};
-    const ls = Object.entries(l).sort(([a],[b]) => a.localeCompare(b)).map(([k,v]) => `${k}=${v}`).join(',');
+    const ls = Object.entries(l)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join(',');
     return `${name}:${ls}`;
   }
 
-  counter(name: string, labels?: Record<string, string>): { inc(): void; incBy(v: number): void; get(): number; reset(): void } {
+  counter(
+    name: string,
+    labels?: Record<string, string>,
+  ): { inc(): void; incBy(v: number): void; get(): number; reset(): void } {
     const k = this._key(name, labels);
-    if (!this._counters.has(k)) { this._counters.set(k, 0); this._counterMeta.set(k, { name, labels: labels ?? {}, labelStr: k }); }
+    if (!this._counters.has(k)) {
+      this._counters.set(k, 0);
+      this._counterMeta.set(k, { name, labels: labels ?? {}, labelStr: k });
+    }
     const v = this._counters;
     return {
-      inc() { v.set(k, (v.get(k) ?? 0) + 1); },
+      inc() {
+        v.set(k, (v.get(k) ?? 0) + 1);
+      },
       incBy(val: number) {
         if (val < 0) throw new Error('Counter cannot decrement');
         v.set(k, (v.get(k) ?? 0) + val);
       },
-      get() { return v.get(k) ?? 0; },
-      reset() { v.set(k, 0); },
+      get() {
+        return v.get(k) ?? 0;
+      },
+      reset() {
+        v.set(k, 0);
+      },
     };
   }
 
-  gauge(name: string, labels?: Record<string, string>): { set(v: number): void; inc(): void; dec(): void; add(v: number): void; get(): number } {
+  gauge(
+    name: string,
+    labels?: Record<string, string>,
+  ): {
+    set(v: number): void;
+    inc(): void;
+    dec(): void;
+    add(v: number): void;
+    get(): number;
+  } {
     const k = this._key(name, labels);
-    if (!this._gauges.has(k)) { this._gauges.set(k, { value: 0 }); this._gaugeMeta.set(k, { name, labels: labels ?? {}, labelStr: k }); }
+    if (!this._gauges.has(k)) {
+      this._gauges.set(k, { value: 0 });
+      this._gaugeMeta.set(k, { name, labels: labels ?? {}, labelStr: k });
+    }
     const store = this._gauges;
     return {
-      set(val: number) { const e = store.get(k)!; e.value = val; },
-      inc() { const e = store.get(k)!; e.value++; },
-      dec() { const e = store.get(k)!; e.value--; },
-      add(val: number) { const e = store.get(k)!; e.value += val; },
-      get() { return store.get(k)?.value ?? 0; },
+      set(val: number) {
+        const e = store.get(k)!;
+        e.value = val;
+      },
+      inc() {
+        const e = store.get(k)!;
+        e.value++;
+      },
+      dec() {
+        const e = store.get(k)!;
+        e.value--;
+      },
+      add(val: number) {
+        const e = store.get(k)!;
+        e.value += val;
+      },
+      get() {
+        return store.get(k)?.value ?? 0;
+      },
     };
   }
 
-  histogram(name: string, labels?: Record<string, string>): { observe(v: number): void; getCount(): number; getSum(): number; getQuantile(p: number): number | undefined; reset(): void } {
+  histogram(
+    name: string,
+    labels?: Record<string, string>,
+  ): {
+    observe(v: number): void;
+    getCount(): number;
+    getSum(): number;
+    getQuantile(p: number): number | undefined;
+    reset(): void;
+  } {
     const k = this._key(name, labels);
-    if (!this._histograms.has(k)) { this._histograms.set(k, { values: [], sum: 0 }); this._histMeta.set(k, { name, labels: labels ?? {}, labelStr: k }); }
+    if (!this._histograms.has(k)) {
+      this._histograms.set(k, { values: [], sum: 0 });
+      this._histMeta.set(k, { name, labels: labels ?? {}, labelStr: k });
+    }
     const store = this._histograms;
     return {
-      observe(val: number) { const e = store.get(k)!; e.values.push(val); e.sum += val; },
-      getCount() { return store.get(k)?.values.length ?? 0; },
-      getSum() { return store.get(k)?.sum ?? 0; },
+      observe(val: number) {
+        const e = store.get(k)!;
+        e.values.push(val);
+        e.sum += val;
+      },
+      getCount() {
+        return store.get(k)?.values.length ?? 0;
+      },
+      getSum() {
+        return store.get(k)?.sum ?? 0;
+      },
       getQuantile(p: number) {
         const e = store.get(k);
         if (!e || e.values.length === 0) return undefined;
         const sorted = [...e.values].sort((a, b) => a - b);
         return sorted[Math.floor(p * (sorted.length - 1))];
       },
-      reset() { store.set(k, { values: [], sum: 0 }); },
+      reset() {
+        store.set(k, { values: [], sum: 0 });
+      },
     };
   }
 
@@ -912,15 +1191,51 @@ class MetricsRegistry {
     const now = Date.now();
     const points: MetricPointLike[] = [];
     for (const [mk, meta] of this._counterMeta) {
-      points.push({ name: meta.name, type: 'counter', value: this._counters.get(mk) ?? 0, labels: Object.entries(meta.labels).map(([k,v]) => ({ key: k, value: v })), timestamp: now });
+      points.push({
+        name: meta.name,
+        type: 'counter',
+        value: this._counters.get(mk) ?? 0,
+        labels: Object.entries(meta.labels).map(([k, v]) => ({
+          key: k,
+          value: v,
+        })),
+        timestamp: now,
+      });
     }
     for (const [mk, meta] of this._gaugeMeta) {
-      points.push({ name: meta.name, type: 'gauge', value: this._gauges.get(mk)?.value ?? 0, labels: Object.entries(meta.labels).map(([k,v]) => ({ key: k, value: v })), timestamp: now });
+      points.push({
+        name: meta.name,
+        type: 'gauge',
+        value: this._gauges.get(mk)?.value ?? 0,
+        labels: Object.entries(meta.labels).map(([k, v]) => ({
+          key: k,
+          value: v,
+        })),
+        timestamp: now,
+      });
     }
     for (const [mk, meta] of this._histMeta) {
       const h = this._histograms.get(mk)!;
-      points.push({ name: `${meta.name}_count`, type: 'gauge', value: h.values.length, labels: Object.entries(meta.labels).map(([k,v]) => ({ key: k, value: v })), timestamp: now });
-      points.push({ name: `${meta.name}_sum`, type: 'gauge', value: h.sum, labels: Object.entries(meta.labels).map(([k,v]) => ({ key: k, value: v })), timestamp: now });
+      points.push({
+        name: `${meta.name}_count`,
+        type: 'gauge',
+        value: h.values.length,
+        labels: Object.entries(meta.labels).map(([k, v]) => ({
+          key: k,
+          value: v,
+        })),
+        timestamp: now,
+      });
+      points.push({
+        name: `${meta.name}_sum`,
+        type: 'gauge',
+        value: h.sum,
+        labels: Object.entries(meta.labels).map(([k, v]) => ({
+          key: k,
+          value: v,
+        })),
+        timestamp: now,
+      });
     }
     return { points, capturedAt: now };
   }
@@ -928,47 +1243,103 @@ class MetricsRegistry {
 
 // ── Logger ──────────────────────────────────────────────────────────
 
-interface LogEntryLike { level: string; message: string; timestamp: string; component: string; context?: Record<string, unknown>; error?: { message: string; stack?: string; name?: string }; traceId?: string; }
+interface LogEntryLike {
+  level: string;
+  message: string;
+  timestamp: string;
+  component: string;
+  context?: Record<string, unknown>;
+  error?: { message: string; stack?: string; name?: string };
+  traceId?: string;
+}
 
 class InMemoryLogger {
   private _entries: LogEntryLike[] = [];
-  constructor(private _maxEntries: number = 100, private _component: string = 'test') {}
+  constructor(
+    private _maxEntries: number = 100,
+    private _component: string = 'test',
+  ) {}
   child(bindings: Record<string, unknown>): InMemoryLogger {
     const c = new InMemoryLogger(this._maxEntries, this._component);
     return c;
   }
   private _log(level: string, msg: string, ctx?: Record<string, unknown>): void {
-    this._entries.push({ level, message: msg, timestamp: new Date().toISOString(), component: this._component, context: ctx });
+    this._entries.push({
+      level,
+      message: msg,
+      timestamp: new Date().toISOString(),
+      component: this._component,
+      context: ctx,
+    });
     if (this._entries.length > this._maxEntries) this._entries.shift();
   }
   private _logError(level: string, ...args: unknown[]): void {
     if (args.length === 1) {
       const a = args[0];
       if (a instanceof Error) {
-        this._entries.push({ level, message: a.message, timestamp: new Date().toISOString(), component: this._component, error: { message: a.message, stack: a.stack, name: a.name } });
+        this._entries.push({
+          level,
+          message: a.message,
+          timestamp: new Date().toISOString(),
+          component: this._component,
+          error: { message: a.message, stack: a.stack, name: a.name },
+        });
       } else {
-        this._entries.push({ level, message: String(a), timestamp: new Date().toISOString(), component: this._component });
+        this._entries.push({
+          level,
+          message: String(a),
+          timestamp: new Date().toISOString(),
+          component: this._component,
+        });
       }
     } else if (args.length === 2 && args[0] instanceof Error) {
-      const err = args[0]; const msg = String(args[1] ?? err.message);
-      this._entries.push({ level, message: msg, timestamp: new Date().toISOString(), component: this._component, error: { message: err.message, stack: err.stack, name: err.name } });
+      const err = args[0];
+      const msg = String(args[1] ?? err.message);
+      this._entries.push({
+        level,
+        message: msg,
+        timestamp: new Date().toISOString(),
+        component: this._component,
+        error: { message: err.message, stack: err.stack, name: err.name },
+      });
     } else {
-      this._entries.push({ level, message: String(args[args.length - 1] ?? ''), timestamp: new Date().toISOString(), component: this._component });
+      this._entries.push({
+        level,
+        message: String(args[args.length - 1] ?? ''),
+        timestamp: new Date().toISOString(),
+        component: this._component,
+      });
     }
     if (this._entries.length > this._maxEntries) this._entries.shift();
   }
-  trace(msg: string): void { this._log('trace', msg); }
-  debug(msg: string): void { this._log('debug', msg); }
-  info(msg: string): void { this._log('info', msg); }
-  warn(msg: string): void { this._log('warn', msg); }
+  trace(msg: string): void {
+    this._log('trace', msg);
+  }
+  debug(msg: string): void {
+    this._log('debug', msg);
+  }
+  info(msg: string): void {
+    this._log('info', msg);
+  }
+  warn(msg: string): void {
+    this._log('warn', msg);
+  }
   error(msg: string): void;
   error(err: Error, msg?: string): void;
-  error(...args: unknown[]): void { this._logError('error', ...args); }
+  error(...args: unknown[]): void {
+    this._logError('error', ...args);
+  }
   fatal(msg: string): void;
   fatal(err: Error, msg?: string): void;
-  fatal(...args: unknown[]): void { this._logError('fatal', ...args); }
-  getEntries(): LogEntryLike[] { return [...this._entries]; }
-  clear(): void { this._entries = []; }
+  fatal(...args: unknown[]): void {
+    this._logError('fatal', ...args);
+  }
+  getEntries(): LogEntryLike[] {
+    return [...this._entries];
+  }
+  clear(): void {
+    this._entries = [];
+  }
 }
 
 // ── Maintenance ─────────────────────────────────────────────────────
@@ -979,37 +1350,79 @@ class InMemoryMaintenanceExecutor {
   private _frag: IndexFragmentation[];
 
   constructor() {
-    this._stats = { fileSizeBytes: 104_857_600, pageCount: 25_600, pageSize: 4096, rowCount: 1_000_000, deadRowCount: 150_000, freeSpaceRatio: 0.3 };
+    this._stats = {
+      fileSizeBytes: 104_857_600,
+      pageCount: 25_600,
+      pageSize: 4096,
+      rowCount: 1_000_000,
+      deadRowCount: 150_000,
+      freeSpaceRatio: 0.3,
+    };
     this._frag = [
-      { indexName: 'idx_a', tableName: 'users', pageCount: 1200, fragmentationRatio: 0.45 },
-      { indexName: 'idx_b', tableName: 'orders', pageCount: 3400, fragmentationRatio: 0.33 },
+      {
+        indexName: 'idx_a',
+        tableName: 'users',
+        pageCount: 1200,
+        fragmentationRatio: 0.45,
+      },
+      {
+        indexName: 'idx_b',
+        tableName: 'orders',
+        pageCount: 3400,
+        fragmentationRatio: 0.33,
+      },
     ];
   }
 
-  get opsLog(): readonly MaintenanceResult[] { return [...this._opsLog]; }
+  get opsLog(): readonly MaintenanceResult[] {
+    return [...this._opsLog];
+  }
 
   async vacuum(options: { target: string; dryRun?: boolean; full?: boolean }): Promise<MaintenanceResult> {
-    if (options.target == null) throw new Error('target is required');
-    const r: MaintenanceResult = { success: true, operation: 'VACUUM', target: options.target, message: `VACUUM on ${options.target}`, durationMs: 1, details: { dryRun: options.dryRun ?? false, full: options.full ?? false } };
+    if (options.target === null || options.target === undefined) throw new Error('target is required');
+    const r: MaintenanceResult = {
+      success: true,
+      operation: 'VACUUM',
+      target: options.target,
+      message: `VACUUM on ${options.target}`,
+      durationMs: 1,
+      details: { dryRun: options.dryRun ?? false, full: options.full ?? false },
+    };
     this._opsLog.push(r);
     return r;
   }
   async analyze(options: { target: string }): Promise<MaintenanceResult> {
-    const r: MaintenanceResult = { success: true, operation: 'ANALYZE', target: options.target, message: `ANALYZE on ${options.target}`, durationMs: 1, details: {} };
+    const r: MaintenanceResult = {
+      success: true,
+      operation: 'ANALYZE',
+      target: options.target,
+      message: `ANALYZE on ${options.target}`,
+      durationMs: 1,
+      details: {},
+    };
     this._opsLog.push(r);
     return r;
   }
   async reindex(options: { target: string; isTable?: boolean }): Promise<MaintenanceResult> {
-    const r: MaintenanceResult = { success: true, operation: 'REINDEX', target: options.target, message: `REINDEX on ${options.target}`, durationMs: 1, details: { isTable: options.isTable ?? false } };
+    const r: MaintenanceResult = {
+      success: true,
+      operation: 'REINDEX',
+      target: options.target,
+      message: `REINDEX on ${options.target}`,
+      durationMs: 1,
+      details: { isTable: options.isTable ?? false },
+    };
     this._opsLog.push(r);
     return r;
   }
   async getStorageStats(target: string): Promise<StorageStats> {
-    if (target == null) throw new Error('target is required');
+    if (target === null || target === undefined) throw new Error('target is required');
     return { ...this._stats };
   }
   async getIndexFragmentation(target: string): Promise<IndexFragmentation[]> {
-    return this._frag.filter(f => f.tableName === target || f.indexName === target || target === '*').map(f => ({ ...f }));
+    return this._frag
+      .filter((f) => f.tableName === target || f.indexName === target || target === '*')
+      .map((f) => ({ ...f }));
   }
 }
 
@@ -1018,7 +1431,6 @@ class InMemoryMaintenanceExecutor {
 // ══════════════════════════════════════════════════════════════════════
 
 describe('SECTION A: Cross-package Integration Tests', () => {
-
   // ── A1: Health + ProviderRegistry ────────────────────────────────────
 
   describe('A1: Health + ProviderRegistry integration', () => {
@@ -1074,9 +1486,15 @@ describe('SECTION A: Cross-package Integration Tests', () => {
       const lifecycleProvider: IProviderLifecycle = {
         providerId: 'test-lifecycle',
         phase: 'created' as LifecyclePhase,
-        async start() { started = true; },
-        async stop() { stopped = true; },
-        getHealth() { return null; },
+        async start() {
+          started = true;
+        },
+        async stop() {
+          stopped = true;
+        },
+        getHealth() {
+          return null;
+        },
       };
 
       reg.register(token<any>('lifecycle'), lifecycleProvider);
@@ -1093,7 +1511,12 @@ describe('SECTION A: Cross-package Integration Tests', () => {
   describe('A2: Backup + Storage + Retention full lifecycle', () => {
     it('full backup chain: create → list → get → restore → delete', async () => {
       const storage = new InMemoryStorageBackend();
-      const retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 10, keepRecent: '', minAge: '', maxTotalBytes: 0 });
+      const retention = new RetentionPolicyEvaluator({
+        maxFullSnapshots: 10,
+        keepRecent: '',
+        minAge: '',
+        maxTotalBytes: 0,
+      });
       const mgr = new InMemoryBackupManager(storage, retention);
 
       const result = await mgr.createBackup({ type: 'full' });
@@ -1121,7 +1544,12 @@ describe('SECTION A: Cross-package Integration Tests', () => {
 
     it('incremental backup creates parent link', async () => {
       const storage = new InMemoryStorageBackend();
-      const retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 10, keepRecent: '', minAge: '', maxTotalBytes: 0 });
+      const retention = new RetentionPolicyEvaluator({
+        maxFullSnapshots: 10,
+        keepRecent: '',
+        minAge: '',
+        maxTotalBytes: 0,
+      });
       const mgr = new InMemoryBackupManager(storage, retention);
 
       const full = await mgr.createBackup({ type: 'full' });
@@ -1133,12 +1561,17 @@ describe('SECTION A: Cross-package Integration Tests', () => {
 
     it('prune after maxFullSnapshots=1 keeps only latest', async () => {
       const storage = new InMemoryStorageBackend();
-      const retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 1, keepRecent: '', minAge: '', maxTotalBytes: 0 });
+      const retention = new RetentionPolicyEvaluator({
+        maxFullSnapshots: 1,
+        keepRecent: '',
+        minAge: '',
+        maxTotalBytes: 0,
+      });
       const mgr = new InMemoryBackupManager(storage, retention);
 
       await mgr.createBackup({ type: 'full' });
       // Small delay so timestamps differ
-      await new Promise(r => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 5));
       await mgr.createBackup({ type: 'full' });
 
       const pruned = await mgr.prune();
@@ -1150,7 +1583,12 @@ describe('SECTION A: Cross-package Integration Tests', () => {
 
     it('restore then delete: get returns null', async () => {
       const storage = new InMemoryStorageBackend();
-      const retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 10, keepRecent: '', minAge: '', maxTotalBytes: 0 });
+      const retention = new RetentionPolicyEvaluator({
+        maxFullSnapshots: 10,
+        keepRecent: '',
+        minAge: '',
+        maxTotalBytes: 0,
+      });
       const mgr = new InMemoryBackupManager(storage, retention);
 
       const result = await mgr.createBackup({ type: 'full' });
@@ -1188,7 +1626,12 @@ describe('SECTION A: Cross-package Integration Tests', () => {
       detector.reportLockAcquired('txA', 'resA');
       detector.reportLockAcquired('txB', 'resB');
 
-      await recorder.record({ query: 'SELECT * FROM t', durationMs: 200, timestamp: new Date(), database: 'db1' });
+      await recorder.record({
+        query: 'SELECT * FROM t',
+        durationMs: 200,
+        timestamp: new Date(),
+        database: 'db1',
+      });
 
       const events = detector.detectDeadlocks();
       expect(events.length).toBeGreaterThanOrEqual(1);
@@ -1217,7 +1660,13 @@ describe('SECTION A: Cross-package Integration Tests', () => {
   describe('A4: Audit + Exporter full lifecycle', () => {
     it('write → get → verify all fields match', async () => {
       const store = new InMemoryAuditStore();
-      const id = await store.write({ operation: 'CREATE_USER', actor: 'admin', resource: 'users/1', result: 'success', severity: 'info' });
+      const id = await store.write({
+        operation: 'CREATE_USER',
+        actor: 'admin',
+        resource: 'users/1',
+        result: 'success',
+        severity: 'info',
+      });
       const entry = await store.get(id);
       expect(entry).not.toBeNull();
       expect(entry!.id).toBe(id);
@@ -1229,9 +1678,24 @@ describe('SECTION A: Cross-package Integration Tests', () => {
 
     it('write multiple → query with filter → correct count', async () => {
       const store = new InMemoryAuditStore();
-      await store.write({ operation: 'OP1', actor: 'alice', resource: 'r1', result: 'success' });
-      await store.write({ operation: 'OP2', actor: 'bob', resource: 'r2', result: 'failure' });
-      await store.write({ operation: 'OP1', actor: 'alice', resource: 'r3', result: 'success' });
+      await store.write({
+        operation: 'OP1',
+        actor: 'alice',
+        resource: 'r1',
+        result: 'success',
+      });
+      await store.write({
+        operation: 'OP2',
+        actor: 'bob',
+        resource: 'r2',
+        result: 'failure',
+      });
+      await store.write({
+        operation: 'OP1',
+        actor: 'alice',
+        resource: 'r3',
+        result: 'success',
+      });
 
       const result = await store.query({ actor: 'alice' });
       expect(result.length).toBe(2);
@@ -1240,7 +1704,12 @@ describe('SECTION A: Cross-package Integration Tests', () => {
     it('export to file → file has correct content', async () => {
       const store = new InMemoryAuditStore();
       const exporter = new JsonAuditExporter(store);
-      await store.write({ operation: 'EXPORT_TEST', actor: 'tester', resource: 'r1', result: 'success' });
+      await store.write({
+        operation: 'EXPORT_TEST',
+        actor: 'tester',
+        resource: 'r1',
+        result: 'success',
+      });
 
       const json = await exporter.exportToString();
       const parsed = JSON.parse(json);
@@ -1252,10 +1721,20 @@ describe('SECTION A: Cross-package Integration Tests', () => {
     it('prune older than → remaining entries correct', async () => {
       const store = new InMemoryAuditStore();
       const old = new Date(Date.now() - 86_400_000); // 1 day ago
-      await store.write({ operation: 'OLD', actor: 'a', resource: 'r', result: 'success' });
-      await new Promise(r => setTimeout(r, 5));
+      await store.write({
+        operation: 'OLD',
+        actor: 'a',
+        resource: 'r',
+        result: 'success',
+      });
+      await new Promise((r) => setTimeout(r, 5));
       const now = new Date();
-      await store.write({ operation: 'NEW', actor: 'b', resource: 'r', result: 'success' });
+      await store.write({
+        operation: 'NEW',
+        actor: 'b',
+        resource: 'r',
+        result: 'success',
+      });
 
       const pruned = await store.pruneOlderThan(now);
       expect(pruned).toBe(1);
@@ -1271,7 +1750,10 @@ describe('SECTION A: Cross-package Integration Tests', () => {
   describe('A5: TLS + CertMonitor lifecycle', () => {
     it('loadConfig → getCertInfo has valid fields', async () => {
       const tls = new InMemoryTLSManager();
-      await tls.loadConfig({ certPath: '/certs/server.crt', keyPath: '/certs/server.key' });
+      await tls.loadConfig({
+        certPath: '/certs/server.crt',
+        keyPath: '/certs/server.key',
+      });
       const info = await tls.getCertInfo();
       expect(info.subject).toBe('CN=localhost');
       expect(info.daysRemaining).toBeGreaterThan(0);
@@ -1285,7 +1767,16 @@ describe('SECTION A: Cross-package Integration Tests', () => {
 
       monitor.onWarning(warning);
       monitor.addExpiryStatus(
-        { subject: 'CN=expired', issuer: 'CA', serialNumber: 'S1', validFrom: '2024-01-01', validTo: '2024-06-01', daysRemaining: -10, path: '/certs/bad.crt', fingerprint: 'sha256$$bad' },
+        {
+          subject: 'CN=expired',
+          issuer: 'CA',
+          serialNumber: 'S1',
+          validFrom: '2024-01-01',
+          validTo: '2024-06-01',
+          daysRemaining: -10,
+          path: '/certs/bad.crt',
+          fingerprint: 'sha256$$bad',
+        },
         'expired',
       );
 
@@ -1343,7 +1834,6 @@ describe('SECTION A: Cross-package Integration Tests', () => {
 // ══════════════════════════════════════════════════════════════════════
 
 describe('SECTION B: Edge / Boundary Conditions', () => {
-
   // ── B1: ProviderRegistry ──────────────────────────────────────────
 
   describe('B1: ProviderRegistry edge cases', () => {
@@ -1395,8 +1885,18 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('getAggregateStatus() with all failed → unhealthy', () => {
       const health = new HealthOrchestrator();
-      health.registerComponent(componentProbe('fail1', 'Fail1', { liveness: () => ({ ok: false, message: 'dead' }), readiness: () => ({ ok: false }) }));
-      health.registerComponent(componentProbe('fail2', 'Fail2', { liveness: () => ({ ok: false, message: 'dead' }), readiness: () => ({ ok: false }) }));
+      health.registerComponent(
+        componentProbe('fail1', 'Fail1', {
+          liveness: () => ({ ok: false, message: 'dead' }),
+          readiness: () => ({ ok: false }),
+        }),
+      );
+      health.registerComponent(
+        componentProbe('fail2', 'Fail2', {
+          liveness: () => ({ ok: false, message: 'dead' }),
+          readiness: () => ({ ok: false }),
+        }),
+      );
 
       const status = health.getAggregateStatus();
       expect(status.status).toBe('unhealthy');
@@ -1409,7 +1909,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       expect(health.hasComponent('gone')).toBe(true);
       health.unregisterComponent('gone');
       const comps = health.getComponentHealth();
-      expect(comps.find(c => c.componentId === 'gone')).toBeUndefined();
+      expect(comps.find((c) => c.componentId === 'gone')).toBeUndefined();
     });
   });
 
@@ -1491,21 +1991,41 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
     it('setThreshold(0) → everything recorded', async () => {
       const r = new InMemorySlowQueryRecorder(100);
       r.setThreshold(0);
-      await r.record({ query: 'SELECT 1', durationMs: 1, timestamp: new Date(), database: 'db' });
+      await r.record({
+        query: 'SELECT 1',
+        durationMs: 1,
+        timestamp: new Date(),
+        database: 'db',
+      });
       expect(r.getRecentSlowQueries().length).toBe(1);
     });
 
     it('setThreshold(Infinity) → nothing recorded', async () => {
       const r = new InMemorySlowQueryRecorder(100);
       r.setThreshold(Infinity);
-      await r.record({ query: 'SELECT 1', durationMs: 999_999, timestamp: new Date(), database: 'db' });
+      await r.record({
+        query: 'SELECT 1',
+        durationMs: 999_999,
+        timestamp: new Date(),
+        database: 'db',
+      });
       expect(r.getRecentSlowQueries().length).toBe(0);
     });
 
     it('max entries = 1 → only latest retained', async () => {
       const r = new InMemorySlowQueryRecorder(0, 1);
-      await r.record({ query: 'first', durationMs: 1, timestamp: new Date(), database: 'db' });
-      await r.record({ query: 'second', durationMs: 1, timestamp: new Date(), database: 'db' });
+      await r.record({
+        query: 'first',
+        durationMs: 1,
+        timestamp: new Date(),
+        database: 'db',
+      });
+      await r.record({
+        query: 'second',
+        durationMs: 1,
+        timestamp: new Date(),
+        database: 'db',
+      });
       const q = r.getRecentSlowQueries();
       expect(q.length).toBe(1);
       expect(q[0].query).toBe('second');
@@ -1513,7 +2033,12 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('record with empty string query', async () => {
       const r = new InMemorySlowQueryRecorder(0);
-      await r.record({ query: '', durationMs: 1, timestamp: new Date(), database: 'db' });
+      await r.record({
+        query: '',
+        durationMs: 1,
+        timestamp: new Date(),
+        database: 'db',
+      });
       const q = r.getRecentSlowQueries();
       expect(q.length).toBe(1);
       expect(q[0].query).toBe('');
@@ -1521,14 +2046,24 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('clear() then getRecentSlowQueries() → empty', async () => {
       const r = new InMemorySlowQueryRecorder(0);
-      await r.record({ query: 'SELECT 1', durationMs: 1, timestamp: new Date(), database: 'db' });
+      await r.record({
+        query: 'SELECT 1',
+        durationMs: 1,
+        timestamp: new Date(),
+        database: 'db',
+      });
       r.clear();
       expect(r.getRecentSlowQueries().length).toBe(0);
     });
 
     it('context with partial fields (only database, no user)', async () => {
       const r = new InMemorySlowQueryRecorder(0);
-      await r.record({ query: 'SELECT *', durationMs: 1, timestamp: new Date(), database: 'shard-1' });
+      await r.record({
+        query: 'SELECT *',
+        durationMs: 1,
+        timestamp: new Date(),
+        database: 'shard-1',
+      });
       const q = r.getRecentSlowQueries();
       expect(q[0].database).toBe('shard-1');
       expect(q[0].user).toBeUndefined();
@@ -1540,22 +2075,45 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
   describe('B5: AlertRuleManager edge cases', () => {
     it('evaluate({}) (empty snapshot) → empty results', () => {
       const m = new InMemoryAlertRuleManager();
-      m.addRule({ name: 'high-cpu', metric: 'cpu_pct', condition: 'gt', threshold: 90, durationMs: 10000, severity: 'warning', enabled:
- true });
+      m.addRule({
+        name: 'high-cpu',
+        metric: 'cpu_pct',
+        condition: 'gt',
+        threshold: 90,
+        durationMs: 10000,
+        severity: 'warning',
+        enabled: true,
+      });
       const results = m.evaluateSnapshot({});
       expect(results.length).toBe(0);
     });
 
     it('condition points to non-existent key → skip entry', () => {
       const m = new InMemoryAlertRuleManager();
-      m.addRule({ name: 'foo', metric: 'nonexistent', condition: 'gt', threshold: 10, durationMs: 1000, severity: 'warning', enabled: true });
+      m.addRule({
+        name: 'foo',
+        metric: 'nonexistent',
+        condition: 'gt',
+        threshold: 10,
+        durationMs: 1000,
+        severity: 'warning',
+        enabled: true,
+      });
       const results = m.evaluateSnapshot({ existing_metric: 50 });
       expect(results.length).toBe(0);
     });
 
     it('threshold is NaN → entry skipped', () => {
       const m = new InMemoryAlertRuleManager();
-      m.addRule({ name: 'nan-rule', metric: 'cpu_pct', condition: 'gt', threshold: NaN, durationMs: 1000, severity: 'warning', enabled: true });
+      m.addRule({
+        name: 'nan-rule',
+        metric: 'cpu_pct',
+        condition: 'gt',
+        threshold: NaN,
+        durationMs: 1000,
+        severity: 'warning',
+        enabled: true,
+      });
       const results = m.evaluateSnapshot({ cpu_pct: 50 });
       // NaN comparisons always return false, so no trigger
       expect(results.length).toBe(0);
@@ -1569,8 +2127,25 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('add same rule ID twice → second overrides', async () => {
       const m = new InMemoryAlertRuleManager();
-      const id1 = await m.addRule({ name: 'rule1', metric: 'cpu_pct', condition: 'gt', threshold: 80, durationMs: 1000, severity: 'warning', enabled: true });
-      const id2 = await m.addRule({ id: id1, name: 'rule1-override', metric: 'cpu_pct', condition: 'gt', threshold: 90, durationMs: 1000, severity: 'warning', enabled: true });
+      const id1 = await m.addRule({
+        name: 'rule1',
+        metric: 'cpu_pct',
+        condition: 'gt',
+        threshold: 80,
+        durationMs: 1000,
+        severity: 'warning',
+        enabled: true,
+      });
+      const id2 = await m.addRule({
+        id: id1,
+        name: 'rule1-override',
+        metric: 'cpu_pct',
+        condition: 'gt',
+        threshold: 90,
+        durationMs: 1000,
+        severity: 'warning',
+        enabled: true,
+      });
       const rules = m.getRules();
       expect(rules.length).toBe(1);
       expect(rules[0].threshold).toBe(90);
@@ -1582,7 +2157,12 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
   describe('B6: Backup edge cases', () => {
     it('listBackups on empty manager → empty array', async () => {
       const storage = new InMemoryStorageBackend();
-      const retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 10, keepRecent: '', minAge: '', maxTotalBytes: 0 });
+      const retention = new RetentionPolicyEvaluator({
+        maxFullSnapshots: 10,
+        keepRecent: '',
+        minAge: '',
+        maxTotalBytes: 0,
+      });
       const mgr = new InMemoryBackupManager(storage, retention);
       const list = await mgr.listBackups();
       expect(list).toEqual([]);
@@ -1590,7 +2170,12 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('deleteBackup on non-existent ID → returns false', async () => {
       const storage = new InMemoryStorageBackend();
-      const retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 10, keepRecent: '', minAge: '', maxTotalBytes: 0 });
+      const retention = new RetentionPolicyEvaluator({
+        maxFullSnapshots: 10,
+        keepRecent: '',
+        minAge: '',
+        maxTotalBytes: 0,
+      });
       const mgr = new InMemoryBackupManager(storage, retention);
       const result = await mgr.deleteBackup('nonexistent');
       expect(result).toBe(false);
@@ -1598,7 +2183,12 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('prune() on empty list → returns 0', async () => {
       const storage = new InMemoryStorageBackend();
-      const retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 10, keepRecent: '', minAge: '', maxTotalBytes: 0 });
+      const retention = new RetentionPolicyEvaluator({
+        maxFullSnapshots: 10,
+        keepRecent: '',
+        minAge: '',
+        maxTotalBytes: 0,
+      });
       const mgr = new InMemoryBackupManager(storage, retention);
       const pruned = await mgr.prune();
       expect(pruned).toBe(0);
@@ -1606,7 +2196,12 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('getBackup(null | undefined) → handled', async () => {
       const storage = new InMemoryStorageBackend();
-      const retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 10, keepRecent: '', minAge: '', maxTotalBytes: 0 });
+      const retention = new RetentionPolicyEvaluator({
+        maxFullSnapshots: 10,
+        keepRecent: '',
+        minAge: '',
+        maxTotalBytes: 0,
+      });
       const mgr = new InMemoryBackupManager(storage, retention);
       const result1 = await mgr.getBackup(null as unknown as string);
       const result2 = await mgr.getBackup(undefined as unknown as string);
@@ -1616,7 +2211,12 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('createBackup with type=full, no options → defaults', async () => {
       const storage = new InMemoryStorageBackend();
-      const retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 10, keepRecent: '', minAge: '', maxTotalBytes: 0 });
+      const retention = new RetentionPolicyEvaluator({
+        maxFullSnapshots: 10,
+        keepRecent: '',
+        minAge: '',
+        maxTotalBytes: 0,
+      });
       const mgr = new InMemoryBackupManager(storage, retention);
       const result = await mgr.createBackup({ type: 'full' });
       expect(result.success).toBe(true);
@@ -1672,7 +2272,9 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       expect(snap.points.length).toBeGreaterThan(0);
 
       // Mutate snapshot
-      for (const p of snap.points) { (p as any).value = 999; }
+      for (const p of snap.points) {
+        (p as any).value = 999;
+      }
 
       // Registry should be unchanged
       expect(registry.counter('test').get()).toBe(5);
@@ -1753,18 +2355,21 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('RBACProvider identity with no roles → no permissions', () => {
       const rbac = new InMemoryRBACProvider();
-      rbac.registerRole({ name: 'admin', permissions: [{ resource: 'users', action: 'read' }] });
+      rbac.registerRole({
+        name: 'admin',
+        permissions: [{ resource: 'users', action: 'read' }],
+      });
       const has = rbac.hasPermission({ id: 'user', roles: [] }, { resource: 'users', action: 'read' });
       expect(has).toBe(false);
     });
 
     it('RBACProvider hasPermission with undefined identity fields → handled', () => {
       const rbac = new InMemoryRBACProvider();
-      rbac.registerRole({ name: 'viewer', permissions: [{ resource: 'docs', action: 'read' }] });
-      const has = rbac.hasPermission(
-        { id: 'anon', roles: ['viewer'] },
-        { resource: 'docs', action: 'read' },
-      );
+      rbac.registerRole({
+        name: 'viewer',
+        permissions: [{ resource: 'docs', action: 'read' }],
+      });
+      const has = rbac.hasPermission({ id: 'anon', roles: ['viewer'] }, { resource: 'docs', action: 'read' });
       expect(has).toBe(true);
     });
 
@@ -1895,7 +2500,6 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 // ══════════════════════════════════════════════════════════════════════
 
 describe('SECTION C: Serialization / Immutability', () => {
-
   // ── C1: Snapshot immutability ────────────────────────────────────
 
   describe('C1: Snapshot immutability', () => {
@@ -1904,7 +2508,7 @@ describe('SECTION C: Serialization / Immutability', () => {
       registry.counter('hits').incBy(5);
       const snap = registry.snapshot();
       // Snapshot points at counter value 5
-      const hitsPoint = snap.points.find(p => p.name === 'hits')!;
+      const hitsPoint = snap.points.find((p) => p.name === 'hits')!;
       expect(hitsPoint.value).toBe(5);
 
       // Modify point value (snapshot is an array, let's verify the registry is independent)
@@ -1919,8 +2523,8 @@ describe('SECTION C: Serialization / Immutability', () => {
       registry.counter('req').incBy(2);
       const snap2 = registry.snapshot();
       // snap1 should not be affected by later mutations
-      const p1 = snap1.points.find(p => p.name === 'req')!;
-      const p2 = snap2.points.find(p => p.name === 'req')!;
+      const p1 = snap1.points.find((p) => p.name === 'req')!;
+      const p2 = snap2.points.find((p) => p.name === 'req')!;
       expect(p1.value).toBe(3);
       expect(p2.value).toBe(5);
     });
@@ -1931,7 +2535,15 @@ describe('SECTION C: Serialization / Immutability', () => {
   describe('C2: JSON round-trip', () => {
     it('AuditEntry → JSON.stringify → JSON.parse → all fields match', async () => {
       const store = new InMemoryAuditStore();
-      const id = await store.write({ operation: 'TEST', actor: 'alice', resource: 'r1', result: 'success', severity: 'info', details: { key: 'value' }, traceId: 'trace-123' });
+      const id = await store.write({
+        operation: 'TEST',
+        actor: 'alice',
+        resource: 'r1',
+        result: 'success',
+        severity: 'info',
+        details: { key: 'value' },
+        traceId: 'trace-123',
+      });
       const entry = await store.get(id);
 
       const json = JSON.stringify(entry);

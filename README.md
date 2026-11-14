@@ -53,6 +53,24 @@ The `@agentix-e/db-cluster/testing` entry ships the integration harness
 (`TestCluster`, certificate generation, a linearizability checker) so downstream
 packages can build real clusters in their own tests instead of copying internals.
 
+## Documentation
+
+| Start here | What it covers |
+|---|---|
+| [docs/getting-started.md](docs/getting-started.md) | Empty directory → 3-node mTLS cluster → a replicated write, in 15 minutes |
+| [docs/concepts.md](docs/concepts.md) | The mental model: consensus groups, shards, federation, guarantees |
+| [docs/architecture.md](docs/architecture.md) | High-level architecture and component inventory |
+| [docs/user-guide/cluster.md](docs/user-guide/cluster.md) | Consensus, sharding, snapshots, HA/fencing, sessions, watch, PITR |
+| [docs/user-guide/federation.md](docs/user-guide/federation.md) | CDC, outbox, conflict resolution, anti-entropy, topology |
+| [docs/user-guide/operations.md](docs/user-guide/operations.md) | The 21 engine-agnostic operations packages |
+| [docs/user-guide/engine-adapters.md](docs/user-guide/engine-adapters.md) | Plugging **your** database engine into the middleware |
+| [docs/user-guide/production-runbook.md](docs/user-guide/production-runbook.md) | Certificates, capacity, monitoring, failure handling, DR |
+| [docs/glossary.md](docs/glossary.md) | Every term, defined as this project uses it |
+
+Internal artefacts — product whitepaper, detailed technical design, ADRs, roadmap, audit
+and progress reports — live in the companion repository
+[`AgentiX-E/db-stack-docs`](https://github.com/AgentiX-E/db-stack-docs).
+
 ## Repository layout
 
 ```
@@ -81,7 +99,13 @@ e2e/
   harness/            process harness + node/gateway entry points
   tests/              real TLS cluster suite, cross-cluster sync suite
   bench/              YCSB against a real cluster
+
+docs/                 external documentation (see the table above)
 ```
+
+No internal design notes, iteration logs or audit reports are kept in this repository:
+they belong to `db-stack-docs`, so what ships alongside the code is exactly what a user of
+the packages needs.
 
 ## Testing philosophy
 

@@ -143,7 +143,12 @@ export interface IConnectionMonitor {
   /** Get information about all current connections */
   getConnections(): Promise<IConnectionInfo[]>;
   /** Get current pool utilization statistics */
-  getPoolUtilization(): Promise<{ total: number; active: number; idle: number; waiting: number }>;
+  getPoolUtilization(): Promise<{
+    total: number;
+    active: number;
+    idle: number;
+    waiting: number;
+  }>;
   /** Callback invoked when the connection pool is exhausted */
   onExhaustion(callback: (stats: { total: number; active: number; waiting: number }) => void): void;
 }
@@ -167,7 +172,12 @@ export interface IResourceQuotaManager {
   /** Check whether a role is allowed to consume the requested resources */
   checkQuota(roleId: string): Promise<{ allowed: boolean; reason?: string }>;
   /** Get current resource usage for a given role */
-  getUsage(roleId: string): Promise<{ cpu: number; memoryMB: number; connections: number; queryRate: number }>;
+  getUsage(roleId: string): Promise<{
+    cpu: number;
+    memoryMB: number;
+    connections: number;
+    queryRate: number;
+  }>;
 }
 export interface ResourceUsageSnapshot {
   /** Memory usage in bytes. */

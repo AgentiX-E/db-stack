@@ -86,7 +86,7 @@ export class InMemoryLogger implements ILogger {
    * Get entries filtered by log level.
    */
   getByLevel(level: LogLevel): LogEntry[] {
-    return this._entries.filter(e => e.level === level);
+    return this._entries.filter((e) => e.level === level);
   }
 
   /**
@@ -148,9 +148,7 @@ export class InMemoryLogger implements ILogger {
           }
         }
       }
-      const extraCtx = validCtx
-        ? extra as Record<string, unknown>
-        : undefined;
+      const extraCtx = validCtx ? (extra as Record<string, unknown>) : undefined;
       this._pushEntry(this._makeEntry(level, contextOrMsg, extraCtx));
     } else if (firstIsObject) {
       const ctx = contextOrMsg as Record<string, unknown>;
@@ -164,9 +162,7 @@ export class InMemoryLogger implements ILogger {
       if (extraNotNull) {
         useExtra = extraIsString;
       }
-      const msg = useExtra
-        ? extra as string
-        : String(contextOrMsg ?? '');
+      const msg = useExtra ? (extra as string) : String(contextOrMsg ?? '');
       this._pushEntry(this._makeEntry(level, msg));
     }
   }
@@ -177,7 +173,11 @@ export class InMemoryLogger implements ILogger {
       const arg = args[0];
       if (arg instanceof Error) {
         const entry = this._makeEntry(level, arg.message);
-        entry.error = { message: arg.message, stack: arg.stack, name: arg.name };
+        entry.error = {
+          message: arg.message,
+          stack: arg.stack,
+          name: arg.name,
+        };
         this._pushEntry(entry);
       } else {
         this._pushEntry(this._makeEntry(level, arg as string));
@@ -187,17 +187,25 @@ export class InMemoryLogger implements ILogger {
       const [first, second] = args;
       if (first instanceof Error) {
         // error(err, msg?)
-        const msg = second as string ?? first.message;
+        const msg = (second as string) ?? first.message;
         const entry = this._makeEntry(level, msg);
-        entry.error = { message: first.message, stack: first.stack, name: first.name };
+        entry.error = {
+          message: first.message,
+          stack: first.stack,
+          name: first.name,
+        };
         this._pushEntry(entry);
       } else if (first && typeof first === 'object' && second instanceof Error) {
         // error(context, err) or error(context, err, msg?)
         const ctx = first as Record<string, unknown>;
         const err = second as Error;
-        const msg = args[2] as string ?? err.message;
+        const msg = (args[2] as string) ?? err.message;
         const entry = this._makeEntry(level, msg, ctx);
-        entry.error = { message: err.message, stack: err.stack, name: err.name };
+        entry.error = {
+          message: err.message,
+          stack: err.stack,
+          name: err.name,
+        };
         this._pushEntry(entry);
       } else {
         // error(context, msg)
@@ -210,7 +218,11 @@ export class InMemoryLogger implements ILogger {
       const [ctx, err, msg] = args;
       const entry = this._makeEntry(level, msg as string, ctx as Record<string, unknown>);
       if (err instanceof Error) {
-        entry.error = { message: err.message, stack: err.stack, name: err.name };
+        entry.error = {
+          message: err.message,
+          stack: err.stack,
+          name: err.name,
+        };
       }
       this._pushEntry(entry);
     }

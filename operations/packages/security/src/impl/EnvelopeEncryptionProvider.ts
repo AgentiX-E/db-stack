@@ -21,10 +21,10 @@
  * └──────────┴───────────────┴───────────────┘
  */
 
-import { AES256GCMEncryptionProvider } from "./AES256GCMEncryptionProvider.js";
-import { KeyManager, type WrappedKey, type KeyManagerConfig } from "./KeyManager.js";
-import type { IEncryptionManager, EncryptionConfig } from "../interfaces/index.js";
-import crypto from "crypto";
+import { AES256GCMEncryptionProvider } from './AES256GCMEncryptionProvider.js';
+import { KeyManager, type WrappedKey, type KeyManagerConfig } from './KeyManager.js';
+import type { IEncryptionManager, EncryptionConfig } from '../interfaces/index.js';
+import crypto from 'crypto';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -82,17 +82,14 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
     this._ensureInitialized();
 
     if (!this.currentDek) {
-      throw new Error("EnvelopeEncryption: no DEK available. Call initialize() first.");
+      throw new Error('EnvelopeEncryption: no DEK available. Call initialize() first.');
     }
 
     // Encrypt with current DEK
     const encrypted = await this._encryptWithDEK(this.currentDek, plaintext, context);
 
     // Get the wrapped form of the current DEK
-    const wrappedKey = await this.keyManager.wrapKey(
-      this.currentDek,
-      this.keyManager.version,
-    );
+    const wrappedKey = await this.keyManager.wrapKey(this.currentDek, this.keyManager.version);
 
     // Serialize wrapped key (convert Buffers to arrays for JSON)
     const serializableWrappedKey = {
@@ -103,7 +100,7 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
       salt: Array.from(wrappedKey.salt),
     };
     const wrappedKeyJson = JSON.stringify(serializableWrappedKey);
-    const wrappedKeyBuf = Buffer.from(wrappedKeyJson, "utf-8");
+    const wrappedKeyBuf = Buffer.from(wrappedKeyJson, 'utf-8');
     const lenBuf = Buffer.alloc(HEADER_PREFIX_LENGTH);
     lenBuf.writeUInt32BE(wrappedKeyBuf.length, 0);
 
@@ -116,9 +113,7 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
     this._ensureInitialized();
 
     if (ciphertext.length < HEADER_PREFIX_LENGTH) {
-      throw new Error(
-        `EnvelopeEncryption: ciphertext too short (${ciphertext.length}B)`,
-      );
+      throw new Error(`EnvelopeEncryption: ciphertext too short (${ciphertext.length}B)`);
     }
 
     // Parse header
@@ -127,12 +122,10 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
     offset += HEADER_PREFIX_LENGTH;
 
     if (ciphertext.length < HEADER_PREFIX_LENGTH + wrappedKeyLen + 12) {
-      throw new Error(
-        `EnvelopeEncryption: incomplete header (wrapped key length: ${wrappedKeyLen})`,
-      );
+      throw new Error(`EnvelopeEncryption: incomplete header (wrapped key length: ${wrappedKeyLen})`);
     }
 
-    const wrappedKeyJson = ciphertext.subarray(offset, offset + wrappedKeyLen).toString("utf-8");
+    const wrappedKeyJson = ciphertext.subarray(offset, offset + wrappedKeyLen).toString('utf-8');
     offset += wrappedKeyLen;
 
     const encrypted = ciphertext.subarray(offset);
@@ -150,7 +143,7 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
         salt: Buffer.from(wrappedKey.salt as unknown as Uint8Array),
       };
     } catch {
-      throw new Error("EnvelopeEncryption: invalid wrapped key JSON in header");
+      throw new Error('EnvelopeEncryption: invalid wrapped key JSON in header');
     }
 
     // Unwrap DEK
@@ -221,21 +214,14 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
 
   // ── Internal: AES-GCM with a specific DEK ──────────────────
 
-  private async _encryptWithDEK(
-    dek: Buffer,
-    data: Buffer,
-    context?: string,
-    decrypt = false,
-  ): Promise<Buffer> {
+  private async _encryptWithDEK(dek: Buffer, data: Buffer, context?: string, decrypt = false): Promise<Buffer> {
     const iv = crypto.randomBytes(12);
-    const aad = context ? Buffer.from(context, "utf-8") : undefined;
+    const aad = context ? Buffer.from(context, 'utf-8') : undefined;
 
     if (decrypt) {
       // Parsing: [IV(12B)] [ciphertext] [tag(16B)]
       if (data.length < 12 + 16) {
-        throw new Error(
-          `EnvelopeEncryption: data too short for AES-GCM (${data.length}B)`,
-        );
+        throw new Error(`EnvelopeEncryption: data too short for AES-GCM (${data.length}B)`);
       }
 
       const msgIV = data.subarray(0, 12);
@@ -243,19 +229,17 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
       const encrypted = data.subarray(12, data.length - 16);
 
       try {
-        const decipher = crypto.createDecipheriv("aes-256-gcm", dek, msgIV, {
+        const decipher = crypto.createDecipheriv('aes-256-gcm', dek, msgIV, {
           authTagLength: 16,
         });
         decipher.setAuthTag(tag);
         if (aad) decipher.setAAD(aad);
         return Buffer.concat([decipher.update(encrypted), decipher.final()]);
       } catch (error) {
-        throw new Error(
-          `EnvelopeEncryption: AES-GCM decryption failed: ${String(error)}`,
-        );
+        throw new Error(`EnvelopeEncryption: AES-GCM decryption failed: ${String(error)}`);
       }
     } else {
-      const cipher = crypto.createCipheriv("aes-256-gcm", dek, iv, {
+      const cipher = crypto.createCipheriv('aes-256-gcm', dek, iv, {
         authTagLength: 16,
       });
       if (aad) cipher.setAAD(aad);
@@ -268,7 +252,7 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
 
   private _ensureInitialized(): void {
     if (!this.enabled) {
-      throw new Error("EnvelopeEncryption: not initialized. Call initialize() first.");
+      throw new Error('EnvelopeEncryption: not initialized. Call initialize() first.');
     }
   }
 }

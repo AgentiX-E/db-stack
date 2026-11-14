@@ -187,9 +187,7 @@ describe('RaftGroup — constructor/fallback/membership-timeout branches', () =>
   describe('pipeline parse fallbacks', () => {
     it('defaults msgId and type in pipeline apply', async () => {
       mockRaftAdapter.getProgress.mockResolvedValue({ lastLog: 0 });
-      group.pipeline = [
-        { index: 1, flushed: false, acknowledged: true, data: '{}', term: 0, sentAt: Date.now() },
-      ];
+      group.pipeline = [{ index: 1, flushed: false, acknowledged: true, data: '{}', term: 0, sentAt: Date.now() }];
       mockRaftAdapter.propose.mockResolvedValue({ index: '1', term: '0' });
       await group.flushPipeline();
       expect(mockRaftAdapter.propose).toHaveBeenCalled();

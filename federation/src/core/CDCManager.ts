@@ -16,10 +16,10 @@
  *   MA5 — Graceful shutdown stops all workers
  */
 
-import type { ICDCManager, CDCSubscription, ICDCPublication } from "../interfaces/replication/ICDCManager";
-import { CDCEngine } from "../replication/CDCEngine";
-import type { HLC } from "../hlc/HLC";
-import { EventEmitter } from "events";
+import type { ICDCManager, CDCSubscription, ICDCPublication } from '../interfaces/replication/ICDCManager';
+import { CDCEngine } from '../replication/CDCEngine';
+import type { HLC } from '../hlc/HLC';
+import { EventEmitter } from 'events';
 
 export interface CDCTarget {
   nodeId: string;
@@ -41,7 +41,7 @@ export interface CDCEvent {
   eventId: string;
   key: string;
   value: string;
-  type: "insert" | "update" | "delete";
+  type: 'insert' | 'update' | 'delete';
   sourceNodeId: string;
   sourceDc: string;
   hlcTimestamp: { wallTime: number; logical: number; nodeId: string };
@@ -86,7 +86,9 @@ export class CDCManager implements ICDCManager {
 
     // Start flush loop
     this.tickTimer = setInterval(() => {
-      this.flushBuffer().catch(() => { /* best-effort */ });
+      this.flushBuffer().catch(() => {
+        /* best-effort */
+      });
     }, this.config.tickMs);
 
     this.started = true;
@@ -104,7 +106,11 @@ export class CDCManager implements ICDCManager {
     await this.flushBuffer();
 
     for (const engine of this.engines) {
-      try { await engine.stop(); } catch { /* best-effort */ }
+      try {
+        await engine.stop();
+      } catch {
+        /* best-effort */
+      }
     }
 
     this.engines.length = 0;
@@ -119,13 +125,13 @@ export class CDCManager implements ICDCManager {
    */
   async capture(event: CDCEvent): Promise<void> {
     if (!this.started) {
-      throw new Error("CDCManager not started");
+      throw new Error('CDCManager not started');
     }
 
     // MA3: Backpressure
     if (this.eventBuffer.length >= this.config.maxBufferSize) {
       this.isApplyingBackpressure = true;
-      this.emitter.emit("backpressure", {
+      this.emitter.emit('backpressure', {
         bufferSize: this.eventBuffer.length,
         maxBufferSize: this.config.maxBufferSize,
       });
@@ -133,11 +139,11 @@ export class CDCManager implements ICDCManager {
     }
 
     this.eventBuffer.push(event);
-    this.emitter.emit("event-captured", event);
+    this.emitter.emit('event-captured', event);
 
     // If buffer is filling up, notify
     if (this.eventBuffer.length >= this.config.maxBufferSize * 0.8) {
-      this.emitter.emit("buffer-warning", {
+      this.emitter.emit('buffer-warning', {
         bufferSize: this.eventBuffer.length,
         threshold: this.config.maxBufferSize * 0.8,
       });
@@ -158,8 +164,10 @@ export class CDCManager implements ICDCManager {
    * Register a backpressure callback.
    */
   onBackpressure(callback: (info: { bufferSize: number; maxBufferSize: number }) => void): () => void {
-    this.emitter.on("backpressure", callback);
-    return () => { this.emitter.off("backpressure", callback); };
+    this.emitter.on('backpressure', callback);
+    return () => {
+      this.emitter.off('backpressure', callback);
+    };
   }
 
   /**
@@ -204,15 +212,11 @@ export class CDCManager implements ICDCManager {
     // No-op for in-memory implementation
   }
 
-  async createSubscription(
-    name: string,
-    _publicationName: string,
-    _targetDsn: string,
-  ): Promise<CDCSubscription> {
+  async createSubscription(name: string, _publicationName: string, _targetDsn: string): Promise<CDCSubscription> {
     return {
       subscriptionId: name,
       tables: [],
-      operations: ["insert", "update", "delete"],
+      operations: ['insert', 'update', 'delete'],
       createdAt: Date.now(),
     };
   }
@@ -230,8 +234,10 @@ export class CDCManager implements ICDCManager {
   }
 
   onSlotInvalid(callback: (subscriptionId: string) => void): () => void {
-    this.emitter.on("slot-invalid", callback);
-    return () => { this.emitter.off("slot-invalid", callback); };
+    this.emitter.on('slot-invalid', callback);
+    return () => {
+      this.emitter.off('slot-invalid', callback);
+    };
   }
 
   // ── Private ──────────────────────────────────────────────
@@ -255,6 +261,6 @@ export class CDCManager implements ICDCManager {
     // MA2: All CDC engines receive events
     // Each engine records the events for WAL-anchored replay
     // (Future: per-engine event routing based on target DC)
-    this.emitter.emit("flushed", events.length);
+    this.emitter.emit('flushed', events.length);
   }
 }

@@ -10,8 +10,8 @@
  *   CHAOS6 — After recovery, all transports healthy
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { ChaosEngineV2, SeededRNG } from "../impl/ChaosEngineV2.js";
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { ChaosEngineV2, SeededRNG } from '../impl/ChaosEngineV2.js';
 import type {
   IChaosTransport,
   IChaoticInvariantChecker,
@@ -20,7 +20,7 @@ import type {
   ChaoticInvariant,
   InvariantCheckResult,
   ChaosFaultV2,
-} from "../interfaces/v2-types.js";
+} from '../interfaces/v2-types.js';
 
 // ── Mock Transport Adapter ──────────────────────────────────
 
@@ -132,8 +132,8 @@ function makeTransport(id: string, peers = 3, total = 5): MockChaosTransport {
 
 function makeFault(overrides: Partial<ChaosFaultV2> = {}): ChaosFaultV2 {
   return {
-    type: "network-partition",
-    targets: ["node-0"],
+    type: 'network-partition',
+    targets: ['node-0'],
     durationMs: 0,
     config: {},
     ...overrides,
@@ -142,13 +142,13 @@ function makeFault(overrides: Partial<ChaosFaultV2> = {}): ChaosFaultV2 {
 
 // ── CHAOS1: Atomic Injection ────────────────────────────────
 
-describe("CHAOS1 — Atomic Fault Injection", () => {
+describe('CHAOS1 — Atomic Fault Injection', () => {
   let engine: ChaosEngineV2;
   let transports: MockChaosTransport[];
 
   beforeEach(async () => {
     engine = new ChaosEngineV2();
-    transports = [makeTransport("node-0"), makeTransport("node-1"), makeTransport("node-2")];
+    transports = [makeTransport('node-0'), makeTransport('node-1'), makeTransport('node-2')];
     await engine.start(transports);
   });
 
@@ -156,23 +156,23 @@ describe("CHAOS1 — Atomic Fault Injection", () => {
     await engine.stop();
   });
 
-  it("CHAOS1.1 — single fault injection creates exactly one active fault", async () => {
-    await engine.inject(makeFault({ targets: ["node-0"] }));
+  it('CHAOS1.1 — single fault injection creates exactly one active fault', async () => {
+    await engine.inject(makeFault({ targets: ['node-0'] }));
     expect(engine.getActiveFaults()).toHaveLength(1);
   });
 
-  it("CHAOS1.2 — injectMany creates the correct number of active faults", async () => {
+  it('CHAOS1.2 — injectMany creates the correct number of active faults', async () => {
     const faults: ChaosFaultV2[] = [
-      makeFault({ targets: ["node-0"], type: "network-partition" }),
-      makeFault({ targets: ["node-1"], type: "node-crash" }),
-      makeFault({ targets: ["node-2"], type: "message-loss" }),
+      makeFault({ targets: ['node-0'], type: 'network-partition' }),
+      makeFault({ targets: ['node-1'], type: 'node-crash' }),
+      makeFault({ targets: ['node-2'], type: 'message-loss' }),
     ];
     await engine.injectMany(faults);
     expect(engine.getActiveFaults()).toHaveLength(3);
   });
 
-  it("CHAOS1.3 — resolve removes the fault and restores transport", async () => {
-    await engine.inject(makeFault({ targets: ["node-0"] }));
+  it('CHAOS1.3 — resolve removes the fault and restores transport', async () => {
+    await engine.inject(makeFault({ targets: ['node-0'] }));
     const faults = engine.getActiveFaults();
     const faultId = faults[0]!.faultId!;
 
@@ -181,17 +181,14 @@ describe("CHAOS1 — Atomic Fault Injection", () => {
     expect(transports[0]!.isHealthy()).toBe(true);
   });
 
-  it("CHAOS1.4 — resolve non-existent ID is a no-op", async () => {
+  it('CHAOS1.4 — resolve non-existent ID is a no-op', async () => {
     await engine.inject(makeFault());
-    await engine.resolve("non-existent");
+    await engine.resolve('non-existent');
     expect(engine.getActiveFaults()).toHaveLength(1);
   });
 
-  it("CHAOS1.5 — healAll clears all active faults", async () => {
-    await engine.injectMany([
-      makeFault({ targets: ["node-0"] }),
-      makeFault({ targets: ["node-1"] }),
-    ]);
+  it('CHAOS1.5 — healAll clears all active faults', async () => {
+    await engine.injectMany([makeFault({ targets: ['node-0'] }), makeFault({ targets: ['node-1'] })]);
     await engine.healAll();
     expect(engine.getActiveFaults()).toHaveLength(0);
     for (const t of transports) {
@@ -199,23 +196,23 @@ describe("CHAOS1 — Atomic Fault Injection", () => {
     }
   });
 
-  it("CHAOS1.6 — duplicate transport ID throws on start", async () => {
+  it('CHAOS1.6 — duplicate transport ID throws on start', async () => {
     const e2 = new ChaosEngineV2();
-    await expect(
-      e2.start([makeTransport("node-0"), makeTransport("node-0")]),
-    ).rejects.toThrow("Duplicate transport ID");
+    await expect(e2.start([makeTransport('node-0'), makeTransport('node-0')])).rejects.toThrow(
+      'Duplicate transport ID',
+    );
   });
 
-  it("CHAOS1.7 — inject before start throws", async () => {
+  it('CHAOS1.7 — inject before start throws', async () => {
     const e2 = new ChaosEngineV2();
-    await expect(e2.inject(makeFault())).rejects.toThrow("not started");
+    await expect(e2.inject(makeFault())).rejects.toThrow('not started');
   });
 });
 
 // ── CHAOS2: Deterministic Reproducibility ────────────────────
 
-describe("CHAOS2 — Deterministic RNG", () => {
-  it("CHAOS2.1 — same seed produces identical sequences", () => {
+describe('CHAOS2 — Deterministic RNG', () => {
+  it('CHAOS2.1 — same seed produces identical sequences', () => {
     const rng1 = new SeededRNG(42);
     const rng2 = new SeededRNG(42);
     for (let i = 0; i < 100; i++) {
@@ -223,7 +220,7 @@ describe("CHAOS2 — Deterministic RNG", () => {
     }
   });
 
-  it("CHAOS2.2 — different seeds produce different sequences", () => {
+  it('CHAOS2.2 — different seeds produce different sequences', () => {
     const rng1 = new SeededRNG(42);
     const rng2 = new SeededRNG(43);
     const seq1 = Array.from({ length: 10 }, () => rng1.next());
@@ -231,22 +228,22 @@ describe("CHAOS2 — Deterministic RNG", () => {
     expect(seq1).not.toEqual(seq2);
   });
 
-  it("CHAOS2.3 — pick returns elements within bounds", () => {
+  it('CHAOS2.3 — pick returns elements within bounds', () => {
     const rng = new SeededRNG(42);
-    const arr = ["a", "b", "c", "d", "e"];
+    const arr = ['a', 'b', 'c', 'd', 'e'];
     for (let i = 0; i < 50; i++) {
       expect(arr).toContain(rng.pick(arr));
     }
   });
 
-  it("CHAOS2.4 — pickN with same seed returns same elements", () => {
+  it('CHAOS2.4 — pickN with same seed returns same elements', () => {
     const rng1 = new SeededRNG(99);
     const rng2 = new SeededRNG(99);
     const arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     expect(rng1.pickN(arr, 3)).toEqual(rng2.pickN(arr, 3));
   });
 
-  it("CHAOS2.5 — shuffle alters order deterministically", () => {
+  it('CHAOS2.5 — shuffle alters order deterministically', () => {
     const rng1 = new SeededRNG(7);
     const rng2 = new SeededRNG(7);
     const arr1 = [1, 2, 3, 4, 5];
@@ -259,7 +256,7 @@ describe("CHAOS2 — Deterministic RNG", () => {
 
 // ── CHAOS4: Scenario Runner ─────────────────────────────────
 
-describe("CHAOS4 — Scenario Runner", () => {
+describe('CHAOS4 — Scenario Runner', () => {
   let engine: ChaosEngineV2;
   let checker: MockInvariantChecker;
 
@@ -267,10 +264,10 @@ describe("CHAOS4 — Scenario Runner", () => {
     engine = new ChaosEngineV2();
     checker = new MockInvariantChecker();
     await engine.start([
-      makeTransport("dc1:node-0"),
-      makeTransport("dc1:node-1"),
-      makeTransport("dc2:node-0"),
-      makeTransport("dc2:node-1"),
+      makeTransport('dc1:node-0'),
+      makeTransport('dc1:node-1'),
+      makeTransport('dc2:node-0'),
+      makeTransport('dc2:node-1'),
     ]);
   });
 
@@ -279,37 +276,37 @@ describe("CHAOS4 — Scenario Runner", () => {
   });
 
   const simpleScenario: ChaosScenario = {
-    name: "test-simple",
-    description: "Simple injection + invariant check",
+    name: 'test-simple',
+    description: 'Simple injection + invariant check',
     seed: 42,
     maxDurationMs: 30_000,
     steps: [
       {
-        name: "inject partition",
+        name: 'inject partition',
         fault: {
-          type: "network-partition",
-          targets: ["dc1:node-0"],
+          type: 'network-partition',
+          targets: ['dc1:node-0'],
           durationMs: 0,
           config: {},
         },
         waitMs: 100,
-        invariants: ["eventual-consistency"],
+        invariants: ['eventual-consistency'],
       },
       {
-        name: "crash node",
+        name: 'crash node',
         fault: {
-          type: "node-crash",
-          targets: ["dc1:node-1"],
+          type: 'node-crash',
+          targets: ['dc1:node-1'],
           durationMs: 500,
           config: {},
         },
         waitMs: 200,
-        invariants: ["leader-exists", "no-split-brain"],
+        invariants: ['leader-exists', 'no-split-brain'],
       },
     ],
   };
 
-  it("CHAOS4.1 — scenario executes all steps and passes", async () => {
+  it('CHAOS4.1 — scenario executes all steps and passes', async () => {
     const result = await engine.runScenario(simpleScenario, checker);
     expect(result.passed).toBe(true);
     expect(result.stepsExecuted).toBe(2);
@@ -317,56 +314,56 @@ describe("CHAOS4 — Scenario Runner", () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it("CHAOS4.2 — scenario records invariant results", async () => {
+  it('CHAOS4.2 — scenario records invariant results', async () => {
     const result = await engine.runScenario(simpleScenario, checker);
     expect(result.invariantResults).toHaveLength(3); // 1 from step1, 2 from step2
     expect(result.invariantResults.every((r) => r.passed)).toBe(true);
   });
 
-  it("CHAOS4.3 — scenario fails when invariants fail", async () => {
-    checker.failOn.add("eventual-consistency");
+  it('CHAOS4.3 — scenario fails when invariants fail', async () => {
+    checker.failOn.add('eventual-consistency');
     const result = await engine.runScenario(simpleScenario, checker);
     expect(result.passed).toBe(false);
   });
 
-  it("CHAOS4.4 — scenario respects maxDurationMs", async () => {
+  it('CHAOS4.4 — scenario respects maxDurationMs', async () => {
     const timeoutScenario: ChaosScenario = {
-      name: "test-timeout",
-      description: "Should timeout",
+      name: 'test-timeout',
+      description: 'Should timeout',
       seed: 1,
       maxDurationMs: 50,
       steps: [
         {
-          name: "slow step",
-          fault: makeFault({ targets: ["dc1:node-0"] }),
+          name: 'slow step',
+          fault: makeFault({ targets: ['dc1:node-0'] }),
           waitMs: 500, // longer than maxDurationMs
         },
         {
-          name: "never reached",
-          fault: makeFault({ targets: ["dc2:node-0"] }),
+          name: 'never reached',
+          fault: makeFault({ targets: ['dc2:node-0'] }),
           waitMs: 0,
         },
       ],
     };
     const result = await engine.runScenario(timeoutScenario, checker);
     expect(result.stepsExecuted).toBeLessThan(2);
-    expect(result.errors.some((e) => e.includes("timed out"))).toBe(true);
+    expect(result.errors.some((e) => e.includes('timed out'))).toBe(true);
   });
 
-  it("CHAOS4.5 — scenario heals all transports after completion", async () => {
+  it('CHAOS4.5 — scenario heals all transports after completion', async () => {
     await engine.runScenario(simpleScenario, checker);
     // All transports should be healthy after scenario
     const stats = engine.getAllTransportStats();
-    for (const transport of [makeTransport("dc1:node-0")]) {
+    for (const transport of [makeTransport('dc1:node-0')]) {
       // Check that engine's state is clean
     }
     expect(engine.getActiveFaults()).toHaveLength(0);
   });
 
-  it("CHAOS4.6 — empty scenario passes immediately", async () => {
+  it('CHAOS4.6 — empty scenario passes immediately', async () => {
     const emptyScenario: ChaosScenario = {
-      name: "test-empty",
-      description: "Empty",
+      name: 'test-empty',
+      description: 'Empty',
       seed: 1,
       maxDurationMs: 10_000,
       steps: [],
@@ -379,7 +376,7 @@ describe("CHAOS4 — Scenario Runner", () => {
 
 // ── CHAOS5: Transport-Level Injection ────────────────────────
 
-describe("CHAOS5 — Transport-Level Injection", () => {
+describe('CHAOS5 — Transport-Level Injection', () => {
   let engine: ChaosEngineV2;
   let t0: MockChaosTransport;
   let t1: MockChaosTransport;
@@ -387,9 +384,9 @@ describe("CHAOS5 — Transport-Level Injection", () => {
 
   beforeEach(async () => {
     engine = new ChaosEngineV2();
-    t0 = makeTransport("node-0", 2, 3);
-    t1 = makeTransport("node-1", 2, 3);
-    t2 = makeTransport("node-2", 2, 3);
+    t0 = makeTransport('node-0', 2, 3);
+    t1 = makeTransport('node-1', 2, 3);
+    t2 = makeTransport('node-2', 2, 3);
     await engine.start([t0, t1, t2]);
   });
 
@@ -397,30 +394,30 @@ describe("CHAOS5 — Transport-Level Injection", () => {
     await engine.stop();
   });
 
-  it("CHAOS5.1 — network-partition isolates target", async () => {
+  it('CHAOS5.1 — network-partition isolates target', async () => {
     await engine.inject({
-      type: "network-partition",
-      targets: ["node-0"],
+      type: 'network-partition',
+      targets: ['node-0'],
       durationMs: 0,
       config: {},
     });
     expect(t0.isolatedPeers.size).toBeGreaterThan(0);
   });
 
-  it("CHAOS5.2 — node-crash stops transport", async () => {
+  it('CHAOS5.2 — node-crash stops transport', async () => {
     await engine.inject({
-      type: "node-crash",
-      targets: ["node-0"],
+      type: 'node-crash',
+      targets: ['node-0'],
       durationMs: 0,
       config: {},
     });
     expect(t0.stopped).toBe(true);
   });
 
-  it("CHAOS5.3 — node-crash recovery restarts transport", async () => {
+  it('CHAOS5.3 — node-crash recovery restarts transport', async () => {
     await engine.inject({
-      type: "node-crash",
-      targets: ["node-0"],
+      type: 'node-crash',
+      targets: ['node-0'],
       durationMs: 0,
       config: {},
     });
@@ -429,30 +426,30 @@ describe("CHAOS5 — Transport-Level Injection", () => {
     expect(t0.stopped).toBe(false);
   });
 
-  it("CHAOS5.4 — message-loss sets loss rate", async () => {
+  it('CHAOS5.4 — message-loss sets loss rate', async () => {
     await engine.inject({
-      type: "message-loss",
-      targets: ["node-0"],
+      type: 'message-loss',
+      targets: ['node-0'],
       durationMs: 0,
       config: { lossRate: 0.5 },
     });
     expect(t0.messageLossRate).toBe(0.5);
   });
 
-  it("CHAOS5.5 — latency-injection sets latency", async () => {
+  it('CHAOS5.5 — latency-injection sets latency', async () => {
     await engine.inject({
-      type: "latency-injection",
-      targets: ["node-0"],
+      type: 'latency-injection',
+      targets: ['node-0'],
       durationMs: 0,
       config: { latencyMs: 300 },
     });
     expect(t0.latencyMs).toBe(300);
   });
 
-  it("CHAOS5.6 — cascading-failure stops targets sequentially", async () => {
+  it('CHAOS5.6 — cascading-failure stops targets sequentially', async () => {
     await engine.inject({
-      type: "cascading-failure",
-      targets: ["node-0", "node-1", "node-2"],
+      type: 'cascading-failure',
+      targets: ['node-0', 'node-1', 'node-2'],
       durationMs: 0,
       config: { staggerMs: 10 },
     });
@@ -461,30 +458,30 @@ describe("CHAOS5 — Transport-Level Injection", () => {
     expect(t2.stopped).toBe(true);
   });
 
-  it("CHAOS5.7 — resource-pressure simulates slowdown", async () => {
+  it('CHAOS5.7 — resource-pressure simulates slowdown', async () => {
     await engine.inject({
-      type: "resource-pressure",
-      targets: ["node-0"],
+      type: 'resource-pressure',
+      targets: ['node-0'],
       durationMs: 0,
-      config: { pressureType: "disk" },
+      config: { pressureType: 'disk' },
     });
     expect(t0.latencyMs).toBeGreaterThan(0);
   });
 
-  it("CHAOS5.8 — leadership-flap sets message loss", async () => {
+  it('CHAOS5.8 — leadership-flap sets message loss', async () => {
     await engine.inject({
-      type: "leadership-flap",
-      targets: ["node-0"],
+      type: 'leadership-flap',
+      targets: ['node-0'],
       durationMs: 0,
       config: {},
     });
     expect(t0.messageLossRate).toBe(0.5);
   });
 
-  it("CHAOS5.9 — wildcard target * affects all transports", async () => {
+  it('CHAOS5.9 — wildcard target * affects all transports', async () => {
     await engine.inject({
-      type: "message-loss",
-      targets: ["*"],
+      type: 'message-loss',
+      targets: ['*'],
       durationMs: 0,
       config: { lossRate: 0.3 },
     });
@@ -493,16 +490,16 @@ describe("CHAOS5 — Transport-Level Injection", () => {
     expect(t2.messageLossRate).toBe(0.3);
   });
 
-  it("CHAOS5.10 — dc: prefix targets all transports in DC", async () => {
-    const dc1_t0 = new MockChaosTransport("dc1:node-0", 1, 2);
-    const dc1_t1 = new MockChaosTransport("dc1:node-1", 1, 2);
-    const dc2_t0 = new MockChaosTransport("dc2:node-0", 1, 2);
+  it('CHAOS5.10 — dc: prefix targets all transports in DC', async () => {
+    const dc1_t0 = new MockChaosTransport('dc1:node-0', 1, 2);
+    const dc1_t1 = new MockChaosTransport('dc1:node-1', 1, 2);
+    const dc2_t0 = new MockChaosTransport('dc2:node-0', 1, 2);
     const e2 = new ChaosEngineV2();
     await e2.start([dc1_t0, dc1_t1, dc2_t0]);
 
     await e2.inject({
-      type: "message-loss",
-      targets: ["dc:dc1"],
+      type: 'message-loss',
+      targets: ['dc:dc1'],
       durationMs: 0,
       config: { lossRate: 0.9 },
     });
@@ -517,27 +514,33 @@ describe("CHAOS5 — Transport-Level Injection", () => {
 
 // ── CHAOS6: Recovery After Fault ─────────────────────────────
 
-describe("CHAOS6 — Recovery After Fault", () => {
+describe('CHAOS6 — Recovery After Fault', () => {
   let engine: ChaosEngineV2;
 
   beforeEach(async () => {
     engine = new ChaosEngineV2();
-    await engine.start([
-      makeTransport("node-0", 2, 3),
-      makeTransport("node-1", 2, 3),
-      makeTransport("node-2", 2, 3),
-    ]);
+    await engine.start([makeTransport('node-0', 2, 3), makeTransport('node-1', 2, 3), makeTransport('node-2', 2, 3)]);
   });
 
   afterEach(async () => {
     await engine.stop();
   });
 
-  it("CHAOS6.1 — all transports healthy after healAll", async () => {
+  it('CHAOS6.1 — all transports healthy after healAll', async () => {
     await engine.injectMany([
-      { type: "network-partition", targets: ["node-0"], durationMs: 0, config: {} },
-      { type: "node-crash", targets: ["node-1"], durationMs: 0, config: {} },
-      { type: "message-loss", targets: ["node-2"], durationMs: 0, config: { lossRate: 0.5 } },
+      {
+        type: 'network-partition',
+        targets: ['node-0'],
+        durationMs: 0,
+        config: {},
+      },
+      { type: 'node-crash', targets: ['node-1'], durationMs: 0, config: {} },
+      {
+        type: 'message-loss',
+        targets: ['node-2'],
+        durationMs: 0,
+        config: { lossRate: 0.5 },
+      },
     ]);
 
     await engine.healAll();
@@ -549,11 +552,8 @@ describe("CHAOS6 — Recovery After Fault", () => {
     }
   });
 
-  it("CHAOS6.2 — fault history preserved after healAll", async () => {
-    await engine.injectMany([
-      makeFault({ targets: ["node-0"] }),
-      makeFault({ targets: ["node-1"] }),
-    ]);
+  it('CHAOS6.2 — fault history preserved after healAll', async () => {
+    await engine.injectMany([makeFault({ targets: ['node-0'] }), makeFault({ targets: ['node-1'] })]);
 
     const historyBefore = engine.getHistory();
     expect(historyBefore).toHaveLength(2);
@@ -562,16 +562,16 @@ describe("CHAOS6 — Recovery After Fault", () => {
     expect(engine.getHistory()).toHaveLength(2); // history retained
   });
 
-  it("CHAOS6.3 — transport stats accessible", async () => {
+  it('CHAOS6.3 — transport stats accessible', async () => {
     const stats = engine.getAllTransportStats();
     expect(stats.size).toBe(3);
-    expect(stats.get("node-0")!.totalPeers).toBe(3);
+    expect(stats.get('node-0')!.totalPeers).toBe(3);
   });
 
-  it("CHAOS6.4 — auto-resolve removes fault after durationMs", async () => {
+  it('CHAOS6.4 — auto-resolve removes fault after durationMs', async () => {
     await engine.inject({
-      type: "network-partition",
-      targets: ["node-0"],
+      type: 'network-partition',
+      targets: ['node-0'],
       durationMs: 100,
       config: {},
     });
@@ -586,47 +586,47 @@ describe("CHAOS6 — Recovery After Fault", () => {
 
 // ── Event System ─────────────────────────────────────────────
 
-describe("Event System", () => {
+describe('Event System', () => {
   let engine: ChaosEngineV2;
 
   beforeEach(async () => {
     engine = new ChaosEngineV2();
-    await engine.start([makeTransport("node-0")]);
+    await engine.start([makeTransport('node-0')]);
   });
 
   afterEach(async () => {
     await engine.stop();
   });
 
-  it("fires onFaultInjected when fault is injected", async () => {
+  it('fires onFaultInjected when fault is injected', async () => {
     const fired: ChaosFaultV2[] = [];
     engine.onFaultInjected((f) => fired.push(f));
 
-    await engine.inject(makeFault({ targets: ["node-0"] }));
+    await engine.inject(makeFault({ targets: ['node-0'] }));
     expect(fired).toHaveLength(1);
-    expect(fired[0]!.type).toBe("network-partition");
+    expect(fired[0]!.type).toBe('network-partition');
   });
 
-  it("fires onFaultResolved when fault is resolved", async () => {
+  it('fires onFaultResolved when fault is resolved', async () => {
     const fired: string[] = [];
     engine.onFaultResolved((fid) => fired.push(fid));
 
-    const faultId = await engine.inject(makeFault({ targets: ["node-0"] }));
+    const faultId = await engine.inject(makeFault({ targets: ['node-0'] }));
     await engine.resolve(faultId);
     expect(fired).toHaveLength(1);
   });
 
-  it("unsubscribe onFaultResolved works", async () => {
+  it('unsubscribe onFaultResolved works', async () => {
     const fired: string[] = [];
     const unsub = engine.onFaultResolved((fid) => fired.push(fid));
     unsub();
 
-    const faultId = await engine.inject(makeFault({ targets: ["node-0"] }));
+    const faultId = await engine.inject(makeFault({ targets: ['node-0'] }));
     await engine.resolve(faultId);
     expect(fired).toHaveLength(0);
   });
 
-  it("unsubscribe works for onFaultInjected", async () => {
+  it('unsubscribe works for onFaultInjected', async () => {
     const fired: ChaosFaultV2[] = [];
     const unsub = engine.onFaultInjected((f) => fired.push(f));
     unsub();
@@ -635,24 +635,24 @@ describe("Event System", () => {
     expect(fired).toHaveLength(0);
   });
 
-  it("onScenarioCompleted fires with result", async () => {
+  it('onScenarioCompleted fires with result', async () => {
     const results: unknown[] = [];
     engine.onScenarioCompleted((r) => results.push(r));
 
     await engine.runScenario(
       {
-        name: "event-test",
-        description: "",
+        name: 'event-test',
+        description: '',
         seed: 1,
         maxDurationMs: 10_000,
         steps: [],
       },
       new (class implements IChaoticInvariantChecker {
         async check(): Promise<InvariantCheckResult> {
-          return { invariant: "custom", passed: true, detail: "" };
+          return { invariant: 'custom', passed: true, detail: '' };
         }
         async checkAll(invs: ChaoticInvariant[]): Promise<InvariantCheckResult[]> {
-          return invs.map((i) => ({ invariant: i, passed: true, detail: "" }));
+          return invs.map((i) => ({ invariant: i, passed: true, detail: '' }));
         }
       })(),
     );
@@ -660,25 +660,25 @@ describe("Event System", () => {
     expect(results).toHaveLength(1);
   });
 
-  it("unsubscribe onScenarioCompleted works", async () => {
+  it('unsubscribe onScenarioCompleted works', async () => {
     const results: unknown[] = [];
     const unsub = engine.onScenarioCompleted((r) => results.push(r));
     unsub();
 
     await engine.runScenario(
       {
-        name: "unsub-test",
-        description: "",
+        name: 'unsub-test',
+        description: '',
         seed: 2,
         maxDurationMs: 10_000,
         steps: [],
       },
       new (class implements IChaoticInvariantChecker {
         async check(): Promise<InvariantCheckResult> {
-          return { invariant: "custom", passed: true, detail: "" };
+          return { invariant: 'custom', passed: true, detail: '' };
         }
         async checkAll(invs: ChaoticInvariant[]): Promise<InvariantCheckResult[]> {
-          return invs.map((i) => ({ invariant: i, passed: true, detail: "" }));
+          return invs.map((i) => ({ invariant: i, passed: true, detail: '' }));
         }
       })(),
     );
@@ -689,11 +689,11 @@ describe("Event System", () => {
 
 // ── Backward Compatibility ───────────────────────────────────
 
-describe("Backward Compatibility", () => {
-  it("v1 InMemoryChaosEngine still works", async () => {
-    const { InMemoryChaosEngine } = await import("../impl/InMemoryChaosEngine.js");
+describe('Backward Compatibility', () => {
+  it('v1 InMemoryChaosEngine still works', async () => {
+    const { InMemoryChaosEngine } = await import('../impl/InMemoryChaosEngine.js');
     const engine = new InMemoryChaosEngine();
-    await engine.inject({ type: "latency", target: "db", durationMs: 100 });
+    await engine.inject({ type: 'latency', target: 'db', durationMs: 100 });
     expect(engine.getActiveFaults()).toHaveLength(1);
     expect(engine.getHistory()).toHaveLength(1);
   });
@@ -701,90 +701,86 @@ describe("Backward Compatibility", () => {
 
 // ── Coverage: Uncovered fault types ──────────────────────────
 
-describe("Coverage: uncovered fault types & edges", () => {
+describe('Coverage: uncovered fault types & edges', () => {
   let engine: ChaosEngineV2;
 
   beforeEach(async () => {
     engine = new ChaosEngineV2();
-    await engine.start([
-      makeTransport("node-a", 3, 3),
-      makeTransport("node-b", 3, 3),
-      makeTransport("node-c", 3, 3),
-    ]);
+    await engine.start([makeTransport('node-a', 3, 3), makeTransport('node-b', 3, 3), makeTransport('node-c', 3, 3)]);
   });
 
   afterEach(async () => {
     await engine.stop();
   });
 
-  it("clock-skew fault injects latency as time drift proxy", async () => {
+  it('clock-skew fault injects latency as time drift proxy', async () => {
     await engine.inject({
-      type: "clock-skew",
-      targets: ["node-a"],
+      type: 'clock-skew',
+      targets: ['node-a'],
       durationMs: 0,
       config: { skewMs: 750 },
     });
 
     const stats = engine.getAllTransportStats();
-    expect(stats.get("node-a")!.avgLatencyMs).toBe(750);
+    expect(stats.get('node-a')!.avgLatencyMs).toBe(750);
   });
 
-  it("resource-pressure with disk type uses 1000ms latency", async () => {
+  it('resource-pressure with disk type uses 1000ms latency', async () => {
     await engine.inject({
-      type: "resource-pressure",
-      targets: ["node-a"],
+      type: 'resource-pressure',
+      targets: ['node-a'],
       durationMs: 0,
-      config: { pressureType: "disk" },
+      config: { pressureType: 'disk' },
     });
 
     const stats = engine.getAllTransportStats();
-    expect(stats.get("node-a")!.avgLatencyMs).toBe(1000);
+    expect(stats.get('node-a')!.avgLatencyMs).toBe(1000);
   });
 
-  it("resource-pressure defaults to 500ms latency", async () => {
+  it('resource-pressure defaults to 500ms latency', async () => {
     await engine.inject({
-      type: "resource-pressure",
-      targets: ["node-b"],
+      type: 'resource-pressure',
+      targets: ['node-b'],
       durationMs: 0,
       config: {},
     });
 
     const stats = engine.getAllTransportStats();
-    expect(stats.get("node-b")!.avgLatencyMs).toBe(500);
+    expect(stats.get('node-b')!.avgLatencyMs).toBe(500);
   });
 
-  it("leadership-flap injects 0.5 message loss", async () => {
+  it('leadership-flap injects 0.5 message loss', async () => {
     await engine.inject({
-      type: "leadership-flap",
-      targets: ["node-a"],
+      type: 'leadership-flap',
+      targets: ['node-a'],
       durationMs: 0,
       config: {},
     });
 
     // Verify fault is registered (message loss applied via transport adapter)
     expect(engine.getActiveFaults()).toHaveLength(1);
-    expect(engine.getActiveFaults()[0]!.type).toBe("leadership-flap");
+    expect(engine.getActiveFaults()[0]!.type).toBe('leadership-flap');
   });
 
-  it("cascading-failure stops nodes with stagger", async () => {
+  it('cascading-failure stops nodes with stagger', async () => {
     await engine.inject({
-      type: "cascading-failure",
-      targets: ["node-a", "node-b", "node-c"],
+      type: 'cascading-failure',
+      targets: ['node-a', 'node-b', 'node-c'],
       durationMs: 0,
       config: { staggerMs: 10 },
     });
 
     // Verify nodes are stopped (connectedPeers drops to 0)
     const stats = engine.getAllTransportStats();
-    for (const id of ["node-a", "node-b", "node-c"]) {
+    for (const id of ['node-a', 'node-b', 'node-c']) {
       expect(stats.get(id)!.connectedPeers).toBe(0);
     }
   });
 
   it("wildcard target 'all' resolves all transports", async () => {
     await engine.inject({
-      type: "message-loss",
-      targets: ["all"],
+      type: 'message-loss',
+      targets: ['all'],
       durationMs: 0,
       config: { lossRate: 0.7 },
     });
@@ -797,22 +793,22 @@ describe("Coverage: uncovered fault types & edges", () => {
 
   it("wildcard target '*' resolves all transports", async () => {
     await engine.inject({
-      type: "latency-injection",
-      targets: ["*"],
+      type: 'latency-injection',
+      targets: ['*'],
       durationMs: 0,
       config: { latencyMs: 200 },
     });
 
     const stats = engine.getAllTransportStats();
-    for (const id of ["node-a", "node-b", "node-c"]) {
+    for (const id of ['node-a', 'node-b', 'node-c']) {
       expect(stats.get(id)!.avgLatencyMs).toBe(200);
     }
   });
 
-  it("unknown target produces no-op (fault registered, no targets)", async () => {
+  it('unknown target produces no-op (fault registered, no targets)', async () => {
     await engine.inject({
-      type: "message-loss",
-      targets: ["non-existent-node"],
+      type: 'message-loss',
+      targets: ['non-existent-node'],
       durationMs: 0,
       config: { lossRate: 0.5 },
     });
@@ -820,58 +816,58 @@ describe("Coverage: uncovered fault types & edges", () => {
     expect(engine.getActiveFaults()).toHaveLength(1);
   });
 
-  it("undoFault restarts crashed nodes", async () => {
+  it('undoFault restarts crashed nodes', async () => {
     const faultId = await engine.inject({
-      type: "node-crash",
-      targets: ["node-a", "node-b"],
+      type: 'node-crash',
+      targets: ['node-a', 'node-b'],
       durationMs: 0,
       config: {},
     });
 
     // Nodes are stopped (connectedPeers → 0)
     const beforeStats = engine.getAllTransportStats();
-    expect(beforeStats.get("node-a")!.connectedPeers).toBe(0);
-    expect(beforeStats.get("node-b")!.connectedPeers).toBe(0);
+    expect(beforeStats.get('node-a')!.connectedPeers).toBe(0);
+    expect(beforeStats.get('node-b')!.connectedPeers).toBe(0);
 
     await engine.resolve(faultId);
 
     // Nodes are restarted
     const afterStats = engine.getAllTransportStats();
-    expect(afterStats.get("node-a")!.connectedPeers).toBe(3);
-    expect(afterStats.get("node-b")!.connectedPeers).toBe(3);
+    expect(afterStats.get('node-a')!.connectedPeers).toBe(3);
+    expect(afterStats.get('node-b')!.connectedPeers).toBe(3);
   });
 
-  it("undoFault restarts cascading-failure nodes", async () => {
+  it('undoFault restarts cascading-failure nodes', async () => {
     const faultId = await engine.inject({
-      type: "cascading-failure",
-      targets: ["node-a", "node-c"],
+      type: 'cascading-failure',
+      targets: ['node-a', 'node-c'],
       durationMs: 0,
       config: { staggerMs: 5 },
     });
 
     const beforeStats = engine.getAllTransportStats();
-    expect(beforeStats.get("node-a")!.connectedPeers).toBe(0);
-    expect(beforeStats.get("node-c")!.connectedPeers).toBe(0);
+    expect(beforeStats.get('node-a')!.connectedPeers).toBe(0);
+    expect(beforeStats.get('node-c')!.connectedPeers).toBe(0);
 
     await engine.resolve(faultId);
 
     const afterStats = engine.getAllTransportStats();
-    expect(afterStats.get("node-a")!.connectedPeers).toBe(3);
-    expect(afterStats.get("node-c")!.connectedPeers).toBe(3);
+    expect(afterStats.get('node-a')!.connectedPeers).toBe(3);
+    expect(afterStats.get('node-c')!.connectedPeers).toBe(3);
   });
 
-  it("unsubscribe onStepCompleted listener works", async () => {
+  it('unsubscribe onStepCompleted listener works', async () => {
     const steps: number[] = [];
     const unsub = engine.onStepCompleted((step, total) => steps.push(step));
     unsub();
 
     await engine.runScenario(
       {
-        name: "step-unsub-test",
-        description: "",
+        name: 'step-unsub-test',
+        description: '',
         seed: 3,
         maxDurationMs: 10_000,
-        steps: [{ name: "s1", faults: [] }],
+        steps: [{ name: 's1', faults: [] }],
       },
       new MockInvariantChecker(),
     );
@@ -880,13 +876,13 @@ describe("Coverage: uncovered fault types & edges", () => {
     expect(steps).toHaveLength(0);
   });
 
-  it("unknown fault type throws via internal path", () => {
+  it('unknown fault type throws via internal path', () => {
     // TypeScript prevents unknown types at compile time, but runtime
     // default branch in applyFault must be exercised for coverage.
     const injector = async () => {
       await (engine as any).inject?.({
-        type: "invalid-fault-type-xyz",
-        targets: ["node-a"],
+        type: 'invalid-fault-type-xyz',
+        targets: ['node-a'],
         durationMs: 0,
         config: {},
       });

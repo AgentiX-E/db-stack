@@ -30,7 +30,9 @@ describe('IMetricsRegistry', () => {
   });
 
   it('should observe a histogram value', () => {
-    mockRegistry.observeHistogram('request_duration_ms', 150, { endpoint: '/api' });
+    mockRegistry.observeHistogram('request_duration_ms', 150, {
+      endpoint: '/api',
+    });
     expect(mockRegistry.observeHistogram).toHaveBeenCalledWith('request_duration_ms', 150, { endpoint: '/api' });
   });
 
@@ -63,7 +65,12 @@ describe('ISlowQueryRecorder', () => {
     record: vi.fn().mockResolvedValue(undefined),
     getSlowQueries: vi.fn().mockResolvedValue([createSlowQuery()]),
     analyzePatterns: vi.fn().mockResolvedValue([
-      { pattern: 'SELECT * FROM orders WHERE ...', averageDurationMs: 1200, count: 5, lastSeen: new Date() },
+      {
+        pattern: 'SELECT * FROM orders WHERE ...',
+        averageDurationMs: 1200,
+        count: 5,
+        lastSeen: new Date(),
+      },
     ]),
   };
 
@@ -99,13 +106,29 @@ describe('IAlertRuleManager', () => {
     updateRule: vi.fn().mockResolvedValue(undefined),
     deleteRule: vi.fn().mockResolvedValue(undefined),
     evaluate: vi.fn().mockResolvedValue([
-      { ruleId: 'rule-1', ruleName: 'High CPU', severity: 'critical', value: 95, threshold: 90, triggeredAt: new Date(), message: 'CPU usage exceeded 90%' },
+      {
+        ruleId: 'rule-1',
+        ruleName: 'High CPU',
+        severity: 'critical',
+        value: 95,
+        threshold: 90,
+        triggeredAt: new Date(),
+        message: 'CPU usage exceeded 90%',
+      },
     ]),
     silenceRule: vi.fn().mockResolvedValue(undefined),
   };
 
   it('should create a rule', async () => {
-    const rule: AlertRule = { name: 'High CPU', metric: 'cpu_usage', condition: 'gt', threshold: 90, durationMs: 60000, severity: 'critical', enabled: true };
+    const rule: AlertRule = {
+      name: 'High CPU',
+      metric: 'cpu_usage',
+      condition: 'gt',
+      threshold: 90,
+      durationMs: 60000,
+      severity: 'critical',
+      enabled: true,
+    };
     const id = await mockRuleManager.createRule(rule);
     expect(id).toBe('rule-1');
   });
@@ -130,13 +153,21 @@ describe('IAlertRuleManager', () => {
 });
 
 describe('IHealthCheck', () => {
-  const componentStatus: ComponentStatus = { name: 'database', healthy: true, message: 'OK', lastChecked: new Date(), latencyMs: 5 };
+  const componentStatus: ComponentStatus = {
+    name: 'database',
+    healthy: true,
+    message: 'OK',
+    lastChecked: new Date(),
+    latencyMs: 5,
+  };
 
   const mockHealthCheck: IHealthCheck = {
-    check: vi.fn().mockResolvedValue({ overall: true, components: [componentStatus], timestamp: new Date() }),
-    getHistory: vi.fn().mockResolvedValue([
-      { overall: true, components: [componentStatus], timestamp: new Date() },
-    ]),
+    check: vi.fn().mockResolvedValue({
+      overall: true,
+      components: [componentStatus],
+      timestamp: new Date(),
+    }),
+    getHistory: vi.fn().mockResolvedValue([{ overall: true, components: [componentStatus], timestamp: new Date() }]),
     registerComponent: vi.fn(),
   };
 
@@ -152,7 +183,13 @@ describe('IHealthCheck', () => {
   });
 
   it('should register a new component', () => {
-    mockHealthCheck.registerComponent('cache', async () => ({ name: 'cache', healthy: true, message: 'OK', lastChecked: new Date(), latencyMs: 1 }));
+    mockHealthCheck.registerComponent('cache', async () => ({
+      name: 'cache',
+      healthy: true,
+      message: 'OK',
+      lastChecked: new Date(),
+      latencyMs: 1,
+    }));
     expect(mockHealthCheck.registerComponent).toHaveBeenCalled();
   });
 
@@ -196,7 +233,11 @@ describe('IDeadlockDetector', () => {
     stop: vi.fn().mockResolvedValue(undefined),
     onDeadlock: vi.fn(),
     getDeadlockHistory: vi.fn().mockResolvedValue([
-      { cycle: ['txn-1', 'txn-2'], victimTransaction: 'txn-1', detectedAt: new Date() },
+      {
+        cycle: ['txn-1', 'txn-2'],
+        victimTransaction: 'txn-1',
+        detectedAt: new Date(),
+      },
     ]),
   };
 
@@ -260,7 +301,14 @@ describe('IConnectionMonitor', () => {
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     getConnections: vi.fn().mockResolvedValue([
-      { id: 'conn-1', user: 'admin', database: 'prod', state: 'active', connectedAt: new Date(), idleInTransaction: false },
+      {
+        id: 'conn-1',
+        user: 'admin',
+        database: 'prod',
+        state: 'active',
+        connectedAt: new Date(),
+        idleInTransaction: false,
+      },
     ]),
     getPoolUtilization: vi.fn().mockResolvedValue({ total: 100, active: 45, idle: 55, waiting: 0 }),
     onExhaustion: vi.fn(),
@@ -326,14 +374,31 @@ describe('IResourceQuotaManager', () => {
   const mockQuotaManager: IResourceQuotaManager = {
     setQuota: vi.fn().mockResolvedValue(undefined),
     getQuota: vi.fn().mockImplementation(async (roleId: string) =>
-      roleId === 'admin' ? { cpuLimit: 80, memoryLimitMB: 4096, connectionLimit: 50, queryRateLimit: 1000 } : null
+      roleId === 'admin'
+        ? {
+            cpuLimit: 80,
+            memoryLimitMB: 4096,
+            connectionLimit: 50,
+            queryRateLimit: 1000,
+          }
+        : null,
     ),
     checkQuota: vi.fn().mockResolvedValue({ allowed: true }),
-    getUsage: vi.fn().mockResolvedValue({ cpu: 45, memoryMB: 2048, connections: 20, queryRate: 500 }),
+    getUsage: vi.fn().mockResolvedValue({
+      cpu: 45,
+      memoryMB: 2048,
+      connections: 20,
+      queryRate: 500,
+    }),
   };
 
   it('should set a quota', async () => {
-    const quota: IResourceQuota = { cpuLimit: 80, memoryLimitMB: 4096, connectionLimit: 50, queryRateLimit: 1000 };
+    const quota: IResourceQuota = {
+      cpuLimit: 80,
+      memoryLimitMB: 4096,
+      connectionLimit: 50,
+      queryRateLimit: 1000,
+    };
     await expect(mockQuotaManager.setQuota('admin', quota)).resolves.toBeUndefined();
   });
 

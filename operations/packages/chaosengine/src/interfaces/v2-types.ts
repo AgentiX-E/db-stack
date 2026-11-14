@@ -22,14 +22,14 @@
  * v2.0 adds targets-aware fault injection with temporal bounds and cascade options.
  */
 export type FaultTypeV2 =
-  | 'network-partition'   // Isolate targets from each other or from a group
-  | 'node-crash'          // Kill/stop target(s), optionally restart after durationMs
-  | 'message-loss'        // Drop a percentage of messages between targets
-  | 'latency-injection'   // Add fixed or jittery delay to messages
-  | 'clock-skew'          // Skew HLC/wall-clock on target(s)
-  | 'resource-pressure'   // CPU/memory/disk saturation
-  | 'leadership-flap'     // Force leader step-down (Raft-specific)
-  | 'cascading-failure';  // Chain of dependent faults across targets
+  | 'network-partition' // Isolate targets from each other or from a group
+  | 'node-crash' // Kill/stop target(s), optionally restart after durationMs
+  | 'message-loss' // Drop a percentage of messages between targets
+  | 'latency-injection' // Add fixed or jittery delay to messages
+  | 'clock-skew' // Skew HLC/wall-clock on target(s)
+  | 'resource-pressure' // CPU/memory/disk saturation
+  | 'leadership-flap' // Force leader step-down (Raft-specific)
+  | 'cascading-failure'; // Chain of dependent faults across targets
 
 export interface ChaosFaultV2 {
   /** Unique fault ID (auto-generated if omitted) */

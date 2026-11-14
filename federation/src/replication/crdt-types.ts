@@ -12,7 +12,7 @@
  *   - ORSet: Observed-Remove Set with unique element tags
  */
 
-import type { IHLCTimestamp } from "../interfaces/hlc/IHLCTimestamp";
+import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
 
 // ── GCounter ────────────────────────────────────────────────
 
@@ -143,7 +143,7 @@ export class LWWRegister {
       this.hlcWallTime = Number(hlc.wallTime);
       this.hlcLogical = hlc.logical;
       this.nodeId = hlc.nodeId ?? this.nodeId;
-    } else if (cmp === 0 && (hlc.nodeId ?? "") > this.nodeId) {
+    } else if (cmp === 0 && (hlc.nodeId ?? '') > this.nodeId) {
       // tiebreak by nodeId
       this.value = value;
       this.nodeId = hlc.nodeId ?? this.nodeId;
@@ -152,11 +152,7 @@ export class LWWRegister {
 
   /** Merge: keep the value with the higher HLC. */
   merge(other: LWWRegisterState): void {
-    const cmp = this.compareToRaw(
-      other.hlcWallTime,
-      other.hlcLogical,
-      other.nodeId,
-    );
+    const cmp = this.compareToRaw(other.hlcWallTime, other.hlcLogical, other.nodeId);
     if (cmp < 0) {
       this.value = other.value;
       this.hlcWallTime = other.hlcWallTime;
@@ -242,7 +238,7 @@ export class MVRegister {
         value,
         wallTime: Number(hlc.wallTime),
         logical: hlc.logical,
-        nodeId: hlc.nodeId ?? "",
+        nodeId: hlc.nodeId ?? '',
       },
     ];
   }
@@ -253,7 +249,7 @@ export class MVRegister {
       value,
       wallTime: Number(hlc.wallTime),
       logical: hlc.logical,
-      nodeId: hlc.nodeId ?? "",
+      nodeId: hlc.nodeId ?? '',
     });
   }
 
@@ -305,9 +301,7 @@ export class MVRegister {
       const superseded = this.entries.some(
         (other) =>
           other !== entry &&
-          (other.wallTime > entry.wallTime ||
-            (other.wallTime === entry.wallTime &&
-              other.logical > entry.logical)),
+          (other.wallTime > entry.wallTime || (other.wallTime === entry.wallTime && other.logical > entry.logical)),
       );
       if (!superseded) {
         // Also check uniqueness among result entries

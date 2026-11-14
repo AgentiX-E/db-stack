@@ -1,16 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryEngineFactory } from './InMemoryEngineFactory.js';
 
-describe.each([
-  { name: 'InMemory', factory: new InMemoryEngineFactory() },
-])('$name e2e: Backup', ({ factory }) => {
+describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$name e2e: Backup', ({ factory }) => {
   afterAll(async () => {
     await factory.cleanup();
   });
 
   it('should create a full backup', async () => {
     const backup = factory.createBackupManager();
-    const result = await backup.createBackup({ type: 'full', tags: { env: 'test' } });
+    const result = await backup.createBackup({
+      type: 'full',
+      tags: { env: 'test' },
+    });
     expect(result.success).toBe(true);
     expect(result.snapshot?.snapshotId).toBeTruthy();
   });
@@ -54,7 +55,9 @@ describe.each([
 
   it('should perform PITR', async () => {
     const backup = factory.createBackupManager();
-    const result = await backup.pitr({ targetTime: new Date().toISOString() });
+    const result = await backup.pitr({
+      targetTime: new Date().toISOString(),
+    });
     expect(result.success).toBe(true);
   });
 

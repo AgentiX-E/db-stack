@@ -1,4 +1,4 @@
-import type { IHLCTimestamp } from "../hlc/IHLCTimestamp";
+import type { IHLCTimestamp } from '../hlc/IHLCTimestamp';
 
 export interface OutboxEntry {
   /** Unique entry ID */
@@ -32,4 +32,4 @@ export interface OutboxEntry {
   lastError: string | null;
 }
 
-export type OutboxStatus = "pending" | "delivered" | "failed";
+export type OutboxStatus = 'pending' | 'delivered' | 'failed';

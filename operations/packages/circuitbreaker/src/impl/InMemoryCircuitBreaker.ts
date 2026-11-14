@@ -20,9 +20,9 @@ export class InMemoryCircuitBreaker implements ICircuitBreaker {
 
   getState(): CircuitState {
     if (
-      this.state === 'open'
-      && this.config.timeoutMs > 0
-      && Date.now() - this.lastFailureTime >= this.config.timeoutMs
+      this.state === 'open' &&
+      this.config.timeoutMs > 0 &&
+      Date.now() - this.lastFailureTime >= this.config.timeoutMs
     ) {
       this.state = 'half-open';
     }

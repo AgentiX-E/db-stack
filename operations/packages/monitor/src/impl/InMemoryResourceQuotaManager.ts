@@ -73,25 +73,47 @@ export class InMemoryResourceQuotaManager implements IResourceQuotaManager {
     const q = entry.quota;
 
     if (u.cpu > q.cpuLimit) {
-      return Promise.resolve({ allowed: false, reason: `CPU limit exceeded: ${u.cpu} > ${q.cpuLimit}` });
+      return Promise.resolve({
+        allowed: false,
+        reason: `CPU limit exceeded: ${u.cpu} > ${q.cpuLimit}`,
+      });
     }
     if (u.memoryMB > q.memoryLimitMB) {
-      return Promise.resolve({ allowed: false, reason: `Memory limit exceeded: ${u.memoryMB} > ${q.memoryLimitMB}` });
+      return Promise.resolve({
+        allowed: false,
+        reason: `Memory limit exceeded: ${u.memoryMB} > ${q.memoryLimitMB}`,
+      });
     }
     if (u.connections > q.connectionLimit) {
-      return Promise.resolve({ allowed: false, reason: `Connection limit exceeded: ${u.connections} > ${q.connectionLimit}` });
+      return Promise.resolve({
+        allowed: false,
+        reason: `Connection limit exceeded: ${u.connections} > ${q.connectionLimit}`,
+      });
     }
     if (u.queryRate > q.queryRateLimit) {
-      return Promise.resolve({ allowed: false, reason: `Query rate limit exceeded: ${u.queryRate} > ${q.queryRateLimit}` });
+      return Promise.resolve({
+        allowed: false,
+        reason: `Query rate limit exceeded: ${u.queryRate} > ${q.queryRateLimit}`,
+      });
     }
 
     return Promise.resolve({ allowed: true });
   }
 
-  getUsage(roleId: string): Promise<{ cpu: number; memoryMB: number; connections: number; queryRate: number }> {
+  getUsage(roleId: string): Promise<{
+    cpu: number;
+    memoryMB: number;
+    connections: number;
+    queryRate: number;
+  }> {
     const entry = this._quotas.get(roleId);
     if (!entry) {
-      return Promise.resolve({ cpu: 0, memoryMB: 0, connections: 0, queryRate: 0 });
+      return Promise.resolve({
+        cpu: 0,
+        memoryMB: 0,
+        connections: 0,
+        queryRate: 0,
+      });
     }
     return Promise.resolve({ ...entry.usage });
   }
@@ -137,9 +159,7 @@ export class InMemoryResourceQuotaManager implements IResourceQuotaManager {
     return {
       memoryBytes: this._usage.memoryMB * 1024 * 1024,
       memoryLimitBytes: this._config.maxMemoryMB * 1024 * 1024,
-      memoryUtilization: this._config.maxMemoryMB > 0
-        ? this._usage.memoryMB / this._config.maxMemoryMB
-        : 0,
+      memoryUtilization: this._config.maxMemoryMB > 0 ? this._usage.memoryMB / this._config.maxMemoryMB : 0,
       queriesPerSec: this._usage.queriesPerSec,
       maxQueriesPerSec: this._config.maxQueriesPerSec,
       cpuPercent: 0,
@@ -149,9 +169,7 @@ export class InMemoryResourceQuotaManager implements IResourceQuotaManager {
         idle: 0,
         waiting: 0,
         maxSize: this._config.maxConnections,
-        utilization: this._config.maxConnections > 0
-          ? this._usage.connections / this._config.maxConnections
-          : 0,
+        utilization: this._config.maxConnections > 0 ? this._usage.connections / this._config.maxConnections : 0,
       },
       diskUsedBytes: 0,
       diskFreeBytes: 0,
@@ -170,7 +188,15 @@ export class InMemoryResourceQuotaManager implements IResourceQuotaManager {
   /**
    * Set role usage for testing.
    */
-  setRoleUsage(roleId: string, usage: Partial<{ cpu: number; memoryMB: number; connections: number; queryRate: number }>): void {
+  setRoleUsage(
+    roleId: string,
+    usage: Partial<{
+      cpu: number;
+      memoryMB: number;
+      connections: number;
+      queryRate: number;
+    }>,
+  ): void {
     const entry = this._quotas.get(roleId);
     if (entry) {
       if (usage.cpu !== undefined) entry.usage.cpu = usage.cpu;

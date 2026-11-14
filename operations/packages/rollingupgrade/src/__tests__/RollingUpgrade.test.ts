@@ -40,36 +40,51 @@ describe('InMemoryRollingUpgrade', () => {
   });
 
   it('executes a single-node upgrade to completion', async () => {
-    const ug = new InMemoryRollingUpgrade({ minBakeMs: 0, sleep: instantSleep });
+    const ug = new InMemoryRollingUpgrade({
+      minBakeMs: 0,
+      sleep: instantSleep,
+    });
     ug.registerHealthCheck('ok', healthy);
-    const stats = await ug.execute(makePlan({
-      nodes: ['n1'],
-      healthCheckNames: ['ok'],
-    }));
+    const stats = await ug.execute(
+      makePlan({
+        nodes: ['n1'],
+        healthCheckNames: ['ok'],
+      }),
+    );
     expect(stats.phase).toBe('completed');
     expect(stats.upgradedNodes).toBe(1);
     expect(stats.failedNodes).toBe(0);
   });
 
   it('splits nodes into the requested number of batches', async () => {
-    const ug = new InMemoryRollingUpgrade({ minBakeMs: 0, sleep: instantSleep });
+    const ug = new InMemoryRollingUpgrade({
+      minBakeMs: 0,
+      sleep: instantSleep,
+    });
     ug.registerHealthCheck('ok', healthy);
-    const stats = await ug.execute(makePlan({
-      nodes: ['n1', 'n2', 'n3', 'n4', 'n5'],
-      batchSize: 2,
-      healthCheckNames: ['ok'],
-    }));
+    const stats = await ug.execute(
+      makePlan({
+        nodes: ['n1', 'n2', 'n3', 'n4', 'n5'],
+        batchSize: 2,
+        healthCheckNames: ['ok'],
+      }),
+    );
     // 5 nodes / 2 = 3 batches (ceil).
     expect(stats.totalBatches).toBe(3);
   });
 
   it('records events across validation, batches, and completion', async () => {
-    const ug = new InMemoryRollingUpgrade({ minBakeMs: 0, sleep: instantSleep });
+    const ug = new InMemoryRollingUpgrade({
+      minBakeMs: 0,
+      sleep: instantSleep,
+    });
     ug.registerHealthCheck('ok', healthy);
-    const stats = await ug.execute(makePlan({
-      nodes: ['n1', 'n2'],
-      healthCheckNames: ['ok'],
-    }));
+    const stats = await ug.execute(
+      makePlan({
+        nodes: ['n1', 'n2'],
+        healthCheckNames: ['ok'],
+      }),
+    );
     const types = stats.events.map((e) => e.type);
     expect(types).toContain('plan_validated');
     expect(types).toContain('upgrade_completed');
@@ -83,7 +98,10 @@ describe('InMemoryRollingUpgrade', () => {
   });
 
   it('rollback on a completed plan is accepted', async () => {
-    const ug = new InMemoryRollingUpgrade({ minBakeMs: 0, sleep: instantSleep });
+    const ug = new InMemoryRollingUpgrade({
+      minBakeMs: 0,
+      sleep: instantSleep,
+    });
     ug.registerHealthCheck('ok', healthy);
     await ug.execute(makePlan({ healthCheckNames: ['ok'] }));
     await expect(ug.rollback()).resolves.toBeDefined();

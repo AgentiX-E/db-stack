@@ -76,7 +76,9 @@ describe('RaftAdapter — propose / proposeAndWait force-leader & error paths', 
   // AC 34.22
   it('propose wraps a force-leader apply error', async () => {
     const adapter = adapterWithNode(fakeNode());
-    (adapter as any).applyHandler = () => { throw new Error('boom'); };
+    (adapter as any).applyHandler = () => {
+      throw new Error('boom');
+    };
     adapter.setForceLeader(true);
 
     await expect(adapter.propose('x')).rejects.toThrow(/Force-leader apply failed/);
@@ -109,7 +111,13 @@ describe('RaftAdapter — propose / proposeAndWait force-leader & error paths', 
 
   // AC 34.26
   it('propose wraps a thrown error as INTERNAL_ERROR', async () => {
-    const adapter = adapterWithNode(fakeNode({ submitCommand: () => { throw new Error('transport'); } }));
+    const adapter = adapterWithNode(
+      fakeNode({
+        submitCommand: () => {
+          throw new Error('transport');
+        },
+      }),
+    );
     await expect(adapter.propose('data')).rejects.toThrow(/Raft propose failed/);
   });
 
@@ -134,9 +142,7 @@ describe('RaftAdapter — propose / proposeAndWait force-leader & error paths', 
 
   // AC 34.29
   it('_serviceQueue drains queued proposals', async () => {
-    const adapter = adapterWithNode(
-      fakeNode({ submitCommand: () => Promise.resolve({ success: true, index: 1 }) }),
-    );
+    const adapter = adapterWithNode(fakeNode({ submitCommand: () => Promise.resolve({ success: true, index: 1 }) }));
     const priv = adapter as any;
 
     // Seed the queue directly with several deferred proposals.
@@ -169,13 +175,27 @@ describe('RaftAdapter — getter try/catch isolation', () => {
   // AC 34.30 — each getter must swallow a throwing node method.
   const throwing = {
     node: fakeNode({
-      isLeader: () => { throw new Error('x'); },
-      getCurrentTerm: () => { throw new Error('x'); },
-      getLeaderId: () => { throw new Error('x'); },
-      getCommittedIndex: () => { throw new Error('x'); },
-      getLastApplied: () => { throw new Error('x'); },
-      getLastLogIndex: () => { throw new Error('x'); },
-      getState: () => { throw new Error('x'); },
+      isLeader: () => {
+        throw new Error('x');
+      },
+      getCurrentTerm: () => {
+        throw new Error('x');
+      },
+      getLeaderId: () => {
+        throw new Error('x');
+      },
+      getCommittedIndex: () => {
+        throw new Error('x');
+      },
+      getLastApplied: () => {
+        throw new Error('x');
+      },
+      getLastLogIndex: () => {
+        throw new Error('x');
+      },
+      getState: () => {
+        throw new Error('x');
+      },
     }),
   };
 
@@ -269,24 +289,22 @@ describe('RaftAdapter — getter try/catch isolation', () => {
 
   // AC 34.25b: propose generic failure without leaderId and without error msg.
   it('propose reports unknown error when result.error is falsy', async () => {
-    const adapter = adapterWithNode(
-      fakeNode({ submitCommand: () => Promise.resolve({ success: false }) }),
-    );
+    const adapter = adapterWithNode(fakeNode({ submitCommand: () => Promise.resolve({ success: false }) }));
     await expect(adapter.propose('data')).rejects.toThrow(/unknown error/);
   });
 
   // AC 34.28b: _doPropose generic failure without leaderId.
   it('proposeAndWait rejects on generic failure without leaderId', async () => {
-    const adapter = adapterWithNode(
-      fakeNode({ submitCommand: () => Promise.resolve({ success: false }) }),
-    );
+    const adapter = adapterWithNode(fakeNode({ submitCommand: () => Promise.resolve({ success: false }) }));
     await expect(adapter.proposeAndWait('data')).rejects.toThrow(/Raft propose failed/);
   });
 
   // AC 34.27b: _doPropose force-leader apply error (proposeAndWait).
   it('proposeAndWait wraps a force-leader apply error', async () => {
     const adapter = adapterWithNode(fakeNode());
-    (adapter as any).applyHandler = () => { throw new Error('boom'); };
+    (adapter as any).applyHandler = () => {
+      throw new Error('boom');
+    };
     adapter.setForceLeader(true);
     await expect(adapter.proposeAndWait('x')).rejects.toThrow(/Force-leader apply failed/);
   });
@@ -309,7 +327,11 @@ describe('RaftAdapter — getter try/catch isolation', () => {
   // AC 34.27d: _doPropose wraps a plain thrown error from submitCommand.
   it('proposeAndWait wraps a plain thrown error from submitCommand', async () => {
     const adapter = adapterWithNode(
-      fakeNode({ submitCommand: () => { throw new Error('raw-io-error'); } }),
+      fakeNode({
+        submitCommand: () => {
+          throw new Error('raw-io-error');
+        },
+      }),
     );
     await expect(adapter.proposeAndWait('data')).rejects.toThrow(/Raft propose failed: raw-io-error/);
   });
@@ -405,10 +427,26 @@ describe('RaftAdapter — snapshot API & resource teardown', () => {
   // AC 34.35
   it('stop() tears down all resources with error isolation', () => {
     const adapter = new RaftAdapter(minimalConfig());
-    const node = { stop: vi.fn(() => { throw new Error('node-stop'); }) };
-    const transport = { stop: vi.fn(() => { throw new Error('transport-stop'); }) };
-    const originalTcp = { stop: vi.fn(() => { throw new Error('tcp-stop'); }) };
-    const sqlite = { close: vi.fn(() => { throw new Error('sqlite-close'); }) };
+    const node = {
+      stop: vi.fn(() => {
+        throw new Error('node-stop');
+      }),
+    };
+    const transport = {
+      stop: vi.fn(() => {
+        throw new Error('transport-stop');
+      }),
+    };
+    const originalTcp = {
+      stop: vi.fn(() => {
+        throw new Error('tcp-stop');
+      }),
+    };
+    const sqlite = {
+      close: vi.fn(() => {
+        throw new Error('sqlite-close');
+      }),
+    };
 
     (adapter as any).node = node;
     (adapter as any).transport = transport;

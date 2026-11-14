@@ -12,20 +12,33 @@
 
 import type { EngineFactory } from './EngineFactory.js';
 import { HealthOrchestrator } from '@agentix-e/db-operations-health';
-import type {
-  IHealthProbe, IHealthOrchestrator,
-} from '@agentix-e/db-operations-health';
+import type { IHealthProbe, IHealthOrchestrator } from '@agentix-e/db-operations-health';
 import type { IMetricsRegistry } from '@agentix-e/db-operations-metrics';
 import type { IBackupManager, IStorageBackend, IBackupRetentionPolicy } from '@agentix-e/db-operations-backup';
 import type { IAuditStore, AuditEntry, AuditQueryFilter } from '@agentix-e/db-operations-audit';
 import type { IDistributedTracer, Span, SpanContext } from '@agentix-e/db-operations-observability';
-import type { IDeadlockDetector, IAlertRuleManager, ISlowQueryRecorder, IConnectionMonitor } from '@agentix-e/db-operations-monitor';
-import type { IMaintenanceExecutor, VacuumOptions, AnalyzeOptions, ReindexOptions } from '@agentix-e/db-operations-maintenance';
+import type {
+  IDeadlockDetector,
+  IAlertRuleManager,
+  ISlowQueryRecorder,
+  IConnectionMonitor,
+} from '@agentix-e/db-operations-monitor';
+import type {
+  IMaintenanceExecutor,
+  VacuumOptions,
+  AnalyzeOptions,
+  ReindexOptions,
+} from '@agentix-e/db-operations-maintenance';
 import type { IAuthProvider } from '@agentix-e/db-operations-auth';
 import type { ILogger } from '@agentix-e/db-operations-logger';
 import type {
-  ProbeResult, MaintenanceResult, StorageStats, IndexFragmentation,
-  BackupMetadata, BackupResult, RestoreResult,
+  ProbeResult,
+  MaintenanceResult,
+  StorageStats,
+  IndexFragmentation,
+  BackupMetadata,
+  BackupResult,
+  RestoreResult,
 } from '@agentix-e/db-operations-core/types';
 
 // ══════════════════════════════════════════════════════════════════
@@ -37,22 +50,40 @@ class HealthStub {
   private started = false;
   private lastError: string | null = null;
 
-  constructor() { this.started = true; }
+  constructor() {
+    this.started = true;
+  }
 
-  liveness(): { ready: boolean; error?: string; details?: Record<string, unknown> } {
+  liveness(): {
+    ready: boolean;
+    error?: string;
+    details?: Record<string, unknown>;
+  } {
     return { ready: true };
   }
 
-  async readiness(): Promise<{ ready: boolean; error?: string; details?: Record<string, unknown> }> {
+  async readiness(): Promise<{
+    ready: boolean;
+    error?: string;
+    details?: Record<string, unknown>;
+  }> {
     return { ready: true, details: { shards: { healthy: 4, total: 4 } } };
   }
 
-  async startup(): Promise<{ started: boolean; error?: string; duration: number }> {
+  async startup(): Promise<{
+    started: boolean;
+    error?: string;
+    duration: number;
+  }> {
     return { started: true, duration: 0 };
   }
 
   async check(): Promise<Record<string, unknown>> {
-    return { status: 'healthy', shards: { healthy: 4, total: 4 }, raft: { hasLeader: true } };
+    return {
+      status: 'healthy',
+      shards: { healthy: 4, total: 4 },
+      raft: { hasLeader: true },
+    };
   }
 
   getStatus(): { lastError: string | null } {
@@ -101,14 +132,28 @@ class BackupManagerStub {
 
   async fullBackup(): Promise<Record<string, any>> {
     const id = `gv-full-${++this.counter}`;
-    const snap = { snapshotId: id, type: 'full', timestamp: Date.now(), sizeBytes: 16384, fileCount: 2, path: `/tmp/gv-backup/${id}` };
+    const snap = {
+      snapshotId: id,
+      type: 'full',
+      timestamp: Date.now(),
+      sizeBytes: 16384,
+      fileCount: 2,
+      path: `/tmp/gv-backup/${id}`,
+    };
     this.snapshots.push(snap);
     return snap;
   }
 
   async incrementalBackup(): Promise<Record<string, any>> {
     const id = `gv-inc-${++this.counter}`;
-    const snap = { snapshotId: id, type: 'incremental', timestamp: Date.now(), sizeBytes: 4096, fileCount: 1, path: `/tmp/gv-backup/${id}` };
+    const snap = {
+      snapshotId: id,
+      type: 'incremental',
+      timestamp: Date.now(),
+      sizeBytes: 4096,
+      fileCount: 1,
+      path: `/tmp/gv-backup/${id}`,
+    };
     this.snapshots.push(snap);
     return snap;
   }
@@ -117,9 +162,13 @@ class BackupManagerStub {
     return Promise.resolve([...this.snapshots]);
   }
 
-  async restore(_snapshotId: string): Promise<void> { /* no-op */ }
+  async restore(_snapshotId: string): Promise<void> {
+    /* no-op */
+  }
 
-  shouldTakeFullBackup(): boolean { return true; }
+  shouldTakeFullBackup(): boolean {
+    return true;
+  }
 }
 
 /** GraphVec SecurityAuditor class adapter. */
@@ -130,20 +179,43 @@ class SecurityAuditorStub {
 
   checkConfigBaseline(): Array<Record<string, any>> {
     return [
-      { id: 'tls', category: 'network', description: 'TLS enabled', severity: 'PASS', message: 'OK', timestamp: Date.now() },
-      { id: 'mtls', category: 'auth', description: 'mTLS expiry', severity: 'PASS', message: 'OK', timestamp: Date.now() },
+      {
+        id: 'tls',
+        category: 'network',
+        description: 'TLS enabled',
+        severity: 'PASS',
+        message: 'OK',
+        timestamp: Date.now(),
+      },
+      {
+        id: 'mtls',
+        category: 'auth',
+        description: 'mTLS expiry',
+        severity: 'PASS',
+        message: 'OK',
+        timestamp: Date.now(),
+      },
     ];
   }
 
-  onAuthFailure(_nodeId: string): void { this.authFailures++; }
-  onExport(_bytes: number): void { this.bulkExports++; }
-  onBulkDelete(_count: number): void { this.bulkDeletes++; }
+  onAuthFailure(_nodeId: string): void {
+    this.authFailures++;
+  }
+  onExport(_bytes: number): void {
+    this.bulkExports++;
+  }
+  onBulkDelete(_count: number): void {
+    this.bulkDeletes++;
+  }
 
   checkRuntimeThreats(): Record<string, any> {
     return {
-      authFailures: this.authFailures, authFailureRate: this.authFailures > 0 ? 0.5 : 0,
-      bulkExports: this.bulkExports, bulkExportRate: this.bulkExports > 0 ? 0.3 : 0,
-      bulkDeletes: this.bulkDeletes, bulkDeleteRate: this.bulkDeletes > 0 ? 0.2 : 0,
+      authFailures: this.authFailures,
+      authFailureRate: this.authFailures > 0 ? 0.5 : 0,
+      bulkExports: this.bulkExports,
+      bulkExportRate: this.bulkExports > 0 ? 0.3 : 0,
+      bulkDeletes: this.bulkDeletes,
+      bulkDeleteRate: this.bulkDeletes > 0 ? 0.2 : 0,
       alerts: [],
     };
   }
@@ -151,10 +223,11 @@ class SecurityAuditorStub {
   generateSecurityReport(): Record<string, any> {
     const checks = this.checkConfigBaseline();
     return {
-      generatedAt: Date.now(), totalChecks: checks.length,
-      passed: checks.filter(c => c.severity === 'PASS').length,
-      warned: checks.filter(c => c.severity === 'WARN').length,
-      failed: checks.filter(c => c.severity === 'FAIL').length,
+      generatedAt: Date.now(),
+      totalChecks: checks.length,
+      passed: checks.filter((c) => c.severity === 'PASS').length,
+      warned: checks.filter((c) => c.severity === 'WARN').length,
+      failed: checks.filter((c) => c.severity === 'FAIL').length,
       checks,
     };
   }
@@ -234,7 +307,9 @@ class NativeLoggerStub {
     this.entries.push(`${_level}: ${_msg}`);
   }
 
-  getEntries(): string[] { return [...this.entries]; }
+  getEntries(): string[] {
+    return [...this.entries];
+  }
 }
 
 /** GraphVec QuerySlowLog stub. */
@@ -242,37 +317,73 @@ class QuerySlowLogStub {
   private thresholdMs: number;
   private entries: Array<Record<string, any>> = [];
 
-  constructor(thresholdMs = 100) { this.thresholdMs = thresholdMs; }
+  constructor(thresholdMs = 100) {
+    this.thresholdMs = thresholdMs;
+  }
 
   async track<T>(_name: string, fn: () => Promise<T>, _user?: string): Promise<T> {
     const start = Date.now();
-    try { return await fn(); } finally {
+    try {
+      return await fn();
+    } finally {
       const dur = Date.now() - start;
       if (dur >= this.thresholdMs) {
-        this.entries.push({ op: _name, duration: dur, timestamp: Date.now(), user: _user ?? 'anonymous' });
+        this.entries.push({
+          op: _name,
+          duration: dur,
+          timestamp: Date.now(),
+          user: _user ?? 'anonymous',
+        });
       }
     }
   }
 
-  getSlowQueries(): Array<Record<string, any>> { return [...this.entries]; }
-  setThreshold(ms: number): void { this.thresholdMs = ms; }
-  clear(): void { this.entries = []; }
-  close(): void { /* no-op */ }
+  getSlowQueries(): Array<Record<string, any>> {
+    return [...this.entries];
+  }
+  setThreshold(ms: number): void {
+    this.thresholdMs = ms;
+  }
+  clear(): void {
+    this.entries = [];
+  }
+  close(): void {
+    /* no-op */
+  }
 }
 
 /** GraphVec ResourceQuotaManager stub. */
 class ResourceQuotaStub {
   private queryCount = 0;
   private connections = 0;
-  private config = { maxMemoryMB: 1024, maxQueriesPerSec: 100, maxConnections: 50 };
+  private config = {
+    maxMemoryMB: 1024,
+    maxQueriesPerSec: 100,
+    maxConnections: 50,
+  };
 
-  tryAcquire(): boolean { return true; }
-  getMemoryUsageMB(): number { return 256; }
-  reset(): void { this.queryCount = 0; this.connections = 0; }
-  dispose(): void { /* no-op */ }
-  updateConfig(c: Partial<Record<string, any>>): void { Object.assign(this.config, c); }
-  getConfig(): typeof this.config { return { ...this.config }; }
-  getQueryCount(): number { return ++this.queryCount; }
+  tryAcquire(): boolean {
+    return true;
+  }
+  getMemoryUsageMB(): number {
+    return 256;
+  }
+  reset(): void {
+    this.queryCount = 0;
+    this.connections = 0;
+  }
+  dispose(): void {
+    /* no-op */
+  }
+  updateConfig(c: Partial<Record<string, any>>): void {
+    Object.assign(this.config, c);
+  }
+  getConfig(): typeof this.config {
+    return { ...this.config };
+  }
+  getQueryCount(): number {
+    return ++this.queryCount;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -295,12 +406,18 @@ class GraphVecHealthAdapter implements IHealthProbe {
 
   liveness(): ProbeResult {
     const result = this.health.liveness();
-    return { ok: result.ready, message: result.error ?? 'GraphVec engine is alive' };
+    return {
+      ok: result.ready,
+      message: result.error ?? 'GraphVec engine is alive',
+    };
   }
 
   async readiness(): Promise<ProbeResult> {
     const result = await this.health.readiness();
-    return { ok: result.ready, message: result.error ?? 'GraphVec engine is ready' };
+    return {
+      ok: result.ready,
+      message: result.error ?? 'GraphVec engine is ready',
+    };
   }
 
   async startup(): Promise<ProbeResult> {
@@ -317,24 +434,49 @@ class GraphVecHealthAdapter implements IHealthProbe {
 class GraphVecMetricAdapter implements IMetricsRegistry {
   private metrics = new MetricsStub();
 
-  counter(name: string, _labels?: Record<string, string>): { inc: () => void; incBy: (n: number) => void; get: () => number; reset: () => void } {
+  counter(
+    name: string,
+    _labels?: Record<string, string>,
+  ): {
+    inc: () => void;
+    incBy: (n: number) => void;
+    get: () => number;
+    reset: () => void;
+  } {
     return {
       inc: () => this.metrics.incrementCounter(name, 1),
       incBy: (n: number) => this.metrics.incrementCounter(name, n),
       get: () => this.metrics.getCounter(name),
-      reset: () => { this.metrics.incrementCounter(name, -this.metrics.getCounter(name)); },
+      reset: () => {
+        this.metrics.incrementCounter(name, -this.metrics.getCounter(name));
+      },
     };
   }
 
-  gauge(name: string, _labels?: Record<string, string>): { set: (v: number) => void; get: () => number; add: (v: number) => void } {
+  gauge(
+    name: string,
+    _labels?: Record<string, string>,
+  ): { set: (v: number) => void; get: () => number; add: (v: number) => void } {
     return {
-      set: (_v: number) => { /* not recorded in stub */ },
+      set: (_v: number) => {
+        /* not recorded in stub */
+      },
       get: () => 0,
-      add: (_v: number) => { /* not recorded in stub */ },
+      add: (_v: number) => {
+        /* not recorded in stub */
+      },
     };
   }
 
-  histogram(name: string, _labels?: Record<string, string>, _buckets?: number[]): { observe: (v: number) => void; getCount: () => number; getQuantile: (q: number) => number } {
+  histogram(
+    name: string,
+    _labels?: Record<string, string>,
+    _buckets?: number[],
+  ): {
+    observe: (v: number) => void;
+    getCount: () => number;
+    getQuantile: (q: number) => number;
+  } {
     return {
       observe: (v: number) => this.metrics.recordLatency(name, v),
       getCount: () => 0,
@@ -342,10 +484,20 @@ class GraphVecMetricAdapter implements IMetricsRegistry {
     };
   }
 
-  snapshot(): { points: Array<{ name: string; type: string; value: number; labels: Array<{ key: string; value: string }> }> } {
+  snapshot(): {
+    points: Array<{
+      name: string;
+      type: string;
+      value: number;
+      labels: Array<{ key: string; value: string }>;
+    }>;
+  } {
     const snap = this.metrics.snapshot();
     const points = Object.entries(snap.counters).map(([name, value]) => ({
-      name, type: 'counter' as const, value, labels: [],
+      name,
+      type: 'counter' as const,
+      value,
+      labels: [],
     }));
     return { points };
   }
@@ -357,12 +509,13 @@ class GraphVecMetricAdapter implements IMetricsRegistry {
  */
 class GraphVecBackupAdapter implements IBackupManager {
   private native: BackupManagerStub;
-  constructor() { this.native = new BackupManagerStub(); }
+  constructor() {
+    this.native = new BackupManagerStub();
+  }
 
   async createBackup(options: { type: string }): Promise<BackupResult> {
-    const snap = options.type === 'incremental'
-      ? await this.native.incrementalBackup()
-      : await this.native.fullBackup();
+    const snap =
+      options.type === 'incremental' ? await this.native.incrementalBackup() : await this.native.fullBackup();
     return {
       success: true,
       snapshot: {
@@ -380,7 +533,7 @@ class GraphVecBackupAdapter implements IBackupManager {
 
   async listBackups(): Promise<BackupMetadata[]> {
     const snaps = await this.native.listSnapshots();
-    return snaps.map(s => ({
+    return snaps.map((s) => ({
       snapshotId: s.snapshotId,
       type: s.type as 'full' | 'incremental',
       createdAt: new Date(s.timestamp).toISOString(),
@@ -394,17 +547,19 @@ class GraphVecBackupAdapter implements IBackupManager {
 
   async getBackup(snapshotId: string): Promise<BackupMetadata | null> {
     const snaps = await this.native.listSnapshots();
-    const found = snaps.find(s => s.snapshotId === snapshotId);
-    return found ? {
-      snapshotId: found.snapshotId,
-      type: found.type as 'full' | 'incremental',
-      createdAt: new Date(found.timestamp).toISOString(),
-      sizeBytes: found.sizeBytes,
-      fileCount: found.fileCount,
-      location: found.path,
-      state: 'completed',
-      completedAt: new Date(found.timestamp).toISOString(),
-    } : null;
+    const found = snaps.find((s) => s.snapshotId === snapshotId);
+    return found
+      ? {
+          snapshotId: found.snapshotId,
+          type: found.type as 'full' | 'incremental',
+          createdAt: new Date(found.timestamp).toISOString(),
+          sizeBytes: found.sizeBytes,
+          fileCount: found.fileCount,
+          location: found.path,
+          state: 'completed',
+          completedAt: new Date(found.timestamp).toISOString(),
+        }
+      : null;
   }
 
   async deleteBackup(snapshotId: string): Promise<boolean> {
@@ -433,7 +588,9 @@ class GraphVecSecurityAuditStore implements IAuditStore {
   private entries: Array<AuditEntry & { id: string }> = [];
   private counter = 0;
 
-  constructor() { this.native = new SecurityAuditorStub(); }
+  constructor() {
+    this.native = new SecurityAuditorStub();
+  }
 
   async write(entry: Omit<AuditEntry, 'id' | 'timestamp'>): Promise<string> {
     const id = `gv-audit-${++this.counter}`;
@@ -450,17 +607,17 @@ class GraphVecSecurityAuditStore implements IAuditStore {
   }
 
   async get(id: string): Promise<AuditEntry | null> {
-    return this.entries.find(e => (e as any).id === id) ?? null;
+    return this.entries.find((e) => (e as any).id === id) ?? null;
   }
 
   async query(filter?: AuditQueryFilter): Promise<AuditEntry[]> {
     let results = [...this.entries];
-    if (filter?.actor) results = results.filter(e => e.actor === filter.actor);
-    if (filter?.operation) results = results.filter(e => e.operation === filter.operation);
-    if (filter?.result) results = results.filter(e => e.result === filter.result);
+    if (filter?.actor) results = results.filter((e) => e.actor === filter.actor);
+    if (filter?.operation) results = results.filter((e) => e.operation === filter.operation);
+    if (filter?.result) results = results.filter((e) => e.result === filter.result);
     if (filter?.limit) results = results.slice(0, filter.limit);
-    if (filter?.startTime) results = results.filter(e => e.timestamp! >= filter.startTime!);
-    if (filter?.endTime) results = results.filter(e => e.timestamp! <= filter.endTime!);
+    if (filter?.startTime) results = results.filter((e) => e.timestamp! >= filter.startTime!);
+    if (filter?.endTime) results = results.filter((e) => e.timestamp! <= filter.endTime!);
     return results;
   }
 
@@ -470,7 +627,7 @@ class GraphVecSecurityAuditStore implements IAuditStore {
 
   async pruneOlderThan(date: Date): Promise<number> {
     const before = this.entries.length;
-    this.entries = this.entries.filter(e => e.timestamp! >= date);
+    this.entries = this.entries.filter((e) => e.timestamp! >= date);
     return before - this.entries.length;
   }
 }
@@ -482,9 +639,17 @@ class GraphVecSecurityAuditStore implements IAuditStore {
 class GraphVecTracerAdapter implements IDistributedTracer {
   private native: TelemetryStub;
 
-  constructor() { this.native = new TelemetryStub(); }
+  constructor() {
+    this.native = new TelemetryStub();
+  }
 
-  startSpan(name: string, options?: { attributes?: Record<string, string | number | boolean>; parentContext?: SpanContext }): Span {
+  startSpan(
+    name: string,
+    options?: {
+      attributes?: Record<string, string | number | boolean>;
+      parentContext?: SpanContext;
+    },
+  ): Span {
     const parentCtx = options?.parentContext ?? this.getCurrentSpan();
     const nativeSpan = this.native.startSpan(name, parentCtx ?? null);
     const span: Span = {
@@ -516,7 +681,7 @@ class GraphVecTracerAdapter implements IDistributedTracer {
   }
 
   getCompletedSpans(): Span[] {
-    return this.native.getCompletedSpans().map(s => ({
+    return this.native.getCompletedSpans().map((s) => ({
       spanId: s.spanId,
       traceId: s.traceId,
       name: s.name,
@@ -548,12 +713,24 @@ class GraphVecLoggerAdapter implements ILogger {
     return new GraphVecLoggerAdapter(`${this.component}-${JSON.stringify(bindings)}`);
   }
 
-  trace(...args: any[]): void { this.native.log('trace', String(args[args.length - 1] ?? '')); }
-  debug(...args: any[]): void { this.native.log('debug', String(args[args.length - 1] ?? '')); }
-  info(...args: any[]): void { this.native.log('info', String(args[args.length - 1] ?? '')); }
-  warn(...args: any[]): void { this.native.log('warn', String(args[args.length - 1] ?? '')); }
-  error(...args: any[]): void { this.native.log('error', String(args[args.length - 1] ?? '')); }
-  fatal(...args: any[]): void { this.native.log('fatal', String(args[args.length - 1] ?? '')); }
+  trace(...args: any[]): void {
+    this.native.log('trace', String(args[args.length - 1] ?? ''));
+  }
+  debug(...args: any[]): void {
+    this.native.log('debug', String(args[args.length - 1] ?? ''));
+  }
+  info(...args: any[]): void {
+    this.native.log('info', String(args[args.length - 1] ?? ''));
+  }
+  warn(...args: any[]): void {
+    this.native.log('warn', String(args[args.length - 1] ?? ''));
+  }
+  error(...args: any[]): void {
+    this.native.log('error', String(args[args.length - 1] ?? ''));
+  }
+  fatal(...args: any[]): void {
+    this.native.log('fatal', String(args[args.length - 1] ?? ''));
+  }
 }
 
 /**
@@ -562,15 +739,27 @@ class GraphVecLoggerAdapter implements ILogger {
 class GraphVecSlowQueryRecorder implements ISlowQueryRecorder {
   private native: QuerySlowLogStub;
 
-  constructor(thresholdMs = 100) { this.native = new QuerySlowLogStub(thresholdMs); }
+  constructor(thresholdMs = 100) {
+    this.native = new QuerySlowLogStub(thresholdMs);
+  }
 
   async record(entry: { query: string; durationMs: number; timestamp: Date; database: string }): Promise<void> {
     // The stub's track method handles timing; for direct recording we store it
   }
 
-  async getSlowQueries(thresholdMs: number): Promise<Array<{ query: string; durationMs: number; timestamp: Date; database: string }>> {
-    return this.native.getSlowQueries().map(e => ({
-      query: e.op, durationMs: e.duration, timestamp: new Date(e.timestamp), database: 'graphvec',
+  async getSlowQueries(thresholdMs: number): Promise<
+    Array<{
+      query: string;
+      durationMs: number;
+      timestamp: Date;
+      database: string;
+    }>
+  > {
+    return this.native.getSlowQueries().map((e) => ({
+      query: e.op,
+      durationMs: e.duration,
+      timestamp: new Date(e.timestamp),
+      database: 'graphvec',
     }));
   }
 }
@@ -581,19 +770,37 @@ class GraphVecSlowQueryRecorder implements ISlowQueryRecorder {
  */
 class GraphVecMaintenanceExecutor implements IMaintenanceExecutor {
   async vacuum(options?: VacuumOptions): Promise<MaintenanceResult> {
-    return { success: true, operation: 'VACUUM', details: { target: options?.target ?? '*' } };
+    return {
+      success: true,
+      operation: 'VACUUM',
+      details: { target: options?.target ?? '*' },
+    };
   }
 
   async analyze(options?: AnalyzeOptions): Promise<MaintenanceResult> {
-    return { success: true, operation: 'ANALYZE', details: { target: options?.target ?? '*' } };
+    return {
+      success: true,
+      operation: 'ANALYZE',
+      details: { target: options?.target ?? '*' },
+    };
   }
 
   async reindex(options?: ReindexOptions): Promise<MaintenanceResult> {
-    return { success: true, operation: 'REINDEX', details: { target: options?.target ?? '*' } };
+    return {
+      success: true,
+      operation: 'REINDEX',
+      details: { target: options?.target ?? '*' },
+    };
   }
 
   getStorageStats(_target: string): Promise<StorageStats> {
-    return Promise.resolve({ totalBytes: 1024 * 1024, usedBytes: 512 * 1024, freeBytes: 512 * 1024, tableCount: 10, indexCount: 15 });
+    return Promise.resolve({
+      totalBytes: 1024 * 1024,
+      usedBytes: 512 * 1024,
+      freeBytes: 512 * 1024,
+      tableCount: 10,
+      indexCount: 15,
+    });
   }
 
   getIndexFragmentation(_target: string): Promise<IndexFragmentation[]> {
@@ -610,7 +817,12 @@ class GraphVecMaintenanceExecutor implements IMaintenanceExecutor {
  * following the real graphvec-adapter pattern.
  */
 class GraphVecDeadlockDetector implements IDeadlockDetector {
-  private history: Array<{ cycle: string[]; resources: string[]; victim: string; detectedAt: number }> = [];
+  private history: Array<{
+    cycle: string[];
+    resources: string[];
+    victim: string;
+    detectedAt: number;
+  }> = [];
   private interval: ReturnType<typeof setInterval> | null = null;
 
   async start(): Promise<void> {
@@ -621,10 +833,20 @@ class GraphVecDeadlockDetector implements IDeadlockDetector {
   }
 
   async stop(): Promise<void> {
-    if (this.interval) { clearInterval(this.interval); this.interval = null; }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
   }
 
-  async getDeadlockHistory(): Promise<Array<{ cycle: string[]; resources: string[]; victim: string; detectedAt: number }>> {
+  async getDeadlockHistory(): Promise<
+    Array<{
+      cycle: string[];
+      resources: string[];
+      victim: string;
+      detectedAt: number;
+    }>
+  > {
     return this.history;
   }
 }
@@ -669,7 +891,10 @@ export class GraphVecEngineFactory implements EngineFactory {
 
   async createRetentionPolicy(): Promise<IBackupRetentionPolicy> {
     const { RetentionPolicyEvaluator } = await import('@agentix-e/db-operations-backup');
-    return new RetentionPolicyEvaluator({ maxFullSnapshots: 3, maxTotalBytes: 1_000_000_000 });
+    return new RetentionPolicyEvaluator({
+      maxFullSnapshots: 3,
+      maxTotalBytes: 1_000_000_000,
+    });
   }
 
   async createAuditStore(): Promise<IAuditStore> {

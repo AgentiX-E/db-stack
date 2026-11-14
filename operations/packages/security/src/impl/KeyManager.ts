@@ -20,7 +20,7 @@
  *   Application data ← AES-256-GCM
  */
 
-import crypto from "crypto";
+import crypto from 'crypto';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -60,10 +60,10 @@ export interface KeyPair {
   createdAt: number;
 }
 
-const DEFAULT_CONFIG: Omit<KeyManagerConfig, "masterSecret"> = {
+const DEFAULT_CONFIG: Omit<KeyManagerConfig, 'masterSecret'> = {
   iterations: 600_000,
   keyLength: 32,
-  hashAlgorithm: "sha256",
+  hashAlgorithm: 'sha256',
 };
 
 // ── KeyManager ─────────────────────────────────────────────
@@ -110,12 +110,20 @@ export class KeyManager {
 
     if (unwrapNow) {
       const dek = await this.unwrapKey(wrapped);
-      this.keyHistory.set(version, { version, key: dek, createdAt: wrapped.createdAt });
+      this.keyHistory.set(version, {
+        version,
+        key: dek,
+        createdAt: wrapped.createdAt,
+      });
     } else {
       // Lazy: store wrapped key for later unwrapping
       // (Not implemented here — for now always unwrap immediately)
       const dek = await this.unwrapKey(wrapped);
-      this.keyHistory.set(version, { version, key: dek, createdAt: wrapped.createdAt });
+      this.keyHistory.set(version, {
+        version,
+        key: dek,
+        createdAt: wrapped.createdAt,
+      });
     }
 
     if (version > this.currentVersion) {
@@ -134,7 +142,7 @@ export class KeyManager {
     const kek = await this._deriveKEK();
     const iv = crypto.randomBytes(12);
 
-    const cipher = crypto.createCipheriv("aes-256-gcm", kek, iv, {
+    const cipher = crypto.createCipheriv('aes-256-gcm', kek, iv, {
       authTagLength: 16,
     });
 
@@ -162,15 +170,12 @@ export class KeyManager {
     const kek = await this._deriveKEK(wrapped.salt, wrapped.iterations);
 
     try {
-      const decipher = crypto.createDecipheriv("aes-256-gcm", kek, wrapped.iv, {
+      const decipher = crypto.createDecipheriv('aes-256-gcm', kek, wrapped.iv, {
         authTagLength: 16,
       });
 
       decipher.setAuthTag(wrapped.authTag);
-      const dek = Buffer.concat([
-        decipher.update(wrapped.encryptedKey),
-        decipher.final(),
-      ]);
+      const dek = Buffer.concat([decipher.update(wrapped.encryptedKey), decipher.final()]);
 
       // Zeroize KEK
       kek.fill(0);
@@ -247,10 +252,7 @@ export class KeyManager {
 
   // ── Internal ─────────────────────────────────────────────
 
-  private async _deriveKEK(
-    salt?: Buffer,
-    iterations?: number,
-  ): Promise<Buffer> {
+  private async _deriveKEK(salt?: Buffer, iterations?: number): Promise<Buffer> {
     const effectiveSalt = salt ?? this.config.salt!;
     const effectiveIterations = iterations ?? this.config.iterations;
 

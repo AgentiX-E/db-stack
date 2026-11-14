@@ -83,9 +83,7 @@ describe('Boundary: Security (SEC)', () => {
   it(
     'SEC.3: rapid register/deregister cycles — no memory leak',
     async () => {
-      const { RaftTcpTransport } = await import(
-        '../../consensus/transport/RaftTcpTransport'
-      );
+      const { RaftTcpTransport } = await import('../../consensus/transport/RaftTcpTransport');
       const transport = new RaftTcpTransport({
         node: { id: 99901, host: '127.0.0.1', port: 29001 },
         peers: [],
@@ -120,7 +118,7 @@ describe('Boundary: Security (SEC)', () => {
 
       console.log(
         `[SEC.3] 1,000 register cycles, heap +${heapDeltaMB.toFixed(1)}MB, ` +
-        `pending: ${pendingSize}, reconnects: ${reconSize}`,
+          `pending: ${pendingSize}, reconnects: ${reconSize}`,
       );
 
       // Registering the same peer 1,000 times should NOT grow memory
@@ -133,9 +131,7 @@ describe('Boundary: Security (SEC)', () => {
   it(
     'SEC.4: concurrent stop while 100 sends in-flight',
     async () => {
-      const { RaftTcpTransport } = await import(
-        '../../consensus/transport/RaftTcpTransport'
-      );
+      const { RaftTcpTransport } = await import('../../consensus/transport/RaftTcpTransport');
       const transport = new RaftTcpTransport({
         node: { id: 99903, host: '127.0.0.1', port: 29003 },
         peers: [],
@@ -155,9 +151,7 @@ describe('Boundary: Security (SEC)', () => {
       });
 
       // Fire 100 sends, then immediately stop
-      const sends = Array.from({ length: 100 }, (_, i) =>
-        transport.send(99904, `sec4-msg-${i}`).catch(() => {}),
-      );
+      const sends = Array.from({ length: 100 }, (_, i) => transport.send(99904, `sec4-msg-${i}`).catch(() => {}));
 
       await transport.stop();
 
@@ -176,24 +170,14 @@ describe('Boundary: Security (SEC)', () => {
       await cluster.start();
       try {
         const leader = await cluster.findLeader();
-        const edgeCases = [
-          '',
-          '   ',
-          '\n\t',
-          'null',
-          'undefined',
-          '0',
-          'x'.repeat(100_000),
-        ];
+        const edgeCases = ['', '   ', '\n\t', 'null', 'undefined', '0', 'x'.repeat(100_000)];
 
         for (const payload of edgeCases) {
           try {
             await leader.adapter.proposeAndWait(payload);
             console.log(`[SEC.5] Accepted payload length=${payload.length}`);
           } catch (e: any) {
-            console.log(
-              `[SEC.5] Rejected length=${payload.length}: ${e.message}`,
-            );
+            console.log(`[SEC.5] Rejected length=${payload.length}: ${e.message}`);
           }
         }
 

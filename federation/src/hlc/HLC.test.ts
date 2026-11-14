@@ -10,20 +10,13 @@
  *   - Edge cases: bigint boundary, empty nodeId, max logical counter
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  HLC,
-  compareHLC,
-  happenedBefore,
-  hlcToKey,
-  keyToHlc,
-  makeHLC,
-} from "./HLC";
-import type { IHLCTimestamp } from "../interfaces/hlc/IHLCTimestamp";
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { HLC, compareHLC, happenedBefore, hlcToKey, keyToHlc, makeHLC } from './HLC';
+import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
 
-describe("HLC — Monotonicity (AC 42.1)", () => {
-  it("should produce strictly increasing timestamps on consecutive now() calls", () => {
-    const hlc = new HLC("node-1");
+describe('HLC — Monotonicity (AC 42.1)', () => {
+  it('should produce strictly increasing timestamps on consecutive now() calls', () => {
+    const hlc = new HLC('node-1');
     const ts1 = hlc.now();
     const ts2 = hlc.now();
     const ts3 = hlc.now();
@@ -33,12 +26,12 @@ describe("HLC — Monotonicity (AC 42.1)", () => {
     expect(compareHLC(ts1, ts3)).toBeLessThan(0);
   });
 
-  it("should increment logical counter when now() is called within the same millisecond", () => {
+  it('should increment logical counter when now() is called within the same millisecond', () => {
     const fixedNow = BigInt(1_700_000_000_000);
-    const hlc = new HLC("node-1", fixedNow, 0);
+    const hlc = new HLC('node-1', fixedNow, 0);
 
     // Freeze Date.now() to same millisecond
-    const spy = vi.spyOn(Date, "now").mockReturnValue(Number(fixedNow));
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(Number(fixedNow));
 
     const ts1 = hlc.now();
     const ts2 = hlc.now();
@@ -58,8 +51,8 @@ describe("HLC — Monotonicity (AC 42.1)", () => {
     spy.mockRestore();
   });
 
-  it("should produce 1M strictly increasing timestamps under high throughput", () => {
-    const hlc = new HLC("node-bench");
+  it('should produce 1M strictly increasing timestamps under high throughput', () => {
+    const hlc = new HLC('node-bench');
     const timestamps: bigint[] = [];
 
     for (let i = 0; i < 1_000_000; i++) {
@@ -87,13 +80,13 @@ describe("HLC — Monotonicity (AC 42.1)", () => {
   });
 });
 
-describe("HLC — observe() Causal Ordering (AC 42.2)", () => {
-  it("should advance local HLC past remote timestamp on observe()", () => {
-    const local = new HLC("node-a");
+describe('HLC — observe() Causal Ordering (AC 42.2)', () => {
+  it('should advance local HLC past remote timestamp on observe()', () => {
+    const local = new HLC('node-a');
     const beforeObserve = local.now();
 
     // Remote timestamp at a demonstrably future wall time
-    const remoteTs = makeHLC(BigInt(1_800_000_000_000), 0, "node-b");
+    const remoteTs = makeHLC(BigInt(1_800_000_000_000), 0, 'node-b');
 
     local.observe(remoteTs);
 
@@ -107,11 +100,11 @@ describe("HLC — observe() Causal Ordering (AC 42.2)", () => {
     expect(localTs.wallTime).toBeGreaterThanOrEqual(remoteTs.wallTime);
   });
 
-  it("should advance logical past remote logical when local+remote wall equal", () => {
+  it('should advance logical past remote logical when local+remote wall equal', () => {
     const fixedNow = BigInt(1_700_000_000_000);
-    const spy = vi.spyOn(Date, "now").mockReturnValue(Number(fixedNow));
-    const local = new HLC("node-a", fixedNow, 0);
-    const remoteTs = makeHLC(fixedNow, 100, "node-b");
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(Number(fixedNow));
+    const local = new HLC('node-a', fixedNow, 0);
+    const remoteTs = makeHLC(fixedNow, 100, 'node-b');
 
     local.observe(remoteTs);
 
@@ -124,13 +117,13 @@ describe("HLC — observe() Causal Ordering (AC 42.2)", () => {
     spy.mockRestore();
   });
 
-  it("should advance logical past both when local wall, remote wall and pt are equal", () => {
+  it('should advance logical past both when local wall, remote wall and pt are equal', () => {
     const fixedNow = BigInt(1_700_000_000_000);
-    const local = new HLC("node-a", fixedNow, 50);
-    const remoteTs = makeHLC(fixedNow, 100, "node-b");
+    const local = new HLC('node-a', fixedNow, 50);
+    const remoteTs = makeHLC(fixedNow, 100, 'node-b');
 
     // Date.now() returns same fixed time
-    const spy = vi.spyOn(Date, "now").mockReturnValue(Number(fixedNow));
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(Number(fixedNow));
 
     local.observe(remoteTs);
 
@@ -143,9 +136,9 @@ describe("HLC — observe() Causal Ordering (AC 42.2)", () => {
     spy.mockRestore();
   });
 
-  it("should not regress local HLC when observing an older timestamp", () => {
-    const local = new HLC("node-a", BigInt(1_700_000_000_100), 0);
-    const olderTs = makeHLC(BigInt(1_700_000_000_000), 0, "node-b");
+  it('should not regress local HLC when observing an older timestamp', () => {
+    const local = new HLC('node-a', BigInt(1_700_000_000_100), 0);
+    const olderTs = makeHLC(BigInt(1_700_000_000_000), 0, 'node-b');
 
     const before = local.now();
     local.observe(olderTs);
@@ -155,9 +148,9 @@ describe("HLC — observe() Causal Ordering (AC 42.2)", () => {
     expect(compareHLC(before, after)).toBeLessThan(0);
   });
 
-  it("should handle observe() with concurrent equal timestamps (happened-before invariance)", () => {
-    const a = new HLC("node-a", BigInt(1_700_000_000_000), 0);
-    const b = new HLC("node-b", BigInt(1_700_000_000_000), 0);
+  it('should handle observe() with concurrent equal timestamps (happened-before invariance)', () => {
+    const a = new HLC('node-a', BigInt(1_700_000_000_000), 0);
+    const b = new HLC('node-b', BigInt(1_700_000_000_000), 0);
 
     // Simulate concurrent writes: both generate timestamps, then exchange
     const tsA = a.now();
@@ -178,15 +171,15 @@ describe("HLC — observe() Causal Ordering (AC 42.2)", () => {
   });
 });
 
-describe("HLC — Clock Rollback Handling", () => {
-  it("should maintain monotonicity when system clock moves backwards", () => {
-    const hlc = new HLC("node-a");
+describe('HLC — Clock Rollback Handling', () => {
+  it('should maintain monotonicity when system clock moves backwards', () => {
+    const hlc = new HLC('node-a');
 
     // Generate timestamp with current wall
     const ts1 = hlc.now();
 
     // Simulate clock rollback
-    const spy = vi.spyOn(Date, "now").mockReturnValue(1_000_000_000); // January 1970
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(1_000_000_000); // January 1970
 
     const ts2 = hlc.now();
 
@@ -200,11 +193,11 @@ describe("HLC — Clock Rollback Handling", () => {
     spy.mockRestore();
   });
 
-  it("should survive aggressive clock jumps (< -1 second)", () => {
-    const hlc = new HLC("node-a");
+  it('should survive aggressive clock jumps (< -1 second)', () => {
+    const hlc = new HLC('node-a');
 
     const ts1 = hlc.now();
-    const spy = vi.spyOn(Date, "now").mockReturnValue(1);
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(1);
     const ts2 = hlc.now();
     spy.mockRestore();
 
@@ -215,40 +208,40 @@ describe("HLC — Clock Rollback Handling", () => {
   });
 });
 
-describe("HLC — Comparison (AC 42.3)", () => {
-  it("compareHLC should order by wallTime first", () => {
-    const a = makeHLC(BigInt(100), 0, "node-a");
-    const b = makeHLC(BigInt(200), 0, "node-b");
+describe('HLC — Comparison (AC 42.3)', () => {
+  it('compareHLC should order by wallTime first', () => {
+    const a = makeHLC(BigInt(100), 0, 'node-a');
+    const b = makeHLC(BigInt(200), 0, 'node-b');
 
     expect(compareHLC(a, b)).toBeLessThan(0);
     expect(compareHLC(b, a)).toBeGreaterThan(0);
   });
 
-  it("compareHLC should break ties by logical counter", () => {
-    const a = makeHLC(BigInt(100), 1, "node-a");
-    const b = makeHLC(BigInt(100), 2, "node-b");
+  it('compareHLC should break ties by logical counter', () => {
+    const a = makeHLC(BigInt(100), 1, 'node-a');
+    const b = makeHLC(BigInt(100), 2, 'node-b');
 
     expect(compareHLC(a, b)).toBeLessThan(0);
   });
 
-  it("compareHLC should break ties by nodeId when wall+logical equal", () => {
-    const a = makeHLC(BigInt(100), 0, "node-a");
-    const b = makeHLC(BigInt(100), 0, "node-b");
+  it('compareHLC should break ties by nodeId when wall+logical equal', () => {
+    const a = makeHLC(BigInt(100), 0, 'node-a');
+    const b = makeHLC(BigInt(100), 0, 'node-b');
 
     expect(compareHLC(a, b)).toBeLessThan(0); // "node-a" < "node-b"
     expect(compareHLC(b, a)).toBeGreaterThan(0);
   });
 
-  it("compareHLC should return 0 for identical timestamps", () => {
-    const a = makeHLC(BigInt(100), 5, "node-x");
-    const b = makeHLC(BigInt(100), 5, "node-x");
+  it('compareHLC should return 0 for identical timestamps', () => {
+    const a = makeHLC(BigInt(100), 5, 'node-x');
+    const b = makeHLC(BigInt(100), 5, 'node-x');
 
     expect(compareHLC(a, b)).toBe(0);
   });
 
-  it("happenedBefore should correctly identify causal order", () => {
-    const a = makeHLC(BigInt(100), 0, "node-a");
-    const b = makeHLC(BigInt(200), 0, "node-b");
+  it('happenedBefore should correctly identify causal order', () => {
+    const a = makeHLC(BigInt(100), 0, 'node-a');
+    const b = makeHLC(BigInt(200), 0, 'node-b');
 
     expect(happenedBefore(a, b)).toBe(true);
     expect(happenedBefore(b, a)).toBe(false);
@@ -256,13 +249,13 @@ describe("HLC — Comparison (AC 42.3)", () => {
   });
 });
 
-describe("HLC — Serialization Roundtrip (AC 42.3)", () => {
-  it("hlcToKey should produce lexicographically sortable strings matching compareHLC", () => {
+describe('HLC — Serialization Roundtrip (AC 42.3)', () => {
+  it('hlcToKey should produce lexicographically sortable strings matching compareHLC', () => {
     const timestamps = [
-      makeHLC(BigInt(100), 0, "node-a"),
-      makeHLC(BigInt(100), 1, "node-b"),
-      makeHLC(BigInt(200), 0, "node-c"),
-      makeHLC(BigInt(50),  0, "node-d"),
+      makeHLC(BigInt(100), 0, 'node-a'),
+      makeHLC(BigInt(100), 1, 'node-b'),
+      makeHLC(BigInt(200), 0, 'node-c'),
+      makeHLC(BigInt(50), 0, 'node-d'),
     ];
 
     // Sort by compareHLC
@@ -282,8 +275,8 @@ describe("HLC — Serialization Roundtrip (AC 42.3)", () => {
     }
   });
 
-  it("should serialize and deserialize correctly (round-trip with nodeId)", () => {
-    const ts = makeHLC(BigInt(1_700_000_000_000), 42, "node-test");
+  it('should serialize and deserialize correctly (round-trip with nodeId)', () => {
+    const ts = makeHLC(BigInt(1_700_000_000_000), 42, 'node-test');
     const key = hlcToKey(ts);
     const restored = keyToHlc(key);
 
@@ -292,9 +285,9 @@ describe("HLC — Serialization Roundtrip (AC 42.3)", () => {
     expect(restored.nodeId).toBe(ts.nodeId);
   });
 
-  it("should pad hex strings consistently for bigint sort order", () => {
-    const small = makeHLC(BigInt(1), 0, "node-a");
-    const large = makeHLC(BigInt(0xffffffffffffff), 0, "node-b");
+  it('should pad hex strings consistently for bigint sort order', () => {
+    const small = makeHLC(BigInt(1), 0, 'node-a');
+    const large = makeHLC(BigInt(0xffffffffffffffn), 0, 'node-b');
 
     const keySmall = hlcToKey(small);
     const keyLarge = hlcToKey(large);
@@ -306,22 +299,22 @@ describe("HLC — Serialization Roundtrip (AC 42.3)", () => {
   });
 });
 
-describe("HLC — IHLCTimestamp interface compliance", () => {
-  it("HLC instance should satisfy the IHLCTimestamp interface", () => {
-    const hlc = new HLC("node-iface");
+describe('HLC — IHLCTimestamp interface compliance', () => {
+  it('HLC instance should satisfy the IHLCTimestamp interface', () => {
+    const hlc = new HLC('node-iface');
     const ts = hlc.now();
 
     // Interface methods must work
-    expect(typeof ts.wallTime).toBe("bigint");
-    expect(typeof ts.logical).toBe("number");
-    expect(typeof ts.nodeId).toBe("string");
-    expect(typeof ts.compare).toBe("function");
-    expect(typeof ts.serialize).toBe("function");
-    expect(typeof ts.deserialize).toBe("function");
+    expect(typeof ts.wallTime).toBe('bigint');
+    expect(typeof ts.logical).toBe('number');
+    expect(typeof ts.nodeId).toBe('string');
+    expect(typeof ts.compare).toBe('function');
+    expect(typeof ts.serialize).toBe('function');
+    expect(typeof ts.deserialize).toBe('function');
   });
 
-  it("serialize() output should be comparable via string sort", () => {
-    const hlc = new HLC("node-sort");
+  it('serialize() output should be comparable via string sort', () => {
+    const hlc = new HLC('node-sort');
 
     const timestamps: string[] = [];
     for (let i = 0; i < 100; i++) {
@@ -333,8 +326,8 @@ describe("HLC — IHLCTimestamp interface compliance", () => {
     }
   });
 
-  it("deserialize(serialize()) should preserve ordering equality and nodeId", () => {
-    const hlc = new HLC("node-roundtrip");
+  it('deserialize(serialize()) should preserve ordering equality and nodeId', () => {
+    const hlc = new HLC('node-roundtrip');
 
     for (let i = 0; i < 50; i++) {
       const ts = hlc.now();
@@ -347,31 +340,29 @@ describe("HLC — IHLCTimestamp interface compliance", () => {
     }
   });
 
-  it("should handle bigint boundary values with nodeId round-trip", () => {
+  it('should handle bigint boundary values with nodeId round-trip', () => {
     const maxSafeInt = BigInt(Number.MAX_SAFE_INTEGER);
-    const hlc = makeHLC(maxSafeInt, 0, "node-edge");
+    const hlc = makeHLC(maxSafeInt, 0, 'node-edge');
 
     const key = hlcToKey(hlc);
     const restored = keyToHlc(key);
 
     expect(restored.wallTime).toBe(maxSafeInt);
     expect(restored.logical).toBe(0);
-    expect(restored.nodeId).toBe("node-edge");
+    expect(restored.nodeId).toBe('node-edge');
   });
 });
 
-describe("HLC — Edge Cases", () => {
-  it("should work with empty nodeId", () => {
-    const hlc = new HLC("");
+describe('HLC — Edge Cases', () => {
+  it('should work with empty nodeId', () => {
+    const hlc = new HLC('');
     const ts = hlc.now();
-    expect(ts.nodeId).toBe("");
+    expect(ts.nodeId).toBe('');
   });
 
-  it("should survive rapid consecutive observe() calls", () => {
-    const local = new HLC("node-local");
-    const peers = [0, 1, 2, 3, 4].map(
-      (i) => new HLC(`node-peer-${i}`),
-    );
+  it('should survive rapid consecutive observe() calls', () => {
+    const local = new HLC('node-local');
+    const peers = [0, 1, 2, 3, 4].map((i) => new HLC(`node-peer-${i}`));
 
     // Capture pre-exchange timestamps
     const pre = local.now();
@@ -393,9 +384,9 @@ describe("HLC — Edge Cases", () => {
     expect(localFinal.wallTime).toBeGreaterThanOrEqual(pre.wallTime);
   });
 
-  it("should not overflow logical counter under extreme concurrent use", () => {
-    const hlc = new HLC("node-extreme");
-    const spy = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+  it('should not overflow logical counter under extreme concurrent use', () => {
+    const hlc = new HLC('node-extreme');
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
 
     // Simulate 100K calls in same millisecond
     for (let i = 0; i < 100_000; i++) {
@@ -410,43 +401,43 @@ describe("HLC — Edge Cases", () => {
   });
 });
 
-  describe('HLCTimestamp interface methods', () => {
-    it('compare should delegate to compareHLC', () => {
-      const ts = makeHLC(100n, 0, 'n1');
-      const result = ts.compare(ts);
-      expect(ts.compare(ts)).toBe(0);
-    });
-
-    it('serialize should produce reversible output', () => {
-      const ts = makeHLC(42n, 0, 'node-x');
-      const key = ts.serialize();
-      expect(typeof key).toBe('string');
-      // hex-encoded key: wallTime:logical:hexNodeId
-      expect(key).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/);
-    });
-
-    it('deserialize should reconstruct timestamp from key', () => {
-      const original = makeHLC(77n, 2, 'peer-a');
-      const key = original.serialize();
-      const restored = original.deserialize(key);
-      expect(restored.wallTime).toBe(77n);
-      expect(restored.nodeId).toBe('peer-a');
-    });
-
-    it('deserialize with empty string should throw', () => {
-      const ts = makeHLC(10n, 1, 'n');
-      expect(() => ts.deserialize('')).toThrow(SyntaxError);
-    });
-
-    it('compare with different logical returns negative', () => {
-      const a = makeHLC(50n, 0, 'same');
-      const b = makeHLC(50n, 5, 'same');
-      // same wall, same node, same logical
-      expect(makeHLC(100n, 0, 'n1').compare(makeHLC(100n, 0, 'n1'))).toBe(0);
-    });
-
-    it('serialize handles large values', () => {
-      const ts = makeHLC(999999999999n, 0, 'big-node');
-      expect(() => ts.serialize()).not.toThrow();
-    });
+describe('HLCTimestamp interface methods', () => {
+  it('compare should delegate to compareHLC', () => {
+    const ts = makeHLC(100n, 0, 'n1');
+    const result = ts.compare(ts);
+    expect(ts.compare(ts)).toBe(0);
   });
+
+  it('serialize should produce reversible output', () => {
+    const ts = makeHLC(42n, 0, 'node-x');
+    const key = ts.serialize();
+    expect(typeof key).toBe('string');
+    // hex-encoded key: wallTime:logical:hexNodeId
+    expect(key).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/);
+  });
+
+  it('deserialize should reconstruct timestamp from key', () => {
+    const original = makeHLC(77n, 2, 'peer-a');
+    const key = original.serialize();
+    const restored = original.deserialize(key);
+    expect(restored.wallTime).toBe(77n);
+    expect(restored.nodeId).toBe('peer-a');
+  });
+
+  it('deserialize with empty string should throw', () => {
+    const ts = makeHLC(10n, 1, 'n');
+    expect(() => ts.deserialize('')).toThrow(SyntaxError);
+  });
+
+  it('compare with different logical returns negative', () => {
+    const a = makeHLC(50n, 0, 'same');
+    const b = makeHLC(50n, 5, 'same');
+    // same wall, same node, same logical
+    expect(makeHLC(100n, 0, 'n1').compare(makeHLC(100n, 0, 'n1'))).toBe(0);
+  });
+
+  it('serialize handles large values', () => {
+    const ts = makeHLC(999999999999n, 0, 'big-node');
+    expect(() => ts.serialize()).not.toThrow();
+  });
+});

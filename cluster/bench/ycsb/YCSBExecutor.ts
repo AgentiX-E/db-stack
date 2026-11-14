@@ -73,7 +73,7 @@ function computeLatencyStats(sortedLatencies: number[]): LatencyStats {
     return { p50: 0, p95: 0, p99: 0, max: 0 };
   }
 
-  const p50Index = Math.floor(sortedLatencies.length * 0.50);
+  const p50Index = Math.floor(sortedLatencies.length * 0.5);
   const p95Index = Math.floor(sortedLatencies.length * 0.95);
   const p99Index = Math.floor(sortedLatencies.length * 0.99);
 
@@ -93,7 +93,7 @@ function* zipfianGenerator(alpha: number, seed: number): Generator<number> {
   // Simple multiplicative congruential generator with zipfian skew
   const theta = 1.0 - alpha;
   const zetaN = 1.0 / (1.0 - theta); // approximation
-  const zeta2 = 1.0 / (1.0 - theta) * 0.5; // approximation
+  const zeta2 = (1.0 / (1.0 - theta)) * 0.5; // approximation
 
   let state = seed;
   while (true) {
@@ -135,10 +135,7 @@ function* latestGenerator(seed: number): Generator<number> {
 
 type DistributionGenerator = Generator<number>;
 
-function createDistribution(
-  type: 'uniform' | 'zipfian' | 'latest',
-  seed: number,
-): DistributionGenerator {
+function createDistribution(type: 'uniform' | 'zipfian' | 'latest', seed: number): DistributionGenerator {
   switch (type) {
     case 'uniform':
       return uniformGenerator(seed);
@@ -192,8 +189,11 @@ export class YCSBExecutor<T = string> {
     const cooldownCut = Math.floor(measureOps.length * 0.1);
     const trimmedOps = measureOps.slice(cooldownCut, measureOps.length - cooldownCut);
 
-    const { readLatencies, updateLatencies, errorCount, durationMs } =
-      await this.executeBatch(target, trimmedOps, threads);
+    const { readLatencies, updateLatencies, errorCount, durationMs } = await this.executeBatch(
+      target,
+      trimmedOps,
+      threads,
+    );
 
     // ── Phase 5: Compute results ───────────────────────────────
     const readSorted = [...readLatencies].sort((a, b) => a - b);
@@ -306,7 +306,7 @@ export class YCSBExecutor<T = string> {
   }> {
     const readLatencies: number[] = [];
     const updateLatencies: number[] = [];
-    let errorCount = 0;
+    const errorCount = 0;
 
     const start = Date.now();
 

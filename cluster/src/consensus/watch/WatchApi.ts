@@ -1,22 +1,22 @@
 /**
- * WatchApi — 基于事件总线的异步 Watch 机制。
- * 
- * 消费者注册 watch key，当匹配的事件通过 EventBus 发布时，
- * 消费者通过异步回调接收事件。保证 FIFO 顺序和 leader 变更场景下的正确性。
+ * WatchApi — asynchronous watch mechanism built on the event bus.
+ *
+ * Consumers register a watch key; when a matching event is published through the EventBus,
+ * the consumer receives it asynchronously. FIFO order and correctness across leader changes are guaranteed.
  *
  * @module consensus/watch
  */
 
 import type { IEventBus, IDisposable, ConsensusEvent, ProposalCommittedEvent } from '../events/EventBus';
 
-// ── 接口 ──────────────────────────────────────────────────────────
+// ── Interfaces ─────────────────────────────────────────────────────
 
 export interface WatchOptions {
-  /** Watch 超时时间 (ms)，超过后自动取消 */
+  /** Watch timeout (ms); the watch is cancelled when exceeded */
   timeoutMs?: number;
-  /** 是否包含历史已 committed 的 entries（从当前 commitIndex 开始） */
+  /** Whether committed history from the current commitIndex is replayed first */
   includeHistory?: boolean;
-  /** 起始 index（用于断点续传） */
+  /** Start index (used to resume from a checkpoint) */
   startIndex?: number;
 }
 
@@ -31,44 +31,44 @@ export interface WatchEvent {
 export type WatchHandler = (event: WatchEvent) => Promise<void> | void;
 
 /**
- * IWatchApi — 类型安全的 Watch 机制。
- * 
- * 设计原则：
- * 1. 基于 EventBus 的 proposal.committed 事件
- * 2. 支持 key-prefix 匹配（key like "prefix*"）
- * 3. Leader 变更时自动重新注册
- * 4. 超时保护
+ * IWatchApi — type-safe watch mechanism.
+ *
+ * Design principles:
+ * 1. Built on the EventBus proposal.committed event
+ * 2. Key-prefix matching (key like "prefix*")
+ * 3. Re-registers automatically across leader changes
+ * 4. Timeout protection
  */
 export interface IWatchApi {
   /**
-   * 注册 watch。当匹配 key prefix 的 proposal 被 commit 时触发 handler。
-   * 返回 IDisposable 句柄用于取消。
+   * Register a watch. The handler fires when a proposal matching the key prefix commits.
+   * Returns an IDisposable handle used to cancel.
    *
-   * @param keyPrefix — 匹配前缀（空字符串匹配所有 key）
-   * @param handler — 异步回调
-   * @param options — 可选配置
+   * @param keyPrefix — prefix to match (an empty string matches every key)
+   * @param handler — asynchronous callback
+   * @param options — optional configuration
    */
   watch(keyPrefix: string, handler: WatchHandler, options?: WatchOptions): IDisposable;
 
   /**
-   * 获取当前活跃的 watch 数量。
+   * Number of currently active watches.
    */
   activeWatchCount(): number;
 
   /**
-   * 关闭所有 watch 并停止事件监听。
+   * Cancel every watch and stop listening for events.
    */
   shutdown(): void;
 }
 
-// ── 工具函数 ──────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────
 
 function parseKeyFromData(data: string): string | null {
   try {
     const parsed = JSON.parse(data);
     return typeof parsed.key === 'string' ? parsed.key : null;
   } catch {
-    // data 不是 JSON，尝试提取 key（去掉第一个等号后的 value 部分）
+    // The payload is not JSON; strip the value after the first "=" to recover the key
     const eqIdx = data.indexOf('=');
     const rawKey = eqIdx >= 0 ? data.slice(0, eqIdx) : data;
     return rawKey || null;
@@ -84,15 +84,15 @@ function parseValueFromData(data: string): string {
   }
 }
 
-// ── 实现 ──────────────────────────────────────────────────────────
+// ── Implementation ─────────────────────────────────────────────────
 
 /**
- * WatchApi — 高性能 Watch 实现。
+ * WatchApi — high-performance watch implementation.
  *
- * 特点：
- * - 前缀匹配（O(1) 哈希 + O(n) 遍历活跃 watches）
- * - Leader 变更事件触发自动重连
- * - 内存安全：所有订阅在 shutdown 时释放
+ * Properties:
+ * - prefix matching (O(1) hash + O(n) scan over active watches)
+ * - automatic re-registration on leader change
+ * - memory safety: every subscription is released on shutdown
  */
 export class WatchApi implements IWatchApi {
   private _eventBus: IEventBus;
@@ -118,13 +118,13 @@ export class WatchApi implements IWatchApi {
     const watchId = `${keyPrefix}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     const disposables: IDisposable[] = [];
 
-    // 订阅 proposal.committed 事件
+    // Subscribe to proposal.committed
     const sub = this._eventBus.on('proposal.committed', (event: ConsensusEvent) => {
       const committed = event as ProposalCommittedEvent;
       const key = parseKeyFromData(committed.data);
       if (key === null) return;
 
-      // 前缀匹配
+      // Prefix match
       if (keyPrefix === '' || key.startsWith(keyPrefix)) {
         try {
           const value = parseValueFromData(committed.data);
@@ -137,21 +137,21 @@ export class WatchApi implements IWatchApi {
           };
           handler(watchEvent);
         } catch {
-          // handler 异常不影响其他 watches
+          // A throwing handler must not affect other watches
         }
       }
     });
     disposables.push(sub);
 
-    // 订阅 leader 变更事件用于自动适配
+    // Subscribe to leader changes to adapt automatically
     const leaderSub = this._eventBus.on('leader.elected', () => {
-      // Leader 变更时 watcher 不需要特殊处理，
-      // 因为 proposal.committed 事件只由 leader 发布，
-      // 新的 leader 会继续发布此事件。
+      // Watchers need no special handling on leader change because
+      // proposal.committed is published by the leader only and the
+      // new leader keeps publishing it.
     });
     disposables.push(leaderSub);
 
-    // 超时处理
+    // Timeout handling
     if (options.timeoutMs && options.timeoutMs > 0) {
       const timeoutId = setTimeout(() => {
         this._cleanup(watchId);
@@ -186,7 +186,11 @@ export class WatchApi implements IWatchApi {
     const entry = this._watches.get(watchId);
     if (!entry) return;
     for (const d of entry.disposables) {
-      try { d.dispose(); } catch { /* swallowed */ }
+      try {
+        d.dispose();
+      } catch {
+        /* swallowed */
+      }
     }
     this._watches.delete(watchId);
   }

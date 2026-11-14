@@ -33,23 +33,39 @@ function labelsToPairs(labels?: Record<string, string>): Array<{ key: string; va
 class Counter implements ICounter {
   private _value = 0;
 
-  inc(): void { this._value++; }
+  inc(): void {
+    this._value++;
+  }
   incBy(value: number): void {
     if (value < 0) throw new Error('Counter cannot decrement');
     this._value += value;
   }
-  reset(): void { this._value = 0; }
-  get(): number { return this._value; }
+  reset(): void {
+    this._value = 0;
+  }
+  get(): number {
+    return this._value;
+  }
 }
 
 class Gauge implements IGauge {
   private _value = 0;
 
-  set(value: number): void { this._value = value; }
-  inc(): void { this._value++; }
-  dec(): void { this._value--; }
-  add(value: number): void { this._value += value; }
-  get(): number { return this._value; }
+  set(value: number): void {
+    this._value = value;
+  }
+  inc(): void {
+    this._value++;
+  }
+  dec(): void {
+    this._value--;
+  }
+  add(value: number): void {
+    this._value += value;
+  }
+  get(): number {
+    return this._value;
+  }
 }
 
 class Histogram implements IHistogram {
@@ -63,8 +79,12 @@ class Histogram implements IHistogram {
     this._sum += value;
   }
 
-  getCount(): number { return this._values.length; }
-  getSum(): number { return this._sum; }
+  getCount(): number {
+    return this._values.length;
+  }
+  getSum(): number {
+    return this._sum;
+  }
 
   getQuantile(p: number): number | undefined {
     if (this._values.length === 0) return undefined;
@@ -148,8 +168,8 @@ export class MetricsRegistry implements IMetricsRegistry {
       }
     };
 
-    addPoints(this._counterMeta, 'counter', k => (this._counters.get(k) as Counter).get());
-    addPoints(this._gaugeMeta, 'gauge', k => (this._gauges.get(k) as Gauge).get());
+    addPoints(this._counterMeta, 'counter', (k) => (this._counters.get(k) as Counter).get());
+    addPoints(this._gaugeMeta, 'gauge', (k) => (this._gauges.get(k) as Gauge).get());
 
     // For histograms, add count + sum as separate points.
     for (const [mapKey, key] of this._histogramMeta) {

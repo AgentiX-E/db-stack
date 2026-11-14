@@ -11,7 +11,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EdgeReplica, type EdgeSourceConfig } from './EdgeReplica';
 
-const SRC: EdgeSourceConfig = { url: 'ws://localhost:1', protocol: 'websocket' };
+const SRC: EdgeSourceConfig = {
+  url: 'ws://localhost:1',
+  protocol: 'websocket',
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -88,9 +91,13 @@ describe('EdgeReplica — event handler isolation when connected', () => {
     const edge = new EdgeReplica();
     await edge.connect(SRC);
 
-    edge.onEvent(() => { throw new Error('handler crash'); });
+    edge.onEvent(() => {
+      throw new Error('handler crash');
+    });
     let secondCalled = false;
-    edge.onEvent(() => { secondCalled = true; });
+    edge.onEvent(() => {
+      secondCalled = true;
+    });
 
     // Must not throw, and the second handler still fires.
     expect(() => edge.receive(1, 'x')).not.toThrow();
@@ -103,9 +110,13 @@ describe('EdgeReplica — event handler isolation when connected', () => {
     const edge = new EdgeReplica();
     await edge.connect(SRC);
 
-    edge.onSyncComplete(() => { throw new Error('sync crash'); });
+    edge.onSyncComplete(() => {
+      throw new Error('sync crash');
+    });
     let secondCalled = false;
-    edge.onSyncComplete(() => { secondCalled = true; });
+    edge.onSyncComplete(() => {
+      secondCalled = true;
+    });
 
     expect(() => edge.receive(1, 'x')).not.toThrow();
     expect(secondCalled).toBe(true);

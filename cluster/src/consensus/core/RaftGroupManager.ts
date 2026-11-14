@@ -678,7 +678,10 @@ export class RaftGroupManager implements IConsensusLayer {
         return;
       }
     } catch (err) {
-      logger.debug({ err: err as Error }, `[RaftGroupManager] Reconnect attempt ${state.attempt} for peer ${peerId} failed`);
+      logger.debug(
+        { err: err as Error },
+        `[RaftGroupManager] Reconnect attempt ${state.attempt} for peer ${peerId} failed`,
+      );
     }
 
     // Schedule next retry
@@ -1148,10 +1151,7 @@ export class RaftGroupManager implements IConsensusLayer {
         this.pgClientPool.set(pgAddr.port, poolEntry);
         await poolEntry.client.query('-- @raft_forward\n' + sql);
       } catch (retryErr: unknown) {
-        logger.warn(
-          { err: retryErr, sql: sql.substring(0, 100) },
-          'Auto-forward write to leader failed',
-        );
+        logger.warn({ err: retryErr, sql: sql.substring(0, 100) }, 'Auto-forward write to leader failed');
         throw new Error(
           `This node is not the Raft leader for shard ${shardId} (forward failed: ${getErrorMessage(retryErr)})`,
         );

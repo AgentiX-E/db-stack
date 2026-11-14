@@ -124,7 +124,7 @@ class DL {
       }
     }
 
-    for (let f = true; f; ) {
+    for (let f = true; f;) {
       f = false;
       const v = new Set();
       const rs = new Set();
@@ -160,8 +160,12 @@ class DL {
 
 const AuditS = class {
   _o: any[] = [];
-  write() { this._o.push({}); }
-  query() { return [...this._o]; }
+  write() {
+    this._o.push({});
+  }
+  query() {
+    return [...this._o];
+  }
 };
 
 const TracR = class {
@@ -184,9 +188,13 @@ const TracR = class {
     };
   }
 
-  completed() { return [...this._s]; }
+  completed() {
+    return [...this._s];
+  }
 
-  inject(c: any) { c.tp = '1'; }
+  inject(c: any) {
+    c.tp = '1';
+  }
 
   extract(c: any) {
     return c.tp ? { traceId: 'a', parentSpanId: 'b' } : undefined;
@@ -198,7 +206,14 @@ const TracR = class {
 // ──────────────────────────────────────────────────────
 describe('DD', () => {
   // Avg: insert single wait edge (nanosecond level, thread contention can 2×)
-  ba('reportWait 1000', () => { new DL().wait('t', 'r'); }, 1000, 10_000);
+  ba(
+    'reportWait 1000',
+    () => {
+      new DL().wait('t', 'r');
+    },
+    1000,
+    10_000,
+  );
 
   // Single-shot: detect 50-node DAG (no cycle)
   // Baseline ~1M ns, GC spike during concurrent suite → 10M ns
@@ -248,10 +263,25 @@ describe('DD', () => {
 // ──────────────────────────────────────────────────────
 describe('RL', () => {
   // Avg: single rate-limit check (Map get+set)
-  ba('check 1000', () => { const d = new DL(); d.wait('t', 'r'); }, 1000, 10_000);
+  ba(
+    'check 1000',
+    () => {
+      const d = new DL();
+      d.wait('t', 'r');
+    },
+    1000,
+    10_000,
+  );
 
   // Avg: empty loop baseline (accounts for JS runtime overhead)
-  ba('reset 1000', () => { /* no-op */ }, 1000, 5_000);
+  ba(
+    'reset 1000',
+    () => {
+      /* no-op */
+    },
+    1000,
+    5_000,
+  );
 });
 
 // ──────────────────────────────────────────────────────
@@ -269,7 +299,14 @@ describe('MR', () => {
   );
 
   // Avg: single counter increment
-  ba('inc 10000', () => { new MetricR().counter('x').inc(); }, 10000, 50_000);
+  ba(
+    'inc 10000',
+    () => {
+      new MetricR().counter('x').inc();
+    },
+    10000,
+    50_000,
+  );
 });
 
 // ──────────────────────────────────────────────────────

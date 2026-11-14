@@ -584,13 +584,15 @@ export class RaftGroup {
 
     const now = Date.now();
 
-    // Get current progress to determine where to start streaming from
+    // Start streaming from the current commit index. Before the first apply
+    // there is no progress yet, in which case the log origin is the right
+    // starting point.
     let nextIndex = 0;
     try {
       const progress = await this.raft.getProgress();
       nextIndex = progress.commit || 0;
     } catch {
-      nextIndex = 0;
+      // Progress is unavailable on a freshly started node; keep the origin.
     }
 
     const info: LearnerInfo = {
@@ -1678,7 +1680,9 @@ export class RaftGroup {
           logger.info(`[RaftGroup] Leader stepped down due to minority partition (shard ${this.shardId})`);
         }
       } catch (err: unknown) {
-        logger.error(`[RaftGroup] Failed to step down from minority partition (shard ${this.shardId}): ${getErrorMessage(err)}`);
+        logger.error(
+          `[RaftGroup] Failed to step down from minority partition (shard ${this.shardId}): ${getErrorMessage(err)}`,
+        );
       }
     }
   }

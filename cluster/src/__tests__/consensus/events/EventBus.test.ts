@@ -122,7 +122,9 @@ describe('EventBus', () => {
   // ── 错误隔离 ────────────────────────────────────────────────────
 
   it('一个订阅者崩溃不影响其他订阅者', () => {
-    const crashHandler = vi.fn(() => { throw new Error('boom'); });
+    const crashHandler = vi.fn(() => {
+      throw new Error('boom');
+    });
     const normalHandler = vi.fn();
 
     bus.on('proposal.committed', crashHandler);
@@ -184,7 +186,7 @@ describe('EventBus', () => {
   it('异步订阅通过 setImmediate 延迟处理', async () => {
     let processed = false;
     bus.onAsync('leader.elected', async () => {
-      await new Promise(r => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 5));
       processed = true;
     });
 
@@ -193,7 +195,7 @@ describe('EventBus', () => {
     expect(processed).toBe(false);
 
     // 等待微任务 + setImmediate 完成
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
     expect(processed).toBe(true);
   });
 
@@ -203,7 +205,9 @@ describe('EventBus', () => {
     // `onAsync` marks the handler as async (deferred via setImmediate), but a
     // synchronous throw inside the callback exercises the try/catch that
     // swallows async-handler exceptions.
-    const crashAsync = vi.fn(() => { throw new Error('async-boom'); });
+    const crashAsync = vi.fn(() => {
+      throw new Error('async-boom');
+    });
     const normalHandler = vi.fn();
 
     bus.onAsync('leader.elected', crashAsync);
@@ -214,7 +218,7 @@ describe('EventBus', () => {
     }).not.toThrow();
 
     // Wait for the setImmediate-delayed async handler to run and throw.
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
 
     expect(crashAsync).toHaveBeenCalledTimes(1);
     expect(normalHandler).toHaveBeenCalledTimes(1);

@@ -14,16 +14,16 @@
  * E2E.2 — Crash recovery test: simulate crash, verify checkpoint resume
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ExactlyOnceCDCPipeline, type ExactlyOnceCDCPipelineConfig } from "../../replication/ExactlyOnceCDCPipeline";
-import { existsSync, readFileSync, mkdirSync, rmSync } from "fs";
-import * as path from "path";
-import type { ITransport } from "../../interfaces/transport/ITransport";
-import type { TransportMessage } from "../../interfaces/transport/TransportMessage";
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ExactlyOnceCDCPipeline, type ExactlyOnceCDCPipelineConfig } from '../../replication/ExactlyOnceCDCPipeline';
+import { existsSync, readFileSync, mkdirSync, rmSync } from 'fs';
+import * as path from 'path';
+import type { ITransport } from '../../interfaces/transport/ITransport';
+import type { TransportMessage } from '../../interfaces/transport/TransportMessage';
 
 // ── Test data dir ──────────────────────────────────────────
 
-const TEST_DIR = "/tmp/db-federation-test/cdc-pipeline";
+const TEST_DIR = '/tmp/db-federation-test/cdc-pipeline';
 
 function cleanDir(): void {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
@@ -42,7 +42,7 @@ function createMockTransport(): {
 
   const transport: ITransport = {
     send: vi.fn(async (msg: TransportMessage): Promise<boolean> => {
-      if (shouldFail) throw new Error("Transport send failed");
+      if (shouldFail) throw new Error('Transport send failed');
       sentMessages.push(msg);
       return true;
     }),
@@ -51,20 +51,36 @@ function createMockTransport(): {
       return 1;
     }),
     onMessage: vi.fn(() => vi.fn()),
-    getConnectedPeers: vi.fn(() => [{ peerId: "remote-1", address: "127.0.0.1:7001", connectedAt: Date.now() }]),
-    getStats: vi.fn(() => ({ sentCount: 0, receivedCount: 0, reconnectCount: 0 })),
+    getConnectedPeers: vi.fn(() => [
+      {
+        peerId: 'remote-1',
+        address: '127.0.0.1:7001',
+        connectedAt: Date.now(),
+      },
+    ]),
+    getStats: vi.fn(() => ({
+      sentCount: 0,
+      receivedCount: 0,
+      reconnectCount: 0,
+    })),
   };
 
-  return { transport, sentMessages, enableSendFailure: () => { shouldFail = true; } };
+  return {
+    transport,
+    sentMessages,
+    enableSendFailure: () => {
+      shouldFail = true;
+    },
+  };
 }
 
 // ── Config factory ─────────────────────────────────────────
 
 function makePipelineConfig(overrides?: Partial<ExactlyOnceCDCPipelineConfig>): ExactlyOnceCDCPipelineConfig {
   return {
-    nodeId: "n1",
-    cdcConfig: { nodeId: "n1" },
-    outboxConfig: { dataDir: path.join(TEST_DIR, "outbox") },
+    nodeId: 'n1',
+    cdcConfig: { nodeId: 'n1' },
+    outboxConfig: { dataDir: path.join(TEST_DIR, 'outbox') },
     pumpIntervalMs: 50,
     pumpBatchSize: 100,
     maxPending: 1000,
@@ -75,7 +91,7 @@ function makePipelineConfig(overrides?: Partial<ExactlyOnceCDCPipelineConfig>): 
 
 // ── Suite ──────────────────────────────────────────────────
 
-describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => {
+describe('ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline', () => {
   let pipeline: ExactlyOnceCDCPipeline;
   let transport: ITransport;
   let sentMessages: TransportMessage[];
@@ -90,25 +106,29 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
   });
 
   afterEach(async () => {
-    try { await pipeline.cleanup(); } catch { /* ignore */ }
+    try {
+      await pipeline.cleanup();
+    } catch {
+      /* ignore */
+    }
   });
 
   // AC 47.1: Lifecycle
-  it("AC 47.1: should start and stop pipeline", async () => {
+  it('AC 47.1: should start and stop pipeline', async () => {
     pipeline = new ExactlyOnceCDCPipeline({
       ...makePipelineConfig(),
       transport,
-      remoteNodeId: "remote-1",
+      remoteNodeId: 'remote-1',
     });
 
-    const CHECKPOINT_PATH = path.join(TEST_DIR, "outbox", "cdc-checkpoint.json");
+    const CHECKPOINT_PATH = path.join(TEST_DIR, 'outbox', 'cdc-checkpoint.json');
     expect(existsSync(CHECKPOINT_PATH)).toBe(false);
 
     await pipeline.start();
 
     // Checkpoint should exist
     expect(existsSync(CHECKPOINT_PATH)).toBe(true);
-    const cp = JSON.parse(readFileSync(CHECKPOINT_PATH, "utf-8"));
+    const cp = JSON.parse(readFileSync(CHECKPOINT_PATH, 'utf-8'));
     expect(cp.version).toBe(1);
     expect(cp.lastConfirmedLSN).toEqual({});
 
@@ -116,17 +136,17 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
   });
 
   // AC 47.2: G1 — At-least-once persistence
-  it("AC 47.2: CDC events persist to outbox before return", async () => {
+  it('AC 47.2: CDC events persist to outbox before return', async () => {
     pipeline = new ExactlyOnceCDCPipeline(makePipelineConfig());
 
     await pipeline.start();
-    pipeline.watchTable("users");
+    pipeline.watchTable('users');
 
     const event = pipeline.appendChange({
-      tableName: "users",
-      operation: "insert",
+      tableName: 'users',
+      operation: 'insert',
       oldValues: null,
-      newValues: { id: 1, name: "Alice" },
+      newValues: { id: 1, name: 'Alice' },
     });
 
     // Event has LSN already assigned by CDCEngine
@@ -141,18 +161,18 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
   });
 
   // AC 47.3: Outbox pump → transport deliver
-  it("AC 47.3: should pump CDC events through transport", async () => {
+  it('AC 47.3: should pump CDC events through transport', async () => {
     pipeline = new ExactlyOnceCDCPipeline({
       ...makePipelineConfig({ pumpIntervalMs: 50 }),
       transport,
-      remoteNodeId: "remote-1",
+      remoteNodeId: 'remote-1',
     });
 
     await pipeline.start();
-    pipeline.watchTable("users");
+    pipeline.watchTable('users');
     pipeline.appendChange({
-      tableName: "users",
-      operation: "insert",
+      tableName: 'users',
+      operation: 'insert',
       oldValues: null,
       newValues: { id: 1 },
     });
@@ -164,43 +184,43 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
     // Event should have been sent via transport
     expect(sentMessages.length).toBeGreaterThanOrEqual(1);
     const msg = sentMessages[0];
-    expect(msg.sourcePeerId).toBe("n1");
-    expect(msg.targetPeerId).toBe("remote-1");
-    expect(msg.type).toContain("cdc_event");
+    expect(msg.sourcePeerId).toBe('n1');
+    expect(msg.targetPeerId).toBe('remote-1');
+    expect(msg.type).toContain('cdc_event');
   });
 
   // AC 47.4: G2 — At-most-once delivery via DedupRing
-  it("AC 47.4: dedup prevents duplicate processing", async () => {
+  it('AC 47.4: dedup prevents duplicate processing', async () => {
     pipeline = new ExactlyOnceCDCPipeline(makePipelineConfig());
     await pipeline.start();
 
     // Create a fake transport message (as if received from remote)
     const changeEvent = {
-      lsn: "0/12345678",
-      timestamp: { wallClock: Date.now(), logicalTicks: 0, nodeId: "n1" },
-      tableName: "users",
-      operation: "insert",
+      lsn: '0/12345678',
+      timestamp: { wallClock: Date.now(), logicalTicks: 0, nodeId: 'n1' },
+      tableName: 'users',
+      operation: 'insert',
       oldValues: null,
-      newValues: { id: 1, name: "Alice" },
-      txId: "tx-001",
+      newValues: { id: 1, name: 'Alice' },
+      txId: 'tx-001',
     };
 
     const encoder = new TextEncoder();
     const msg: TransportMessage = {
       messageId: `0/12345678:tx-001`,
-      sourcePeerId: "n2",
-      targetPeerId: "n1",
+      sourcePeerId: 'n2',
+      targetPeerId: 'n1',
       payload: encoder.encode(JSON.stringify(changeEvent)),
-      timestamp: { wallClock: Date.now(), logicalTicks: 0, nodeId: "n2" },
+      timestamp: { wallClock: Date.now(), logicalTicks: 0, nodeId: 'n2' },
       createdAt: Date.now(),
-      type: "cdc_event:users",
+      type: 'cdc_event:users',
     };
 
     // First delivery: accepted
     const r1 = pipeline.processInbound(msg);
     expect(r1.accepted).toBe(true);
     expect(r1.event).toBeDefined();
-    expect(r1.event!.tableName).toBe("users");
+    expect(r1.event!.tableName).toBe('users');
 
     // Second delivery: deduped (same messageId)
     const r2 = pipeline.processInbound(msg);
@@ -214,23 +234,23 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
   });
 
   // AC 47.5: G3 — Checkpoint persistence & recovery
-  it("AC 47.5: checkpoint persists LSN and recovers after restart", async () => {
+  it('AC 47.5: checkpoint persists LSN and recovers after restart', async () => {
     pipeline = new ExactlyOnceCDCPipeline({
       ...makePipelineConfig(),
       transport,
-      remoteNodeId: "remote-1",
+      remoteNodeId: 'remote-1',
     });
 
     await pipeline.start();
-    pipeline.watchTable("orders");
+    pipeline.watchTable('orders');
 
     // Simulate checkpoint advance
-    pipeline.advanceCheckpoint("orders", "0/DEADBEEF");
-    pipeline.advanceCheckpoint("users", "0/CAFEBABE");
+    pipeline.advanceCheckpoint('orders', '0/DEADBEEF');
+    pipeline.advanceCheckpoint('users', '0/CAFEBABE');
 
     const cp1 = pipeline.getCheckpoint();
-    expect(cp1.lastConfirmedLSN["orders"]).toBe("0/DEADBEEF");
-    expect(cp1.lastConfirmedLSN["users"]).toBe("0/CAFEBABE");
+    expect(cp1.lastConfirmedLSN['orders']).toBe('0/DEADBEEF');
+    expect(cp1.lastConfirmedLSN['users']).toBe('0/CAFEBABE');
 
     await pipeline.stop();
 
@@ -238,38 +258,38 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
     const pipeline2 = new ExactlyOnceCDCPipeline({
       ...makePipelineConfig(),
       transport,
-      remoteNodeId: "remote-1",
+      remoteNodeId: 'remote-1',
     });
     await pipeline2.start();
 
     // G3: Should have recovered LSNs from checkpoint
-    expect(pipeline2.getLastConfirmedLSN("orders")).toBe("0/DEADBEEF");
-    expect(pipeline2.getLastConfirmedLSN("users")).toBe("0/CAFEBABE");
+    expect(pipeline2.getLastConfirmedLSN('orders')).toBe('0/DEADBEEF');
+    expect(pipeline2.getLastConfirmedLSN('users')).toBe('0/CAFEBABE');
 
     await pipeline2.cleanup();
   });
 
   // AC 47.6: G4 — monotonic LSN (no regress)
-  it("AC 47.6: should reject non-monotonic checkpoint advance", async () => {
+  it('AC 47.6: should reject non-monotonic checkpoint advance', async () => {
     pipeline = new ExactlyOnceCDCPipeline(makePipelineConfig());
     await pipeline.start();
 
-    pipeline.advanceCheckpoint("users", "0/BEEF0001");
-    expect(pipeline.getLastConfirmedLSN("users")).toBe("0/BEEF0001");
+    pipeline.advanceCheckpoint('users', '0/BEEF0001');
+    expect(pipeline.getLastConfirmedLSN('users')).toBe('0/BEEF0001');
 
     // Stale LSN: should be ignored
-    pipeline.advanceCheckpoint("users", "0/BEEF0000");
-    expect(pipeline.getLastConfirmedLSN("users")).toBe("0/BEEF0001");
+    pipeline.advanceCheckpoint('users', '0/BEEF0000');
+    expect(pipeline.getLastConfirmedLSN('users')).toBe('0/BEEF0001');
 
     await pipeline.stop();
   });
 
   // AC 47.7: G5 — Backpressure detection
-  it("AC 47.7: should emit backpressure when pending exceeds threshold", async () => {
+  it('AC 47.7: should emit backpressure when pending exceeds threshold', async () => {
     pipeline = new ExactlyOnceCDCPipeline({
       ...makePipelineConfig({ maxPending: 5 }),
       transport,
-      remoteNodeId: "remote-1",
+      remoteNodeId: 'remote-1',
     });
 
     const bpEvents: string[] = [];
@@ -280,12 +300,12 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
     await pipeline.start();
 
     // inject many events quickly (transport fails = stays pending)
-    pipeline.watchTable("users");
+    pipeline.watchTable('users');
     enableSendFailure();
     for (let i = 0; i < 10; i++) {
       pipeline.appendChange({
-        tableName: "users",
-        operation: "insert",
+        tableName: 'users',
+        operation: 'insert',
         oldValues: null,
         newValues: { id: i },
       });
@@ -299,23 +319,25 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
   });
 
   // AC 47.8: Dead letter queue
-  it("AC 47.8: should move entries to dead letter after max retries", async () => {
+  it('AC 47.8: should move entries to dead letter after max retries', async () => {
     pipeline = new ExactlyOnceCDCPipeline({
-      ...makePipelineConfig({ outboxConfig: { dataDir: path.join(TEST_DIR, "outbox"), maxRetries: 2 } }),
+      ...makePipelineConfig({
+        outboxConfig: { dataDir: path.join(TEST_DIR, 'outbox'), maxRetries: 2 },
+      }),
       transport,
-      remoteNodeId: "remote-1",
+      remoteNodeId: 'remote-1',
     });
 
     await pipeline.start();
-    pipeline.watchTable("users");
+    pipeline.watchTable('users');
 
     // Transport fails = entries stay pending, retry, move to DLQ
     enableSendFailure();
     pipeline.appendChange({
-      tableName: "users",
-      operation: "update",
-      oldValues: { id: 1, name: "Alice" },
-      newValues: { id: 1, name: "Bob" },
+      tableName: 'users',
+      operation: 'update',
+      oldValues: { id: 1, name: 'Alice' },
+      newValues: { id: 1, name: 'Bob' },
     });
 
     // Wait for pump cycles + retries
@@ -328,20 +350,22 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
   });
 
   // AC 47.9: Retry from dead letter
-  it("AC 47.9: should retry dead letter entry after recover", async () => {
+  it('AC 47.9: should retry dead letter entry after recover', async () => {
     pipeline = new ExactlyOnceCDCPipeline({
-      ...makePipelineConfig({ outboxConfig: { dataDir: path.join(TEST_DIR, "outbox"), maxRetries: 1 } }),
+      ...makePipelineConfig({
+        outboxConfig: { dataDir: path.join(TEST_DIR, 'outbox'), maxRetries: 1 },
+      }),
       transport,
-      remoteNodeId: "remote-1",
+      remoteNodeId: 'remote-1',
     });
 
     await pipeline.start();
-    pipeline.watchTable("users");
+    pipeline.watchTable('users');
 
     enableSendFailure();
     pipeline.appendChange({
-      tableName: "users",
-      operation: "delete",
+      tableName: 'users',
+      operation: 'delete',
       oldValues: { id: 1 },
       newValues: null,
     });
@@ -358,35 +382,35 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
   });
 
   // E2E.1: Full round-trip
-  it("E2E.1: full round-trip produce → outbox → pump → transport → receive → dedup", async () => {
+  it('E2E.1: full round-trip produce → outbox → pump → transport → receive → dedup', async () => {
     // Sender side
     const pipelineSender = new ExactlyOnceCDCPipeline({
       ...makePipelineConfig({
-        nodeId: "n1",
-        outboxConfig: { dataDir: path.join(TEST_DIR, "sender-outbox") },
+        nodeId: 'n1',
+        outboxConfig: { dataDir: path.join(TEST_DIR, 'sender-outbox') },
         pumpIntervalMs: 100,
       }),
       transport,
-      remoteNodeId: "n2",
+      remoteNodeId: 'n2',
     });
 
     // Receiver side (same process, separate DedupRing)
     const pipelineReceiver = new ExactlyOnceCDCPipeline({
       ...makePipelineConfig({
-        nodeId: "n2",
-        outboxConfig: { dataDir: path.join(TEST_DIR, "receiver-outbox") },
+        nodeId: 'n2',
+        outboxConfig: { dataDir: path.join(TEST_DIR, 'receiver-outbox') },
       }),
     });
 
     await pipelineSender.start();
     await pipelineReceiver.start();
 
-    pipelineSender.watchTable("products");
+    pipelineSender.watchTable('products');
     pipelineSender.appendChange({
-      tableName: "products",
-      operation: "insert",
+      tableName: 'products',
+      operation: 'insert',
       oldValues: null,
-      newValues: { sku: "ABC", qty: 100 },
+      newValues: { sku: 'ABC', qty: 100 },
     });
 
     // Wait for pump
@@ -417,20 +441,20 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
   });
 
   // E2E.2: Crash recovery
-  it("E2E.2: should resume from checkpoint after simulated crash", async () => {
+  it('E2E.2: should resume from checkpoint after simulated crash', async () => {
     pipeline = new ExactlyOnceCDCPipeline({
       ...makePipelineConfig({
-        outboxConfig: { dataDir: path.join(TEST_DIR, "crash-outbox") },
+        outboxConfig: { dataDir: path.join(TEST_DIR, 'crash-outbox') },
       }),
       transport,
-      remoteNodeId: "remote-1",
+      remoteNodeId: 'remote-1',
     });
 
     await pipeline.start();
 
     // Simulate processing and checkpoint
-    pipeline.advanceCheckpoint("users", "0/LSN0001");
-    pipeline.advanceCheckpoint("orders", "0/LSN0002");
+    pipeline.advanceCheckpoint('users', '0/LSN0001');
+    pipeline.advanceCheckpoint('orders', '0/LSN0002');
 
     // Crash (simulated)
     await pipeline.stop();
@@ -438,25 +462,25 @@ describe("ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline", () => 
     // Restart
     const pipeline2 = new ExactlyOnceCDCPipeline({
       ...makePipelineConfig({
-        outboxConfig: { dataDir: path.join(TEST_DIR, "crash-outbox") },
+        outboxConfig: { dataDir: path.join(TEST_DIR, 'crash-outbox') },
       }),
       transport,
-      remoteNodeId: "remote-1",
+      remoteNodeId: 'remote-1',
     });
 
     await pipeline2.start();
 
     // G3: Resume from checkpoint
-    expect(pipeline2.getLastConfirmedLSN("users")).toBe("0/LSN0001");
-    expect(pipeline2.getLastConfirmedLSN("orders")).toBe("0/LSN0002");
+    expect(pipeline2.getLastConfirmedLSN('users')).toBe('0/LSN0001');
+    expect(pipeline2.getLastConfirmedLSN('orders')).toBe('0/LSN0002');
 
     // Continue from where we left off
-    pipeline2.watchTable("users");
+    pipeline2.watchTable('users');
     pipeline2.appendChange({
-      tableName: "users",
-      operation: "insert",
+      tableName: 'users',
+      operation: 'insert',
       oldValues: null,
-      newValues: { id: 2, name: "Bob" },
+      newValues: { id: 2, name: 'Bob' },
     });
 
     await new Promise((r) => setTimeout(r, 200));

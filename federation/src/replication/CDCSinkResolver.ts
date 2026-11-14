@@ -8,11 +8,11 @@
  *   - Health checks and liveness probes
  */
 
-import type { ICDCSink, CDCEvent } from "../interfaces/replication/ICDCSink";
+import type { ICDCSink, CDCEvent } from '../interfaces/replication/ICDCSink';
 
 // ── Types ──────────────────────────────────────────────────
 
-export type RetryStrategy = "fixed" | "exponential" | "none";
+export type RetryStrategy = 'fixed' | 'exponential' | 'none';
 
 export interface CDCSinkResolverConfig {
   /** Name of the underlying sink */
@@ -41,9 +41,9 @@ export interface ResolverHealth {
 }
 
 export type SinkFailureMode =
-  | { type: "connection_lost" }
-  | { type: "emit_failed"; batchSize: number }
-  | { type: "retry_exhausted"; attempts: number };
+  | { type: 'connection_lost' }
+  | { type: 'emit_failed'; batchSize: number }
+  | { type: 'retry_exhausted'; attempts: number };
 
 export interface FailureEvent {
   mode: SinkFailureMode;
@@ -55,7 +55,7 @@ const DEFAULT_CONFIG: CDCSinkResolverConfig = {
   maxRetries: 5,
   retryBaseMs: 100,
   retryMaxMs: 30_000,
-  retryStrategy: "exponential",
+  retryStrategy: 'exponential',
   maxBatchSize: 1000,
   healthCheckIntervalMs: 30_000,
 };
@@ -138,12 +138,16 @@ export class CDCSinkResolver implements ICDCSink {
 
   onHealthChange(callback: (health: ResolverHealth) => void): () => void {
     this.healthListeners.add(callback);
-    return () => { this.healthListeners.delete(callback); };
+    return () => {
+      this.healthListeners.delete(callback);
+    };
   }
 
   onFailure(callback: (event: FailureEvent) => void): () => void {
     this.failureListeners.add(callback);
-    return () => { this.failureListeners.delete(callback); };
+    return () => {
+      this.failureListeners.delete(callback);
+    };
   }
 
   /** Check if connected (liveness probe). */
@@ -165,13 +169,14 @@ export class CDCSinkResolver implements ICDCSink {
       } catch (error) {
         attempt++;
         if (attempt >= this.config.maxRetries) {
-          this._notifyFailure({
-            type: "retry_exhausted",
-            attempts: attempt,
-          }, error);
-          throw new Error(
-            `${this.name}: connection failed after ${attempt} attempts: ${String(error)}`,
+          this._notifyFailure(
+            {
+              type: 'retry_exhausted',
+              attempts: attempt,
+            },
+            error,
           );
+          throw new Error(`${this.name}: connection failed after ${attempt} attempts: ${String(error)}`);
         }
 
         const delay = this._computeBackoff(attempt);
@@ -180,16 +185,10 @@ export class CDCSinkResolver implements ICDCSink {
     }
   }
 
-  private async _handleEmitFailure(
-    batchSize: number,
-    error: unknown,
-  ): Promise<void> {
+  private async _handleEmitFailure(batchSize: number, error: unknown): Promise<void> {
     this.totalFailures++;
     this.consecutiveFailures++;
-    this._notifyFailure(
-      { type: "emit_failed", batchSize },
-      error,
-    );
+    this._notifyFailure({ type: 'emit_failed', batchSize }, error);
 
     // If sink becomes disconnected during emit, attempt reconnect
     if (!this._connected) return;
@@ -199,10 +198,7 @@ export class CDCSinkResolver implements ICDCSink {
     try {
       await this._connectWithRetry();
     } catch {
-      this._notifyFailure(
-        { type: "connection_lost" },
-        error,
-      );
+      this._notifyFailure({ type: 'connection_lost' }, error);
       throw error;
     }
 
@@ -234,16 +230,13 @@ export class CDCSinkResolver implements ICDCSink {
 
   private _computeBackoff(attempt: number): number {
     switch (this.config.retryStrategy) {
-      case "none":
+      case 'none':
         return 0;
-      case "fixed":
+      case 'fixed':
         return this.config.retryBaseMs;
-      case "exponential":
+      case 'exponential':
       default:
-        return Math.min(
-          this.config.retryBaseMs * Math.pow(2, attempt - 1),
-          this.config.retryMaxMs,
-        );
+        return Math.min(this.config.retryBaseMs * Math.pow(2, attempt - 1), this.config.retryMaxMs);
     }
   }
 
@@ -279,7 +272,11 @@ export class CDCSinkResolver implements ICDCSink {
   private _publishHealth(): void {
     const health = this.getHealth();
     for (const listener of this.healthListeners) {
-      try { listener(health); } catch { /* noop */ }
+      try {
+        listener(health);
+      } catch {
+        /* noop */
+      }
     }
   }
 
@@ -290,7 +287,11 @@ export class CDCSinkResolver implements ICDCSink {
       error: String(error),
     };
     for (const listener of this.failureListeners) {
-      try { listener(event); } catch { /* noop */ }
+      try {
+        listener(event);
+      } catch {
+        /* noop */
+      }
     }
   }
 

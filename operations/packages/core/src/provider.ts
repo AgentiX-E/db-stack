@@ -43,8 +43,7 @@ export class InterfaceToken<T> {
 }
 
 /** Helper to create a typed interface token. */
-export const token = <T>(namespace: string): InterfaceToken<T> =>
-  new InterfaceToken<T>(namespace);
+export const token = <T>(namespace: string): InterfaceToken<T> => new InterfaceToken<T>(namespace);
 
 // ══════════════════════════════════════════════════════════════════════
 //  Provider Lifecycle
@@ -111,7 +110,7 @@ interface RegistrationEntry<T> {
 export class ProviderRegistry {
   /** Map of token → sorted registrations. */
   private _registrations = new Map<
-    string,                   // token.namespace
+    string, // token.namespace
     RegistrationEntry<unknown>[]
   >();
 
@@ -198,7 +197,7 @@ export class ProviderRegistry {
   getAll<T>(iface: InterfaceToken<T>): T[] {
     const entries = this._registrations.get(iface.namespace);
     if (!entries) return [];
-    return entries.map(e => e.instance as T);
+    return entries.map((e) => e.instance as T);
   }
 
   /**
@@ -222,13 +221,15 @@ export class ProviderRegistry {
    * Register multiple providers in a single call.
    * Useful for the engine bootstrap to register all its providers at once.
    */
-  registerAll(registrations: Array<{
-    token: InterfaceToken<unknown>;
-    instance: unknown;
-    engineType?: EngineType;
-    priority?: number;
-    name?: string;
-  }>): this {
+  registerAll(
+    registrations: Array<{
+      token: InterfaceToken<unknown>;
+      instance: unknown;
+      engineType?: EngineType;
+      priority?: number;
+      name?: string;
+    }>,
+  ): this {
     for (const reg of registrations) {
       this.register(reg.token, reg.instance, {
         engineType: reg.engineType,
@@ -254,7 +255,10 @@ export class ProviderRegistry {
       try {
         await provider.start();
       } catch (err) {
-        errors.push({ id, error: err instanceof Error ? err : new Error(String(err)) });
+        errors.push({
+          id,
+          error: err instanceof Error ? err : new Error(String(err)),
+        });
       }
     }
 
@@ -281,7 +285,10 @@ export class ProviderRegistry {
       try {
         await provider.stop();
       } catch (err) {
-        errors.push({ id, error: err instanceof Error ? err : new Error(String(err)) });
+        errors.push({
+          id,
+          error: err instanceof Error ? err : new Error(String(err)),
+        });
       }
     }
 
@@ -303,7 +310,11 @@ export class ProviderRegistry {
    * Get a summary of all registered providers.
    */
   getSummary(): Array<{ token: string; name: string; engineType: EngineType }> {
-    const result: Array<{ token: string; name: string; engineType: EngineType }> = [];
+    const result: Array<{
+      token: string;
+      name: string;
+      engineType: EngineType;
+    }> = [];
     for (const [namespace, entries] of this._registrations) {
       for (const entry of entries) {
         result.push({
@@ -346,7 +357,7 @@ export class ProviderStartError extends Error {
   public readonly failures: Array<{ id: string; error: Error }>;
 
   constructor(failures: Array<{ id: string; error: Error }>) {
-    const msg = failures.map(f => `[${f.id}] ${f.error.message}`).join('; ');
+    const msg = failures.map((f) => `[${f.id}] ${f.error.message}`).join('; ');
     super(`Provider start failed: ${msg}`);
     this.name = 'ProviderStartError';
     this.failures = failures;
@@ -358,7 +369,7 @@ export class ProviderStopError extends Error {
   public readonly failures: Array<{ id: string; error: Error }>;
 
   constructor(failures: Array<{ id: string; error: Error }>) {
-    const msg = failures.map(f => `[${f.id}] ${f.error.message}`).join('; ');
+    const msg = failures.map((f) => `[${f.id}] ${f.error.message}`).join('; ');
     super(`Provider stop failed: ${msg}`);
     this.name = 'ProviderStopError';
     this.failures = failures;

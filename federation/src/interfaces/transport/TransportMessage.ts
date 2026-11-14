@@ -1,4 +1,4 @@
-import type { IHLCTimestamp } from "../hlc/IHLCTimestamp";
+import type { IHLCTimestamp } from '../hlc/IHLCTimestamp';
 
 export interface TransportMessage {
   /** Unique message ID (UUID or similar) */

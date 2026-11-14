@@ -18,7 +18,7 @@ export type {
   IFederatedQueryRouter,
   NodeExecutor,
   RouterStats,
-} from "./interfaces/index.js";
+} from './interfaces/index.js';
 export type {
   ISchemaFederator,
   SchemaSnapshot,
@@ -36,6 +36,6 @@ export type {
   DriftMonitorStats,
   ReferenceStrategy,
   SchemaRule,
-} from "./interfaces/index.js";
-export { FederatedQueryRouter } from "./impl/FederatedQueryRouter.js";
-export { SchemaFederator } from "./impl/SchemaFederator.js";
+} from './interfaces/index.js';
+export { FederatedQueryRouter } from './impl/FederatedQueryRouter.js';
+export { SchemaFederator } from './impl/SchemaFederator.js';

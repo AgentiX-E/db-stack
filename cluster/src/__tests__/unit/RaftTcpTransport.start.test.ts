@@ -592,9 +592,11 @@ describe('RaftTcpTransport — write failure', () => {
     const t = new RaftTcpTransport(validConfig());
     await t.start();
     const pool = freshPool();
-    const conn = { write: vi.fn(async () => {
-      throw new Error('socket write failed');
-    }) };
+    const conn = {
+      write: vi.fn(async () => {
+        throw new Error('socket write failed');
+      }),
+    };
     pool.tryGetConnection.mockReturnValue(conn);
 
     priv(t)._doSendFrame(2, Buffer.from('frame'), false);

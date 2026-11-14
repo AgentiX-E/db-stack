@@ -42,7 +42,7 @@ describe('WatchApi', () => {
     bus.emit(createCommittedEvent(3, JSON.stringify({ key: 'orders:1', value: 'widget' })));
 
     expect(results).toHaveLength(2);
-    expect(results.map(r => r.key)).toEqual(['users:1', 'users:2']);
+    expect(results.map((r) => r.key)).toEqual(['users:1', 'users:2']);
   });
 
   it('空字符串前缀匹配所有 key', () => {
@@ -121,7 +121,9 @@ describe('WatchApi', () => {
 
   it('handler 异常不影响其他 watch', () => {
     const good: WatchEvent[] = [];
-    const crashHandler = vi.fn(() => { throw new Error('boom'); });
+    const crashHandler = vi.fn(() => {
+      throw new Error('boom');
+    });
 
     watch.watch('crash:', crashHandler);
     watch.watch('good:', (e) => good.push(e));

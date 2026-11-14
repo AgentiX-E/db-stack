@@ -16,16 +16,20 @@ export function formatMarkdown(results: YCSBResult[]): string {
   const lines: string[] = [];
   lines.push('## YCSB Benchmark Results');
   lines.push('');
-  lines.push('| Workload | Total Ops | Duration (ms) | Throughput (ops/s) | Read P50 (ms) | Read P95 (ms) | Read P99 (ms) | Update P50 (ms) | Update P95 (ms) | Update P99 (ms) | Errors |');
-  lines.push('|----------|-----------|---------------|--------------------|---------------|---------------|---------------|-----------------|-----------------|-----------------|--------|');
+  lines.push(
+    '| Workload | Total Ops | Duration (ms) | Throughput (ops/s) | Read P50 (ms) | Read P95 (ms) | Read P99 (ms) | Update P50 (ms) | Update P95 (ms) | Update P99 (ms) | Errors |',
+  );
+  lines.push(
+    '|----------|-----------|---------------|--------------------|---------------|---------------|---------------|-----------------|-----------------|-----------------|--------|',
+  );
 
   for (const r of results) {
     const wl = r.workload;
     lines.push(
       `| ${wl} | ${r.totalOps} | ${r.durationMs} | ${r.throughput} | ` +
-      `${r.readLatency.p50.toFixed(2)} | ${r.readLatency.p95.toFixed(2)} | ${r.readLatency.p99.toFixed(2)} | ` +
-      `${r.updateLatency.p50.toFixed(2)} | ${r.updateLatency.p95.toFixed(2)} | ${r.updateLatency.p99.toFixed(2)} | ` +
-      `${r.errors} |`,
+        `${r.readLatency.p50.toFixed(2)} | ${r.readLatency.p95.toFixed(2)} | ${r.readLatency.p99.toFixed(2)} | ` +
+        `${r.updateLatency.p50.toFixed(2)} | ${r.updateLatency.p95.toFixed(2)} | ${r.updateLatency.p99.toFixed(2)} | ` +
+        `${r.errors} |`,
     );
   }
 
@@ -55,10 +59,7 @@ export function formatJSON(results: YCSBResult[]): string {
  * @param baseline - Baseline throughput per workload type (ops/sec)
  * @returns Markdown comparison report
  */
-export function compareWithBaseline(
-  results: YCSBResult[],
-  baseline: Partial<Record<WorkloadType, number>>,
-): string {
+export function compareWithBaseline(results: YCSBResult[], baseline: Partial<Record<WorkloadType, number>>): string {
   const lines: string[] = [];
   lines.push('## YCSB Baseline Comparison');
   lines.push('');
@@ -77,9 +78,7 @@ export function compareWithBaseline(
     const delta = current > 0 ? ((current - base) / base) * 100 : -100;
     const verdict = delta >= -5 ? '✅ Pass' : delta >= -10 ? '⚠️ Degraded' : '❌ Regression';
 
-    lines.push(
-      `| ${r.workload} | ${current} | ${base} | ${delta.toFixed(1)}% | ${verdict} |`,
-    );
+    lines.push(`| ${r.workload} | ${current} | ${base} | ${delta.toFixed(1)}% | ${verdict} |`);
   }
 
   lines.push('');

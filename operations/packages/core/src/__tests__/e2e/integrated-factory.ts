@@ -5,53 +5,53 @@
  * integration tests can exercise real inter-package paths
  * (e.g. Encryption→Backup, RBAC→Audit, Health→AutoScale→RollingUpgrade).
  */
-import type { IHealthOrchestrator } from "@agentix-e/db-operations-health";
-import type { IMetricsRegistry } from "@agentix-e/db-operations-metrics";
-import type { IBackupManager } from "@agentix-e/db-operations-backup";
-import type { IStorageBackend } from "@agentix-e/db-operations-backup";
-import type { IBackupRetentionPolicy } from "@agentix-e/db-operations-backup";
-import type { IAuditStore } from "@agentix-e/db-operations-audit";
-import type { IDistributedTracer } from "@agentix-e/db-operations-observability";
+import type { IHealthOrchestrator } from '@agentix-e/db-operations-health';
+import type { IMetricsRegistry } from '@agentix-e/db-operations-metrics';
+import type { IBackupManager } from '@agentix-e/db-operations-backup';
+import type { IStorageBackend } from '@agentix-e/db-operations-backup';
+import type { IBackupRetentionPolicy } from '@agentix-e/db-operations-backup';
+import type { IAuditStore } from '@agentix-e/db-operations-audit';
+import type { IDistributedTracer } from '@agentix-e/db-operations-observability';
 import type {
   IDeadlockDetector,
   IAlertRuleManager,
   ISlowQueryRecorder,
   IConnectionMonitor,
-} from "@agentix-e/db-operations-monitor";
-import type { IMaintenanceExecutor } from "@agentix-e/db-operations-maintenance";
-import type { IAuthProvider } from "@agentix-e/db-operations-auth";
-import type { ILogger } from "@agentix-e/db-operations-logger";
-import type { IEncryptionManager } from "@agentix-e/db-operations-security";
-import type { IRBACProvider } from "@agentix-e/db-operations-security";
-import type { IAuditLogger } from "@agentix-e/db-operations-security";
-import type { IKeyRotationManager } from "@agentix-e/db-operations-security";
-import type { IAutoScaler } from "@agentix-e/db-operations-autoscaler";
-import type { IRollingUpgrade } from "@agentix-e/db-operations-rollingupgrade";
-import type { ICircuitBreaker } from "@agentix-e/db-operations-circuitbreaker";
-import type { IChaosEngine } from "@agentix-e/db-operations-chaosengine";
+} from '@agentix-e/db-operations-monitor';
+import type { IMaintenanceExecutor } from '@agentix-e/db-operations-maintenance';
+import type { IAuthProvider } from '@agentix-e/db-operations-auth';
+import type { ILogger } from '@agentix-e/db-operations-logger';
+import type { IEncryptionManager } from '@agentix-e/db-operations-security';
+import type { IRBACProvider } from '@agentix-e/db-operations-security';
+import type { IAuditLogger } from '@agentix-e/db-operations-security';
+import type { IKeyRotationManager } from '@agentix-e/db-operations-security';
+import type { IAutoScaler } from '@agentix-e/db-operations-autoscaler';
+import type { IRollingUpgrade } from '@agentix-e/db-operations-rollingupgrade';
+import type { ICircuitBreaker } from '@agentix-e/db-operations-circuitbreaker';
+import type { IChaosEngine } from '@agentix-e/db-operations-chaosengine';
 
-import { HealthOrchestrator } from "@agentix-e/db-operations-health";
-import { MetricsRegistry } from "@agentix-e/db-operations-metrics";
+import { HealthOrchestrator } from '@agentix-e/db-operations-health';
+import { MetricsRegistry } from '@agentix-e/db-operations-metrics';
 import {
   InMemoryBackupManager,
   InMemoryStorageBackend,
   RetentionPolicyEvaluator,
-} from "@agentix-e/db-operations-backup";
-import { InMemoryAuditStore } from "@agentix-e/db-operations-audit";
-import { InMemoryDistributedTracer } from "@agentix-e/db-operations-observability";
+} from '@agentix-e/db-operations-backup';
+import { InMemoryAuditStore } from '@agentix-e/db-operations-audit';
+import { InMemoryDistributedTracer } from '@agentix-e/db-operations-observability';
 import {
   InMemoryDeadlockDetector,
   InMemoryAlertRuleManager,
   InMemorySlowQueryRecorder,
   InMemoryConnectionMonitor,
-} from "@agentix-e/db-operations-monitor";
-import { InMemoryMaintenanceExecutor } from "@agentix-e/db-operations-maintenance";
-import { InMemoryLogger } from "@agentix-e/db-operations-logger";
-import { InMemoryEncryptionManager } from "@agentix-e/db-operations-security";
-import { InMemoryRBACProvider } from "@agentix-e/db-operations-security";
-import { InMemoryCircuitBreaker } from "@agentix-e/db-operations-circuitbreaker";
-import { AutoScaler } from "@agentix-e/db-operations-autoscaler";
-import { InMemoryRollingUpgrade } from "@agentix-e/db-operations-rollingupgrade";
+} from '@agentix-e/db-operations-monitor';
+import { InMemoryMaintenanceExecutor } from '@agentix-e/db-operations-maintenance';
+import { InMemoryLogger } from '@agentix-e/db-operations-logger';
+import { InMemoryEncryptionManager } from '@agentix-e/db-operations-security';
+import { InMemoryRBACProvider } from '@agentix-e/db-operations-security';
+import { InMemoryCircuitBreaker } from '@agentix-e/db-operations-circuitbreaker';
+import { AutoScaler } from '@agentix-e/db-operations-autoscaler';
+import { InMemoryRollingUpgrade } from '@agentix-e/db-operations-rollingupgrade';
 
 /**
  * Single factory that creates interconnected instances of every
@@ -59,7 +59,7 @@ import { InMemoryRollingUpgrade } from "@agentix-e/db-operations-rollingupgrade"
  */
 export class IntegratedFactory {
   private storage = new InMemoryStorageBackend();
-  private logger = new InMemoryLogger("integration");
+  private logger = new InMemoryLogger('integration');
   private metrics = new MetricsRegistry();
   private healthOrch = new HealthOrchestrator();
   private encryption = new InMemoryEncryptionManager();
@@ -126,12 +126,12 @@ export class IntegratedFactory {
   createAuthProvider(): IAuthProvider {
     return {
       authenticate: async (_user: string, _pass: string) => ({
-        token: "integration-token",
+        token: 'integration-token',
         expiresAt: new Date(Date.now() + 3600_000),
       }),
       validateToken: async (_token: string) => ({
-        userId: "integration-user",
-        roles: ["admin", "operator"],
+        userId: 'integration-user',
+        roles: ['admin', 'operator'],
       }),
       revokeToken: async (_token: string) => {},
     };
@@ -165,10 +165,13 @@ export class IntegratedFactory {
 
   // ── CircuitBreaker ─────────────────────────────────
 
-  createCircuitBreaker(name: string, config?: {
-    failureThreshold?: number;
-    timeoutMs?: number;
-  }): ICircuitBreaker {
+  createCircuitBreaker(
+    name: string,
+    config?: {
+      failureThreshold?: number;
+      timeoutMs?: number;
+    },
+  ): ICircuitBreaker {
     return new InMemoryCircuitBreaker(name, {
       failureThreshold: config?.failureThreshold ?? 3,
       timeoutMs: config?.timeoutMs ?? 5000,
@@ -185,7 +188,7 @@ export class IntegratedFactory {
 
   async cleanup(): Promise<void> {
     this.storage = new InMemoryStorageBackend();
-    this.logger = new InMemoryLogger("integration");
+    this.logger = new InMemoryLogger('integration');
     this.metrics = new MetricsRegistry();
     this.healthOrch = new HealthOrchestrator();
     this.encryption = new InMemoryEncryptionManager();

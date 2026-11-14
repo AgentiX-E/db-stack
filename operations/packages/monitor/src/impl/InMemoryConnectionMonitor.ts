@@ -99,7 +99,12 @@ export class InMemoryConnectionMonitor implements IConnectionMonitor {
     return Promise.resolve(Array.from(this._connections.values()));
   }
 
-  getPoolUtilization(): Promise<{ total: number; active: number; idle: number; waiting: number }> {
+  getPoolUtilization(): Promise<{
+    total: number;
+    active: number;
+    idle: number;
+    waiting: number;
+  }> {
     let total = 0;
     let active = 0;
     let idle = 0;
@@ -121,7 +126,12 @@ export class InMemoryConnectionMonitor implements IConnectionMonitor {
 
   private _getOrCreatePool(poolId: string): PoolState {
     if (!this._poolStats.has(poolId)) {
-      this._poolStats.set(poolId, { active: 0, idle: 0, waiting: 0, maxSize: 100 });
+      this._poolStats.set(poolId, {
+        active: 0,
+        idle: 0,
+        waiting: 0,
+        maxSize: 100,
+      });
     }
     return this._poolStats.get(poolId)!;
   }

@@ -58,8 +58,8 @@ export class InMemorySlowQueryRecorder {
    */
   getSlowQueries(thresholdMs: number): Promise<SlowQueryRecord[]> {
     const result = this._entries
-      .filter(e => e.durationMs >= thresholdMs)
-      .map(e => ({
+      .filter((e) => e.durationMs >= thresholdMs)
+      .map((e) => ({
         query: e.query,
         durationMs: e.durationMs,
         timestamp: new Date(e.startTime),
@@ -108,7 +108,7 @@ export class InMemorySlowQueryRecorder {
    */
   getRecentSlowQueries(limit?: number): SlowQueryRecord[] {
     const entries = limit ? this._entries.slice(-limit) : [...this._entries];
-    return entries.map(e => ({
+    return entries.map((e) => ({
       query: e.query,
       durationMs: e.durationMs,
       timestamp: new Date(e.startTime),

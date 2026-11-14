@@ -114,7 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DedupRing, HLC, PipelineBuilder, SessionManager, BackupVerifier.
 - **Cross-Repo Architecture Panorama** (`docs/cross-repo-architecture.md`) —
   mermaid topology diagrams, data flow, module map across all three repos.
-- **Iteration Index** (`docs/ITERATIONS.md`) — I1 through I16 with test totals,
+- **Iteration Index** (`db-stack-docs/plan/ITERATIONS-LEGACY-FEDERATION.md`) — I1 through I16 with test totals,
   coverage, ADR inventory, and commit hashes.
 - **I10, I12, I13, I15 documentation** — CI pipeline, security audit, observability
   stack, and final verification reports.

@@ -1,13 +1,13 @@
 /**
- * IEventBus — 类型安全共识事件总线
- * 
- * 所有 Raft 状态转换事件通过此总线发布，支持同步和异步订阅者。
- * 遵循 Disposable 模式确保零内存泄漏。
- * 
+ * IEventBus — type-safe consensus event bus
+ *
+ * Every Raft state-transition event is published here; both synchronous and asynchronous subscribers are supported.
+ * The Disposable pattern guarantees zero subscription leaks.
+ *
  * @module consensus/events
  */
 
-// ── 事件类型定义 ───────────────────────────────────────────────────
+// ── Event types ────────────────────────────────────────────────────
 
 export type RaftRole = 'follower' | 'candidate' | 'leader';
 
@@ -84,95 +84,120 @@ export type ConsensusEvent =
   | RoleChangedEvent
   | MembershipChangedEvent;
 
-// ── 订阅者接口 ─────────────────────────────────────────────────────
-// 使用函数类型而非 class 以减少运行时开销
+// ── Subscriber interfaces ──────────────────────────────────────────
+// Function types rather than classes keep the hot path allocation-free
 
 /**
- * IDisposable — 订阅释放句柄。
- * 调用 dispose() 取消订阅，防止内存泄漏。
+ * IDisposable — handle that releases a subscription.
+ * Calling dispose() unsubscribes and prevents a leak.
  */
 export interface IDisposable {
   dispose(): void;
 }
 
-/** 异步事件处理器 */
+/** Asynchronous event handler */
 export type AsyncEventHandler<T extends ConsensusEvent = ConsensusEvent> = (event: T) => Promise<void> | void;
 
-/** 同步事件处理器（性能敏感路径） */
+/** Synchronous event handler (performance-sensitive path) */
 export type SyncEventHandler<T extends ConsensusEvent = ConsensusEvent> = (event: T) => void;
 
-// ── 事件总线实现 ───────────────────────────────────────────────────
+/**
+ * Internal handler type covering both subscriber flavours.
+ *
+ * Declared explicitly instead of the `Function` builtin so an accidental call
+ * signature mismatch is a compile error rather than a runtime
+ * `undefined is not a function`. The parameter is `any` on purpose: the bus
+ * stores handlers for every event type in one map and dispatches by runtime
+ * type tag, so the generic parameter of the public `on<T>()` overloads cannot
+ * be recovered here. The public surface stays fully generic.
+ */
+type EventHandler = (event: any) => void | Promise<void>;
+
+/** One registered subscriber. */
+interface EventSubscription {
+  handler: EventHandler;
+  async: boolean;
+  once: boolean;
+}
+
+// ── Implementation ─────────────────────────────────────────────────
 
 export interface IEventBus {
   /**
-   * 发布事件到所有匹配类型的订阅者。
-   * 异步订阅者在微任务队列中执行（不阻塞发布线程）。
-   * 同步订阅者立即执行。
+   * Publish an event to every subscriber registered for its type.
+   * Asynchronous subscribers run on the microtask queue and never block the publisher.
+   * Synchronous subscribers run immediately.
    */
   emit<T extends ConsensusEvent>(event: T): void;
 
   /**
-   * 订阅事件（默认同步模式，保证事件顺序）。
-   * 返回 IDisposable 句柄用于取消订阅。
+   * Subscribe (synchronous by default, which preserves event order).
+   * Returns an IDisposable handle used to unsubscribe.
    */
   on<T extends ConsensusEvent>(type: T['type'], handler: SyncEventHandler<T>): IDisposable;
 
   /**
-   * 异步订阅（事件按 FIFO 顺序在微任务队列中处理）。
-   * 适用于需要长时间处理的事件消费者。
+   * Asynchronous subscription (events are consumed FIFO on the microtask queue).
+   * Intended for consumers whose handling takes a long time.
    */
   onAsync<T extends ConsensusEvent>(type: T['type'], handler: AsyncEventHandler<T>): IDisposable;
 
   /**
-   * 一次性订阅。事件触发后自动取消订阅。
+   * One-shot subscription. Automatically unsubscribed after the first event.
    */
   once<T extends ConsensusEvent>(type: T['type'], handler: SyncEventHandler<T>): IDisposable;
 
   /**
-   * 获取当前订阅者数量（诊断用）。
+   * Current number of subscribers (diagnostics).
    */
   subscriberCount(type?: string): number;
 
-  /** 清空所有订阅（用于测试重置）。 */
+  /** Remove every subscription (used to reset between tests). */
   reset(): void;
 }
 
-// ── 实现 ──────────────────────────────────────────────────────────
+// ── Implementation ─────────────────────────────────────────────────
 
 /**
- * EventBus — 高性能共识事件总线。
- * 
- * 设计要点：
- * 1. 同步订阅者立即执行（保证顺序事件）
- * 2. 异步订阅者通过 setImmediate 延迟（不阻塞关键路径）
- * 3. 每个回调包装在 try-catch 中（一个订阅者崩溃不影响其他）
- * 4. Disposable 模式（测试中零泄漏验证）
+ * EventBus — high-performance consensus event bus.
+ *
+ * Design notes:
+ * 1. Synchronous subscribers run inline (ordering is guaranteed)
+ * 2. Asynchronous subscribers are deferred through setImmediate (off the critical path)
+ * 3. Every callback is wrapped in try/catch (one crashed subscriber cannot affect the others)
+ * 4. Disposable pattern (zero-leak assertions in the test suite)
  */
 export class EventBus implements IEventBus {
-  // 用 Map<eventType, Set<{handler, async}>>
-  private _subscribers = new Map<string, Set<{ handler: Function; async: boolean; once: boolean }>>();
+  // Map<eventType, Set<{handler, async}>>
+  private _subscribers = new Map<string, Set<EventSubscription>>();
   private _emitInProgress = new Map<string, boolean>();
 
   emit(event: ConsensusEvent): void {
     const subs = this._subscribers.get(event.type);
     if (!subs || subs.size === 0) return;
 
-    // 防止递归 emit 死循环
+    // Guard against recursive emit (infinite loop)
     if (this._emitInProgress.get(event.type)) return;
     this._emitInProgress.set(event.type, true);
 
-    const toRemove: Function[] = [];
+    const toRemove: EventHandler[] = [];
 
     try {
       for (const sub of subs) {
         try {
           if (sub.async) {
-            setImmediate(() => { try { sub.handler(event); } catch { /* swallowed */ } });
+            setImmediate(() => {
+              try {
+                sub.handler(event);
+              } catch {
+                /* swallowed */
+              }
+            });
           } else {
             sub.handler(event);
           }
         } catch {
-          // 一个订阅者崩溃不影响其他
+          // One crashed subscriber must not affect the others
           continue;
         }
         if (sub.once) {
@@ -202,12 +227,7 @@ export class EventBus implements IEventBus {
     return this._subscribe(type, handler, false, true);
   }
 
-  private _subscribe(
-    type: string,
-    handler: Function,
-    async: boolean,
-    once: boolean,
-  ): IDisposable {
+  private _subscribe(type: string, handler: EventHandler, async: boolean, once: boolean): IDisposable {
     if (!this._subscribers.has(type)) {
       this._subscribers.set(type, new Set());
     }

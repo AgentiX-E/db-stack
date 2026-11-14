@@ -1,9 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryEngineFactory } from './InMemoryEngineFactory.js';
 
-describe.each([
-  { name: 'InMemory', factory: new InMemoryEngineFactory() },
-])('$name e2e: Audit', ({ factory }) => {
+describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$name e2e: Audit', ({ factory }) => {
   afterAll(async () => {
     await factory.cleanup();
   });
@@ -22,7 +20,12 @@ describe.each([
 
   it('should query with time range filter', async () => {
     const audit = factory.createAuditStore();
-    await audit.write({ operation: 'OP1', actor: 'a', resource: 'r', result: 'success' });
+    await audit.write({
+      operation: 'OP1',
+      actor: 'a',
+      resource: 'r',
+      result: 'success',
+    });
     const now = new Date();
     const entries = await audit.query({
       startTime: new Date(now.getTime() - 60000),
@@ -33,25 +36,46 @@ describe.each([
 
   it('should query with operation filter', async () => {
     const audit = factory.createAuditStore();
-    await audit.write({ operation: 'LOGIN', actor: 'bob', resource: 'auth', result: 'failure', severity: 'warning' });
+    await audit.write({
+      operation: 'LOGIN',
+      actor: 'bob',
+      resource: 'auth',
+      result: 'failure',
+      severity: 'warning',
+    });
     const entries = await audit.query({ operation: 'LOGIN' });
     expect(entries.length).toBeGreaterThan(0);
-    expect(entries.every(e => e.operation === 'LOGIN')).toBe(true);
+    expect(entries.every((e) => e.operation === 'LOGIN')).toBe(true);
   });
 
   it('should query with actor filter', async () => {
     const audit = factory.createAuditStore();
-    await audit.write({ operation: 'OP', actor: 'bob', resource: 'r', result: 'success' });
-    await audit.write({ operation: 'OP', actor: 'alice', resource: 'r', result: 'success' });
+    await audit.write({
+      operation: 'OP',
+      actor: 'bob',
+      resource: 'r',
+      result: 'success',
+    });
+    await audit.write({
+      operation: 'OP',
+      actor: 'alice',
+      resource: 'r',
+      result: 'success',
+    });
     const bobEntries = await audit.query({ actor: 'bob' });
-    expect(bobEntries.every(e => e.actor === 'bob')).toBe(true);
+    expect(bobEntries.every((e) => e.actor === 'bob')).toBe(true);
   });
 
   it('should query with result filter', async () => {
     const audit = factory.createAuditStore();
-    await audit.write({ operation: 'OP', actor: 'sys', resource: 'r', result: 'failure' });
+    await audit.write({
+      operation: 'OP',
+      actor: 'sys',
+      resource: 'r',
+      result: 'failure',
+    });
     const failures = await audit.query({ result: 'failure' });
-    expect(failures.every(e => e.result === 'failure')).toBe(true);
+    expect(failures.every((e) => e.result === 'failure')).toBe(true);
   });
 
   it('should return null for non-existent entry', async () => {
@@ -63,7 +87,12 @@ describe.each([
   it('should count entries', async () => {
     const audit = factory.createAuditStore();
     const before = await audit.count();
-    await audit.write({ operation: 'NEW', actor: 'sys', resource: 'r', result: 'success' });
+    await audit.write({
+      operation: 'NEW',
+      actor: 'sys',
+      resource: 'r',
+      result: 'success',
+    });
     const after = await audit.count();
     expect(after).toBe(before + 1);
   });
@@ -71,7 +100,12 @@ describe.each([
   it('should prune entries older than date', async () => {
     const audit = factory.createAuditStore();
     const oldDate = new Date('2023-01-01');
-    await audit.write({ operation: 'OLD_OP', actor: 'sys', resource: 'r', result: 'success' });
+    await audit.write({
+      operation: 'OLD_OP',
+      actor: 'sys',
+      resource: 'r',
+      result: 'success',
+    });
     const pruned = await audit.pruneOlderThan(oldDate);
     expect(pruned).toBeGreaterThanOrEqual(0);
   });

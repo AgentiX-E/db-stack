@@ -5,21 +5,21 @@
  * strategy for automated key lifecycle management.
  */
 
-import type { WrappedKey } from "../impl/KeyManager.js";
+import type { WrappedKey } from '../impl/KeyManager.js';
 
 // ── Rotation Trigger ───────────────────────────────────────
 
 /** What triggers a key rotation. */
 export type RotationTrigger =
-  | { kind: "time"; maxAgeMs: number }
-  | { kind: "count"; maxEncryptions: number }
-  | { kind: "volume"; maxBytes: number }
-  | { kind: "manual" }
-  | { kind: "schedule"; cron: string }
-  | { kind: "compromise"; reason: string };
+  | { kind: 'time'; maxAgeMs: number }
+  | { kind: 'count'; maxEncryptions: number }
+  | { kind: 'volume'; maxBytes: number }
+  | { kind: 'manual' }
+  | { kind: 'schedule'; cron: string }
+  | { kind: 'compromise'; reason: string };
 
 /** Rotation priority — determines order when multiple rotations are pending. */
-export type RotationPriority = "low" | "normal" | "high" | "critical";
+export type RotationPriority = 'low' | 'normal' | 'high' | 'critical';
 
 // ── Rotation Policy ────────────────────────────────────────
 

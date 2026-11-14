@@ -10,9 +10,9 @@
  * Key migration cost is minimized via controlled rebalancing.
  */
 
-import { IShardStrategy } from "../interfaces/shard/IShardStrategy";
-import { OperationResult } from "../interfaces/types";
-import * as crypto from "crypto";
+import { IShardStrategy } from '../interfaces/shard/IShardStrategy';
+import { OperationResult } from '../interfaces/types';
+import * as crypto from 'crypto';
 
 // ── HashStrategy ────────────────────────────────────────────
 
@@ -21,23 +21,20 @@ import * as crypto from "crypto";
  * Pure function, no side effects, reproducible across nodes.
  */
 function fnv1aHash(key: string): bigint {
-  let hash = BigInt("0xcbf29ce484222325");
+  let hash = BigInt('0xcbf29ce484222325');
   for (let i = 0; i < key.length; i++) {
     hash ^= BigInt(key.charCodeAt(i));
-    hash *= BigInt("0x100000001b3");
+    hash *= BigInt('0x100000001b3');
   }
-  return hash & BigInt("0xFFFFFFFFFFFFFFFF");
+  return hash & BigInt('0xFFFFFFFFFFFFFFFF');
 }
 
 export class HashShardStrategy implements IShardStrategy {
-  readonly name = "hash";
+  readonly name = 'hash';
 
-  async getShardForKey(
-    key: string,
-    totalShards: number,
-  ): Promise<OperationResult<string>> {
+  async getShardForKey(key: string, totalShards: number): Promise<OperationResult<string>> {
     if (totalShards <= 0) {
-      return { success: false, error: "totalShards must be positive" };
+      return { success: false, error: 'totalShards must be positive' };
     }
     const hash = fnv1aHash(key);
     const shardIdx = Number(hash % BigInt(totalShards));
@@ -51,7 +48,7 @@ export class HashShardStrategy implements IShardStrategy {
     replicationFactor = 1,
   ): Promise<OperationResult<Record<string, string[]>>> {
     if (nodeIds.length === 0) {
-      return { success: false, error: "no nodes available" };
+      return { success: false, error: 'no nodes available' };
     }
     const assignments: Record<string, string[]> = {};
     const sortedShards = [...shardIds].sort();
@@ -86,12 +83,7 @@ export class HashShardStrategy implements IShardStrategy {
       for (const n of nodes) allNodes.add(n);
     }
     allNodes.add(nodeId);
-    return this.computeAssignments(
-      shardIds,
-      [...allNodes],
-      currentDistribution,
-      replicationFactor,
-    );
+    return this.computeAssignments(shardIds, [...allNodes], currentDistribution, replicationFactor);
   }
 
   async onNodeRemoved(
@@ -107,14 +99,9 @@ export class HashShardStrategy implements IShardStrategy {
       }
     }
     if (allNodes.size === 0) {
-      return { success: false, error: "no nodes remaining after removal" };
+      return { success: false, error: 'no nodes remaining after removal' };
     }
-    return this.computeAssignments(
-      shardIds,
-      [...allNodes],
-      currentDistribution,
-      replicationFactor,
-    );
+    return this.computeAssignments(shardIds, [...allNodes], currentDistribution, replicationFactor);
   }
 
   async validateDistribution(
@@ -142,18 +129,16 @@ export class HashShardStrategy implements IShardStrategy {
 export interface RangeShardBoundary {
   shardId: string;
   rangeStart: string; // inclusive
-  rangeEnd: string;   // exclusive
+  rangeEnd: string; // exclusive
 }
 
 export class RangeShardStrategy implements IShardStrategy {
-  readonly name = "range";
+  readonly name = 'range';
 
   private boundaries: RangeShardBoundary[] = [];
 
   constructor(boundaries: RangeShardBoundary[] = []) {
-    this.boundaries = [...boundaries].sort((a, b) =>
-      a.rangeStart.localeCompare(b.rangeStart),
-    );
+    this.boundaries = [...boundaries].sort((a, b) => a.rangeStart.localeCompare(b.rangeStart));
   }
 
   /** Add a new range boundary. */
@@ -163,23 +148,14 @@ export class RangeShardStrategy implements IShardStrategy {
   }
 
   /** Split a shard at the given key. */
-  splitShard(
-    sourceShardId: string,
-    splitKey: string,
-    newShardId: string,
-  ): OperationResult<RangeShardBoundary[]> {
-    const idx = this.boundaries.findIndex(
-      (b) => b.shardId === sourceShardId,
-    );
+  splitShard(sourceShardId: string, splitKey: string, newShardId: string): OperationResult<RangeShardBoundary[]> {
+    const idx = this.boundaries.findIndex((b) => b.shardId === sourceShardId);
     if (idx === -1) {
       return { success: false, error: `shard ${sourceShardId} not found` };
     }
 
     const boundary = this.boundaries[idx]!;
-    if (
-      splitKey <= boundary.rangeStart ||
-      splitKey >= boundary.rangeEnd
-    ) {
+    if (splitKey <= boundary.rangeStart || splitKey >= boundary.rangeEnd) {
       return {
         success: false,
         error: `split key ${splitKey} out of range [${boundary.rangeStart}, ${boundary.rangeEnd})`,
@@ -208,12 +184,9 @@ export class RangeShardStrategy implements IShardStrategy {
     return [...this.boundaries];
   }
 
-  async getShardForKey(
-    key: string,
-    _totalShards: number,
-  ): Promise<OperationResult<string>> {
+  async getShardForKey(key: string, _totalShards: number): Promise<OperationResult<string>> {
     if (this.boundaries.length === 0) {
-      return { success: false, error: "no range boundaries configured" };
+      return { success: false, error: 'no range boundaries configured' };
     }
 
     // Binary search for the range containing key
@@ -278,7 +251,7 @@ export interface VirtualNode {
 }
 
 export class ConsistentHashStrategy implements IShardStrategy {
-  readonly name = "consistent-hashing";
+  readonly name = 'consistent-hashing';
 
   private ring: VirtualNode[] = [];
   private readonly vnodesPerNode: number;
@@ -357,16 +330,13 @@ export class ConsistentHashStrategy implements IShardStrategy {
     return replicas;
   }
 
-  async getShardForKey(
-    key: string,
-    _totalShards: number,
-  ): Promise<OperationResult<string>> {
+  async getShardForKey(key: string, _totalShards: number): Promise<OperationResult<string>> {
     if (this.ring.length === 0) {
-      return { success: false, error: "hash ring is empty" };
+      return { success: false, error: 'hash ring is empty' };
     }
     const node = this.findNode(key);
     if (!node) {
-      return { success: false, error: "no node found" };
+      return { success: false, error: 'no node found' };
     }
     return { success: true, data: `shard-${node}` };
   }
@@ -416,7 +386,7 @@ export class ConsistentHashStrategy implements IShardStrategy {
       }
     }
     if (allNodes.size === 0) {
-      return { success: false, error: "no nodes remaining after removal" };
+      return { success: false, error: 'no nodes remaining after removal' };
     }
     return this.computeAssignments(
       Object.keys(currentDistribution),
@@ -440,10 +410,7 @@ export class ConsistentHashStrategy implements IShardStrategy {
   }
 
   /** Get key redistribution ratio after node change (0-1, lower is better). */
-  estimateRedistributionRatio(
-    oldNodes: string[],
-    _newNodes: string[],
-  ): number {
+  estimateRedistributionRatio(oldNodes: string[], _newNodes: string[]): number {
     if (oldNodes.length === 0) return 1.0;
     return 1.0 / (oldNodes.length + 1);
   }

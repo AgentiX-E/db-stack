@@ -11,21 +11,11 @@
  * Cutover guarantees no data loss via a brief write-pause window (configurable).
  */
 
-import {
-  IOnlineShardMigration,
-  IMigrationConfig,
-} from "../interfaces/shard/IOnlineShardMigration";
+import { IOnlineShardMigration, IMigrationConfig } from '../interfaces/shard/IOnlineShardMigration';
 
 // ── Migration State ─────────────────────────────────────────
 
-type MigrationPhase =
-  | "idle"
-  | "initial-sync"
-  | "incremental-sync"
-  | "cutover"
-  | "completed"
-  | "rolled-back"
-  | "failed";
+type MigrationPhase = 'idle' | 'initial-sync' | 'incremental-sync' | 'cutover' | 'completed' | 'rolled-back' | 'failed';
 
 interface MigrationState {
   migrationId: string;
@@ -54,25 +44,22 @@ export class OnlineShardMigration implements IOnlineShardMigration {
 
   // ── Lifecycle ─────────────────────────────────────────────
 
-  async startMigration(
-    config: IMigrationConfig,
-  ): Promise<{ migrationId: string }> {
+  async startMigration(config: IMigrationConfig): Promise<{ migrationId: string }> {
     // Validate
     if (config.sourceNode === config.targetNode) {
-      throw new Error("source and target nodes must be different");
+      throw new Error('source and target nodes must be different');
     }
     if (config.batchSize <= 0) {
-      throw new Error("batchSize must be positive");
+      throw new Error('batchSize must be positive');
     }
 
     const migrationId = generateMigrationId();
-    const totalBytes =
-      Math.floor(Math.random() * 50 * 1024 * 1024) + 10 * 1024 * 1024; // 10-60MB simulated
+    const totalBytes = Math.floor(Math.random() * 50 * 1024 * 1024) + 10 * 1024 * 1024; // 10-60MB simulated
 
     const state: MigrationState = {
       migrationId,
       config: { ...config },
-      phase: "initial-sync",
+      phase: 'initial-sync',
       progress: 0,
       remainingBytes: totalBytes,
       totalBytes,
@@ -84,7 +71,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
 
     // Start async migration
     this.runMigration(state).catch((err) => {
-      state.phase = "failed";
+      state.phase = 'failed';
       state.error = String(err);
     });
 
@@ -92,42 +79,31 @@ export class OnlineShardMigration implements IOnlineShardMigration {
   }
 
   private async runMigration(state: MigrationState): Promise<void> {
-    const totalBatches = Math.ceil(
-      state.totalBytes / state.config.batchSize,
-    );
+    const totalBatches = Math.ceil(state.totalBytes / state.config.batchSize);
     const bytesPerBatch = state.config.batchSize;
 
     // Phase 1: Initial sync
-    state.phase = "initial-sync";
+    state.phase = 'initial-sync';
     for (let batch = 0; batch < totalBatches; batch++) {
       await this.delayMs(15);
       state.bytesCopied += bytesPerBatch;
-      state.remainingBytes = Math.max(
-        0,
-        state.totalBytes - state.bytesCopied,
-      );
-      state.progress = Math.min(
-        80,
-        Math.round((state.bytesCopied / state.totalBytes) * 100),
-      );
+      state.remainingBytes = Math.max(0, state.totalBytes - state.bytesCopied);
+      state.progress = Math.min(80, Math.round((state.bytesCopied / state.totalBytes) * 100));
     }
 
     // Phase 2: Incremental sync (catch-up writes)
-    state.phase = "incremental-sync";
+    state.phase = 'incremental-sync';
     for (let retry = 0; retry < 3; retry++) {
       await this.delayMs(10);
       // Simulate catching up a small delta
       const delta = Math.floor(Math.random() * bytesPerBatch * 0.1);
       state.bytesCopied += delta;
-      state.remainingBytes = Math.max(
-        0,
-        state.totalBytes - state.bytesCopied,
-      );
+      state.remainingBytes = Math.max(0, state.totalBytes - state.bytesCopied);
       state.progress = 80 + retry * 5;
     }
 
     // Phase 3: Cutover
-    state.phase = "cutover";
+    state.phase = 'cutover';
     if (state.config.pauseWritesOnCutover) {
       this.writeSuspended.add(state.migrationId);
     }
@@ -140,15 +116,13 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     state.progress = 100;
 
     // Phase 4: Completed
-    state.phase = "completed";
+    state.phase = 'completed';
     this.writeSuspended.delete(state.migrationId);
   }
 
   // ── Query ─────────────────────────────────────────────────
 
-  async getStatus(
-    migrationId: string,
-  ): Promise<{
+  async getStatus(migrationId: string): Promise<{
     phase: string;
     progress: number;
     remainingBytes: number;
@@ -171,17 +145,15 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     if (!state) {
       throw new Error(`migration ${migrationId} not found`);
     }
-    if (state.phase === "completed") {
+    if (state.phase === 'completed') {
       return; // Already cut over
     }
-    if (state.phase === "failed" || state.phase === "rolled-back") {
-      throw new Error(
-        `cannot cutover migration in phase ${state.phase}`,
-      );
+    if (state.phase === 'failed' || state.phase === 'rolled-back') {
+      throw new Error(`cannot cutover migration in phase ${state.phase}`);
     }
 
     // Force cutover
-    state.phase = "completed";
+    state.phase = 'completed';
     state.progress = 100;
     state.bytesCopied = state.totalBytes;
     state.remainingBytes = 0;
@@ -193,7 +165,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     if (!state) {
       throw new Error(`migration ${migrationId} not found`);
     }
-    state.phase = "rolled-back";
+    state.phase = 'rolled-back';
     state.progress = 0;
     state.remainingBytes = state.totalBytes;
     this.writeSuspended.delete(migrationId);
@@ -204,11 +176,11 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     if (!state) {
       throw new Error(`migration ${migrationId} not found`);
     }
-    if (state.phase === "completed" || state.phase === "failed") {
+    if (state.phase === 'completed' || state.phase === 'failed') {
       return; // Already terminal
     }
-    state.phase = "failed";
-    state.error = "cancelled by user";
+    state.phase = 'failed';
+    state.error = 'cancelled by user';
     this.writeSuspended.delete(migrationId);
   }
 
@@ -223,11 +195,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
   getActiveMigrationCount(): number {
     let count = 0;
     for (const state of this.migrations.values()) {
-      if (
-        state.phase !== "completed" &&
-        state.phase !== "failed" &&
-        state.phase !== "rolled-back"
-      ) {
+      if (state.phase !== 'completed' && state.phase !== 'failed' && state.phase !== 'rolled-back') {
         count++;
       }
     }

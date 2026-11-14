@@ -15,7 +15,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RaftJointConsensusEngine } from '../../consensus/joint-consensus/RaftJointConsensusEngine';
-import type { PeerConfig, TransitionOptions, IClusterMembershipTransition } from '../../consensus/joint-consensus/IClusterMembershipTransition';
+import type {
+  PeerConfig,
+  TransitionOptions,
+  IClusterMembershipTransition,
+} from '../../consensus/joint-consensus/IClusterMembershipTransition';
 import type { IConsensusLayer } from '../../consensus/interfaces/interfaces';
 import { TestCluster } from '../../__tests__/integration/TestCluster';
 
@@ -32,7 +36,7 @@ function makePeers(count: number, startFrom: number = 1): PeerConfig[] {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(r => setTimeout(r, ms));
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 // ============================================================
@@ -40,7 +44,7 @@ function sleep(ms: number): Promise<void> {
 // ============================================================
 
 function createMockRaftGroup(slowMs: number = 0) {
-  let phase: string = 'normal';
+  const phase: string = 'normal';
   let _internalPhase: string = 'normal';
 
   return {
@@ -92,7 +96,6 @@ function createMockConsensusLayer(): IConsensusLayer {
 // ============================================================
 
 describe('RaftJointConsensusEngine — 单元测试', () => {
-
   describe('L0: 配置验证', () => {
     it('AC-D1-01: 接收合法的 peer 配置', async () => {
       const engine = new RaftJointConsensusEngine(
@@ -128,9 +131,7 @@ describe('RaftJointConsensusEngine — 单元测试', () => {
         () => undefined,
         () => createMockConsensusLayer(),
       );
-      const result = await engine.transitionTo([
-        makePeer('1'), makePeer('1'),
-      ]);
+      const result = await engine.transitionTo([makePeer('1'), makePeer('1')]);
       expect(result.success).toBe(false);
       expect(result.error).toContain('Duplicate');
     });
@@ -140,9 +141,7 @@ describe('RaftJointConsensusEngine — 单元测试', () => {
         () => undefined,
         () => createMockConsensusLayer(),
       );
-      const result = await engine.transitionTo([
-        { id: '1', host: 'localhost', port: 0, role: 'voter' },
-      ]);
+      const result = await engine.transitionTo([{ id: '1', host: 'localhost', port: 0, role: 'voter' }]);
       expect(result.success).toBe(false);
       expect(result.error).toContain('Invalid address');
     });
@@ -302,7 +301,7 @@ describe('RaftJointConsensusEngine — 单元测试', () => {
       );
 
       const events: any[] = [];
-      engine.onTransitionEvent(e => events.push(e.type));
+      engine.onTransitionEvent((e) => events.push(e.type));
 
       await engine.transitionTo(makePeers(5));
 
@@ -318,7 +317,7 @@ describe('RaftJointConsensusEngine — 单元测试', () => {
       );
 
       const events: any[] = [];
-      const unsubscribe = engine.onTransitionEvent(e => events.push(e.type));
+      const unsubscribe = engine.onTransitionEvent((e) => events.push(e.type));
       unsubscribe();
 
       await engine.transitionTo(makePeers(3));
@@ -516,7 +515,7 @@ describe('RaftJointConsensusEngine — 集成 RaftGroupManager', () => {
     const mockGroup = createMockRaftGroup();
     // 让 C_JOINT 慢提交，让 abort 在 C_JOINT 提交前生效
     mockGroup.proposeMembershipChange = vi.fn(async (change, ...args) => {
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 200));
       return { success: true, phase: 'joint' as any };
     });
 
@@ -528,7 +527,7 @@ describe('RaftJointConsensusEngine — 集成 RaftGroupManager', () => {
     const promise = engine.transitionTo(makePeers(3));
 
     // 在 C_JOINT 完成前 abort
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
     const abortResult = await engine.abortTransition();
 
     await promise;
@@ -669,7 +668,9 @@ describe('RaftJointConsensusEngine — 覆盖率补充', () => {
   it('AC-D1-C13: 无 currentMembership 且无 getLeader 且 groups 无数据时走默认 peer', async () => {
     const groupA = createMockRaftGroup();
     groupA.getCurrentMembership = vi.fn(() => null) as any;
-    groupA.getLeader = vi.fn(async () => { throw new Error('no leader'); }) as any;
+    groupA.getLeader = vi.fn(async () => {
+      throw new Error('no leader');
+    }) as any;
     groupA.proposeMembershipChange = vi.fn(async (change) => {
       return { success: true, phase: 'normal' as any };
     });
@@ -760,7 +761,9 @@ describe('RaftJointConsensusEngine — 覆盖率补充', () => {
 
   it('AC-D1-C16: _campaignIfNeeded catch 分支（campaign 抛异常）', async () => {
     const consensus = createMockConsensusLayer();
-    consensus.campaign = vi.fn(async () => { throw new Error('not leader'); });
+    consensus.campaign = vi.fn(async () => {
+      throw new Error('not leader');
+    });
 
     const mockGroup = createMockRaftGroup();
     mockGroup.getCurrentMembership = vi.fn(() => ({
@@ -866,7 +869,7 @@ describe('RaftJointConsensusEngine — 覆盖率补充', () => {
     // 启动 transition，C_JOINT 将快速完成
     const promise = engine.transitionTo(makePeers(3, 4));
     // 等 10ms 确保 C_JOINT 已提交
-    await new Promise(r => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 10));
     // 在 C_JOINT 提交后 abort — 它会继续到 C_NEW
     const abortResult = await engine.abortTransition();
 
@@ -916,7 +919,9 @@ describe('RaftJointConsensusEngine — 覆盖率补充', () => {
 
   it('AC-D1-C23: _campaignIfNeeded catch 分支——campaign 抛异常', async () => {
     const consensus = createMockConsensusLayer();
-    consensus.campaign = vi.fn(async () => { throw new Error('campaign failed'); });
+    consensus.campaign = vi.fn(async () => {
+      throw new Error('campaign failed');
+    });
     const mockGroup = createMockRaftGroup(50);
     mockGroup.getCurrentMembership = vi.fn(() => ({
       oldPeers: ['1', '2', '3'],
@@ -1092,7 +1097,10 @@ describe('RaftJointConsensusEngine — 覆盖率补充', () => {
       newPeers: ['1', '2', '3'],
     })) as any;
     mockGroup.proposeMembershipChange = vi.fn(async () => {
-      throw 'string error message'; // 非 Error 类型的 throw
+      // A non-Error throw is the behaviour under test: the engine must
+      // stringify anything the consensus layer throws.
+      // eslint-disable-next-line no-throw-literal -- non-Error throw is the fixture
+      throw 'string error message';
     });
 
     const engine = new RaftJointConsensusEngine(

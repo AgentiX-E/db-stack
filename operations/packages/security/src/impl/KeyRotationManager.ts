@@ -26,10 +26,10 @@ import {
   type RotationEvent,
   type RotationStats,
   type ReEncryptionResult,
-} from "../interfaces/IKeyRotationManager.js";
-import type { IEncryptionManager } from "../interfaces/index.js";
-import { KeyManager, type WrappedKey } from "./KeyManager.js";
-import crypto from "crypto";
+} from '../interfaces/IKeyRotationManager.js';
+import type { IEncryptionManager } from '../interfaces/index.js';
+import { KeyManager, type WrappedKey } from './KeyManager.js';
+import crypto from 'crypto';
 
 // ── Constants ──────────────────────────────────────────────
 
@@ -165,11 +165,11 @@ export class KeyRotationManager implements IKeyRotationManager {
       this.registerPolicy({
         id: policyId,
         name: `Emergency rotation: ${reason}`,
-        trigger: { kind: "compromise", reason },
+        trigger: { kind: 'compromise', reason },
         reEncrypt: true,
         reEncryptBatchSize: RE_ENCRYPT_BATCH_SIZE,
         maxKeyVersions: 5,
-        priority: "critical",
+        priority: 'critical',
         enabled: true,
       });
     }
@@ -180,7 +180,7 @@ export class KeyRotationManager implements IKeyRotationManager {
     }
 
     const event = await this.rotate(policyId);
-    event.trigger = { kind: "compromise", reason };
+    event.trigger = { kind: 'compromise', reason };
     // Update history entry
     const idx = this.history.findIndex((e) => e.id === event.id);
     if (idx >= 0) this.history[idx] = event;
@@ -190,10 +190,7 @@ export class KeyRotationManager implements IKeyRotationManager {
 
   // ── Re-encryption ────────────────────────────────────────
 
-  async reEncrypt(
-    policyId: string,
-    blobIterator: AsyncIterable<Buffer>,
-  ): Promise<ReEncryptionResult> {
+  async reEncrypt(policyId: string, blobIterator: AsyncIterable<Buffer>): Promise<ReEncryptionResult> {
     const policy = this.policies.get(policyId);
     if (!policy) throw new Error(`KeyRotation: unknown policy "${policyId}"`);
 
@@ -260,10 +257,7 @@ export class KeyRotationManager implements IKeyRotationManager {
     const successful = events.filter((e) => e.success);
     const failed = events.filter((e) => !e.success);
 
-    const totalDuration = successful.reduce(
-      (sum, e) => sum + ((e.completedAt ?? e.startedAt) - e.startedAt),
-      0,
-    );
+    const totalDuration = successful.reduce((sum, e) => sum + ((e.completedAt ?? e.startedAt) - e.startedAt), 0);
 
     return {
       totalRotations: events.length,
@@ -308,26 +302,22 @@ export class KeyRotationManager implements IKeyRotationManager {
 
   // ── Internal: Due Check ──────────────────────────────────
 
-  private _isDue(
-    policy: KeyRotationPolicy,
-    state: KeyRotationState,
-    now: number,
-  ): boolean {
+  private _isDue(policy: KeyRotationPolicy, state: KeyRotationState, now: number): boolean {
     switch (policy.trigger.kind) {
-      case "time": {
+      case 'time': {
         const lastRotated = state.lastRotatedAt ?? 0;
         return now - lastRotated >= policy.trigger.maxAgeMs;
       }
-      case "count":
+      case 'count':
         return state.encryptionsSinceRotation >= policy.trigger.maxEncryptions;
-      case "volume":
+      case 'volume':
         return state.bytesSinceRotation >= policy.trigger.maxBytes;
-      case "schedule":
+      case 'schedule':
         // Simple: check if nextRotationDue has passed
         return state.nextRotationDue !== null && now >= state.nextRotationDue;
-      case "manual":
+      case 'manual':
         return false; // Only explicit rotate() calls
-      case "compromise":
+      case 'compromise':
         return true; // Always due
       default:
         return false;
@@ -348,10 +338,10 @@ export class KeyRotationManager implements IKeyRotationManager {
   }
 
   private _computeNextDue(policy: KeyRotationPolicy): number | null {
-    if (policy.trigger.kind === "time") {
+    if (policy.trigger.kind === 'time') {
       return Date.now() + policy.trigger.maxAgeMs;
     }
-    if (policy.trigger.kind === "schedule") {
+    if (policy.trigger.kind === 'schedule') {
       // Approximate next cron; for simplicity, return 1 hour from now
       return Date.now() + 3_600_000;
     }

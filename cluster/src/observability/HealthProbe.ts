@@ -66,7 +66,10 @@ export class HealthProbe {
       if (!r.ok) allOk = false;
     }
     if (!allOk) {
-      const failed = Object.entries(results).filter(([, r]) => !r.ok).map(([n]) => n).join(', ');
+      const failed = Object.entries(results)
+        .filter(([, r]) => !r.ok)
+        .map(([n]) => n)
+        .join(', ');
       return { ok: false, reason: `unhealthy probes: ${failed}`, latencyMs: performance.now() - t0 };
     }
     return { ok: true, latencyMs: performance.now() - t0 };
@@ -89,7 +92,7 @@ export class HealthProbe {
       readiness: this.readiness(),
       startup: this.startup(),
     };
-    const allOk = Object.values(probeResults).every(r => r.ok);
+    const allOk = Object.values(probeResults).every((r) => r.ok);
     return {
       status: allOk ? 'healthy' : 'degraded',
       probes: probeResults,

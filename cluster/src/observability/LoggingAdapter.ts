@@ -54,7 +54,7 @@ function rootLogger(): PinoLogger {
 function createTraceContext() {
   try {
     const { AsyncLocalStorage } = require('node:async_hooks');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const storage: any = new (AsyncLocalStorage as any)();
 
     return {
@@ -98,11 +98,7 @@ export class LoggingAdapter implements ILogger {
    * @param bindings  - Pre-bound context for all log messages
    * @param base      - Parent pino instance (defaults to root)
    */
-  constructor(
-    component: string,
-    bindings?: Record<string, unknown>,
-    base?: PinoLogger,
-  ) {
+  constructor(component: string, bindings?: Record<string, unknown>, base?: PinoLogger) {
     this._pino = (base || rootLogger()).child({ component, ...bindings });
     this._component = component;
     this._bindings = bindings || {};
@@ -146,11 +142,11 @@ export class LoggingAdapter implements ILogger {
   error(arg1: unknown, arg2?: unknown, arg3?: unknown): void {
     if (arg1 instanceof Error) {
       const err = arg1;
-      this._pino.error({ err, traceId: traceContext.getTraceId() }, arg2 as string || '');
+      this._pino.error({ err, traceId: traceContext.getTraceId() }, (arg2 as string) || '');
     } else if (arg2 instanceof Error) {
       const ctx = arg1 as Record<string, unknown>;
       const err = arg2;
-      this._pino.error({ ...ctx, err, traceId: traceContext.getTraceId() }, arg3 as string || '');
+      this._pino.error({ ...ctx, err, traceId: traceContext.getTraceId() }, (arg3 as string) || '');
     } else {
       this._log('error', arg1, arg2 as string | undefined);
     }
@@ -163,13 +159,13 @@ export class LoggingAdapter implements ILogger {
   fatal(arg1: unknown, arg2?: unknown, arg3?: unknown): void {
     if (arg1 instanceof Error) {
       const err = arg1;
-      this._pino.fatal({ err, traceId: traceContext.getTraceId() }, arg2 as string || '');
+      this._pino.fatal({ err, traceId: traceContext.getTraceId() }, (arg2 as string) || '');
     } else if (arg2 instanceof Error) {
       const ctx = arg1 as Record<string, unknown>;
       const err = arg2;
-      this._pino.fatal({ ...ctx, err, traceId: traceContext.getTraceId() }, arg3 as string || '');
+      this._pino.fatal({ ...ctx, err, traceId: traceContext.getTraceId() }, (arg3 as string) || '');
     } else {
-      this._pino.fatal({ context: arg1, traceId: traceContext.getTraceId() }, arg2 as string || '');
+      this._pino.fatal({ context: arg1, traceId: traceContext.getTraceId() }, (arg2 as string) || '');
     }
   }
 
@@ -203,10 +199,7 @@ export class LoggingAdapter implements ILogger {
  * logger.error(new Error('fail'), 'Proposal rejected');
  * ```
  */
-export function createLogger(
-  component: string,
-  bindings?: Record<string, unknown>,
-): LoggingAdapter {
+export function createLogger(component: string, bindings?: Record<string, unknown>): LoggingAdapter {
   return new LoggingAdapter(component, bindings);
 }
 

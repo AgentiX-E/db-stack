@@ -19,16 +19,20 @@
  *   - edge: 300s between retries
  */
 
-import type { IMultiLeaderReplication, ReplicationConfig, ReplicationStatus } from "../interfaces/replication/IMultiLeaderReplication";
-import type { TopologyType } from "../interfaces/replication/IMultiLeaderReplication";
-import type { ITransport } from "../interfaces/transport/ITransport";
-import type { TransportMessage } from "../interfaces/transport/TransportMessage";
-import type { IOutboxStore } from "../interfaces/outbox/IOutboxStore";
-import type { OutboxEntry } from "../interfaces/outbox/OutboxEntry";
-import type { OutboxStats } from "../interfaces/types";
-import { HLC } from "../hlc/HLC";
-import { EventEmitter } from "events";
-import { randomUUID } from "crypto";
+import type {
+  IMultiLeaderReplication,
+  ReplicationConfig,
+  ReplicationStatus,
+} from '../interfaces/replication/IMultiLeaderReplication';
+import type { TopologyType } from '../interfaces/replication/IMultiLeaderReplication';
+import type { ITransport } from '../interfaces/transport/ITransport';
+import type { TransportMessage } from '../interfaces/transport/TransportMessage';
+import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
+import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
+import type { OutboxStats } from '../interfaces/types';
+import { HLC } from '../hlc/HLC';
+import { EventEmitter } from 'events';
+import { randomUUID } from 'crypto';
 
 export interface MultiLeaderReplicationOptions {
   transport: ITransport;
@@ -95,9 +99,9 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
     }
 
     this.workers.clear();
-    this.emitter.removeAllListeners("target-connected");
-    this.emitter.removeAllListeners("target-disconnected");
-    this.emitter.removeAllListeners("high-lag");
+    this.emitter.removeAllListeners('target-connected');
+    this.emitter.removeAllListeners('target-disconnected');
+    this.emitter.removeAllListeners('high-lag');
   }
 
   /**
@@ -121,8 +125,8 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
         serialize: timestamp.serialize.bind(timestamp),
         deserialize: timestamp.deserialize.bind(timestamp),
       },
-      type: type ?? "replicate",
-      status: "pending",
+      type: type ?? 'replicate',
+      status: 'pending',
       createdAt: Date.now(),
       lastAttemptAt: null,
       attemptCount: 0,
@@ -140,9 +144,7 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
 
     const targets = Array.from(this.workers.entries()).map(([targetNodeId, worker]) => {
       const now = Date.now();
-      const lagMs = worker.lastSuccessAt !== null
-        ? now - worker.lastSuccessAt
-        : 0;
+      const lagMs = worker.lastSuccessAt !== null ? now - worker.lastSuccessAt : 0;
 
       return {
         targetNodeId,
@@ -206,24 +208,30 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
    * Event: fires when a target connects.
    */
   onTargetConnected(callback: (targetNodeId: string) => void): () => void {
-    this.emitter.on("target-connected", callback);
-    return () => { this.emitter.off("target-connected", callback); };
+    this.emitter.on('target-connected', callback);
+    return () => {
+      this.emitter.off('target-connected', callback);
+    };
   }
 
   /**
    * Event: fires when a target disconnects.
    */
   onTargetDisconnected(callback: (targetNodeId: string) => void): () => void {
-    this.emitter.on("target-disconnected", callback);
-    return () => { this.emitter.off("target-disconnected", callback); };
+    this.emitter.on('target-disconnected', callback);
+    return () => {
+      this.emitter.off('target-disconnected', callback);
+    };
   }
 
   /**
    * Event: fires when replication lag exceeds threshold.
    */
   onHighLag(callback: (targetNodeId: string, lagMs: number) => void): () => void {
-    this.emitter.on("high-lag", callback);
-    return () => { this.emitter.off("high-lag", callback); };
+    this.emitter.on('high-lag', callback);
+    return () => {
+      this.emitter.off('high-lag', callback);
+    };
   }
 
   // ── OutboxWorker (per-target background loop) ──
@@ -245,7 +253,7 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
     };
 
     this.workers.set(nodeId, worker);
-    this.emitter.emit("target-connected", nodeId);
+    this.emitter.emit('target-connected', nodeId);
 
     // Start the tick loop
     this.scheduleTick(worker, 0);
@@ -272,9 +280,7 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
       const pending = await this.outbox.fetchOldestPending(batchSize);
 
       // Filter to entries targeting this worker's node
-      const forTarget = pending.filter(
-        (e) => e.targetPeerIds.includes(worker.nodeId) && e.status === "pending",
-      );
+      const forTarget = pending.filter((e) => e.targetPeerIds.includes(worker.nodeId) && e.status === 'pending');
 
       if (forTarget.length === 0) {
         // No pending — sleep normally
@@ -338,10 +344,7 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
       worker.lastErrorMessage = `Worker error: ${errMsg}`;
       worker.consecutiveFailures++;
 
-      const backoff = Math.min(
-        worker.backoffMs * Math.pow(2, Math.min(worker.consecutiveFailures - 1, 5)),
-        300_000,
-      );
+      const backoff = Math.min(worker.backoffMs * Math.pow(2, Math.min(worker.consecutiveFailures - 1, 5)), 300_000);
       this.scheduleTick(worker, backoff);
     }
   }

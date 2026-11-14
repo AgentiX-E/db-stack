@@ -85,7 +85,7 @@ describe('Section 1: Concurrent Counter Contention', () => {
       counter.inc();
     }
     const snap = registry.snapshot();
-    const opsPoint = snap.points.find(p => p.name === 'ops');
+    const opsPoint = snap.points.find((p) => p.name === 'ops');
     expect(opsPoint).toBeDefined();
     expect(opsPoint!.value).toBe(50);
   });
@@ -117,7 +117,7 @@ describe('Section 2: Concurrent InMemoryLogger', () => {
     expect(entries).toHaveLength(50);
 
     // Verify no duplicates (each message appears once)
-    const messages = new Set(entries.map(e => e.message));
+    const messages = new Set(entries.map((e) => e.message));
     expect(messages.size).toBe(50);
   });
 
@@ -292,7 +292,7 @@ describe('Section 4: Concurrent AlertRuleManager', () => {
     };
 
     // Use createRule which returns a Promise
-    manager.createRule(rule).then(id => {
+    manager.createRule(rule).then((id) => {
       // Toggle enabled/disabled
       manager.setRuleEnabled(id, false);
       const resultDisabled = manager.evaluateSnapshot({ test_metric: 90 });
@@ -350,10 +350,7 @@ describe('Section 5: Concurrent BackupManager', () => {
 
     // Delete one and list
     const firstId = results[0].snapshot!.snapshotId;
-    const [deleted, backups] = await Promise.all([
-      backupManager.deleteBackup(firstId),
-      backupManager.listBackups(),
-    ]);
+    const [deleted, backups] = await Promise.all([backupManager.deleteBackup(firstId), backupManager.listBackups()]);
     expect(deleted).toBe(true);
     expect(backups).toHaveLength(4);
   });
@@ -365,18 +362,13 @@ describe('Section 5: Concurrent BackupManager', () => {
     );
 
     // Restore all and prune in parallel
-    const restorePromises = results.map(r =>
-      backupManager.restoreFromSnapshot(r.snapshot!.snapshotId),
-    );
-    const allOps = await Promise.all([
-      ...restorePromises,
-      backupManager.prune(),
-    ]);
+    const restorePromises = results.map((r) => backupManager.restoreFromSnapshot(r.snapshot!.snapshotId));
+    const allOps = await Promise.all([...restorePromises, backupManager.prune()]);
 
     const restoreResults = allOps.slice(0, 5) as Awaited<ReturnType<typeof backupManager.restoreFromSnapshot>>[];
     const prunedCount = allOps[5] as number;
 
-    expect(restoreResults.every(r => r.success)).toBe(true);
+    expect(restoreResults.every((r) => r.success)).toBe(true);
     expect(typeof prunedCount).toBe('number');
   });
 });
@@ -479,8 +471,8 @@ describe('Section 7: Concurrent RateLimiter', () => {
       results.push(limiter.check('test-key', { maxRequests: 10, windowMs: 60000 }));
     }
 
-    const allowed = results.filter(r => r.allowed);
-    const denied = results.filter(r => !r.allowed);
+    const allowed = results.filter((r) => r.allowed);
+    const denied = results.filter((r) => !r.allowed);
     expect(allowed).toHaveLength(10);
     expect(denied).toHaveLength(90);
   });
@@ -505,15 +497,15 @@ describe('Section 7: Concurrent RateLimiter', () => {
     }
 
     // Each key should be allowed (first request)
-    expect(results.every(r => r.allowed)).toBe(true);
-    expect(results.every(r => r.remaining === 4)).toBe(true);
+    expect(results.every((r) => r.allowed)).toBe(true);
+    expect(results.every((r) => r.remaining === 4)).toBe(true);
 
     // Second round: each should still be allowed
     const results2: ReturnType<typeof limiter.check>[] = [];
     for (let i = 0; i < 10; i++) {
       results2.push(limiter.check(`key-${i}`, { maxRequests: 5, windowMs: 60000 }));
     }
-    expect(results2.every(r => r.allowed)).toBe(true);
+    expect(results2.every((r) => r.allowed)).toBe(true);
   });
 });
 
@@ -623,7 +615,7 @@ describe('Section 8: Cross-package Concurrent Scenario', () => {
       expect(Array.isArray(deadlocks)).toBe(true);
 
       // Check slow queries recorded
-      recorder.getSlowQueries(50).then(queries => {
+      recorder.getSlowQueries(50).then((queries) => {
         expect(queries.length).toBeGreaterThanOrEqual(10);
       });
     });
@@ -787,7 +779,7 @@ describe('Section 9: Large-Scale Stress', () => {
       expect(spans).toHaveLength(1000);
 
       // Verify span names
-      const names = spans.map(s => s.name);
+      const names = spans.map((s) => s.name);
       expect(names[0]).toBe('span-0');
       expect(names[999]).toBe('span-999');
     });

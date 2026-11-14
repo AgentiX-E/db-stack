@@ -37,11 +37,17 @@ export interface IDistributedTracer {
    * Start a new span.
    * Returns a function to end the span with an optional status.
    */
-  startSpan(name: string, options?: {
-    parentSpanId?: string;
-    traceId?: string;
-    attributes?: Record<string, string | number | boolean>;
-  }): { spanId: string; end: (status?: 'ok' | 'error', errorMessage?: string) => void };
+  startSpan(
+    name: string,
+    options?: {
+      parentSpanId?: string;
+      traceId?: string;
+      attributes?: Record<string, string | number | boolean>;
+    },
+  ): {
+    spanId: string;
+    end: (status?: 'ok' | 'error', errorMessage?: string) => void;
+  };
 
   /**
    * Get the current span context (traceId + spanId).

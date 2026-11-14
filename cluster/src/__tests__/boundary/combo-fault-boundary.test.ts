@@ -23,10 +23,7 @@ import { TestCluster } from '../integration/TestCluster';
 const CF_TIMEOUT = 300_000;
 
 describe('Boundary: Composite Faults (CF)', () => {
-  async function withCluster<T>(
-    nodeCount: number,
-    fn: (c: TestCluster) => Promise<T>,
-  ): Promise<T> {
+  async function withCluster<T>(nodeCount: number, fn: (c: TestCluster) => Promise<T>): Promise<T> {
     const cluster = new TestCluster({ nodeCount });
     await cluster.start();
     try {
@@ -49,9 +46,7 @@ describe('Boundary: Composite Faults (CF)', () => {
         const workers = Array.from({ length: 50 }, async (wi) => {
           for (let i = 0; i < 20; i++) {
             try {
-              await leader.adapter.proposeAndWait(
-                `cf1-w${wi}-${i}`,
-              );
+              await leader.adapter.proposeAndWait(`cf1-w${wi}-${i}`);
               totalOk++;
             } catch {
               totalFail++;
@@ -64,7 +59,7 @@ describe('Boundary: Composite Faults (CF)', () => {
 
         console.log(
           `[CF.1] 50×20=1,000 proposals: ${totalOk} ok / ${totalFail} fail ` +
-          `(${((totalOk / total) * 100).toFixed(1)}% success)`,
+            `(${((totalOk / total) * 100).toFixed(1)}% success)`,
         );
 
         // With semaphore (CONCURRENCY_MAX=64), most should succeed
@@ -94,9 +89,7 @@ describe('Boundary: Composite Faults (CF)', () => {
           const isolateId = nodes[cycle % nodes.length].id;
 
           // Isolate with partition
-          const transport = nodes.find(
-            (n) => n.id === isolateId,
-          )?.adapter as any;
+          const transport = nodes.find((n) => n.id === isolateId)?.adapter as any;
           if (transport?._forceStop) {
             // Can't truly partition TestCluster — simulate by overloading
             // the isolated node
@@ -105,9 +98,7 @@ describe('Boundary: Composite Faults (CF)', () => {
           // Propose on active nodes
           for (let i = 0; i < 20; i++) {
             try {
-              await leader.adapter.proposeAndWait(
-                `cf2-c${cycle}-${i}`,
-              );
+              await leader.adapter.proposeAndWait(`cf2-c${cycle}-${i}`);
             } catch {
               /* OK under stress */
             }
@@ -116,9 +107,7 @@ describe('Boundary: Composite Faults (CF)', () => {
           // Compact logs
           await leader.adapter.compactLogs();
 
-          console.log(
-            `[CF.2] Cycle ${cycle}: leader ${isolateId}, index=${await leader.adapter.getAppliedIndex()}`,
-          );
+          console.log(`[CF.2] Cycle ${cycle}: leader ${isolateId}, index=${await leader.adapter.getAppliedIndex()}`);
         }
 
         // Verify cluster still works
@@ -165,21 +154,23 @@ describe('Boundary: Composite Faults (CF)', () => {
           const batch = Array.from({ length: 20 }, (_, i) =>
             leaderNode.adapter
               .proposeAndWait(`cf3-r${round}-${i}`)
-              .then(() => { successes++; })
-              .catch(() => { failures++; }),
+              .then(() => {
+                successes++;
+              })
+              .catch(() => {
+                failures++;
+              }),
           );
           await Promise.all(batch);
 
-          const currentIndex =
-            await leaderNode.adapter.getAppliedIndex();
+          const currentIndex = await leaderNode.adapter.getAppliedIndex();
           if (currentIndex > lastGoodIndex) {
             lastGoodIndex = currentIndex;
           }
         }
 
         console.log(
-          `[CF.3] ${successes} ok / ${failures} fail, ` +
-          `${leadershipChanges} changes, final index=${lastGoodIndex}`,
+          `[CF.3] ${successes} ok / ${failures} fail, ` + `${leadershipChanges} changes, final index=${lastGoodIndex}`,
         );
 
         // System must make progress despite leadership flaps

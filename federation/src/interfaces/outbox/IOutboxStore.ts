@@ -1,19 +1,19 @@
-import type { OutboxEntry } from "./OutboxEntry";
-import type { OutboxStats } from "../types";
+import type { OutboxEntry } from './OutboxEntry';
+import type { OutboxStats } from '../types';
 
 export interface IOutboxStore {
   /**
    * Add a new outbox entry.
    * Returns the created entry with its assigned ID.
    */
-  add(entry: Omit<OutboxEntry, "id">): Promise<OutboxEntry>;
+  add(entry: Omit<OutboxEntry, 'id'>): Promise<OutboxEntry>;
 
   /**
    * Add a batch of outbox entries in a single LMDB transaction.
    * Returns array of created entries with assigned IDs.
    * D3 optimization: up to 5x throughput vs serial add().
    */
-  addBatch?(entries: Array<Omit<OutboxEntry, "id">>): OutboxEntry[];
+  addBatch?(entries: Array<Omit<OutboxEntry, 'id'>>): OutboxEntry[];
 
   /**
    * Fetch the oldest pending entries (for delivery attempt).

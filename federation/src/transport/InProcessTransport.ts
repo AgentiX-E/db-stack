@@ -12,11 +12,11 @@
  * This is NOT for production use — only for integration/chaos testing.
  */
 
-import type { ITransport } from "../interfaces/transport/ITransport";
-import type { TransportMessage } from "../interfaces/transport/TransportMessage";
-import type { InboundMessage } from "../interfaces/transport/InboundMessage";
-import type { PeerInfo, TransportStats } from "../interfaces/types";
-import { EventEmitter } from "events";
+import type { ITransport } from '../interfaces/transport/ITransport';
+import type { TransportMessage } from '../interfaces/transport/TransportMessage';
+import type { InboundMessage } from '../interfaces/transport/InboundMessage';
+import type { PeerInfo, TransportStats } from '../interfaces/types';
+import { EventEmitter } from 'events';
 
 /**
  * Global registry of all InProcessTransport instances.
@@ -59,7 +59,7 @@ export class InProcessTransport implements ITransport {
 
   constructor(config: InProcessTransportConfig) {
     this.nodeId = config.nodeId;
-    this.registryKey = config.registryKey ?? "default";
+    this.registryKey = config.registryKey ?? 'default';
     this.latencyMs = config.latencyMs ?? 0;
     this.dropRate = Math.max(0, Math.min(1, config.dropRate ?? 0));
     this.jitterMs = config.jitterMs ?? 0;
@@ -152,9 +152,9 @@ export class InProcessTransport implements ITransport {
    * Register a callback for incoming messages.
    */
   onMessage(callback: (message: InboundMessage) => void): () => void {
-    this.emitter.on("message", callback);
+    this.emitter.on('message', callback);
     return () => {
-      this.emitter.off("message", callback);
+      this.emitter.off('message', callback);
     };
   }
 
@@ -245,7 +245,7 @@ export class InProcessTransport implements ITransport {
     const payloadSize = inbound.payload.byteLength;
     this._stats.messagesReceived++;
     this._stats.bytesReceived += payloadSize;
-    this.emitter.emit("message", inbound);
+    this.emitter.emit('message', inbound);
   }
 
   /** Rebuild the peer cache from the current registry */

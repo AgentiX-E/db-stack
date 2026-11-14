@@ -16,11 +16,7 @@
  * Rollback is supported at any phase.
  */
 
-import {
-  IReshardPlanner,
-  ReshardPlan,
-  IMigrationProgress,
-} from "../interfaces/shard/IReshardPlanner";
+import { IReshardPlanner, ReshardPlan, IMigrationProgress } from '../interfaces/shard/IReshardPlanner';
 
 // ── Plan ID Generator ───────────────────────────────────────
 
@@ -41,13 +37,10 @@ export class ReshardPlanner implements IReshardPlanner {
 
   // ── Plan Creation ─────────────────────────────────────────
 
-  async createSplitPlan(
-    sourceShardId: number,
-    splitKey: string,
-  ): Promise<ReshardPlan> {
+  async createSplitPlan(sourceShardId: number, splitKey: string): Promise<ReshardPlan> {
     const plan: ReshardPlan = {
-      planId: generatePlanId("split"),
-      type: "split",
+      planId: generatePlanId('split'),
+      type: 'split',
       sourceShardIds: [sourceShardId],
       targetShardIds: [sourceShardId * 10 + 1, sourceShardId * 10 + 2],
       estimatedSizeBytes: 1024 * 1024 * 100, // 100MB default estimate
@@ -59,12 +52,10 @@ export class ReshardPlanner implements IReshardPlanner {
     return plan;
   }
 
-  async createMergePlan(
-    sourceShardIds: [number, number],
-  ): Promise<ReshardPlan> {
+  async createMergePlan(sourceShardIds: [number, number]): Promise<ReshardPlan> {
     const plan: ReshardPlan = {
-      planId: generatePlanId("merge"),
-      type: "merge",
+      planId: generatePlanId('merge'),
+      type: 'merge',
       sourceShardIds,
       targetShardIds: [sourceShardIds[0]],
       estimatedSizeBytes: 1024 * 1024 * 50,
@@ -76,13 +67,10 @@ export class ReshardPlanner implements IReshardPlanner {
     return plan;
   }
 
-  async createMovePlan(
-    shardId: number,
-    targetNodeId: string,
-  ): Promise<ReshardPlan> {
+  async createMovePlan(shardId: number, targetNodeId: string): Promise<ReshardPlan> {
     const plan: ReshardPlan = {
-      planId: generatePlanId("move"),
-      type: "move",
+      planId: generatePlanId('move'),
+      type: 'move',
       sourceShardIds: [shardId],
       targetShardIds: [shardId],
       estimatedSizeBytes: 1024 * 1024 * 10,
@@ -102,13 +90,11 @@ export class ReshardPlanner implements IReshardPlanner {
     }
 
     this.activePlans.add(plan.planId);
-    const totalBatches = Math.ceil(
-      plan.estimatedSizeBytes / (plan.batchSize * 1024),
-    );
+    const totalBatches = Math.ceil(plan.estimatedSizeBytes / (plan.batchSize * 1024));
 
     const progress: IMigrationProgress = {
       planId: plan.planId,
-      status: "preparing",
+      status: 'preparing',
       progressPercent: 0,
       currentBatch: 0,
       totalBatches,
@@ -123,7 +109,7 @@ export class ReshardPlanner implements IReshardPlanner {
 
     // Simulate migration phases asynchronously
     this.runMigrationPhases(plan, progress).catch((err) => {
-      progress.status = "failed";
+      progress.status = 'failed';
       progress.errors.push(String(err));
       this.emitProgress(progress);
     });
@@ -131,52 +117,41 @@ export class ReshardPlanner implements IReshardPlanner {
     return plan.planId;
   }
 
-  private async runMigrationPhases(
-    plan: ReshardPlan,
-    progress: IMigrationProgress,
-  ): Promise<void> {
+  private async runMigrationPhases(plan: ReshardPlan, progress: IMigrationProgress): Promise<void> {
     // Phase 1: Preparing
-    progress.status = "preparing";
+    progress.status = 'preparing';
     progress.progressPercent = 5;
     this.emitProgress(progress);
     await this.delay(50);
 
     // Phase 2: Dual-writing (if required)
     if (plan.dualWriteRequired) {
-      progress.status = "dual-writing";
+      progress.status = 'dual-writing';
       progress.progressPercent = 15;
       this.emitProgress(progress);
       await this.delay(50);
     }
 
     // Phase 3: Migrating (batch by batch)
-    progress.status = "migrating";
+    progress.status = 'migrating';
     for (let batch = 1; batch <= progress.totalBatches; batch++) {
       progress.currentBatch = batch;
-      progress.bytesMigrated = Math.min(
-        batch * plan.batchSize * 1024,
-        plan.estimatedSizeBytes,
-      );
-      progress.progressPercent = Math.min(
-        15 + Math.round((batch / progress.totalBatches) * 70),
-        85,
-      );
-      progress.estimatedCompletionAt =
-        Date.now() +
-        ((progress.totalBatches - batch) / progress.totalBatches) * 60000;
+      progress.bytesMigrated = Math.min(batch * plan.batchSize * 1024, plan.estimatedSizeBytes);
+      progress.progressPercent = Math.min(15 + Math.round((batch / progress.totalBatches) * 70), 85);
+      progress.estimatedCompletionAt = Date.now() + ((progress.totalBatches - batch) / progress.totalBatches) * 60000;
 
       this.emitProgress(progress);
       await this.delay(10);
     }
 
     // Phase 4: Verifying
-    progress.status = "verifying";
+    progress.status = 'verifying';
     progress.progressPercent = 90;
     this.emitProgress(progress);
     await this.delay(50);
 
     // Phase 5: Completed
-    progress.status = "completed";
+    progress.status = 'completed';
     progress.progressPercent = 100;
     progress.bytesMigrated = plan.estimatedSizeBytes;
     this.activePlans.delete(plan.planId);
@@ -185,9 +160,7 @@ export class ReshardPlanner implements IReshardPlanner {
 
   // ── Query ─────────────────────────────────────────────────
 
-  async getProgress(
-    planId: string,
-  ): Promise<IMigrationProgress | null> {
+  async getProgress(planId: string): Promise<IMigrationProgress | null> {
     return this.progressMap.get(planId) ?? null;
   }
 
@@ -200,28 +173,23 @@ export class ReshardPlanner implements IReshardPlanner {
     return result;
   }
 
-  async verifyConsistency(
-    planId: string,
-  ): Promise<{ consistent: boolean; mismatches: number }> {
+  async verifyConsistency(planId: string): Promise<{ consistent: boolean; mismatches: number }> {
     const progress = this.progressMap.get(planId);
     if (!progress) {
       return { consistent: false, mismatches: 1 };
     }
 
     // After successful migration, consistency should be verified
-    if (progress.status === "completed") {
+    if (progress.status === 'completed') {
       return { consistent: true, mismatches: 0 };
     }
-    if (progress.status === "failed" || progress.status === "rolled-back") {
+    if (progress.status === 'failed' || progress.status === 'rolled-back') {
       return { consistent: false, mismatches: 1 };
     }
 
     // During migration: compare bytes migrated vs estimated
     const mismatchRatio =
-      progress.totalBytes > 0
-        ? Math.abs(progress.bytesMigrated - progress.totalBytes) /
-          progress.totalBytes
-        : 0;
+      progress.totalBytes > 0 ? Math.abs(progress.bytesMigrated - progress.totalBytes) / progress.totalBytes : 0;
 
     return {
       consistent: mismatchRatio < 0.01,
@@ -234,8 +202,8 @@ export class ReshardPlanner implements IReshardPlanner {
   async cancelPlan(planId: string): Promise<void> {
     const progress = this.progressMap.get(planId);
     if (progress) {
-      progress.status = "failed";
-      progress.errors.push("cancelled by user");
+      progress.status = 'failed';
+      progress.errors.push('cancelled by user');
       this.activePlans.delete(planId);
       this.emitProgress(progress);
     }
@@ -244,10 +212,10 @@ export class ReshardPlanner implements IReshardPlanner {
   async rollbackPlan(planId: string): Promise<void> {
     const progress = this.progressMap.get(planId);
     if (progress) {
-      progress.status = "rolled-back";
+      progress.status = 'rolled-back';
       progress.progressPercent = 0;
       progress.bytesMigrated = 0;
-      progress.errors.push("rolled back by user");
+      progress.errors.push('rolled back by user');
       this.activePlans.delete(planId);
       this.emitProgress(progress);
     }

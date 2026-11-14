@@ -154,9 +154,7 @@ describe('RaftGroup — RPC, install-snapshot, cleanup, factory', () => {
       group.handleRaftMessage({ msgType: 14, snapshot: req });
       await vi.waitFor(() => expect(mockRaftAdapter.step).toHaveBeenCalled());
       // The callback forwards an assembled snapshot with done=true.
-      const doneStep = mockRaftAdapter.step.mock.calls.find(
-        (c: any) => c[0].snapshot && c[0].snapshot.done === true,
-      );
+      const doneStep = mockRaftAdapter.step.mock.calls.find((c: any) => c[0].snapshot && c[0].snapshot.done === true);
       expect(doneStep).toBeTruthy();
     });
   });
@@ -222,7 +220,14 @@ describe('RaftGroup — RPC, install-snapshot, cleanup, factory', () => {
       const os = await import('os');
       const pathMod = await import('path');
       const file = pathMod.join(os.tmpdir(), `raft-group-sqlite-${Date.now()}-${Math.random()}.db`);
-      const g = await RaftGroup.createWithSqliteStorage(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, { file }, file + '.dir');
+      const g = await RaftGroup.createWithSqliteStorage(
+        0,
+        MOCK_CONFIG,
+        MOCK_REPLICA,
+        MOCK_OUTBOX,
+        { file },
+        file + '.dir',
+      );
       expect(g).toBeInstanceOf(RaftGroup);
       expect(g.getRaftAdapter()).toBeTruthy();
       // The storage backend was injected into the adapter.

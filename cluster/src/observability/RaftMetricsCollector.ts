@@ -96,9 +96,15 @@ export class RaftMetricsCollector {
 
   // ── Gauge setters ──────────────────────────────────────
 
-  setTerm(term: number): void { this._currentTerm = term; }
-  setLogSizeBytes(bytes: number): void { this._logSizeBytes = bytes; }
-  setPeerCount(count: number): void { this._peerCount = count; }
+  setTerm(term: number): void {
+    this._currentTerm = term;
+  }
+  setLogSizeBytes(bytes: number): void {
+    this._logSizeBytes = bytes;
+  }
+  setPeerCount(count: number): void {
+    this._peerCount = count;
+  }
 
   // ── Snapshot ───────────────────────────────────────────
 
@@ -152,8 +158,9 @@ export class RaftMetricsCollector {
 
       `# HELP ${prefix}_commit_latency_seconds Histogram of commit latency.`,
       `# TYPE ${prefix}_commit_latency_seconds histogram`,
-      ...LATENCY_BUCKETS.map((b, i) =>
-        `${prefix}_commit_latency_seconds_bucket{le="${b}"} ${s.commitLatencyBuckets[i]}`),
+      ...LATENCY_BUCKETS.map(
+        (b, i) => `${prefix}_commit_latency_seconds_bucket{le="${b}"} ${s.commitLatencyBuckets[i]}`,
+      ),
     ];
     return lines.join('\n') + '\n';
   }

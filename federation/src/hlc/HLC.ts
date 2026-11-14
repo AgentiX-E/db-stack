@@ -20,7 +20,7 @@
  *   const ts2 = hlc.now(); // ts2 > ts1 guaranteed
  */
 
-import type { IHLCTimestamp } from "../interfaces/hlc/IHLCTimestamp";
+import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
 
 /** Internal representation used for comparison mechanics */
 interface HLCInternal {
@@ -170,9 +170,9 @@ export function happenedBefore(a: IHLCTimestamp, b: IHLCTimestamp): boolean {
  * Includes nodeId (hex-encoded) for round-trip stability.
  */
 export function hlcToKey(ts: IHLCTimestamp): string {
-  const wallHex = ts.wallTime.toString(16).padStart(16, "0");
-  const logHex = ts.logical.toString(16).padStart(8, "0");
-  const nodeHex = Buffer.from(ts.nodeId, "utf-8").toString("hex");
+  const wallHex = ts.wallTime.toString(16).padStart(16, '0');
+  const logHex = ts.logical.toString(16).padStart(8, '0');
+  const nodeHex = Buffer.from(ts.nodeId, 'utf-8').toString('hex');
   return `${wallHex}:${logHex}:${nodeHex}`;
 }
 
@@ -181,17 +181,13 @@ export function hlcToKey(ts: IHLCTimestamp): string {
  * All three components (wallTime, logical, nodeId) are restored.
  */
 export function keyToHlc(key: string): IHLCTimestamp {
-  const parts = key.split(":");
+  const parts = key.split(':');
   const wallTime = BigInt(`0x${parts[0]!}`);
   const logical = parseInt(parts[1]!, 16);
   // parts[2] is hex-encoded nodeId; parts[3..] handles any remaining colons
-  const nodeHex = parts.slice(2).join(":");
-  const nodeId = Buffer.from(nodeHex, "hex").toString("utf-8");
-  return new HLC(
-    nodeId,
-    wallTime,
-    logical,
-  );
+  const nodeHex = parts.slice(2).join(':');
+  const nodeId = Buffer.from(nodeHex, 'hex').toString('utf-8');
+  return new HLC(nodeId, wallTime, logical);
 }
 
 /** Max of three bigints */

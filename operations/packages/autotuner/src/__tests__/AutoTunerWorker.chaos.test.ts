@@ -53,7 +53,13 @@ describe('AutoTunerWorker Chaos (D2)', () => {
   // T1: smoothed metrics should never regress or produce NaN.
   it('B.4: should maintain consistent smoothing under concurrent feedMetrics', async () => {
     const tuner = new MockTuner([
-      { parameter: 'cpu_limit', currentValue: 50, recommendedValue: 75, confidence: 0.85, reason: 'high cpu' },
+      {
+        parameter: 'cpu_limit',
+        currentValue: 50,
+        recommendedValue: 75,
+        confidence: 0.85,
+        reason: 'high cpu',
+      },
     ]);
 
     const worker = new AutoTunerWorker(tuner, {
@@ -68,7 +74,7 @@ describe('AutoTunerWorker Chaos (D2)', () => {
       worker.feedMetrics({
         cpu: 30 + (i % 70),
         latency: 10 + (i % 50),
-        qps: 1000 + (i * 10),
+        qps: 1000 + i * 10,
       }),
     );
 
@@ -124,7 +130,7 @@ describe('AutoTunerWorker Chaos (D2)', () => {
     for (let i = 0; i < 20; i++) {
       worker.start();
       // Feed some metrics between cycles
-      worker.feedMetrics({ cpu: 40 + i, latency: 10 + i, qps: 1000 + (i * 50) });
+      worker.feedMetrics({ cpu: 40 + i, latency: 10 + i, qps: 1000 + i * 50 });
       worker.stop();
     }
 
@@ -146,8 +152,20 @@ describe('AutoTunerWorker Chaos (D2)', () => {
   // B.6: Worker should handle missing metrics gracefully
   it('B.6: should handle zero-confidence recommendations without errors', async () => {
     const tuner = new MockTuner([
-      { parameter: 'cpu_limit', currentValue: 50, recommendedValue: 75, confidence: 0.3, reason: 'low conf' },
-      { parameter: 'mem_limit', currentValue: 512, recommendedValue: 1024, confidence: 0.2, reason: 'very low' },
+      {
+        parameter: 'cpu_limit',
+        currentValue: 50,
+        recommendedValue: 75,
+        confidence: 0.3,
+        reason: 'low conf',
+      },
+      {
+        parameter: 'mem_limit',
+        currentValue: 512,
+        recommendedValue: 1024,
+        confidence: 0.2,
+        reason: 'very low',
+      },
     ]);
 
     const worker = new AutoTunerWorker(tuner, {

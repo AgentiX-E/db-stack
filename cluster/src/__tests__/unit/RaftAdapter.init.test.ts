@@ -23,7 +23,8 @@ import { RaftAdapter, type RaftConfig } from '../../consensus/core/RaftAdapter';
 
 // Capture the logger object passed to RaftNode so its debug/warn/error
 // callbacks (RaftAdapter lines 316-319) can be invoked directly.
-let capturedLogger: { debug: Function; info: Function; warn: Function; error: Function } | undefined;
+type LoggerFn = (...args: unknown[]) => void;
+let capturedLogger: { debug: LoggerFn; info: LoggerFn; warn: LoggerFn; error: LoggerFn } | undefined;
 
 vi.mock('@maboke123/raft-core', async (importOriginal) => {
   const original = await importOriginal<typeof import('@maboke123/raft-core')>();
@@ -37,18 +38,42 @@ vi.mock('@maboke123/raft-core', async (importOriginal) => {
       }
       async start() {}
       async stop() {}
-      async submitCommand() { return { success: true, index: 1 }; }
-      getState() { return 'follower'; }
-      isLeader() { return false; }
-      getLeaderId() { return null; }
-      getCurrentTerm() { return 0; }
-      getCommittedIndex() { return 0; }
-      getLastApplied() { return 0; }
-      getLastLogIndex() { return 0; }
-      getNodeId() { return '1'; }
-      getApplicationState() { return null; }
-      isStarted() { return false; }
-      getEntries() { return []; }
+      async submitCommand() {
+        return { success: true, index: 1 };
+      }
+      getState() {
+        return 'follower';
+      }
+      isLeader() {
+        return false;
+      }
+      getLeaderId() {
+        return null;
+      }
+      getCurrentTerm() {
+        return 0;
+      }
+      getCommittedIndex() {
+        return 0;
+      }
+      getLastApplied() {
+        return 0;
+      }
+      getLastLogIndex() {
+        return 0;
+      }
+      getNodeId() {
+        return '1';
+      }
+      getApplicationState() {
+        return null;
+      }
+      isStarted() {
+        return false;
+      }
+      getEntries() {
+        return [];
+      }
     },
   };
 });
@@ -67,8 +92,12 @@ vi.mock('../../consensus/core/ShardStateMachine', () => {
       async apply(cmd: any) {
         if (this.callbacks.applyHandler) this.callbacks.applyHandler(String(cmd.payload));
       }
-      getState() { return null; }
-      async takeSnapshot() { return Buffer.alloc(0); }
+      getState() {
+        return null;
+      }
+      async takeSnapshot() {
+        return Buffer.alloc(0);
+      }
       async installSnapshot() {}
     },
   };
@@ -84,14 +113,30 @@ vi.mock('../../consensus/storage/SqliteNodeStorage', () => {
     SqliteNodeStorage: class {
       public readonly sqlite: unknown;
       private inner = new Inner();
-      constructor(sqlite: unknown) { this.sqlite = sqlite; }
-      get meta() { return this.inner.meta; }
-      get config() { return this.inner.config; }
-      get log() { return this.inner.log; }
-      get snapshot() { return this.inner.snapshot; }
-      async open() { return this.inner.open(); }
-      async close() { return this.inner.close(); }
-      isOpen() { return this.inner.isOpen(); }
+      constructor(sqlite: unknown) {
+        this.sqlite = sqlite;
+      }
+      get meta() {
+        return this.inner.meta;
+      }
+      get config() {
+        return this.inner.config;
+      }
+      get log() {
+        return this.inner.log;
+      }
+      get snapshot() {
+        return this.inner.snapshot;
+      }
+      async open() {
+        return this.inner.open();
+      }
+      async close() {
+        return this.inner.close();
+      }
+      isOpen() {
+        return this.inner.isOpen();
+      }
     },
   };
 });
@@ -104,12 +149,26 @@ vi.mock('../../consensus/transport/SharedBatchedTransport', () => {
   return {
     SharedBatchedTransport: class {
       private inner = new MT('shared');
-      constructor(public shared: unknown, public shardId: number, public selfNodeId: string) {}
-      async start() { return this.inner.start(); }
-      async stop() { return this.inner.stop(); }
-      isStarted() { return this.inner.isStarted(); }
-      onMessage(h: any) { return this.inner.onMessage(h); }
-      send(peer: string, msg: any) { return this.inner.send(peer, msg); }
+      constructor(
+        public shared: unknown,
+        public shardId: number,
+        public selfNodeId: string,
+      ) {}
+      async start() {
+        return this.inner.start();
+      }
+      async stop() {
+        return this.inner.stop();
+      }
+      isStarted() {
+        return this.inner.isStarted();
+      }
+      onMessage(h: any) {
+        return this.inner.onMessage(h);
+      }
+      send(peer: string, msg: any) {
+        return this.inner.send(peer, msg);
+      }
     },
   };
 });
@@ -127,11 +186,21 @@ vi.mock('../../consensus/transport/BatchedRaftTransport', () => {
           stop: async () => {},
         };
       }
-      async start() { return this.inner.start(); }
-      async stop() { return this.inner.stop(); }
-      isStarted() { return this.inner.isStarted(); }
-      onMessage(h: any) { return this.inner.onMessage(h); }
-      send(peer: string, msg: any) { return this.inner.send(peer, msg); }
+      async start() {
+        return this.inner.start();
+      }
+      async stop() {
+        return this.inner.stop();
+      }
+      isStarted() {
+        return this.inner.isStarted();
+      }
+      onMessage(h: any) {
+        return this.inner.onMessage(h);
+      }
+      send(peer: string, msg: any) {
+        return this.inner.send(peer, msg);
+      }
     },
   };
 });
@@ -144,15 +213,29 @@ vi.mock('../../consensus/storage/SqliteStorage', () => {
       constructor(public opts: any) {}
       open() {}
       close() {}
-      getDb() { return {}; }
-      getKv() { return null; }
+      getDb() {
+        return {};
+      }
+      getKv() {
+        return null;
+      }
       setKv() {}
-      getSnapshotIndex() { return 0; }
-      getLastIndex() { return 0; }
-      getTerm() { return 0; }
+      getSnapshotIndex() {
+        return 0;
+      }
+      getLastIndex() {
+        return 0;
+      }
+      getTerm() {
+        return 0;
+      }
       appendLogEntry() {}
-      getLogEntry() { return null; }
-      getLogEntries() { return []; }
+      getLogEntry() {
+        return null;
+      }
+      getLogEntries() {
+        return [];
+      }
       truncateLogsFrom() {}
       truncateAllLogs() {}
       compactLogs() {}
@@ -175,9 +258,7 @@ describe('RaftAdapter.init — storage & transport construction', () => {
   // AC 34.40: full happy path with in-memory storage and a custom transport.
   it('init succeeds with useInMemoryStorage + custom transport', async () => {
     const transport = new MockTransport(String(1));
-    const adapter = new RaftAdapter(
-      minimalConfig({ useInMemoryStorage: true, transport }),
-    );
+    const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport }));
     const applied: string[] = [];
     await adapter.init((data) => applied.push(data));
 
@@ -208,9 +289,7 @@ describe('RaftAdapter.init — storage & transport construction', () => {
 
   // AC 34.43: useInMemoryTransport alone (no transport) → throw.
   it('init throws when only useInMemoryTransport is set', async () => {
-    const adapter = new RaftAdapter(
-      minimalConfig({ useInMemoryStorage: true, useInMemoryTransport: true }),
-    );
+    const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, useInMemoryTransport: true }));
     await expect(adapter.init()).rejects.toThrow(/InMemoryTransport is not needed/);
   });
 
@@ -228,9 +307,7 @@ describe('RaftAdapter.init — storage & transport construction', () => {
       close: () => {},
       compactLogs: () => Promise.resolve(),
     };
-    const adapter = new RaftAdapter(
-      minimalConfig({ storage: fakeStorage, transport: new MockTransport('1') }),
-    );
+    const adapter = new RaftAdapter(minimalConfig({ storage: fakeStorage, transport: new MockTransport('1') }));
     await adapter.init();
     expect((adapter as any).sqliteStorage).toBe(fakeStorage);
     expect((adapter as any).node).not.toBeNull();
@@ -271,7 +348,9 @@ describe('RaftAdapter.init — storage & transport construction', () => {
   it('a throwing applyHandler is logged and commit still advances', async () => {
     const transport = new MockTransport(String(1));
     const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport }));
-    await adapter.init(() => { throw new Error('apply-boom'); });
+    await adapter.init(() => {
+      throw new Error('apply-boom');
+    });
 
     const before = (adapter as any).committedCount;
     expect(() => capturedApplyHandler!('x')).not.toThrow();
@@ -303,9 +382,7 @@ describe('RaftAdapter.init — storage & transport construction', () => {
   // AC 34.47: init with storagePath builds a SqliteStorage-backed node.
   it('init with storagePath builds durable storage', async () => {
     const transport = new MockTransport(String(1));
-    const adapter = new RaftAdapter(
-      minimalConfig({ storagePath: '/tmp/raft-test.db', transport }),
-    );
+    const adapter = new RaftAdapter(minimalConfig({ storagePath: '/tmp/raft-test.db', transport }));
     await adapter.init();
     expect((adapter as any).sqliteStorage).not.toBeNull();
     expect((adapter as any).node).not.toBeNull();
@@ -358,9 +435,7 @@ describe('RaftAdapter.init — shared transport & tcp transport', () => {
       initialRetryMs: 50,
       maxRetryMs: 1000,
     };
-    const adapter = new RaftAdapter(
-      minimalConfig({ useInMemoryStorage: true, peers: [2, 3] }),
-    );
+    const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, peers: [2, 3] }));
     await adapter.init(undefined, tcpConfig);
     expect((adapter as any).originalTcpTransport).not.toBeNull();
     expect((adapter as any).node).not.toBeNull();
@@ -377,9 +452,7 @@ describe('RaftAdapter.init — shared transport & tcp transport', () => {
       initialRetryMs: 50,
       maxRetryMs: 1000,
     };
-    const adapter = new RaftAdapter(
-      minimalConfig({ useInMemoryStorage: true, peers: [2, 3] }),
-    );
+    const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, peers: [2, 3] }));
     await adapter.init(undefined, tcpConfig);
     expect((adapter as any).node).not.toBeNull();
     await adapter.stop();
@@ -388,9 +461,7 @@ describe('RaftAdapter.init — shared transport & tcp transport', () => {
   // AC 34.52: peer list falls back to [] when config.peers is undefined.
   it('init with undefined peers uses an empty peer list', async () => {
     const transport = new MockTransport(String(1));
-    const adapter = new RaftAdapter(
-      minimalConfig({ useInMemoryStorage: true, transport, peers: undefined }),
-    );
+    const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport, peers: undefined }));
     await adapter.init();
     expect((adapter as any).node).not.toBeNull();
     await adapter.stop();

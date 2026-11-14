@@ -9,21 +9,21 @@
  *   double delete, findNearest boundary, shutdown/restart recovery)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   SnapshotManager,
   type SnapshotManagerConfig,
   type SnapshotDescriptor,
-} from "../../snapshot/SnapshotManager.js";
-import type { SnapshotMeta } from "../../interfaces/types.js";
-import * as fs from "fs";
-import * as fsp from "fs/promises";
-import * as path from "path";
-import * as os from "os";
+} from '../../snapshot/SnapshotManager.js';
+import type { SnapshotMeta } from '../../interfaces/types.js';
+import * as fs from 'fs';
+import * as fsp from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
 
 // ── Helpers ────────────────────────────────────────────────
 
-const TEST_ROOT = path.join(os.tmpdir(), "b4-snapshot-test-" + Date.now());
+const TEST_ROOT = path.join(os.tmpdir(), 'b4-snapshot-test-' + Date.now());
 
 function tmpDir(...parts: string[]): string {
   const dir = path.join(TEST_ROOT, ...parts);
@@ -31,19 +31,17 @@ function tmpDir(...parts: string[]): string {
   return dir;
 }
 
-function metaOverrides(
-  overrides: Partial<SnapshotMeta> = {},
-): SnapshotMeta {
+function metaOverrides(overrides: Partial<SnapshotMeta> = {}): SnapshotMeta {
   return {
     lastIncludedIndex: 100,
     lastIncludedTerm: 5,
-    groupId: "default",
+    groupId: 'default',
     ...overrides,
   };
 }
 
 function makeData(size: number): Buffer {
-  return Buffer.alloc(size, "A".charCodeAt(0));
+  return Buffer.alloc(size, 'A'.charCodeAt(0));
 }
 
 function delay(ms: number): Promise<void> {
@@ -53,14 +51,16 @@ function delay(ms: number): Promise<void> {
 async function cleanupAll(): Promise<void> {
   try {
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
-  } catch { /* ok */ }
+  } catch {
+    /* ok */
+  }
 }
 
 // ── SNAP1-SNAP3: Creation & CRUD ──────────────────────────
 
-describe("SNAP1: Snapshot creation", () => {
+describe('SNAP1: Snapshot creation', () => {
   let manager: SnapshotManager;
-  const dir = tmpDir("snap1");
+  const dir = tmpDir('snap1');
 
   beforeEach(async () => {
     manager = new SnapshotManager({ storageDir: dir });
@@ -72,7 +72,7 @@ describe("SNAP1: Snapshot creation", () => {
     await cleanupAll();
   });
 
-  it("creates a snapshot with correct metadata", async () => {
+  it('creates a snapshot with correct metadata', async () => {
     const data = makeData(1024);
     const meta = metaOverrides({ lastIncludedIndex: 42 });
 
@@ -81,7 +81,7 @@ describe("SNAP1: Snapshot creation", () => {
     expect(snap.id).toMatch(/^snap-/);
     expect(snap.meta.lastIncludedIndex).toBe(42);
     expect(snap.meta.lastIncludedTerm).toBe(5);
-    expect(snap.meta.groupId).toBe("default");
+    expect(snap.meta.groupId).toBe('default');
     expect(snap.sizeBytes).toBe(1024);
     expect(snap.verified).toBe(true);
     expect(snap.compacted).toBe(false);
@@ -89,7 +89,7 @@ describe("SNAP1: Snapshot creation", () => {
     expect(snap.checksum).toHaveLength(64); // SHA-256 hex
   });
 
-  it("creates multiple snapshots with unique IDs", async () => {
+  it('creates multiple snapshots with unique IDs', async () => {
     const snap1 = await manager.createSnapshot(makeData(100), metaOverrides());
     await delay(2); // Ensure different timestamp for ID
     const snap2 = await manager.createSnapshot(makeData(200), metaOverrides());
@@ -99,7 +99,7 @@ describe("SNAP1: Snapshot creation", () => {
     expect(snap2.sizeBytes).toBe(200);
   });
 
-  it("fires onCreated callback", async () => {
+  it('fires onCreated callback', async () => {
     const created: SnapshotDescriptor[] = [];
     manager.onCreated((s) => created.push(s));
 
@@ -109,7 +109,7 @@ describe("SNAP1: Snapshot creation", () => {
     expect(created[0]!.sizeBytes).toBe(500);
   });
 
-  it("verifyOnCreate=false skips verification", async () => {
+  it('verifyOnCreate=false skips verification', async () => {
     const mgr = new SnapshotManager({
       storageDir: dir,
       verifyOnCreate: false,
@@ -123,9 +123,9 @@ describe("SNAP1: Snapshot creation", () => {
   });
 });
 
-describe("SNAP2: Snapshot CRUD", () => {
+describe('SNAP2: Snapshot CRUD', () => {
   let manager: SnapshotManager;
-  const dir = tmpDir("snap2");
+  const dir = tmpDir('snap2');
 
   beforeEach(async () => {
     manager = new SnapshotManager({ storageDir: dir });
@@ -137,7 +137,7 @@ describe("SNAP2: Snapshot CRUD", () => {
     await cleanupAll();
   });
 
-  it("getSnapshot returns descriptor by ID", async () => {
+  it('getSnapshot returns descriptor by ID', async () => {
     const snap = await manager.createSnapshot(makeData(512), metaOverrides());
     const found = await manager.getSnapshot(snap.id);
     expect(found).not.toBeNull();
@@ -145,24 +145,24 @@ describe("SNAP2: Snapshot CRUD", () => {
     expect(found!.checksum).toBe(snap.checksum);
   });
 
-  it("getSnapshot returns null for unknown ID", async () => {
-    const found = await manager.getSnapshot("snap-nonexistent");
+  it('getSnapshot returns null for unknown ID', async () => {
+    const found = await manager.getSnapshot('snap-nonexistent');
     expect(found).toBeNull();
   });
 
-  it("deleteSnapshot removes snapshot and returns true", async () => {
+  it('deleteSnapshot removes snapshot and returns true', async () => {
     const snap = await manager.createSnapshot(makeData(100), metaOverrides());
     const deleted = await manager.deleteSnapshot(snap.id);
     expect(deleted).toBe(true);
     expect(await manager.getSnapshot(snap.id)).toBeNull();
   });
 
-  it("deleteSnapshot returns false for missing snapshot", async () => {
-    const deleted = await manager.deleteSnapshot("snap-nonexistent");
+  it('deleteSnapshot returns false for missing snapshot', async () => {
+    const deleted = await manager.deleteSnapshot('snap-nonexistent');
     expect(deleted).toBe(false);
   });
 
-  it("listSnapshots returns all sorted by index", async () => {
+  it('listSnapshots returns all sorted by index', async () => {
     await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 30 }));
     await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 10 }));
     await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 20 }));
@@ -175,9 +175,9 @@ describe("SNAP2: Snapshot CRUD", () => {
   });
 });
 
-describe("SNAP3: Storage tracking", () => {
+describe('SNAP3: Storage tracking', () => {
   let manager: SnapshotManager;
-  const dir = tmpDir("snap3");
+  const dir = tmpDir('snap3');
 
   beforeEach(async () => {
     manager = new SnapshotManager({ storageDir: dir });
@@ -189,7 +189,7 @@ describe("SNAP3: Storage tracking", () => {
     await cleanupAll();
   });
 
-  it("totalStorageBytes sums all snapshot sizes", async () => {
+  it('totalStorageBytes sums all snapshot sizes', async () => {
     await manager.createSnapshot(makeData(100), metaOverrides());
     await manager.createSnapshot(makeData(250), metaOverrides());
     await manager.createSnapshot(makeData(50), metaOverrides());
@@ -197,11 +197,11 @@ describe("SNAP3: Storage tracking", () => {
     expect(await manager.totalStorageBytes()).toBe(400);
   });
 
-  it("totalStorageBytes is 0 when no snapshots", async () => {
+  it('totalStorageBytes is 0 when no snapshots', async () => {
     expect(await manager.totalStorageBytes()).toBe(0);
   });
 
-  it("count returns correct number", async () => {
+  it('count returns correct number', async () => {
     expect(await manager.count()).toBe(0);
     await manager.createSnapshot(makeData(100), metaOverrides());
     expect(await manager.count()).toBe(1);
@@ -212,9 +212,9 @@ describe("SNAP3: Storage tracking", () => {
 
 // ── SNAP4-SNAP6: Retention ─────────────────────────────────
 
-describe("SNAP4: Count-based retention", () => {
+describe('SNAP4: Count-based retention', () => {
   let manager: SnapshotManager;
-  const dir = tmpDir("snap4");
+  const dir = tmpDir('snap4');
 
   beforeEach(async () => {
     manager = new SnapshotManager({
@@ -230,7 +230,7 @@ describe("SNAP4: Count-based retention", () => {
     await cleanupAll();
   });
 
-  it("prunes oldest snapshots when exceeding maxSnapshots", async () => {
+  it('prunes oldest snapshots when exceeding maxSnapshots', async () => {
     for (let i = 1; i <= 5; i++) {
       await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: i * 10 }));
     }
@@ -248,7 +248,7 @@ describe("SNAP4: Count-based retention", () => {
     expect(indices).toEqual([30, 40, 50]);
   });
 
-  it("onPruned callback fires with removed IDs", async () => {
+  it('onPruned callback fires with removed IDs', async () => {
     for (let i = 1; i <= 5; i++) {
       await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: i * 10 }));
     }
@@ -262,9 +262,9 @@ describe("SNAP4: Count-based retention", () => {
   });
 });
 
-describe("SNAP5: Age-based retention", () => {
+describe('SNAP5: Age-based retention', () => {
   let manager: SnapshotManager;
-  const dir = tmpDir("snap5");
+  const dir = tmpDir('snap5');
 
   beforeEach(async () => {
     manager = new SnapshotManager({
@@ -280,7 +280,7 @@ describe("SNAP5: Age-based retention", () => {
     await cleanupAll();
   });
 
-  it("prunes snapshots older than maxAgeMs", async () => {
+  it('prunes snapshots older than maxAgeMs', async () => {
     await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 10 }));
     // Wait for age threshold
     await delay(250);
@@ -293,7 +293,7 @@ describe("SNAP5: Age-based retention", () => {
     expect(pruned.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("respects minRetain even with aged-out snapshots", async () => {
+  it('respects minRetain even with aged-out snapshots', async () => {
     // Create one snapshot and let it age
     await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 10 }));
     await delay(500);
@@ -305,9 +305,9 @@ describe("SNAP5: Age-based retention", () => {
   });
 });
 
-describe("SNAP6: Combined retention policies", () => {
+describe('SNAP6: Combined retention policies', () => {
   let manager: SnapshotManager;
-  const dir = tmpDir("snap6");
+  const dir = tmpDir('snap6');
 
   beforeEach(async () => {
     manager = new SnapshotManager({
@@ -323,7 +323,7 @@ describe("SNAP6: Combined retention policies", () => {
     await cleanupAll();
   });
 
-  it("minRetain prevents pruning below minimum", async () => {
+  it('minRetain prevents pruning below minimum', async () => {
     // Create 3 snapshots, maxSnapshots=5 so nothing prunes
     for (let i = 1; i <= 3; i++) {
       await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: i * 10 }));
@@ -334,7 +334,7 @@ describe("SNAP6: Combined retention policies", () => {
     expect(await manager.count()).toBe(3); // All retained (3 < max 5)
   });
 
-  it("interval-based retention keeps one per time bucket", async () => {
+  it('interval-based retention keeps one per time bucket', async () => {
     const mgr = new SnapshotManager({
       storageDir: dir,
       retention: { maxSnapshots: 5, maxAgeMs: 0, minRetain: 1, intervalMs: 60_000 }, // 1 min interval
@@ -357,15 +357,15 @@ describe("SNAP6: Combined retention policies", () => {
 
 // ── SNAP7-SNAP9: Compaction ────────────────────────────────
 
-describe("SNAP7: Merge compaction", () => {
+describe('SNAP7: Merge compaction', () => {
   let manager: SnapshotManager;
-  const dir = tmpDir("snap7");
+  const dir = tmpDir('snap7');
 
   beforeEach(async () => {
     manager = new SnapshotManager({
       storageDir: dir,
       compact: {
-        strategy: "merge",
+        strategy: 'merge',
         maxMergeCount: 3,
         minAgeMs: 0,
         keepUncompacted: 1,
@@ -380,12 +380,15 @@ describe("SNAP7: Merge compaction", () => {
     await cleanupAll();
   });
 
-  it("merges eligible snapshots into one compacted snapshot", async () => {
+  it('merges eligible snapshots into one compacted snapshot', async () => {
     for (let i = 1; i <= 5; i++) {
-      await manager.createSnapshot(makeData(50), metaOverrides({
-        lastIncludedIndex: i * 10,
-        groupId: "group-a",
-      }));
+      await manager.createSnapshot(
+        makeData(50),
+        metaOverrides({
+          lastIncludedIndex: i * 10,
+          groupId: 'group-a',
+        }),
+      );
     }
 
     expect(await manager.count()).toBe(5);
@@ -405,18 +408,21 @@ describe("SNAP7: Merge compaction", () => {
     expect(count).toBeLessThanOrEqual(4);
   });
 
-  it("returns null when nothing to compact", async () => {
+  it('returns null when nothing to compact', async () => {
     // Only 1 snapshot
     await manager.createSnapshot(makeData(50), metaOverrides());
     const result = await manager.compact();
     expect(result).toBeNull();
   });
 
-  it("respects keepUncompacted when selecting candidates", async () => {
+  it('respects keepUncompacted when selecting candidates', async () => {
     for (let i = 1; i <= 4; i++) {
-      await manager.createSnapshot(makeData(50), metaOverrides({
-        lastIncludedIndex: i * 10,
-      }));
+      await manager.createSnapshot(
+        makeData(50),
+        metaOverrides({
+          lastIncludedIndex: i * 10,
+        }),
+      );
     }
 
     // keepUncompacted=1, maxMergeCount=3 → eligible = 4-1 = 3 candidates
@@ -425,13 +431,13 @@ describe("SNAP7: Merge compaction", () => {
   });
 });
 
-describe("SNAP8: Selective compaction", () => {
-  it("selective strategy only compacts oldest eligible snapshots", async () => {
-    const dir = tmpDir("snap8");
+describe('SNAP8: Selective compaction', () => {
+  it('selective strategy only compacts oldest eligible snapshots', async () => {
+    const dir = tmpDir('snap8');
     const manager = new SnapshotManager({
       storageDir: dir,
       compact: {
-        strategy: "selective",
+        strategy: 'selective',
         maxMergeCount: 2,
         minAgeMs: 0,
         keepUncompacted: 2,
@@ -441,9 +447,12 @@ describe("SNAP8: Selective compaction", () => {
     await manager.init();
 
     for (let i = 1; i <= 5; i++) {
-      await manager.createSnapshot(makeData(50), metaOverrides({
-        lastIncludedIndex: i * 10,
-      }));
+      await manager.createSnapshot(
+        makeData(50),
+        metaOverrides({
+          lastIncludedIndex: i * 10,
+        }),
+      );
     }
 
     const compacted = await manager.compact();
@@ -455,12 +464,12 @@ describe("SNAP8: Selective compaction", () => {
   });
 });
 
-describe("SNAP9: No compaction", () => {
-  it("compact returns null when strategy is none", async () => {
-    const dir = tmpDir("snap9");
+describe('SNAP9: No compaction', () => {
+  it('compact returns null when strategy is none', async () => {
+    const dir = tmpDir('snap9');
     const manager = new SnapshotManager({
       storageDir: dir,
-      compact: { strategy: "none", maxMergeCount: 3, minAgeMs: 0, keepUncompacted: 1 },
+      compact: { strategy: 'none', maxMergeCount: 3, minAgeMs: 0, keepUncompacted: 1 },
       autoPruneEvery: 0,
     });
     await manager.init();
@@ -479,9 +488,9 @@ describe("SNAP9: No compaction", () => {
 
 // ── SNAP10-SNAP12: Verification ────────────────────────────
 
-describe("SNAP10: Single snapshot verification", () => {
+describe('SNAP10: Single snapshot verification', () => {
   let manager: SnapshotManager;
-  const dir = tmpDir("snap10");
+  const dir = tmpDir('snap10');
 
   beforeEach(async () => {
     manager = new SnapshotManager({ storageDir: dir });
@@ -493,7 +502,7 @@ describe("SNAP10: Single snapshot verification", () => {
     await cleanupAll();
   });
 
-  it("verifies a valid snapshot", async () => {
+  it('verifies a valid snapshot', async () => {
     const snap = await manager.createSnapshot(makeData(100), metaOverrides());
     const result = await manager.verifySnapshot(snap.id);
 
@@ -504,28 +513,28 @@ describe("SNAP10: Single snapshot verification", () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it("returns invalid for unknown snapshot ID", async () => {
-    const result = await manager.verifySnapshot("snap-nonexistent");
+  it('returns invalid for unknown snapshot ID', async () => {
+    const result = await manager.verifySnapshot('snap-nonexistent');
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain("not found");
+    expect(result.errors).toContain('not found');
   });
 
-  it("detects checksum mismatch (corrupted snapshot)", async () => {
+  it('detects checksum mismatch (corrupted snapshot)', async () => {
     const snap = await manager.createSnapshot(makeData(100), metaOverrides());
 
     // Corrupt the file on disk
     const snapPath = path.join(dir, `${snap.id}.snap`);
-    fs.writeFileSync(snapPath, Buffer.from("corrupted data"));
+    fs.writeFileSync(snapPath, Buffer.from('corrupted data'));
 
     const result = await manager.verifySnapshot(snap.id);
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("checksum mismatch"))).toBe(true);
+    expect(result.errors.some((e) => e.includes('checksum mismatch'))).toBe(true);
   });
 });
 
-describe("SNAP11: Verify all snapshots", () => {
+describe('SNAP11: Verify all snapshots', () => {
   let manager: SnapshotManager;
-  const dir = tmpDir("snap11");
+  const dir = tmpDir('snap11');
 
   beforeEach(async () => {
     manager = new SnapshotManager({ storageDir: dir });
@@ -537,7 +546,7 @@ describe("SNAP11: Verify all snapshots", () => {
     await cleanupAll();
   });
 
-  it("verifies all snapshots and returns results", async () => {
+  it('verifies all snapshots and returns results', async () => {
     await manager.createSnapshot(makeData(100), metaOverrides());
     await manager.createSnapshot(makeData(200), metaOverrides());
 
@@ -550,12 +559,12 @@ describe("SNAP11: Verify all snapshots", () => {
     }
   });
 
-  it("detects corruption among multiple snapshots", async () => {
+  it('detects corruption among multiple snapshots', async () => {
     const good = await manager.createSnapshot(makeData(100), metaOverrides());
     const bad = await manager.createSnapshot(makeData(200), metaOverrides({ lastIncludedIndex: 99 }));
 
     // Corrupt the bad one
-    fs.writeFileSync(path.join(dir, `${bad.id}.snap`), Buffer.from("corrupted"));
+    fs.writeFileSync(path.join(dir, `${bad.id}.snap`), Buffer.from('corrupted'));
 
     const results = await manager.verifyAll();
     expect(results.size).toBe(2);
@@ -564,9 +573,9 @@ describe("SNAP11: Verify all snapshots", () => {
   });
 });
 
-describe("SNAP12: Verification robustness", () => {
-  it("survives deleted snapshot during verification", async () => {
-    const dir = tmpDir("snap12");
+describe('SNAP12: Verification robustness', () => {
+  it('survives deleted snapshot during verification', async () => {
+    const dir = tmpDir('snap12');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
@@ -585,9 +594,9 @@ describe("SNAP12: Verification robustness", () => {
 
 // ── SNAP13-SNAP15: Edge Cases ──────────────────────────────
 
-describe("SNAP13: Edge cases — lifecycle", () => {
-  it("init scans existing snapshots from disk", async () => {
-    const dir = tmpDir("snap13a");
+describe('SNAP13: Edge cases — lifecycle', () => {
+  it('init scans existing snapshots from disk', async () => {
+    const dir = tmpDir('snap13a');
     const m1 = new SnapshotManager({ storageDir: dir });
     await m1.init();
     await m1.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 55 }));
@@ -607,15 +616,15 @@ describe("SNAP13: Edge cases — lifecycle", () => {
     await cleanupAll();
   });
 
-  it("operations throw when not initialized", async () => {
+  it('operations throw when not initialized', async () => {
     const m = new SnapshotManager();
-    await expect(m.createSnapshot(makeData(100), metaOverrides())).rejects.toThrow("not initialized");
-    await expect(m.listSnapshots()).rejects.toThrow("not initialized");
-    await expect(m.prune()).rejects.toThrow("not initialized");
+    await expect(m.createSnapshot(makeData(100), metaOverrides())).rejects.toThrow('not initialized');
+    await expect(m.listSnapshots()).rejects.toThrow('not initialized');
+    await expect(m.prune()).rejects.toThrow('not initialized');
   });
 
-  it("shutdown cleans up and reset state", async () => {
-    const dir = tmpDir("snap13c");
+  it('shutdown cleans up and reset state', async () => {
+    const dir = tmpDir('snap13c');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
     await manager.createSnapshot(makeData(100), metaOverrides());
@@ -630,8 +639,8 @@ describe("SNAP13: Edge cases — lifecycle", () => {
     await cleanupAll();
   });
 
-  it("double delete returns false second time", async () => {
-    const dir = tmpDir("snap13d");
+  it('double delete returns false second time', async () => {
+    const dir = tmpDir('snap13d');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
@@ -644,9 +653,9 @@ describe("SNAP13: Edge cases — lifecycle", () => {
   });
 });
 
-describe("SNAP14: Edge cases — auto-prune", () => {
-  it("auto-prune triggers after every N creates", async () => {
-    const dir = tmpDir("snap14a");
+describe('SNAP14: Edge cases — auto-prune', () => {
+  it('auto-prune triggers after every N creates', async () => {
+    const dir = tmpDir('snap14a');
     const manager = new SnapshotManager({
       storageDir: dir,
       retention: { maxSnapshots: 3, maxAgeMs: 0, minRetain: 1, intervalMs: 0 },
@@ -675,27 +684,27 @@ describe("SNAP14: Edge cases — auto-prune", () => {
   });
 });
 
-describe("SNAP15: Edge cases — queries & grouping", () => {
-  it("findNearest finds the closest snapshot ≤ target index", async () => {
-    const dir = tmpDir("snap15a");
+describe('SNAP15: Edge cases — queries & grouping', () => {
+  it('findNearest finds the closest snapshot ≤ target index', async () => {
+    const dir = tmpDir('snap15a');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
-    await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 10, groupId: "g1" }));
-    await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 20, groupId: "g1" }));
-    await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 30, groupId: "g1" }));
+    await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 10, groupId: 'g1' }));
+    await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 20, groupId: 'g1' }));
+    await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 30, groupId: 'g1' }));
 
     expect((await manager.findNearest(15))?.meta.lastIncludedIndex).toBe(10);
     expect((await manager.findNearest(20))?.meta.lastIncludedIndex).toBe(20);
     expect((await manager.findNearest(100))?.meta.lastIncludedIndex).toBe(30);
-    expect((await manager.findNearest(5))).toBeNull();
+    expect(await manager.findNearest(5)).toBeNull();
 
     await manager.shutdown();
     await cleanupAll();
   });
 
-  it("latest returns the newest snapshot", async () => {
-    const dir = tmpDir("snap15b");
+  it('latest returns the newest snapshot', async () => {
+    const dir = tmpDir('snap15b');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
@@ -711,46 +720,46 @@ describe("SNAP15: Edge cases — queries & grouping", () => {
     await cleanupAll();
   });
 
-  it("listSnapshots filters by groupId", async () => {
-    const dir = tmpDir("snap15c");
+  it('listSnapshots filters by groupId', async () => {
+    const dir = tmpDir('snap15c');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
-    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: "group-a" }));
-    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: "group-b" }));
-    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: "group-a" }));
+    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: 'group-a' }));
+    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: 'group-b' }));
+    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: 'group-a' }));
 
-    const aSnaps = await manager.listSnapshots("group-a");
+    const aSnaps = await manager.listSnapshots('group-a');
     expect(aSnaps).toHaveLength(2);
-    expect(aSnaps.every((s) => s.meta.groupId === "group-a")).toBe(true);
+    expect(aSnaps.every((s) => s.meta.groupId === 'group-a')).toBe(true);
 
-    const bSnaps = await manager.listSnapshots("group-b");
+    const bSnaps = await manager.listSnapshots('group-b');
     expect(bSnaps).toHaveLength(1);
 
     await manager.shutdown();
     await cleanupAll();
   });
 
-  it("count filters by groupId", async () => {
-    const dir = tmpDir("snap15d");
+  it('count filters by groupId', async () => {
+    const dir = tmpDir('snap15d');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
-    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: "g1" }));
-    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: "g2" }));
-    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: "g1" }));
+    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: 'g1' }));
+    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: 'g2' }));
+    await manager.createSnapshot(makeData(100), metaOverrides({ groupId: 'g1' }));
 
     expect(await manager.count()).toBe(3);
-    expect(await manager.count("g1")).toBe(2);
-    expect(await manager.count("g2")).toBe(1);
-    expect(await manager.count("g3")).toBe(0);
+    expect(await manager.count('g1')).toBe(2);
+    expect(await manager.count('g2')).toBe(1);
+    expect(await manager.count('g3')).toBe(0);
 
     await manager.shutdown();
     await cleanupAll();
   });
 
-  it("onCreated unsubscribe stops callback", async () => {
-    const dir = tmpDir("snap15e");
+  it('onCreated unsubscribe stops callback', async () => {
+    const dir = tmpDir('snap15e');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
@@ -771,14 +780,14 @@ describe("SNAP15: Edge cases — queries & grouping", () => {
 
 // ── SNAP16: Defensive branches — callback exceptions ─────────
 
-describe("SNAP16: Defensive branches — callback exceptions", () => {
-  it("onCreated listener that throws does not break createSnapshot", async () => {
-    const dir = tmpDir("snap16a");
+describe('SNAP16: Defensive branches — callback exceptions', () => {
+  it('onCreated listener that throws does not break createSnapshot', async () => {
+    const dir = tmpDir('snap16a');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
     manager.onCreated(() => {
-      throw new Error("listener boom");
+      throw new Error('listener boom');
     });
 
     const snap = await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 1 }));
@@ -789,8 +798,8 @@ describe("SNAP16: Defensive branches — callback exceptions", () => {
     await cleanupAll();
   });
 
-  it("onPruned listener that throws does not break prune", async () => {
-    const dir = tmpDir("snap16b");
+  it('onPruned listener that throws does not break prune', async () => {
+    const dir = tmpDir('snap16b');
     const manager = new SnapshotManager({
       storageDir: dir,
       retention: { maxSnapshots: 1, maxAgeMs: 0, minRetain: 1, intervalMs: 0 },
@@ -798,7 +807,7 @@ describe("SNAP16: Defensive branches — callback exceptions", () => {
     await manager.init();
 
     manager.onPruned(() => {
-      throw new Error("prune listener boom");
+      throw new Error('prune listener boom');
     });
 
     await manager.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 1 }));
@@ -815,9 +824,9 @@ describe("SNAP16: Defensive branches — callback exceptions", () => {
 
 // ── SNAP17: Defensive branches — prune/find edge cases ────────
 
-describe("SNAP17: Defensive branches — retention & query edges", () => {
-  it("prune returns immediately when no retention policy is configured", async () => {
-    const dir = tmpDir("snap17a");
+describe('SNAP17: Defensive branches — retention & query edges', () => {
+  it('prune returns immediately when no retention policy is configured', async () => {
+    const dir = tmpDir('snap17a');
     const manager = new SnapshotManager({
       storageDir: dir,
       retention: { maxSnapshots: 0, maxAgeMs: 0, minRetain: 1, intervalMs: 0 },
@@ -833,8 +842,8 @@ describe("SNAP17: Defensive branches — retention & query edges", () => {
     await cleanupAll();
   });
 
-  it("findNearest and latest return null for an empty index", async () => {
-    const dir = tmpDir("snap17b");
+  it('findNearest and latest return null for an empty index', async () => {
+    const dir = tmpDir('snap17b');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
@@ -845,8 +854,8 @@ describe("SNAP17: Defensive branches — retention & query edges", () => {
     await cleanupAll();
   });
 
-  it("latest handles equal lastIncludedIndex", async () => {
-    const dir = tmpDir("snap17c");
+  it('latest handles equal lastIncludedIndex', async () => {
+    const dir = tmpDir('snap17c');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
@@ -861,8 +870,8 @@ describe("SNAP17: Defensive branches — retention & query edges", () => {
     await cleanupAll();
   });
 
-  it("age-based prune rebuilds candidates when too many would be removed", async () => {
-    const dir = tmpDir("snap17d");
+  it('age-based prune rebuilds candidates when too many would be removed', async () => {
+    const dir = tmpDir('snap17d');
     const manager = new SnapshotManager({
       storageDir: dir,
       retention: { maxSnapshots: 100, maxAgeMs: 1, minRetain: 2, intervalMs: 0 },
@@ -886,12 +895,12 @@ describe("SNAP17: Defensive branches — retention & query edges", () => {
 
 // ── SNAP18: Defensive branches — compaction edges ─────────────
 
-describe("SNAP18: Defensive branches — compaction edges", () => {
-  it("selective compaction skips already-compacted snapshots", async () => {
-    const dir = tmpDir("snap18a");
+describe('SNAP18: Defensive branches — compaction edges', () => {
+  it('selective compaction skips already-compacted snapshots', async () => {
+    const dir = tmpDir('snap18a');
     const manager = new SnapshotManager({
       storageDir: dir,
-      compact: { strategy: "selective", maxMergeCount: 3, minAgeMs: 0, keepUncompacted: 1 },
+      compact: { strategy: 'selective', maxMergeCount: 3, minAgeMs: 0, keepUncompacted: 1 },
     });
     await manager.init();
 
@@ -911,11 +920,11 @@ describe("SNAP18: Defensive branches — compaction edges", () => {
     await cleanupAll();
   });
 
-  it("minAgeMs filters out young snapshots from compaction", async () => {
-    const dir = tmpDir("snap18b");
+  it('minAgeMs filters out young snapshots from compaction', async () => {
+    const dir = tmpDir('snap18b');
     const manager = new SnapshotManager({
       storageDir: dir,
-      compact: { strategy: "merge", maxMergeCount: 3, minAgeMs: 60_000, keepUncompacted: 0 },
+      compact: { strategy: 'merge', maxMergeCount: 3, minAgeMs: 60_000, keepUncompacted: 0 },
     });
     await manager.init();
 
@@ -931,11 +940,11 @@ describe("SNAP18: Defensive branches — compaction edges", () => {
     await cleanupAll();
   });
 
-  it("merge compaction skips a missing snapshot file gracefully", async () => {
-    const dir = tmpDir("snap18c");
+  it('merge compaction skips a missing snapshot file gracefully', async () => {
+    const dir = tmpDir('snap18c');
     const manager = new SnapshotManager({
       storageDir: dir,
-      compact: { strategy: "merge", maxMergeCount: 3, minAgeMs: 0, keepUncompacted: 0 },
+      compact: { strategy: 'merge', maxMergeCount: 3, minAgeMs: 0, keepUncompacted: 0 },
     });
     await manager.init();
 
@@ -957,9 +966,9 @@ describe("SNAP18: Defensive branches — compaction edges", () => {
 
 // ── SNAP19: Defensive branches — delete unlink failure ────────
 
-describe("SNAP19: Defensive branches — delete best-effort cleanup", () => {
-  it("deleteSnapshot survives an unlink failure", async () => {
-    const dir = tmpDir("snap19a");
+describe('SNAP19: Defensive branches — delete best-effort cleanup', () => {
+  it('deleteSnapshot survives an unlink failure', async () => {
+    const dir = tmpDir('snap19a');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
@@ -981,16 +990,16 @@ describe("SNAP19: Defensive branches — delete best-effort cleanup", () => {
 
 // ── SNAP20: Defensive branches — scan/interval/merge edges ───
 
-describe("SNAP20: Defensive branches — scan, interval, merge edges", () => {
-  it("_scanExisting skips a snapshot with missing metadata", async () => {
-    const dir = tmpDir("snap20a");
+describe('SNAP20: Defensive branches — scan, interval, merge edges', () => {
+  it('_scanExisting skips a snapshot with missing metadata', async () => {
+    const dir = tmpDir('snap20a');
     const manager1 = new SnapshotManager({ storageDir: dir });
     await manager1.init();
     await manager1.createSnapshot(makeData(100), metaOverrides({ lastIncludedIndex: 10 }));
     await manager1.shutdown();
 
     // Drop a bare .snap file with no .meta.json — scanned but skipped.
-    fs.writeFileSync(path.join(dir, "orphan.snap"), makeData(50));
+    fs.writeFileSync(path.join(dir, 'orphan.snap'), makeData(50));
 
     const manager2 = new SnapshotManager({ storageDir: dir });
     await manager2.init();
@@ -1004,8 +1013,8 @@ describe("SNAP20: Defensive branches — scan, interval, merge edges", () => {
     await cleanupAll();
   });
 
-  it("interval retention keeps one per time bucket when over maxSnapshots", async () => {
-    const dir = tmpDir("snap20b");
+  it('interval retention keeps one per time bucket when over maxSnapshots', async () => {
+    const dir = tmpDir('snap20b');
     const manager = new SnapshotManager({
       storageDir: dir,
       retention: { maxSnapshots: 2, maxAgeMs: 0, minRetain: 1, intervalMs: 1000 },
@@ -1036,11 +1045,11 @@ describe("SNAP20: Defensive branches — scan, interval, merge edges", () => {
     await cleanupAll();
   });
 
-  it("merge compaction skips a candidate whose record is already gone", async () => {
-    const dir = tmpDir("snap20c");
+  it('merge compaction skips a candidate whose record is already gone', async () => {
+    const dir = tmpDir('snap20c');
     const manager = new SnapshotManager({
       storageDir: dir,
-      compact: { strategy: "merge", maxMergeCount: 3, minAgeMs: 0, keepUncompacted: 0 },
+      compact: { strategy: 'merge', maxMergeCount: 3, minAgeMs: 0, keepUncompacted: 0 },
     });
     await manager.init();
 
@@ -1062,9 +1071,9 @@ describe("SNAP20: Defensive branches — scan, interval, merge edges", () => {
 
 // ── SNAP21: Defensive branches — direct private-method edges ─
 
-describe("SNAP21: Defensive branches — compaction filter & merge internals", () => {
-  it("_mergeSnapshots skips a candidate whose record is missing", async () => {
-    const dir = tmpDir("snap21a");
+describe('SNAP21: Defensive branches — compaction filter & merge internals', () => {
+  it('_mergeSnapshots skips a candidate whose record is missing', async () => {
+    const dir = tmpDir('snap21a');
     const manager = new SnapshotManager({ storageDir: dir });
     await manager.init();
 
@@ -1073,7 +1082,15 @@ describe("SNAP21: Defensive branches — compaction filter & merge internals", (
 
     // Invoke the private merge helper with a candidate id that no longer
     // exists in `records`, exercising `if (!record) continue`.
-    const ghost = { id: "does-not-exist", meta: metaOverrides(), sizeBytes: 0, createdAt: 0, checksum: "", verified: false, compacted: false };
+    const ghost = {
+      id: 'does-not-exist',
+      meta: metaOverrides(),
+      sizeBytes: 0,
+      createdAt: 0,
+      checksum: '',
+      verified: false,
+      compacted: false,
+    };
     const merged = await (manager as any)._mergeSnapshots([a, ghost]);
     expect(Buffer.isBuffer(merged)).toBe(true);
 
@@ -1081,11 +1098,11 @@ describe("SNAP21: Defensive branches — compaction filter & merge internals", (
     await cleanupAll();
   });
 
-  it("_selectCompactCandidates skips already-compacted snapshots", async () => {
-    const dir = tmpDir("snap21b");
+  it('_selectCompactCandidates skips already-compacted snapshots', async () => {
+    const dir = tmpDir('snap21b');
     const manager = new SnapshotManager({
       storageDir: dir,
-      compact: { strategy: "merge", maxMergeCount: 5, minAgeMs: 0, keepUncompacted: 0 },
+      compact: { strategy: 'merge', maxMergeCount: 5, minAgeMs: 0, keepUncompacted: 0 },
     });
     await manager.init();
 
@@ -1097,7 +1114,10 @@ describe("SNAP21: Defensive branches — compaction filter & merge internals", (
     (manager as any).records.get(b.id).descriptor.compacted = true;
 
     const candidates = await (manager as any)._selectCompactCandidates({
-      strategy: "merge", maxMergeCount: 5, minAgeMs: 0, keepUncompacted: 0,
+      strategy: 'merge',
+      maxMergeCount: 5,
+      minAgeMs: 0,
+      keepUncompacted: 0,
     });
 
     // b (compacted) is excluded from candidates.

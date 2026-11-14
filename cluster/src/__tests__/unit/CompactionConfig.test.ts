@@ -21,8 +21,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+const COMPACTION_RUN_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'compaction-config-'));
+
 function tempDbPath(name: string): string {
-  const dir = path.join(os.tmpdir(), `compaction-config-test-${name}`);
+  const dir = path.join(COMPACTION_RUN_DIR, name);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, 'raft.db');
 }

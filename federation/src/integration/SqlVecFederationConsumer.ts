@@ -17,8 +17,8 @@
  * AC 46.4 — Propose re-entrant: remote -> propose -> outbox -> replicate
  */
 
-import type { IFederationConsumer, ReplicatedEntry, ConflictEntry } from "../core/FederationManager";
-import { HLC } from "../hlc/HLC";
+import type { IFederationConsumer, ReplicatedEntry, ConflictEntry } from '../core/FederationManager';
+import { HLC } from '../hlc/HLC';
 
 /**
  * Minimal consensus layer interface consumed by SqlVecFederationConsumer.
@@ -84,7 +84,7 @@ export class SqlVecFederationConsumer implements IFederationConsumer {
     });
 
     // Propose to local Raft cluster (AC 46.3)
-    await this.config.consensusLayer.propose("federation", payload);
+    await this.config.consensusLayer.propose('federation', payload);
   }
 
   /**
@@ -107,10 +107,10 @@ export class SqlVecFederationConsumer implements IFederationConsumer {
       key: conflict.key,
       localValue: conflict.localValue,
       remoteValue: conflict.remoteValue,
-      resolvedBy: "lww",
+      resolvedBy: 'lww',
     });
 
-    await this.config.consensusLayer.propose("federation", payload);
+    await this.config.consensusLayer.propose('federation', payload);
   }
 
   /**

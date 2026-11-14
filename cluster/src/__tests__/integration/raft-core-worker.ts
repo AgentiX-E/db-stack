@@ -187,7 +187,7 @@ async function main() {
             process.stderr.write(`[node-${nodeConfig.id}] Unknown command: ${msg.command}\n`);
         }
       } catch (err: any) {
-        let errorData: any = { error: err.message, command: msg.command };
+        const errorData: any = { error: err.message, command: msg.command };
         // If propose was rejected, include the current leader for auto-retry
         if (msg.command === 'propose') {
           try {

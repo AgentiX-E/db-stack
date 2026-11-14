@@ -11,10 +11,10 @@
  *   - Reentrant: safe for concurrent rebalance calls via internal lock
  */
 
-import { EventEmitter } from "events";
-import { IShardManager } from "../interfaces/shard/IShardManager";
-import { IShardStrategy } from "../interfaces/shard/IShardStrategy";
-import { OperationResult } from "../interfaces/types";
+import { EventEmitter } from 'events';
+import { IShardManager } from '../interfaces/shard/IShardManager';
+import { IShardStrategy } from '../interfaces/shard/IShardStrategy';
+import { OperationResult } from '../interfaces/types';
 
 // ── Internal Types ──────────────────────────────────────────
 
@@ -47,7 +47,7 @@ export class ShardManager implements IShardManager {
 
   async initialize(strategy: IShardStrategy): Promise<OperationResult> {
     if (this.initialized) {
-      return { success: false, error: "ShardManager already initialized" };
+      return { success: false, error: 'ShardManager already initialized' };
     }
     this.strategy = strategy;
     this.initialized = true;
@@ -56,7 +56,7 @@ export class ShardManager implements IShardManager {
 
   private ensureInitialized(): void {
     if (!this.initialized || !this.strategy) {
-      throw new Error("ShardManager not initialized. Call initialize() first.");
+      throw new Error('ShardManager not initialized. Call initialize() first.');
     }
   }
 
@@ -99,13 +99,10 @@ export class ShardManager implements IShardManager {
 
   // ── Mutation ──────────────────────────────────────────────
 
-  async assignShard(
-    shardId: string,
-    nodeIds: string[],
-  ): Promise<OperationResult> {
+  async assignShard(shardId: string, nodeIds: string[]): Promise<OperationResult> {
     this.ensureInitialized();
     if (nodeIds.length === 0) {
-      return { success: false, error: "must assign at least one node" };
+      return { success: false, error: 'must assign at least one node' };
     }
 
     const existing = this.shards.get(shardId);
@@ -150,7 +147,7 @@ export class ShardManager implements IShardManager {
     this.ensureInitialized();
 
     if (this.rebalancing) {
-      return { success: false, error: "rebalance already in progress" };
+      return { success: false, error: 'rebalance already in progress' };
     }
     this.rebalancing = true;
 
@@ -165,14 +162,10 @@ export class ShardManager implements IShardManager {
         currentDist[id] = entry.nodeIds;
       }
 
-      const result = await this.strategy.computeAssignments(
-        shardIds,
-        nodeIds,
-        currentDist,
-      );
+      const result = await this.strategy.computeAssignments(shardIds, nodeIds, currentDist);
 
       if (!result.success || !result.data) {
-        return { success: false, error: result.error ?? "strategy failed" };
+        return { success: false, error: result.error ?? 'strategy failed' };
       }
 
       // Apply new distribution
@@ -200,7 +193,7 @@ export class ShardManager implements IShardManager {
 
     const result = await this.strategy.onNodeAdded(nodeId, currentDist, 3);
     if (!result.success || !result.data) {
-      return { success: false, error: result.error ?? "addNode failed" };
+      return { success: false, error: result.error ?? 'addNode failed' };
     }
 
     for (const [shardId, newNodeIds] of Object.entries(result.data)) {
@@ -224,7 +217,7 @@ export class ShardManager implements IShardManager {
 
     const result = await this.strategy.onNodeRemoved(nodeId, currentDist, 3);
     if (!result.success || !result.data) {
-      return { success: false, error: result.error ?? "removeNode failed" };
+      return { success: false, error: result.error ?? 'removeNode failed' };
     }
 
     for (const [shardId, newNodeIds] of Object.entries(result.data)) {

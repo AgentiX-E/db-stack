@@ -16,7 +16,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { LinearizabilityChecker, OperationRecorder, type Event, type CallEvent, type ReturnEvent } from './LinearizabilityChecker';
+import {
+  LinearizabilityChecker,
+  OperationRecorder,
+  type Event,
+  type CallEvent,
+  type ReturnEvent,
+} from './LinearizabilityChecker';
 
 function makeCall(clientId: string, op: 'read' | 'write', key: string, value?: string, time?: number): CallEvent {
   return { type: 'call', clientId, operation: op, key, value, time: time ?? Date.now() };

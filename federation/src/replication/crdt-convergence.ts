@@ -10,20 +10,8 @@
  * for deterministic and reproducible convergence proofs.
  */
 
-import {
-  GCounter,
-  PNCounter,
-  LWWRegister,
-  MVRegister,
-  ORSet,
-} from "./crdt-types";
-import type {
-  GCounterState,
-  PNCounterState,
-  LWWRegisterState,
-  MVRegisterState,
-  ORSetState,
-} from "./crdt-types";
+import { GCounter, PNCounter, LWWRegister, MVRegister, ORSet } from './crdt-types';
+import type { GCounterState, PNCounterState, LWWRegisterState, MVRegisterState, ORSetState } from './crdt-types';
 
 // ── Seeded RNG (Xorshift128+) ──────────────────────────────
 
@@ -65,13 +53,13 @@ export class SeededRNG {
 
   /** Generate a random node ID. */
   nodeId(): string {
-    const nodes = ["node-a", "node-b", "node-c", "node-d", "node-e"];
+    const nodes = ['node-a', 'node-b', 'node-c', 'node-d', 'node-e'];
     return this.pick(nodes);
   }
 
   /** Generate a random element name. */
   element(): string {
-    const prefixes = ["key", "item", "elem", "doc", "record"];
+    const prefixes = ['key', 'item', 'elem', 'doc', 'record'];
     return `${this.pick(prefixes)}-${this.int(0, 99)}`;
   }
 
@@ -108,15 +96,9 @@ export class ConvergenceVerifier {
    * one, so the asymmetry/associativity failure branches become reachable.
    * This is dependency injection for fault detection — not production code.
    */
-  private readonly mergeOverride?: Partial<
-    Record<string, (self: any, other: any) => void>
-  >;
+  private readonly mergeOverride?: Partial<Record<string, (self: any, other: any) => void>>;
 
-  constructor(
-    seed = 42,
-    trials = 500,
-    mergeOverride?: Partial<Record<string, (self: any, other: any) => void>>,
-  ) {
+  constructor(seed = 42, trials = 500, mergeOverride?: Partial<Record<string, (self: any, other: any) => void>>) {
     this.rng = new SeededRNG(seed);
     this.trials = trials;
     this.mergeOverride = mergeOverride;
@@ -139,7 +121,7 @@ export class ConvergenceVerifier {
 
   verifyGCounter(): ConvergenceReport {
     const report: ConvergenceReport = {
-      crdtType: "GCounter",
+      crdtType: 'GCounter',
       trials: this.trials,
       associativePassed: 0,
       associativeFailed: 0,
@@ -157,41 +139,41 @@ export class ConvergenceVerifier {
 
       // Associativity: merge(a, merge(b, c)) === merge(merge(a, b), c)
       const g1 = GCounter.fromState(a);
-      this._merge("GCounter", g1, b);
-      this._merge("GCounter", g1, c);
+      this._merge('GCounter', g1, b);
+      this._merge('GCounter', g1, c);
       const g2 = GCounter.fromState({ counts: {} });
-      this._merge("GCounter", g2, a);
+      this._merge('GCounter', g2, a);
       const g2b = GCounter.fromState(b);
-      this._merge("GCounter", g2b, c);
-      this._merge("GCounter", g2, g2b.toState());
+      this._merge('GCounter', g2b, c);
+      this._merge('GCounter', g2, g2b.toState());
 
       if (countersEqual(g1, g2)) {
         report.associativePassed++;
       } else {
         report.associativeFailed++;
-        report.failures.push({ law: "associativity", details: `trial ${i}` });
+        report.failures.push({ law: 'associativity', details: `trial ${i}` });
       }
 
       // Commutativity: merge(a, b) === merge(b, a)
       const c1 = GCounter.fromState(a);
-      this._merge("GCounter", c1, b);
+      this._merge('GCounter', c1, b);
       const c2 = GCounter.fromState(b);
-      this._merge("GCounter", c2, a);
+      this._merge('GCounter', c2, a);
       if (countersEqual(c1, c2)) {
         report.commutativePassed++;
       } else {
         report.commutativeFailed++;
-        report.failures.push({ law: "commutativity", details: `trial ${i}` });
+        report.failures.push({ law: 'commutativity', details: `trial ${i}` });
       }
 
       // Idempotence: merge(a, a) === a
       const i1 = GCounter.fromState(a);
-      this._merge("GCounter", i1, a);
+      this._merge('GCounter', i1, a);
       if (countersEqual(i1, GCounter.fromState(a))) {
         report.idempotentPassed++;
       } else {
         report.idempotentFailed++;
-        report.failures.push({ law: "idempotence", details: `trial ${i}` });
+        report.failures.push({ law: 'idempotence', details: `trial ${i}` });
       }
     }
 
@@ -202,7 +184,7 @@ export class ConvergenceVerifier {
 
   verifyPNCounter(): ConvergenceReport {
     const report: ConvergenceReport = {
-      crdtType: "PNCounter",
+      crdtType: 'PNCounter',
       trials: this.trials,
       associativePassed: 0,
       associativeFailed: 0,
@@ -220,40 +202,40 @@ export class ConvergenceVerifier {
 
       // Associativity
       const g1 = PNCounter.fromState(a);
-      this._merge("PNCounter", g1, b);
-      this._merge("PNCounter", g1, c);
+      this._merge('PNCounter', g1, b);
+      this._merge('PNCounter', g1, c);
       const g2 = PNCounter.fromState({ p: {}, n: {} });
-      this._merge("PNCounter", g2, a);
+      this._merge('PNCounter', g2, a);
       const g2b = PNCounter.fromState(b);
-      this._merge("PNCounter", g2b, c);
-      this._merge("PNCounter", g2, g2b.toState());
+      this._merge('PNCounter', g2b, c);
+      this._merge('PNCounter', g2, g2b.toState());
       if (pnCountersEqual(g1, g2)) {
         report.associativePassed++;
       } else {
         report.associativeFailed++;
-        report.failures.push({ law: "associativity", details: `trial ${i}` });
+        report.failures.push({ law: 'associativity', details: `trial ${i}` });
       }
 
       // Commutativity
       const c1 = PNCounter.fromState(a);
-      this._merge("PNCounter", c1, b);
+      this._merge('PNCounter', c1, b);
       const c2 = PNCounter.fromState(b);
-      this._merge("PNCounter", c2, a);
+      this._merge('PNCounter', c2, a);
       if (pnCountersEqual(c1, c2)) {
         report.commutativePassed++;
       } else {
         report.commutativeFailed++;
-        report.failures.push({ law: "commutativity", details: `trial ${i}` });
+        report.failures.push({ law: 'commutativity', details: `trial ${i}` });
       }
 
       // Idempotence
       const i1 = PNCounter.fromState(a);
-      this._merge("PNCounter", i1, a);
+      this._merge('PNCounter', i1, a);
       if (pnCountersEqual(i1, PNCounter.fromState(a))) {
         report.idempotentPassed++;
       } else {
         report.idempotentFailed++;
-        report.failures.push({ law: "idempotence", details: `trial ${i}` });
+        report.failures.push({ law: 'idempotence', details: `trial ${i}` });
       }
     }
 
@@ -264,7 +246,7 @@ export class ConvergenceVerifier {
 
   verifyLWWRegister(): ConvergenceReport {
     const report: ConvergenceReport = {
-      crdtType: "LWWRegister",
+      crdtType: 'LWWRegister',
       trials: this.trials,
       associativePassed: 0,
       associativeFailed: 0,
@@ -282,39 +264,39 @@ export class ConvergenceVerifier {
 
       // Associativity
       const g1 = LWWRegister.fromState(a);
-      this._merge("LWWRegister", g1, b);
-      this._merge("LWWRegister", g1, c);
+      this._merge('LWWRegister', g1, b);
+      this._merge('LWWRegister', g1, c);
       const g2 = LWWRegister.fromState(a);
       const g2tmp = LWWRegister.fromState(b);
-      this._merge("LWWRegister", g2tmp, c);
-      this._merge("LWWRegister", g2, g2tmp.toState());
+      this._merge('LWWRegister', g2tmp, c);
+      this._merge('LWWRegister', g2, g2tmp.toState());
       if (g1.value === g2.value) {
         report.associativePassed++;
       } else {
         report.associativeFailed++;
-        report.failures.push({ law: "associativity", details: `trial ${i}` });
+        report.failures.push({ law: 'associativity', details: `trial ${i}` });
       }
 
       // Commutativity
       const c1 = LWWRegister.fromState(a);
-      this._merge("LWWRegister", c1, b);
+      this._merge('LWWRegister', c1, b);
       const c2 = LWWRegister.fromState(b);
-      this._merge("LWWRegister", c2, a);
+      this._merge('LWWRegister', c2, a);
       if (c1.value === c2.value) {
         report.commutativePassed++;
       } else {
         report.commutativeFailed++;
-        report.failures.push({ law: "commutativity", details: `trial ${i}` });
+        report.failures.push({ law: 'commutativity', details: `trial ${i}` });
       }
 
       // Idempotence
       const i1 = LWWRegister.fromState(a);
-      this._merge("LWWRegister", i1, a);
+      this._merge('LWWRegister', i1, a);
       if (i1.value === a.value) {
         report.idempotentPassed++;
       } else {
         report.idempotentFailed++;
-        report.failures.push({ law: "idempotence", details: `trial ${i}` });
+        report.failures.push({ law: 'idempotence', details: `trial ${i}` });
       }
     }
 
@@ -325,7 +307,7 @@ export class ConvergenceVerifier {
 
   verifyMVRegister(): ConvergenceReport {
     const report: ConvergenceReport = {
-      crdtType: "MVRegister",
+      crdtType: 'MVRegister',
       trials: this.trials,
       associativePassed: 0,
       associativeFailed: 0,
@@ -343,39 +325,39 @@ export class ConvergenceVerifier {
 
       // Associativity
       const g1 = MVRegister.fromState(a);
-      this._merge("MVRegister", g1, b);
-      this._merge("MVRegister", g1, c);
+      this._merge('MVRegister', g1, b);
+      this._merge('MVRegister', g1, c);
       const g2 = MVRegister.fromState(a);
       const g2tmp = MVRegister.fromState(b);
-      this._merge("MVRegister", g2tmp, c);
-      this._merge("MVRegister", g2, g2tmp.toState());
+      this._merge('MVRegister', g2tmp, c);
+      this._merge('MVRegister', g2, g2tmp.toState());
       if (mvRegistersEqual(g1, g2)) {
         report.associativePassed++;
       } else {
         report.associativeFailed++;
-        report.failures.push({ law: "associativity", details: `trial ${i}` });
+        report.failures.push({ law: 'associativity', details: `trial ${i}` });
       }
 
       // Commutativity
       const c1 = MVRegister.fromState(a);
-      this._merge("MVRegister", c1, b);
+      this._merge('MVRegister', c1, b);
       const c2 = MVRegister.fromState(b);
-      this._merge("MVRegister", c2, a);
+      this._merge('MVRegister', c2, a);
       if (mvRegistersEqual(c1, c2)) {
         report.commutativePassed++;
       } else {
         report.commutativeFailed++;
-        report.failures.push({ law: "commutativity", details: `trial ${i}` });
+        report.failures.push({ law: 'commutativity', details: `trial ${i}` });
       }
 
       // Idempotence
       const i1 = MVRegister.fromState(a);
-      this._merge("MVRegister", i1, a);
+      this._merge('MVRegister', i1, a);
       if (mvRegistersEqual(i1, MVRegister.fromState(a))) {
         report.idempotentPassed++;
       } else {
         report.idempotentFailed++;
-        report.failures.push({ law: "idempotence", details: `trial ${i}` });
+        report.failures.push({ law: 'idempotence', details: `trial ${i}` });
       }
     }
 
@@ -386,7 +368,7 @@ export class ConvergenceVerifier {
 
   verifyORSet(): ConvergenceReport {
     const report: ConvergenceReport = {
-      crdtType: "ORSet",
+      crdtType: 'ORSet',
       trials: this.trials,
       associativePassed: 0,
       associativeFailed: 0,
@@ -404,39 +386,39 @@ export class ConvergenceVerifier {
 
       // Associativity
       const g1 = ORSet.fromState(a);
-      this._merge("ORSet", g1, b);
-      this._merge("ORSet", g1, c);
+      this._merge('ORSet', g1, b);
+      this._merge('ORSet', g1, c);
       const g2 = ORSet.fromState(a);
       const g2tmp = ORSet.fromState(b);
-      this._merge("ORSet", g2tmp, c);
-      this._merge("ORSet", g2, g2tmp.toState());
+      this._merge('ORSet', g2tmp, c);
+      this._merge('ORSet', g2, g2tmp.toState());
       if (orSetsEqual(g1, g2)) {
         report.associativePassed++;
       } else {
         report.associativeFailed++;
-        report.failures.push({ law: "associativity", details: `trial ${i}` });
+        report.failures.push({ law: 'associativity', details: `trial ${i}` });
       }
 
       // Commutativity
       const c1 = ORSet.fromState(a);
-      this._merge("ORSet", c1, b);
+      this._merge('ORSet', c1, b);
       const c2 = ORSet.fromState(b);
-      this._merge("ORSet", c2, a);
+      this._merge('ORSet', c2, a);
       if (orSetsEqual(c1, c2)) {
         report.commutativePassed++;
       } else {
         report.commutativeFailed++;
-        report.failures.push({ law: "commutativity", details: `trial ${i}` });
+        report.failures.push({ law: 'commutativity', details: `trial ${i}` });
       }
 
       // Idempotence
       const i1 = ORSet.fromState(a);
-      this._merge("ORSet", i1, a);
+      this._merge('ORSet', i1, a);
       if (orSetsEqual(i1, ORSet.fromState(a))) {
         report.idempotentPassed++;
       } else {
         report.idempotentFailed++;
-        report.failures.push({ law: "idempotence", details: `trial ${i}` });
+        report.failures.push({ law: 'idempotence', details: `trial ${i}` });
       }
     }
 
@@ -488,7 +470,7 @@ export class ConvergenceVerifier {
   }
 
   private randomMVRegister(): MVRegisterState {
-    const entries: MVRegisterState["entries"] = [];
+    const entries: MVRegisterState['entries'] = [];
     const entryCount = this.rng.int(0, 5);
     for (let i = 0; i < entryCount; i++) {
       entries.push({
@@ -529,10 +511,7 @@ export class ConvergenceVerifier {
 // converge. Each compares two CRDT states for exact membership/equivalence.
 
 export function countersEqual(a: GCounter, b: GCounter): boolean {
-  const allKeys = new Set([
-    ...Object.keys(a.counts),
-    ...Object.keys(b.counts),
-  ]);
+  const allKeys = new Set([...Object.keys(a.counts), ...Object.keys(b.counts)]);
   for (const k of allKeys) {
     if ((a.counts[k] ?? 0) !== (b.counts[k] ?? 0)) return false;
   }
@@ -542,10 +521,7 @@ export function countersEqual(a: GCounter, b: GCounter): boolean {
 export function pnCountersEqual(a: PNCounter, b: PNCounter): boolean {
   const as = a.toState();
   const bs = b.toState();
-  const allNodes = new Set([
-    ...Object.keys(as.p), ...Object.keys(as.n),
-    ...Object.keys(bs.p), ...Object.keys(bs.n),
-  ]);
+  const allNodes = new Set([...Object.keys(as.p), ...Object.keys(as.n), ...Object.keys(bs.p), ...Object.keys(bs.n)]);
   for (const n of allNodes) {
     if ((as.p[n] ?? 0) !== (bs.p[n] ?? 0)) return false;
     if ((as.n[n] ?? 0) !== (bs.n[n] ?? 0)) return false;

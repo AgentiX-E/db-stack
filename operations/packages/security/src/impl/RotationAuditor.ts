@@ -10,8 +10,8 @@
  *   - Verification: detect missing or tampered entries
  */
 
-import type { RotationEvent } from "../interfaces/IKeyRotationManager.js";
-import crypto from "crypto";
+import type { RotationEvent } from '../interfaces/IKeyRotationManager.js';
+import crypto from 'crypto';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -52,7 +52,7 @@ export interface ComplianceReport {
   pass: boolean;
 }
 
-const GENESIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000";
+const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
 // ── RotationAuditor ────────────────────────────────────────
 
@@ -68,15 +68,13 @@ export class RotationAuditor {
    */
   record(event: RotationEvent): AuditEntry {
     this.seqCounter++;
-    const prevHash = this.entries.length > 0
-      ? this.entries[this.entries.length - 1]!.hash
-      : GENESIS_HASH;
+    const prevHash = this.entries.length > 0 ? this.entries[this.entries.length - 1]!.hash : GENESIS_HASH;
 
     const entry: AuditEntry = {
       seq: this.seqCounter,
       event,
       prevHash,
-      hash: "", // Computed below
+      hash: '', // Computed below
       recordedAt: Date.now(),
     };
 
@@ -150,9 +148,7 @@ export class RotationAuditor {
 
       // Check chain hash
       if (entry.prevHash !== prevHash) {
-        errors.push(
-          `chain broken at seq ${entry.seq}: expected prevHash ${prevHash}, got ${entry.prevHash}`,
-        );
+        errors.push(`chain broken at seq ${entry.seq}: expected prevHash ${prevHash}, got ${entry.prevHash}`);
         chainBroken = true;
       }
 
@@ -192,23 +188,15 @@ export class RotationAuditor {
     const events = this.entries.map((e) => e.event);
     const successful = events.filter((e) => e.success);
     const failed = events.filter((e) => !e.success);
-    const emergency = events.filter(
-      (e) => e.trigger.kind === "compromise",
-    );
-    const timeBased = events.filter(
-      (e) => e.trigger.kind === "time" || e.trigger.kind === "schedule",
-    );
-    const countBased = events.filter((e) => e.trigger.kind === "count");
+    const emergency = events.filter((e) => e.trigger.kind === 'compromise');
+    const timeBased = events.filter((e) => e.trigger.kind === 'time' || e.trigger.kind === 'schedule');
+    const countBased = events.filter((e) => e.trigger.kind === 'count');
 
     // Average interval between rotations
     let averageIntervalMs = 0;
-    const sorted = [...successful].sort(
-      (a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0),
-    );
+    const sorted = [...successful].sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
     if (sorted.length >= 2) {
-      const totalInterval =
-        (sorted[sorted.length - 1]!.completedAt ?? 0) -
-        (sorted[0]!.completedAt ?? 0);
+      const totalInterval = (sorted[sorted.length - 1]!.completedAt ?? 0) - (sorted[0]!.completedAt ?? 0);
       averageIntervalMs = totalInterval / (sorted.length - 1);
     }
 
@@ -217,27 +205,27 @@ export class RotationAuditor {
 
     // Framework-specific checks
     switch (framework.toUpperCase()) {
-      case "PCI-DSS": {
+      case 'PCI-DSS': {
         // PCI-DSS 3.6: keys retired at least annually
         if (sorted.length > 0) {
           const firstRot = sorted[0]!.completedAt ?? sorted[0]!.startedAt;
           const lastRot = sorted[sorted.length - 1]!.completedAt ?? sorted[sorted.length - 1]!.startedAt;
           const spanMs = lastRot - firstRot;
           if (spanMs > 365 * 24 * 3600 * 1000) {
-            findings.push("PCI-DSS 3.6.4: key rotation interval may exceed 1 year");
+            findings.push('PCI-DSS 3.6.4: key rotation interval may exceed 1 year');
             pass = false;
           }
         }
         if (sorted.length === 0) {
-          findings.push("PCI-DSS 3.6: no key rotations recorded — keys must be rotated at least annually");
+          findings.push('PCI-DSS 3.6: no key rotations recorded — keys must be rotated at least annually');
           pass = false;
         }
         break;
       }
-      case "SOC2": {
+      case 'SOC2': {
         // SOC2 CC6.3: documented rotation procedures
         if (events.length === 0) {
-          findings.push("SOC2 CC6.3: no rotation events documented");
+          findings.push('SOC2 CC6.3: no rotation events documented');
           pass = false;
         }
         if (failed.length > 0) {
@@ -245,10 +233,10 @@ export class RotationAuditor {
         }
         break;
       }
-      case "HIPAA": {
+      case 'HIPAA': {
         // HIPAA §164.312(e)(1): transmission security
         if (events.length === 0) {
-          findings.push("HIPAA 164.312: no encryption key rotation records");
+          findings.push('HIPAA 164.312: no encryption key rotation records');
           pass = false;
         }
         break;
@@ -265,9 +253,7 @@ export class RotationAuditor {
       timeBasedRotations: timeBased.length,
       countBasedRotations: countBased.length,
       averageIntervalMs,
-      oldestActiveKeyCreatedAt: events.length > 0
-        ? events[0]!.startedAt
-        : null,
+      oldestActiveKeyCreatedAt: events.length > 0 ? events[0]!.startedAt : null,
       findings,
       pass,
     };
@@ -277,16 +263,14 @@ export class RotationAuditor {
    * Export audit trail as JSONL.
    */
   exportJSONL(): string {
-    return this.entries
-      .map((e) => JSON.stringify(e))
-      .join("\n");
+    return this.entries.map((e) => JSON.stringify(e)).join('\n');
   }
 
   /**
    * Import audit trail from JSONL.
    */
   importJSONL(jsonl: string): number {
-    const lines = jsonl.split("\n").filter((line) => line.trim());
+    const lines = jsonl.split('\n').filter((line) => line.trim());
     for (const line of lines) {
       const entry = JSON.parse(line) as AuditEntry;
       this.entries.push(entry);
@@ -307,15 +291,15 @@ export class RotationAuditor {
 
   // ── Internal ─────────────────────────────────────────────
 
-  private _hashEntry(entry: Omit<AuditEntry, "hash">): string {
+  private _hashEntry(entry: Omit<AuditEntry, 'hash'>): string {
     // Hash: seq + prevHash + JSON(event) + recordedAt
     const content = [
       entry.seq.toString(),
       entry.prevHash,
       JSON.stringify(entry.event),
       entry.recordedAt.toString(),
-    ].join("|");
+    ].join('|');
 
-    return crypto.createHash("sha256").update(content, "utf-8").digest("hex");
+    return crypto.createHash('sha256').update(content, 'utf-8').digest('hex');
   }
 }

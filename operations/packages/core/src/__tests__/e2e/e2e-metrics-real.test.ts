@@ -3,12 +3,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import {
-  IN_MEM_FACTORY,
-  GRAPH_VEC_FACTORY,
-  SQL_VEC_FACTORY,
-  ENGINE_CASES,
-} from './engineFactories.js';
+import { IN_MEM_FACTORY, GRAPH_VEC_FACTORY, SQL_VEC_FACTORY, ENGINE_CASES } from './engineFactories.js';
 
 const inMemFactory = IN_MEM_FACTORY;
 const graphVecFactory = GRAPH_VEC_FACTORY;
@@ -84,7 +79,7 @@ describe.each(ENGINE_CASES)('$name E2E: MetricsRegistry', ({ factory }) => {
     const c = registry.counter('snapshot_val');
     c.incBy(3);
     const snap = registry.snapshot();
-    const point = snap.points.find(p => p.name === 'snapshot_val');
+    const point = snap.points.find((p) => p.name === 'snapshot_val');
     if (point) {
       expect(point.value).toBe(3);
     }
@@ -107,19 +102,14 @@ describe.each(ENGINE_CASES)('$name E2E: MetricsRegistry', ({ factory }) => {
     c2.incBy(7);
     // Each label group should track independently
     const snap = registry.snapshot();
-    const opsPoints = snap.points.filter(p => p.name === 'ops');
+    const opsPoints = snap.points.filter((p) => p.name === 'ops');
     expect(opsPoints.length).toBeGreaterThanOrEqual(1);
   });
 
   it('should handle concurrent counter operations', async () => {
     const registry = await factory.createMetricsRegistry();
     const c = registry.counter('concurrent');
-    await Promise.all([
-      c.inc(),
-      c.incBy(2),
-      c.incBy(3),
-      c.inc(),
-    ]);
+    await Promise.all([c.inc(), c.incBy(2), c.incBy(3), c.inc()]);
     expect(c.get()).toBe(7);
   });
 });

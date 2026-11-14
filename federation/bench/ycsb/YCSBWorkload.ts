@@ -68,19 +68,58 @@ export interface YCSBConfig {
 /**
  * Default YCSB workload proportions per workload type.
  */
-export const WORKLOAD_PROPORTIONS: Record<WorkloadType, {
-  readProportion: number;
-  updateProportion: number;
-  insertProportion: number;
-  scanProportion: number;
-  readModifyWriteProportion: number;
-}> = {
-  A: { readProportion: 0.50, updateProportion: 0.50, insertProportion: 0, scanProportion: 0, readModifyWriteProportion: 0 },
-  B: { readProportion: 0.95, updateProportion: 0.05, insertProportion: 0, scanProportion: 0, readModifyWriteProportion: 0 },
-  C: { readProportion: 1.00, updateProportion: 0,    insertProportion: 0, scanProportion: 0, readModifyWriteProportion: 0 },
-  D: { readProportion: 0.95, updateProportion: 0,    insertProportion: 0.05, scanProportion: 0, readModifyWriteProportion: 0 },
-  E: { readProportion: 0,    updateProportion: 0,    insertProportion: 0.05, scanProportion: 0.95, readModifyWriteProportion: 0 },
-  F: { readProportion: 0.50, updateProportion: 0,    insertProportion: 0, scanProportion: 0, readModifyWriteProportion: 0.50 },
+export const WORKLOAD_PROPORTIONS: Record<
+  WorkloadType,
+  {
+    readProportion: number;
+    updateProportion: number;
+    insertProportion: number;
+    scanProportion: number;
+    readModifyWriteProportion: number;
+  }
+> = {
+  A: {
+    readProportion: 0.5,
+    updateProportion: 0.5,
+    insertProportion: 0,
+    scanProportion: 0,
+    readModifyWriteProportion: 0,
+  },
+  B: {
+    readProportion: 0.95,
+    updateProportion: 0.05,
+    insertProportion: 0,
+    scanProportion: 0,
+    readModifyWriteProportion: 0,
+  },
+  C: {
+    readProportion: 1.0,
+    updateProportion: 0,
+    insertProportion: 0,
+    scanProportion: 0,
+    readModifyWriteProportion: 0,
+  },
+  D: {
+    readProportion: 0.95,
+    updateProportion: 0,
+    insertProportion: 0.05,
+    scanProportion: 0,
+    readModifyWriteProportion: 0,
+  },
+  E: {
+    readProportion: 0,
+    updateProportion: 0,
+    insertProportion: 0.05,
+    scanProportion: 0.95,
+    readModifyWriteProportion: 0,
+  },
+  F: {
+    readProportion: 0.5,
+    updateProportion: 0,
+    insertProportion: 0,
+    scanProportion: 0,
+    readModifyWriteProportion: 0.5,
+  },
 };
 
 /**

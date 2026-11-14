@@ -10,12 +10,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import {
-  IN_MEM_FACTORY,
-  GRAPH_VEC_FACTORY,
-  SQL_VEC_FACTORY,
-  ENGINE_CASES,
-} from './engineFactories.js';
+import { IN_MEM_FACTORY, GRAPH_VEC_FACTORY, SQL_VEC_FACTORY, ENGINE_CASES } from './engineFactories.js';
 
 const inMemFactory = IN_MEM_FACTORY;
 const graphVecFactory = GRAPH_VEC_FACTORY;
@@ -134,9 +129,9 @@ describe.each(ENGINE_CASES)('$name E2E: DistributedTracer', ({ factory }) => {
       results.push({ spanId, end });
     }
     expect(results.length).toBe(5);
-    const ids = results.map(r => r.spanId);
+    const ids = results.map((r) => r.spanId);
     expect(new Set(ids).size).toBe(5); // All unique
-    results.forEach(r => r.end());
+    results.forEach((r) => r.end());
   });
 
   it('should create a child span sharing trace context', async () => {

@@ -7,7 +7,7 @@
  * @module @agentix-e/db-operations-federation/interfaces
  */
 
-import type { MigrationDescriptor, MigrationPlan } from "@agentix-e/db-operations-core";
+import type { MigrationDescriptor, MigrationPlan } from '@agentix-e/db-operations-core';
 
 // Re-export for convenience
 export type { MigrationDescriptor, MigrationPlan };
@@ -31,16 +31,16 @@ export interface SchemaSnapshot {
 // ── Schema Drift ────────────────────────────────────────────
 
 /** Severity of a schema drift. */
-export type DriftSeverity = "info" | "warning" | "critical";
+export type DriftSeverity = 'info' | 'warning' | 'critical';
 
 /** Type of schema drift detected. */
 export type DriftType =
-  | "version_mismatch"      // shard at wrong version
-  | "missing_migration"     // migration applied on peer but not here
-  | "extra_migration"       // migration applied here but not on peer
-  | "checksum_divergence"   // same version, different checksum
-  | "order_divergence"      // migrations applied in different order
-  | "migration_state_mismatch"; // pending/running/failed on one, different on peer
+  | 'version_mismatch' // shard at wrong version
+  | 'missing_migration' // migration applied on peer but not here
+  | 'extra_migration' // migration applied here but not on peer
+  | 'checksum_divergence' // same version, different checksum
+  | 'order_divergence' // migrations applied in different order
+  | 'migration_state_mismatch'; // pending/running/failed on one, different on peer
 
 /** A single drift entry between a shard and its reference/peer. */
 export interface SchemaDrift {
@@ -78,12 +78,12 @@ export interface SchemaDrift {
 
 /** Action to repair a schema drift. */
 export type RepairAction =
-  | "apply_migration"       // apply missing migration(s)
-  | "rollback_migration"    // rollback extra migration(s)
-  | "reorder_migrations"    // fix order by rolling back and reapplying
-  | "resync_snapshot"       // full resync from reference
-  | "mark_resolved"         // manual resolution (no-op)
-  | "force_version";        // force-set version without running migrations
+  | 'apply_migration' // apply missing migration(s)
+  | 'rollback_migration' // rollback extra migration(s)
+  | 'reorder_migrations' // fix order by rolling back and reapplying
+  | 'resync_snapshot' // full resync from reference
+  | 'mark_resolved' // manual resolution (no-op)
+  | 'force_version'; // force-set version without running migrations
 
 /** A single repair plan targeting one drift. */
 export interface DriftRepair {
@@ -111,19 +111,19 @@ export interface DriftRepair {
 
 /** State of a coordinated migration across shards. */
 export type CoordinationState =
-  | "preparing"    // validating preconditions, checking shards
-  | "rolling_out"  // actively applying to shards
-  | "verifying"    // post-apply drift check
-  | "completed"    // all shards confirmed
-  | "rolled_back"  // failure, rolled back all applied shards
-  | "paused";      // paused mid-rollout (manual intervention needed)
+  | 'preparing' // validating preconditions, checking shards
+  | 'rolling_out' // actively applying to shards
+  | 'verifying' // post-apply drift check
+  | 'completed' // all shards confirmed
+  | 'rolled_back' // failure, rolled back all applied shards
+  | 'paused'; // paused mid-rollout (manual intervention needed)
 
 /** Target shard selection mode for a coordinated migration. */
 export type CoordinationMode =
-  | "all"          // apply to all shards
-  | "canary"       // apply to a canary shard first, then all
-  | "batched"      // apply in rolling batches (1 shard per batch)
-  | "manual";      // user picks which shards
+  | 'all' // apply to all shards
+  | 'canary' // apply to a canary shard first, then all
+  | 'batched' // apply in rolling batches (1 shard per batch)
+  | 'manual'; // user picks which shards
 
 /** A coordinated migration across multiple shards. */
 export interface CoordinatedMigration {
@@ -193,10 +193,10 @@ export interface DriftMonitorConfig {
 
 /** How to select the reference shard for drift comparison. */
 export type ReferenceStrategy =
-  | "primary"       // primary/coordinator shard is the baseline
-  | "majority"      // the version most shards agree on
-  | "latest"        // the highest-version shard
-  | "canonical";    // a manually nominated canonical shard ID
+  | 'primary' // primary/coordinator shard is the baseline
+  | 'majority' // the version most shards agree on
+  | 'latest' // the highest-version shard
+  | 'canonical'; // a manually nominated canonical shard ID
 
 /** Monitoring statistics. */
 export interface DriftMonitorStats {
@@ -299,17 +299,10 @@ export interface ISchemaFederator {
   // ── Migration Coordination ─────────────────────────────
 
   /** Start a coordinated migration rollout across shards. */
-  startCoordinatedMigration(
-    plan: MigrationPlan,
-    mode: CoordinationMode,
-    verify?: boolean,
-  ): CoordinatedMigration;
+  startCoordinatedMigration(plan: MigrationPlan, mode: CoordinationMode, verify?: boolean): CoordinatedMigration;
 
   /** Report migration result for a single shard (called by execution layer). */
-  reportShardResult(
-    coordId: string,
-    result: ShardMigrationResult,
-  ): void;
+  reportShardResult(coordId: string, result: ShardMigrationResult): void;
 
   /** Get the state of a coordinated migration. */
   getCoordinationState(coordId: string): CoordinatedMigration | undefined;

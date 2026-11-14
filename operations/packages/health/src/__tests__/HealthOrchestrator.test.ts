@@ -70,9 +70,11 @@ describe('HealthOrchestrator', () => {
 
     it('should return failed when a probe fails', () => {
       orchestrator.registerComponent(createProbe('good', 'Good'));
-      orchestrator.registerComponent(createProbe('bad', 'Bad', {
-        liveness: { ok: false, message: 'Service not responding' },
-      }));
+      orchestrator.registerComponent(
+        createProbe('bad', 'Bad', {
+          liveness: { ok: false, message: 'Service not responding' },
+        }),
+      );
 
       const result = orchestrator.liveness();
       expect(result.ok).toBe(false);
@@ -85,7 +87,9 @@ describe('HealthOrchestrator', () => {
       orchestrator.registerComponent({
         probeId: 'bad',
         componentName: 'Bad Probe',
-        liveness: () => { throw new Error('OOM'); },
+        liveness: () => {
+          throw new Error('OOM');
+        },
         readiness: () => ({ ok: true }),
         startup: () => ({ ok: true }),
       });
@@ -112,9 +116,11 @@ describe('HealthOrchestrator', () => {
     });
 
     it('should fail when readiness fails even if liveness passes', () => {
-      orchestrator.registerComponent(createProbe('a', 'A', {
-        readiness: { ok: false, message: 'Leader not elected' },
-      }));
+      orchestrator.registerComponent(
+        createProbe('a', 'A', {
+          readiness: { ok: false, message: 'Leader not elected' },
+        }),
+      );
 
       const result = orchestrator.readiness();
       expect(result.ok).toBe(false);
@@ -152,23 +158,29 @@ describe('HealthOrchestrator', () => {
 
     it('should return degraded when at least one component fails', () => {
       orchestrator.registerComponent(createProbe('good', 'Good'));
-      orchestrator.registerComponent(createProbe('bad', 'Bad', {
-        liveness: { ok: false, message: 'Down' },
-      }));
+      orchestrator.registerComponent(
+        createProbe('bad', 'Bad', {
+          liveness: { ok: false, message: 'Down' },
+        }),
+      );
 
       const status = orchestrator.getHealthStatus();
       expect(status.status).toBe('degraded');
     });
 
     it('should return unhealthy when all components fail', () => {
-      orchestrator.registerComponent(createProbe('a', 'A', {
-        liveness: { ok: false },
-        readiness: { ok: false },
-      }));
-      orchestrator.registerComponent(createProbe('b', 'B', {
-        liveness: { ok: false },
-        readiness: { ok: false },
-      }));
+      orchestrator.registerComponent(
+        createProbe('a', 'A', {
+          liveness: { ok: false },
+          readiness: { ok: false },
+        }),
+      );
+      orchestrator.registerComponent(
+        createProbe('b', 'B', {
+          liveness: { ok: false },
+          readiness: { ok: false },
+        }),
+      );
 
       const status = orchestrator.getHealthStatus();
       expect(status.status).toBe('unhealthy');
@@ -216,9 +228,11 @@ describe('HealthOrchestrator', () => {
 
     it('should return degraded when mixed', () => {
       orchestrator.registerComponent(createProbe('good', 'Good'));
-      orchestrator.registerComponent(createProbe('bad', 'Bad', {
-        liveness: { ok: false },
-      }));
+      orchestrator.registerComponent(
+        createProbe('bad', 'Bad', {
+          liveness: { ok: false },
+        }),
+      );
       expect(orchestrator.getAggregateStatus().status).toBe('degraded');
     });
   });
@@ -233,9 +247,11 @@ describe('HealthOrchestrator', () => {
     });
 
     it('should include failing count when components fail', () => {
-      orchestrator.registerComponent(createProbe('bad', 'Bad', {
-        liveness: { ok: false },
-      }));
+      orchestrator.registerComponent(
+        createProbe('bad', 'Bad', {
+          liveness: { ok: false },
+        }),
+      );
       const summary = orchestrator.getSummary();
 
       expect(summary).toContain('Failing');

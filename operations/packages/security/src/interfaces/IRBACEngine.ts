@@ -54,7 +54,7 @@ export interface RBACIdentity {
 // ── Constraints ─────────────────────────────────────────────
 
 /** Constraint type. */
-export type ConstraintType = "time" | "ip_range" | "mfa_required" | "rate_limit" | "audit";
+export type ConstraintType = 'time' | 'ip_range' | 'mfa_required' | 'rate_limit' | 'audit';
 
 /** A permission constraint that must be satisfied. */
 export interface RBACConstraint {

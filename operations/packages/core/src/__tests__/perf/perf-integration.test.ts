@@ -16,7 +16,9 @@ import { describe, it, expect, beforeAll } from 'vitest';
 
 // ── Warmup: settle JIT and GC before benchmarks ──
 beforeAll(() => {
-  for (let i = 0; i < 100_000; i++) { /* warmup */ }
+  for (let i = 0; i < 100_000; i++) {
+    /* warmup */
+  }
   if (typeof globalThis.gc === 'function') {
     for (let i = 0; i < 3; i++) globalThis.gc();
   }
@@ -27,10 +29,18 @@ beforeAll(() => {
 class BackupManagerMock {
   private store: Array<{ key: string; value: string }> = [];
 
-  backup(entries: Array<{ key: string; value: string }>): { snapshotId: string; entryCount: number; sizeBytes: number } {
+  backup(entries: Array<{ key: string; value: string }>): {
+    snapshotId: string;
+    entryCount: number;
+    sizeBytes: number;
+  } {
     const snapshot = [...entries];
     this.store.push(...snapshot);
-    return { snapshotId: `snap-${Date.now()}`, entryCount: snapshot.length, sizeBytes: JSON.stringify(snapshot).length };
+    return {
+      snapshotId: `snap-${Date.now()}`,
+      entryCount: snapshot.length,
+      sizeBytes: JSON.stringify(snapshot).length,
+    };
   }
 
   restore(_snapshotId: string): Array<{ key: string; value: string }> {
@@ -42,7 +52,11 @@ class MetricsRegistryMock {
   private counters = new Map<string, number>();
 
   counter(name: string): { inc: (n?: number) => void } {
-    return { inc: (n = 1) => { this.counters.set(name, (this.counters.get(name) ?? 0) + n); } };
+    return {
+      inc: (n = 1) => {
+        this.counters.set(name, (this.counters.get(name) ?? 0) + n);
+      },
+    };
   }
 
   snapshot(): Record<string, number> {
@@ -133,7 +147,11 @@ function makeAuditEntry(index: number): AuditEntry {
     ip: `192.168.${(index >> 8) & 0xff}.${index & 0xff}`,
     userAgent: 'agentix-e/' + (index % 3),
     tags: ['production', 'us-east-1', index % 5 === 0 ? 'critical' : 'normal'],
-    metadata: { traceId: `trace-${index}`, spanId: `span-${index}`, shardId: `shard-${index % 10}` },
+    metadata: {
+      traceId: `trace-${index}`,
+      spanId: `span-${index}`,
+      shardId: `shard-${index % 10}`,
+    },
   };
 }
 
@@ -144,19 +162,12 @@ function bench(label: string, fn: () => void, limitNs: number): void {
     const start = process.hrtime.bigint();
     fn();
     const elapsed = Number(process.hrtime.bigint() - start);
-    process.stdout.write(
-      `\n  [${label}] ${(elapsed / 1e6).toFixed(3)}ms (${elapsed}ns, limit=${limitNs}ns)`,
-    );
+    process.stdout.write(`\n  [${label}] ${(elapsed / 1e6).toFixed(3)}ms (${elapsed}ns, limit=${limitNs}ns)`);
     expect(elapsed).toBeLessThan(limitNs);
   });
 }
 
-function benchThroughput(
-  label: string,
-  fn: () => void,
-  iterations: number,
-  minOpsPerSec: number,
-): void {
+function benchThroughput(label: string, fn: () => void, iterations: number, minOpsPerSec: number): void {
   it(label, () => {
     const start = process.hrtime.bigint();
     for (let i = 0; i < iterations; i++) {
@@ -190,7 +201,10 @@ describe('Cross-Engine Integration', () => {
       // Execute the full chain
       const probeResult = health.probe();
       metrics.counter('health_checks_total').inc(probeResult.ok ? 1 : 0);
-      audit.write({ action: 'HEALTH_CHECK', result: probeResult.ok ? 'pass' : 'fail' });
+      audit.write({
+        action: 'HEALTH_CHECK',
+        result: probeResult.ok ? 'pass' : 'fail',
+      });
       backup.backup([{ key: `health-${Date.now()}`, value: JSON.stringify(probeResult) }]);
 
       expect(probeResult.ok).toBe(true);
@@ -288,7 +302,10 @@ describe('Cross-Engine Integration', () => {
           this.spans.push({ id, op, ts: Date.now() });
           return id;
         },
-      } as { spans: Array<{ id: string; op: string; ts: number }>; startSpan: (op: string) => string },
+      } as {
+        spans: Array<{ id: string; op: string; ts: number }>;
+        startSpan: (op: string) => string;
+      },
       rateLimiter: new RateLimiterMock(100000, 1000),
       security: new SecurityComplianceMock(),
     };
@@ -300,7 +317,11 @@ describe('Cross-Engine Integration', () => {
     const operations = 10000;
     for (let i = 0; i < operations; i++) {
       services.metrics.counter(`ops_${i % 100}`).inc(1);
-      services.audit.write({ action: 'OP', actor: `user:${i % 50}`, detail: `Operation ${i}` });
+      services.audit.write({
+        action: 'OP',
+        actor: `user:${i % 50}`,
+        detail: `Operation ${i}`,
+      });
       services.tracer.startSpan(`op-${i % 10}`);
       services.rateLimiter.check(`key:${i % 200}`);
       if (i % 100 === 0) {

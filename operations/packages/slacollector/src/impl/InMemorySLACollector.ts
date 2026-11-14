@@ -10,9 +10,7 @@ export class InMemorySLACollector implements ISLACollector {
   }
 
   getSLACompliance(since?: Date): Map<string, number> {
-    const filtered = since
-      ? this.events.filter(e => e.timestamp >= since)
-      : this.events;
+    const filtered = since ? this.events.filter((e) => e.timestamp >= since) : this.events;
 
     const metricGroups = new Map<string, { total: number; ok: number }>();
     for (const event of filtered) {
@@ -32,19 +30,17 @@ export class InMemorySLACollector implements ISLACollector {
   }
 
   getViolations(since?: Date): SLAEvent[] {
-    return this.events.filter(e => {
+    return this.events.filter((e) => {
       if (since && e.timestamp < since) return false;
       return e.violated;
     });
   }
 
   getUptime(since?: Date): number {
-    const filtered = since
-      ? this.events.filter(e => e.timestamp >= since)
-      : this.events;
+    const filtered = since ? this.events.filter((e) => e.timestamp >= since) : this.events;
 
     if (filtered.length === 0) return 100;
-    const violations = filtered.filter(e => e.violated);
+    const violations = filtered.filter((e) => e.violated);
     return ((filtered.length - violations.length) / filtered.length) * 100;
   }
 }

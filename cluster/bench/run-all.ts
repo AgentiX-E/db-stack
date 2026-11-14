@@ -98,8 +98,12 @@ async function main(): Promise<void> {
 
     allResults.push(result);
     console.log(`  Throughput: ${result.throughput} ops/s`);
-    console.log(`  Read: P50=${result.readLatency.p50.toFixed(3)}ms  P95=${result.readLatency.p95.toFixed(3)}ms  P99=${result.readLatency.p99.toFixed(3)}ms`);
-    console.log(`  Update: P50=${result.updateLatency.p50.toFixed(3)}ms  P95=${result.updateLatency.p95.toFixed(3)}ms  P99=${result.updateLatency.p99.toFixed(3)}ms`);
+    console.log(
+      `  Read: P50=${result.readLatency.p50.toFixed(3)}ms  P95=${result.readLatency.p95.toFixed(3)}ms  P99=${result.readLatency.p99.toFixed(3)}ms`,
+    );
+    console.log(
+      `  Update: P50=${result.updateLatency.p50.toFixed(3)}ms  P95=${result.updateLatency.p95.toFixed(3)}ms  P99=${result.updateLatency.p99.toFixed(3)}ms`,
+    );
     if (result.errors > 0) console.log(`  ⚠ Errors: ${result.errors}`);
     console.log('');
   }

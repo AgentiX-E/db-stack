@@ -11,7 +11,7 @@
  * to ensure all shards receive the change consistently.
  */
 
-import type { IMultiLeaderReplication } from "../interfaces/replication/IMultiLeaderReplication";
+import type { IMultiLeaderReplication } from '../interfaces/replication/IMultiLeaderReplication';
 
 /**
  * A schema change proposal.

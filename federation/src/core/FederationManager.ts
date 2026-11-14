@@ -18,22 +18,22 @@
  *   - Receive conflict resolution notifications
  */
 
-import type { IMultiLeaderReplication, ReplicationConfig } from "../interfaces/replication/IMultiLeaderReplication";
-import type { ICDCManager } from "../interfaces/replication/ICDCManager";
-import type { IAntiEntropy } from "../interfaces/replication/IAntiEntropy";
-import type { ITransport } from "../interfaces/transport/ITransport";
-import type { IOutboxStore } from "../interfaces/outbox/IOutboxStore";
-import type { IHLCTimestamp } from "../interfaces/hlc/IHLCTimestamp";
-import { HLC, makeHLC } from "../hlc/HLC";
-import { HealthMonitor, type FederationHealth, type HealthMonitorConfig } from "../monitoring/HealthMonitor";
-import { CDCManager, type CDCTarget, type CDCEvent } from "./CDCManager";
-import { DCSplitBrainDetector, type SplitBrainEvent } from "./DCSplitBrainDetector";
-import { ConflictResolver, type ConflictValue, type ConflictStrategy } from "../replication/ConflictResolver";
-import { AntiEntropy } from "../replication/AntiEntropy";
-import { DedupRing } from "../replication/DedupRing";
-import type { InboundMessage } from "../interfaces/transport/InboundMessage";
-import type { DataEntry, DataProvider } from "../replication/AntiEntropy";
-import { EventEmitter } from "events";
+import type { IMultiLeaderReplication, ReplicationConfig } from '../interfaces/replication/IMultiLeaderReplication';
+import type { ICDCManager } from '../interfaces/replication/ICDCManager';
+import type { IAntiEntropy } from '../interfaces/replication/IAntiEntropy';
+import type { ITransport } from '../interfaces/transport/ITransport';
+import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
+import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
+import { HLC, makeHLC } from '../hlc/HLC';
+import { HealthMonitor, type FederationHealth, type HealthMonitorConfig } from '../monitoring/HealthMonitor';
+import { CDCManager, type CDCTarget, type CDCEvent } from './CDCManager';
+import { DCSplitBrainDetector, type SplitBrainEvent } from './DCSplitBrainDetector';
+import { ConflictResolver, type ConflictValue, type ConflictStrategy } from '../replication/ConflictResolver';
+import { AntiEntropy } from '../replication/AntiEntropy';
+import { DedupRing } from '../replication/DedupRing';
+import type { InboundMessage } from '../interfaces/transport/InboundMessage';
+import type { DataEntry, DataProvider } from '../replication/AntiEntropy';
+import { EventEmitter } from 'events';
 
 // ── Interfaces (defined here for Phase 2, will move to separate files) ──
 
@@ -83,7 +83,7 @@ export interface IFederationConsumer {
 }
 
 /** @internal */
-export const NOT_IMPLEMENTED_YET = "Not implemented in Phase 2";
+export const NOT_IMPLEMENTED_YET = 'Not implemented in Phase 2';
 
 // ── FederationManager ──────────────────────────
 
@@ -124,11 +124,22 @@ export class FederationManager {
    * Receiver-side dedup. Transport delivery is at-least-once, so the same
    * message id can arrive more than once (retry, reconnect, anti-entropy).
    */
-  private readonly dedup = new DedupRing({ maxCapacity: 100_000, ttlMs: 30 * 60_000 });
+  private readonly dedup = new DedupRing({
+    maxCapacity: 100_000,
+    ttlMs: 30 * 60_000,
+  });
   private _unsubInbound: (() => void) | null = null;
 
   // Local key-value store for AntiEntropy (MA10-MA12)
-  private readonly localStore = new Map<string, { key: string; value: string; hlc: { wallTime: number; logical: number; nodeId: string }; nodeId: string }>();
+  private readonly localStore = new Map<
+    string,
+    {
+      key: string;
+      value: string;
+      hlc: { wallTime: number; logical: number; nodeId: string };
+      nodeId: string;
+    }
+  >();
 
   constructor(
     private readonly replication: IMultiLeaderReplication,
@@ -185,7 +196,7 @@ export class FederationManager {
 
     // Listen for split-brain events
     this._splitBrainDetector.onSplitBrainDetected((event: SplitBrainEvent) => {
-      this.emitter.emit("split-brain-detected", event);
+      this.emitter.emit('split-brain-detected', event);
     });
 
     // 7. Wire the receive path: without it, inbound replication frames were
@@ -213,16 +224,13 @@ export class FederationManager {
    * @returns `applied`, `duplicate`, `superseded` (remote lost the conflict)
    *          or `malformed` when the frame cannot be decoded.
    */
-  async applyInbound(
-    msg: InboundMessage,
-  ): Promise<"applied" | "duplicate" | "superseded" | "malformed"> {
-    if (!msg.messageId) return "malformed";
-    if (this.dedup.contains(msg.messageId)) return "duplicate";
+  async applyInbound(msg: InboundMessage): Promise<'applied' | 'duplicate' | 'superseded' | 'malformed'> {
+    if (!msg.messageId) return 'malformed';
+    if (this.dedup.contains(msg.messageId)) return 'duplicate';
     this.dedup.put(msg.messageId);
 
-    const decoded = decodeEnvelope(msg.payload, msg.type ?? "replicate");
-    if (!decoded) return "malformed";
-
+    const decoded = decodeEnvelope(msg.payload, msg.type ?? 'replicate');
+    if (!decoded) return 'malformed';
 
     const remoteValue: ConflictValue = {
       key: decoded.key,
@@ -242,7 +250,7 @@ export class FederationManager {
       const resolution = await this._conflictResolver.resolve(decoded.key, local, remoteValue);
       if (resolution.resolvedValue !== remoteValue.value) {
         // Local write won; the remote entry is stale.
-        return "superseded";
+        return 'superseded';
       }
     }
 
@@ -264,20 +272,20 @@ export class FederationManager {
         key: decoded.key,
         data: decoded.value,
         type: decoded.type,
-        sourceDc: decoded.sourceDc ?? "unknown",
+        sourceDc: decoded.sourceDc ?? 'unknown',
         sourceNodeId: decoded.sourceNodeId,
         hlcTimestamp: remoteValue.hlc,
       });
     }
 
-    this.emitter.emit("replicated-entry", {
+    this.emitter.emit('replicated-entry', {
       key: decoded.key,
       value: decoded.value,
       messageId: msg.messageId,
       sourceNodeId: decoded.sourceNodeId,
     });
 
-    return "applied";
+    return 'applied';
   }
 
   /**
@@ -306,10 +314,7 @@ export class FederationManager {
    * self-contained: it reads from and writes to a single `Map` keyed by entry
    * key. All functions are pure with respect to the store.
    */
-  private buildDataProvider(
-    localStore: Map<string, DataEntry>,
-    nodeId: string,
-  ): DataProvider {
+  private buildDataProvider(localStore: Map<string, DataEntry>, nodeId: string): DataProvider {
     return {
       async getRange(start: string, end: string): Promise<DataEntry[]> {
         const entries: DataEntry[] = [];
@@ -322,9 +327,7 @@ export class FederationManager {
       },
 
       async getEntriesAfter(afterKey: string, limit: number): Promise<DataEntry[]> {
-        const sorted = Array.from(localStore.values()).sort((a, b) =>
-          a.key.localeCompare(b.key),
-        );
+        const sorted = Array.from(localStore.values()).sort((a, b) => a.key.localeCompare(b.key));
         const idx = sorted.findIndex((e) => e.key > afterKey);
         // findIndex returns -1 when no entry is strictly greater than
         // afterKey; slice(-1, …) would incorrectly wrap around to the last
@@ -377,9 +380,9 @@ export class FederationManager {
     remoteValue?: ConflictValue,
   ): Promise<{ msgId: string }> {
     // Default params when called with old signature (shardId, data, type)
-    const key = typeof shardIdOrKey === "string" ? shardIdOrKey : `key:${shardIdOrKey}:${Date.now()}`;
+    const key = typeof shardIdOrKey === 'string' ? shardIdOrKey : `key:${shardIdOrKey}:${Date.now()}`;
     const data = valueOrData;
-    const shardId = typeof shardIdOrKey === "number" ? shardIdOrKey : 0;
+    const shardId = typeof shardIdOrKey === 'number' ? shardIdOrKey : 0;
 
     // MA10: Conflict resolution on the write hot path.
     // `HLC.now()` already returns a full `IHLCTimestamp` (compare/serialize/
@@ -412,7 +415,11 @@ export class FederationManager {
     this.localStore.set(key, {
       key,
       value: data,
-      hlc: { wallTime: Number(now.wallTime), logical: now.logical, nodeId: now.nodeId },
+      hlc: {
+        wallTime: Number(now.wallTime),
+        logical: now.logical,
+        nodeId: now.nodeId,
+      },
       nodeId: this.config.nodeId,
     });
 
@@ -440,14 +447,18 @@ export class FederationManager {
     // self-describing envelope so the receiving DC can resolve conflicts on the
     // same key; the legacy numeric-shard call keeps the raw payload.
     const payload =
-      typeof shardIdOrKey === "string"
+      typeof shardIdOrKey === 'string'
         ? encodeEnvelope({
             key,
             value: data,
             type,
             sourceNodeId: this.config.nodeId,
             sourceDc: this.config.dc,
-            hlc: { wallTime: Number(now.wallTime), logical: now.logical, nodeId: now.nodeId },
+            hlc: {
+              wallTime: Number(now.wallTime),
+              logical: now.logical,
+              nodeId: now.nodeId,
+            },
           })
         : data;
     const result = await this.replication.replicate(shardId, payload, type);
@@ -458,10 +469,14 @@ export class FederationManager {
         eventId: result.msgId,
         key,
         value: data,
-        type: type as "insert" | "update" | "delete",
+        type: type as 'insert' | 'update' | 'delete',
         sourceNodeId: this.config.nodeId,
         sourceDc: this.config.dc,
-        hlcTimestamp: { wallTime: Number(now.wallTime), logical: now.logical, nodeId: now.nodeId },
+        hlcTimestamp: {
+          wallTime: Number(now.wallTime),
+          logical: now.logical,
+          nodeId: now.nodeId,
+        },
         appliedAt: Date.now(),
       });
     }
@@ -481,7 +496,7 @@ export class FederationManager {
    */
   getCDC(): CDCManager {
     if (!this._cdcManager) {
-      throw new Error("CDCManager not started. Call start() first.");
+      throw new Error('CDCManager not started. Call start() first.');
     }
     return this._cdcManager;
   }
@@ -491,7 +506,7 @@ export class FederationManager {
    */
   getSplitBrainDetector(): DCSplitBrainDetector {
     if (!this._splitBrainDetector) {
-      throw new Error("DCSplitBrainDetector not started. Call start() first.");
+      throw new Error('DCSplitBrainDetector not started. Call start() first.');
     }
     return this._splitBrainDetector;
   }
@@ -501,7 +516,7 @@ export class FederationManager {
    */
   getConflictResolver(): ConflictResolver {
     if (!this._conflictResolver) {
-      throw new Error("ConflictResolver not initialized. Call start() first.");
+      throw new Error('ConflictResolver not initialized. Call start() first.');
     }
     return this._conflictResolver;
   }
@@ -511,7 +526,7 @@ export class FederationManager {
    */
   getAntiEntropy(): AntiEntropy {
     if (!this._antiEntropy) {
-      throw new Error("AntiEntropy not started. Call start() first.");
+      throw new Error('AntiEntropy not started. Call start() first.');
     }
     return this._antiEntropy;
   }
@@ -569,14 +584,23 @@ export class FederationManager {
    * Register a split-brain detection callback.
    */
   onSplitBrainDetected(callback: (event: SplitBrainEvent) => void): () => void {
-    this.emitter.on("split-brain-detected", callback);
-    return () => { this.emitter.off("split-brain-detected", callback); };
+    this.emitter.on('split-brain-detected', callback);
+    return () => {
+      this.emitter.off('split-brain-detected', callback);
+    };
   }
 
   /**
    * Get the local key-value store for AntiEntropy reconciliation.
    */
-  getLocalStore(): Map<string, { key: string; value: string; hlc: { wallTime: number; logical: number; nodeId: string } }> {
+  getLocalStore(): Map<
+    string,
+    {
+      key: string;
+      value: string;
+      hlc: { wallTime: number; logical: number; nodeId: string };
+    }
+  > {
     return this.localStore;
   }
 }
@@ -592,7 +616,7 @@ export class FederationManager {
  */
 export interface ReplicationEnvelope {
   /** Envelope marker + version, e.g. `"fb1"`. */
-  __fb: "fb1";
+  __fb: 'fb1';
   key: string;
   value: string;
   type: string;
@@ -601,8 +625,11 @@ export interface ReplicationEnvelope {
   hlc: { wallTime: number; logical: number; nodeId: string };
 }
 
-export function encodeEnvelope(envelope: Omit<ReplicationEnvelope, "__fb">): string {
-  return JSON.stringify({ __fb: "fb1", ...envelope } satisfies ReplicationEnvelope);
+export function encodeEnvelope(envelope: Omit<ReplicationEnvelope, '__fb'>): string {
+  return JSON.stringify({
+    __fb: 'fb1',
+    ...envelope,
+  } satisfies ReplicationEnvelope);
 }
 
 export function decodeEnvelope(
@@ -621,18 +648,18 @@ export function decodeEnvelope(
   const text = new TextDecoder().decode(payload);
 
   // Legacy frame: a bare value with no envelope (older producers).
-  if (!text.startsWith("{\"__fb\"")) {
+  if (!text.startsWith('{"__fb"')) {
     return {
       key: `legacy:${hash32(text)}`,
       value: text,
       type: fallbackType,
-      sourceNodeId: "unknown",
+      sourceNodeId: 'unknown',
     };
   }
 
   try {
     const parsed = JSON.parse(text) as ReplicationEnvelope;
-    if (parsed.__fb !== "fb1" || typeof parsed.key !== "string" || typeof parsed.value !== "string") {
+    if (parsed.__fb !== 'fb1' || typeof parsed.key !== 'string' || typeof parsed.value !== 'string') {
       return null;
     }
     return {

@@ -30,7 +30,11 @@ function makeSnapshot(overrides: Partial<BackupMetadata> & { snapshotId: string 
   };
 }
 
-function makeSnapshotAged(snapshotId: string, daysAgo: number, type: 'full' | 'incremental' | 'logical' = 'full'): BackupMetadata {
+function makeSnapshotAged(
+  snapshotId: string,
+  daysAgo: number,
+  type: 'full' | 'incremental' | 'logical' = 'full',
+): BackupMetadata {
   const d = new Date();
   d.setDate(d.getDate() - daysAgo);
   return {
@@ -53,7 +57,10 @@ describe('InMemoryBackupManager', () => {
 
   beforeEach(() => {
     storage = new InMemoryStorageBackend();
-    retention = new RetentionPolicyEvaluator({ maxFullSnapshots: 3, maxTotalBytes: 1_000_000_000 });
+    retention = new RetentionPolicyEvaluator({
+      maxFullSnapshots: 3,
+      maxTotalBytes: 1_000_000_000,
+    });
     manager = new InMemoryBackupManager(storage, retention);
   });
 
@@ -89,14 +96,14 @@ describe('InMemoryBackupManager', () => {
 
     const fulls = await manager.listBackups({ type: 'full' });
     expect(fulls.length).toBe(2);
-    fulls.forEach(s => expect(s.type).toBe('full'));
+    fulls.forEach((s) => expect(s.type).toBe('full'));
   });
 
   it('B3 — listBackups filters by newerThan', async () => {
     await manager.createBackup({ type: 'full' }); // T0
-    await new Promise(r => setTimeout(r, 15));
+    await new Promise((r) => setTimeout(r, 15));
     const mid = new Date().toISOString();
-    await new Promise(r => setTimeout(r, 15));
+    await new Promise((r) => setTimeout(r, 15));
     await manager.createBackup({ type: 'full' }); // T2
 
     const recent = await manager.listBackups({ newerThan: mid });
@@ -157,7 +164,10 @@ describe('InMemoryBackupManager', () => {
 
   // B8: prune respects retention policy
   it('B8 — prune respects retention policy (correct count deleted)', async () => {
-    const strictRetention = new RetentionPolicyEvaluator({ maxFullSnapshots: 2, maxTotalBytes: 1_000_000_000 });
+    const strictRetention = new RetentionPolicyEvaluator({
+      maxFullSnapshots: 2,
+      maxTotalBytes: 1_000_000_000,
+    });
     const m = new InMemoryBackupManager(new InMemoryStorageBackend(), strictRetention);
 
     await m.createBackup({ type: 'full' }); // 1
@@ -335,7 +345,10 @@ describe('InMemoryStorageBackend', () => {
 describe('RetentionPolicyEvaluator', () => {
   // B14: maxFullSnapshots enforced
   it('B14 — keeps only maxFullSnapshots full snapshots', () => {
-    const policy: RetentionPolicy = { maxFullSnapshots: 2, maxTotalBytes: 1_000_000_000 };
+    const policy: RetentionPolicy = {
+      maxFullSnapshots: 2,
+      maxTotalBytes: 1_000_000_000,
+    };
     const evaluator = new RetentionPolicyEvaluator(policy);
 
     const snapshots: BackupMetadata[] = [
@@ -348,7 +361,7 @@ describe('RetentionPolicyEvaluator', () => {
     const toDelete = evaluator.evaluate(snapshots);
     // 4 full snapshots, maxFullSnapshots=2 → 2 should be deleted
     expect(toDelete.length).toBe(2);
-    const deletedIds = toDelete.map(s => s.snapshotId);
+    const deletedIds = toDelete.map((s) => s.snapshotId);
     // The oldest 2 should be deleted
     expect(deletedIds).toContain('s1');
     expect(deletedIds).toContain('s2');
@@ -365,9 +378,9 @@ describe('RetentionPolicyEvaluator', () => {
     const evaluator = new RetentionPolicyEvaluator(policy);
 
     const snapshots: BackupMetadata[] = [
-      makeSnapshotAged('old-snap', 60),    // 60 days old → exceeds keepRecent
+      makeSnapshotAged('old-snap', 60), // 60 days old → exceeds keepRecent
       makeSnapshotAged('recent-snap', 10), // 10 days old → within keepRecent
-      makeSnapshotAged('newest-snap', 1),  // 1 day old → kept by maxFullSnapshots
+      makeSnapshotAged('newest-snap', 1), // 1 day old → kept by maxFullSnapshots
     ];
 
     const toDelete = evaluator.evaluate(snapshots);
@@ -380,7 +393,10 @@ describe('RetentionPolicyEvaluator', () => {
   });
 
   it('returns empty array for empty input', () => {
-    const evaluator = new RetentionPolicyEvaluator({ maxFullSnapshots: 5, maxTotalBytes: 1_000_000_000 });
+    const evaluator = new RetentionPolicyEvaluator({
+      maxFullSnapshots: 5,
+      maxTotalBytes: 1_000_000_000,
+    });
     const result = evaluator.evaluate([]);
     expect(result).toEqual([]);
   });
@@ -393,10 +409,7 @@ describe('RetentionPolicyEvaluator', () => {
     };
     const evaluator = new RetentionPolicyEvaluator(policy);
 
-    const snapshots: BackupMetadata[] = [
-      makeSnapshotAged('young', 5),
-      makeSnapshotAged('old', 20),
-    ];
+    const snapshots: BackupMetadata[] = [makeSnapshotAged('young', 5), makeSnapshotAged('old', 20)];
 
     const toDelete = evaluator.evaluate(snapshots);
     // Both exceed maxFullSnapshots=0
@@ -407,7 +420,10 @@ describe('RetentionPolicyEvaluator', () => {
   });
 
   it('getConfig returns current policy', () => {
-    const policy: RetentionPolicy = { maxFullSnapshots: 5, maxTotalBytes: 500_000 };
+    const policy: RetentionPolicy = {
+      maxFullSnapshots: 5,
+      maxTotalBytes: 500_000,
+    };
     const evaluator = new RetentionPolicyEvaluator(policy);
     const config = evaluator.getConfig();
     expect(config.maxFullSnapshots).toBe(5);
@@ -415,7 +431,10 @@ describe('RetentionPolicyEvaluator', () => {
   });
 
   it('updateConfig merges new values', () => {
-    const evaluator = new RetentionPolicyEvaluator({ maxFullSnapshots: 3, maxTotalBytes: 100 });
+    const evaluator = new RetentionPolicyEvaluator({
+      maxFullSnapshots: 3,
+      maxTotalBytes: 100,
+    });
     evaluator.updateConfig({ maxFullSnapshots: 10 });
     const config = evaluator.getConfig();
     expect(config.maxFullSnapshots).toBe(10);

@@ -17,8 +17,8 @@
  * implementation for the bridge logic.
  */
 
-import type { IFederationConsumer, ReplicatedEntry, ConflictEntry } from "../core/FederationManager";
-import { HLC } from "../hlc/HLC";
+import type { IFederationConsumer, ReplicatedEntry, ConflictEntry } from '../core/FederationManager';
+import { HLC } from '../hlc/HLC';
 
 /**
  * The minimal interface that graphvec-db must expose for federation.
@@ -68,7 +68,7 @@ export class GraphVecFederationConsumer implements IFederationConsumer {
       type: entry.type,
     });
 
-    await this.config.consensusProvider.propose("federation", payload);
+    await this.config.consensusProvider.propose('federation', payload);
   }
 
   getHLC(): HLC {
@@ -82,6 +82,6 @@ export class GraphVecFederationConsumer implements IFederationConsumer {
       key: conflict.key,
     });
 
-    await this.config.consensusProvider.propose("federation", payload);
+    await this.config.consensusProvider.propose('federation', payload);
   }
 }

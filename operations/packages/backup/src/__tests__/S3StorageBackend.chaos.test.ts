@@ -33,17 +33,26 @@ vi.mock('@aws-sdk/client-s3', () => {
 
       if (_mockShouldFail) {
         _mockShouldFail = false;
-        throw Object.assign(new Error('Connection timed out'), { code: 'Timeout' });
+        throw Object.assign(new Error('Connection timed out'), {
+          code: 'Timeout',
+        });
       }
 
       switch (cmdName) {
         case 'CreateBucketCommand':
           return {};
         case 'PutObjectCommand':
-          putObjectCalls.push({ Bucket: command.input.Bucket, Key: command.input.Key });
+          putObjectCalls.push({
+            Bucket: command.input.Bucket,
+            Key: command.input.Key,
+          });
           return { ETag: '"mock-etag"' };
         case 'GetObjectCommand':
-          return { Body: { transformToByteArray: async () => Buffer.from('mock-data') } };
+          return {
+            Body: {
+              transformToByteArray: async () => Buffer.from('mock-data'),
+            },
+          };
         case 'HeadObjectCommand':
           return { ContentLength: 9, ETag: '"mock-etag"' };
         default:
@@ -54,20 +63,72 @@ vi.mock('@aws-sdk/client-s3', () => {
 
   return {
     S3Client: MockS3Client,
-    PutObjectCommand: class { input: any; constructor(i: any) { this.input = i; } },
-    GetObjectCommand: class { input: any; constructor(i: any) { this.input = i; } },
-    ListObjectsV2Command: class { input: any; constructor(i: any) { this.input = i; } },
-    DeleteObjectCommand: class { input: any; constructor(i: any) { this.input = i; } },
-    HeadObjectCommand: class { input: any; constructor(i: any) { this.input = i; } },
-    CreateMultipartUploadCommand: class { input: any; constructor(i: any) { this.input = i; } },
-    UploadPartCommand: class { input: any; constructor(i: any) { this.input = i; } },
-    CompleteMultipartUploadCommand: class { input: any; constructor(i: any) { this.input = i; } },
-    AbortMultipartUploadCommand: class { input: any; constructor(i: any) { this.input = i; } },
+    PutObjectCommand: class {
+      input: any;
+      constructor(i: any) {
+        this.input = i;
+      }
+    },
+    GetObjectCommand: class {
+      input: any;
+      constructor(i: any) {
+        this.input = i;
+      }
+    },
+    ListObjectsV2Command: class {
+      input: any;
+      constructor(i: any) {
+        this.input = i;
+      }
+    },
+    DeleteObjectCommand: class {
+      input: any;
+      constructor(i: any) {
+        this.input = i;
+      }
+    },
+    HeadObjectCommand: class {
+      input: any;
+      constructor(i: any) {
+        this.input = i;
+      }
+    },
+    CreateMultipartUploadCommand: class {
+      input: any;
+      constructor(i: any) {
+        this.input = i;
+      }
+    },
+    UploadPartCommand: class {
+      input: any;
+      constructor(i: any) {
+        this.input = i;
+      }
+    },
+    CompleteMultipartUploadCommand: class {
+      input: any;
+      constructor(i: any) {
+        this.input = i;
+      }
+    },
+    AbortMultipartUploadCommand: class {
+      input: any;
+      constructor(i: any) {
+        this.input = i;
+      }
+    },
   };
 });
 
 vi.mock('@aws-sdk/lib-storage', () => {
-  return { Upload: class { constructor(public opts: any) {} async done() { return {}; } } };
+  return {
+    Upload: class {
+      constructor(public opts: any) {}
+      async done() {
+        return {};
+      }
+    },
+  };
 });
 
 function createTempFile(content: string): string {
@@ -78,7 +139,11 @@ function createTempFile(content: string): string {
 }
 
 function cleanupTempFile(path: string): void {
-  try { rmSync(join(path, '..'), { recursive: true, force: true }); } catch { /* ignore */ }
+  try {
+    rmSync(join(path, '..'), { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
 }
 
 describe('S3StorageBackend Chaos (D2)', () => {
@@ -105,10 +170,10 @@ describe('S3StorageBackend Chaos (D2)', () => {
 
     // S1: Backend remains usable after a timeout
     // Next call should succeed (fault is one-shot)
-    setImmediate(() => { _mockShouldFail = false; });
-    await expect(
-      backend.upload(tmpFile, 'test/recovery-key'),
-    ).resolves.not.toThrow();
+    setImmediate(() => {
+      _mockShouldFail = false;
+    });
+    await expect(backend.upload(tmpFile, 'test/recovery-key')).resolves.not.toThrow();
 
     cleanupTempFile(tmpFile);
   });
@@ -141,9 +206,7 @@ describe('S3StorageBackend Chaos (D2)', () => {
     });
 
     const tmpFile = createTempFile('small data');
-    await expect(
-      backend.upload(tmpFile, 'test/single-key'),
-    ).resolves.not.toThrow();
+    await expect(backend.upload(tmpFile, 'test/single-key')).resolves.not.toThrow();
 
     cleanupTempFile(tmpFile);
   });

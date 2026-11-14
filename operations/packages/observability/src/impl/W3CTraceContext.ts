@@ -1,32 +1,32 @@
 /**
- * W3C TraceContext — 全链路分布式追踪传播。
+ * W3C TraceContext — end-to-end distributed trace propagation.
  *
- * 实现 W3C Trace Context Level 2 规范：
+ * Implements the W3C Trace Context Level 2 specification:
  * https://www.w3.org/TR/trace-context-2/
  *
- * traceparent 格式: 00-{traceId}-{parentSpanId}-{traceFlags}
- *   - version: 2 hex chars (固定 00)
+ * traceparent format: 00-{traceId}-{parentSpanId}-{traceFlags}
+ *   - version: 2 hex chars (always 00)
  *   - traceId: 32 hex chars
  *   - parentSpanId: 16 hex chars
  *   - traceFlags: 2 hex chars (01 = sampled)
  *
- * 与 OTel TraceContext 兼容。
+ * Compatible with the OTel TraceContext.
  *
  * @module observability/trace
  */
 
-// ── 类型 ──────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────
 
 export interface ITraceContextProvider {
-  /** 获取当前 traceparent header value */
+  /** Current traceparent header value */
   getTraceParent(): string;
-  /** 获取 traceId */
+  /** traceId */
   getTraceId(): string;
-  /** 获取当前 spanId */
+  /** Current spanId */
   getSpanId(): string;
-  /** 创建子 span */
+  /** Create a child span */
   createChildSpan(name: string, attributes?: Record<string, string | number | boolean>): ISpan;
-  /** 从 traceparent 恢复上下文 */
+  /** Restore context from a traceparent value */
   extract(traceParent: string): void;
 }
 
@@ -48,10 +48,14 @@ export interface SpanData {
   status: 'ok' | 'error';
   errorMessage?: string;
   attributes: Record<string, string | number | boolean>;
-  events: Array<{ name: string; timestamp: number; attributes?: Record<string, string> }>;
+  events: Array<{
+    name: string;
+    timestamp: number;
+    attributes?: Record<string, string>;
+  }>;
 }
 
-// ── 工具函数 ──────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────
 
 function hex(n: number, len: number): string {
   return n.toString(16).padStart(len, '0');
@@ -60,12 +64,12 @@ function hex(n: number, len: number): string {
 function randomHex(len: number): string {
   const bytes = new Uint8Array(len / 2);
   crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => hex(b, 2)).join('');
+  return Array.from(bytes, (b) => hex(b, 2)).join('');
 }
 
 const TRACEPARENT_REGEX = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
 
-// ── 实现 ──────────────────────────────────────────────────────────
+// ── Implementation ─────────────────────────────────────────────────
 
 export class W3CTraceContextProvider implements ITraceContextProvider {
   private _traceId: string;
@@ -89,10 +93,7 @@ export class W3CTraceContextProvider implements ITraceContextProvider {
     return this._currentSpanId;
   }
 
-  createChildSpan(
-    name: string,
-    attributes?: Record<string, string | number | boolean>,
-  ): ISpan {
+  createChildSpan(name: string, attributes?: Record<string, string | number | boolean>): ISpan {
     const parentSpanId = this._currentSpanId;
     const spanId = randomHex(16);
 
@@ -110,29 +111,27 @@ export class W3CTraceContextProvider implements ITraceContextProvider {
     this._spans.push(span);
     this._currentSpanId = spanId;
 
-    const self = this;
+    // Methods are arrows so the span closes over this context instead of
+    // aliasing `this` to a local variable.
+    const traceId = this._traceId;
     let ended = false;
 
     return {
-      getTraceParent(): string {
-        return `00-${self._traceId}-${spanId}-01`;
-      },
+      getTraceParent: (): string => `00-${traceId}-${spanId}-01`,
 
-      getSpanId(): string {
-        return spanId;
-      },
+      getSpanId: (): string => spanId,
 
-      end(status?: 'ok' | 'error', errorMessage?: string): void {
+      end: (status?: 'ok' | 'error', errorMessage?: string): void => {
         if (ended) return;
         ended = true;
         span.endTime = Date.now();
         // Only override status if explicitly provided
         if (status !== undefined) span.status = status;
         if (errorMessage !== undefined) span.errorMessage = errorMessage;
-        self._currentSpanId = parentSpanId;
+        this._currentSpanId = parentSpanId;
       },
 
-      addEvent(name: string, attrs?: Record<string, string>): void {
+      addEvent: (name: string, attrs?: Record<string, string>): void => {
         span.events.push({
           name,
           timestamp: Date.now(),
@@ -140,7 +139,7 @@ export class W3CTraceContextProvider implements ITraceContextProvider {
         });
       },
 
-      setStatus(code: 'ok' | 'error', description?: string): void {
+      setStatus: (code: 'ok' | 'error', description?: string): void => {
         span.status = code;
         if (description) span.errorMessage = description;
       },
@@ -156,19 +155,19 @@ export class W3CTraceContextProvider implements ITraceContextProvider {
     this._currentSpanId = match[2]!;
   }
 
-  /** 导出所有 span 数据（测试/诊断用） */
+  /** Export every span (for tests and diagnostics) */
   flush(): SpanData[] {
     const result = [...this._spans];
     this._spans = [];
     return result;
   }
 
-  /** 获取所有未结束的 span */
+  /** Every span that has not ended yet */
   getActiveSpans(): SpanData[] {
-    return this._spans.filter(s => !s.endTime);
+    return this._spans.filter((s) => !s.endTime);
   }
 
-  /** 获取 span 数量 */
+  /** Number of spans */
   spanCount(): number {
     return this._spans.length;
   }

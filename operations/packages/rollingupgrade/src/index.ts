@@ -1,4 +1,4 @@
-export type { IRollingUpgrade } from "./interfaces/index.js";
+export type { IRollingUpgrade } from './interfaces/index.js';
 export type {
   RollingUpgradePlan,
   RollingUpgradeStats,
@@ -12,6 +12,6 @@ export type {
   DrainConfig,
   BatchStrategy,
   RollbackTrigger,
-} from "./interfaces/types.js";
-export { RollingUpgradeOrchestrator } from "./impl/RollingUpgradeOrchestrator.js";
-export { InMemoryRollingUpgrade } from "./impl/InMemoryRollingUpgrade.js";
+} from './interfaces/types.js';
+export { RollingUpgradeOrchestrator } from './impl/RollingUpgradeOrchestrator.js';
+export { InMemoryRollingUpgrade } from './impl/InMemoryRollingUpgrade.js';

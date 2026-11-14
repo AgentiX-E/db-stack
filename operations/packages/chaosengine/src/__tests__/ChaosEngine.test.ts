@@ -22,7 +22,11 @@ describe('InMemoryChaosEngine', () => {
 
   it('adds fault to history after injection', async () => {
     const engine = new InMemoryChaosEngine();
-    await engine.inject({ type: 'error', target: 'write-endpoint', durationMs: 500 });
+    await engine.inject({
+      type: 'error',
+      target: 'write-endpoint',
+      durationMs: 500,
+    });
     expect(engine.getHistory()).toHaveLength(1);
   });
 
@@ -30,7 +34,11 @@ describe('InMemoryChaosEngine', () => {
     const engine = new InMemoryChaosEngine();
     await engine.inject({ type: 'latency', target: 'db-1', durationMs: 100 });
     await engine.inject({ type: 'crash', target: 'node-3', durationMs: 0 });
-    await engine.inject({ type: 'partition', target: 'replica-2', durationMs: 5000 });
+    await engine.inject({
+      type: 'partition',
+      target: 'replica-2',
+      durationMs: 5000,
+    });
     expect(engine.getActiveFaults()).toHaveLength(3);
   });
 
@@ -77,7 +85,11 @@ describe('InMemoryChaosEngine', () => {
 
   it('handles resource_exhaustion fault type', async () => {
     const engine = new InMemoryChaosEngine();
-    await engine.inject({ type: 'resource_exhaustion', target: 'disk', durationMs: 60000 });
+    await engine.inject({
+      type: 'resource_exhaustion',
+      target: 'disk',
+      durationMs: 60000,
+    });
     expect(engine.getActiveFaults()).toHaveLength(1);
   });
 });

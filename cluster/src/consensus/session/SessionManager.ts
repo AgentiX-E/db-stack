@@ -1,25 +1,25 @@
 /**
- * SessionManager — 共识会话管理器。
- * 
- * 提供高并发的 session 生命周期管理：
+ * SessionManager — consensus session manager.
+ *
+ * Provides highly concurrent session lifecycle management:
  * - O(1) create / get / delete
- * - 可配置的 TTL + 滑动过期
- * - exactly-once 过期回调
- * - 内存安全的批量清理
+ * - configurable TTL with sliding expiry
+ * - exactly-once expiry callbacks
+ * - memory-safe bulk cleanup
  *
  * @module consensus/session
  */
 
-// ── 接口 ──────────────────────────────────────────────────────────
+// ── Interfaces ─────────────────────────────────────────────────────
 
 export interface SessionConfig {
-  /** 会话存活时间 (ms) */
+  /** Session time-to-live (ms) */
   ttlMs: number;
-  /** 是否启用滑动过期（每次访问重置 TTL） */
+  /** Whether sliding expiry is enabled (every access resets the TTL) */
   slidingExpiry?: boolean;
-  /** 定期清理间隔 (ms)，0 表示不自动清理 */
+  /** Periodic cleanup interval (ms); 0 disables automatic cleanup */
   cleanupIntervalMs?: number;
-  /** 最大并发 session 数，超过后拒绝创建 */
+  /** Maximum number of concurrent sessions; creation is rejected beyond it */
   maxSessions?: number;
 }
 
@@ -35,53 +35,53 @@ export type SessionExpiryHandler = (session: SessionEntry) => void;
 
 export interface ISessionManager {
   /**
-   * 创建新 session。
-   * @param id — 唯一标识
-   * @param metadata — 附加元数据
+   * Create a new session.
+   * @param id — unique identifier
+   * @param metadata — caller-supplied metadata
    * @returns SessionEntry
-   * @throws 如果 id 已存在或超过 maxSessions
+   * @throws if the id already exists or maxSessions is exceeded
    */
   create(id: string, metadata?: Record<string, unknown>): SessionEntry;
 
   /**
-   * 获取 session（如果存在且未过期）。
-   * 如果 slidingExpiry，自动延长过期时间。
+   * Fetch a session if it exists and has not expired.
+   * With slidingExpiry enabled the expiry is extended automatically.
    */
   get(id: string): SessionEntry | null;
 
   /**
-   * 删除 session。
-   * @returns 被删除的 session（如果存在且未过期）
+   * Delete a session.
+   * @returns the removed session (if it existed and had not expired)
    */
   delete(id: string): SessionEntry | null;
 
   /**
-   * 延长 session 过期时间。
+   * Extend the expiry of a session.
    */
   extend(id: string): boolean;
 
   /**
-   * 注册过期回调（每个 session 只触发一次）。
+   * Register an expiry callback (fires at most once per session).
    */
   onExpiry(handler: SessionExpiryHandler): () => void;
 
   /**
-   * 获取当前活跃 session 数量。
+   * Number of currently active sessions.
    */
   activeCount(): number;
 
   /**
-   * 强制清理所有过期 session。
+   * Force a sweep of every expired session.
    */
   cleanup(): number;
 
   /**
-   * 关闭 session manager（停止定时清理、释放所有资源）。
+   * Close the session manager (stops the timer and releases all resources).
    */
   shutdown(): void;
 }
 
-// ── 实现 ──────────────────────────────────────────────────────────
+// ── Implementation ─────────────────────────────────────────────────
 
 export class SessionManager implements ISessionManager {
   private _sessions = new Map<string, SessionEntry>();
@@ -89,7 +89,7 @@ export class SessionManager implements ISessionManager {
   private _expiryHandlers: SessionExpiryHandler[] = [];
   private _cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private _shutdown = false;
-  private _expiredIds = new Set<string>(); // exactly-once 保证
+  private _expiredIds = new Set<string>(); // exactly-once guarantee
 
   constructor(config: SessionConfig) {
     this._config = {
@@ -103,7 +103,7 @@ export class SessionManager implements ISessionManager {
       this._cleanupTimer = setInterval(() => {
         if (!this._shutdown) this.cleanup();
       }, this._config.cleanupIntervalMs);
-      // Node.js timer 不阻止进程退出
+      // A Node.js timer must not keep the process alive
       if (this._cleanupTimer && typeof this._cleanupTimer === 'object') {
         (this._cleanupTimer as any).unref?.();
       }
@@ -115,14 +115,14 @@ export class SessionManager implements ISessionManager {
       throw new Error('SessionManager is shut down');
     }
 
-    // 先清理同一个 id 的旧 session
+    // Drop any previous session with the same id first
     if (this._sessions.has(id)) {
       throw new Error(`Session '${id}' already exists`);
     }
 
-    // 检查容量
+    // Enforce capacity
     if (this._config.maxSessions > 0 && this._sessions.size >= this._config.maxSessions) {
-      // 尝试先清理过期 session
+      // Try to reclaim expired sessions first
       this.cleanup();
       if (this._sessions.size >= this._config.maxSessions) {
         throw new Error(`Max sessions (${this._config.maxSessions}) reached`);
@@ -139,7 +139,7 @@ export class SessionManager implements ISessionManager {
     };
 
     this._sessions.set(id, entry);
-    this._expiredIds.delete(id); // 如果是重新创建
+    this._expiredIds.delete(id); // the id is being created again
     return { ...entry };
   }
 
@@ -149,13 +149,13 @@ export class SessionManager implements ISessionManager {
     const entry = this._sessions.get(id);
     if (!entry) return null;
 
-    // 检查过期
+    // Check expiry
     if (Date.now() > entry.expiresAt) {
       this._expireOne(entry);
       return null;
     }
 
-    // 滑动过期：重置 TTL
+    // Sliding expiry: reset the TTL
     if (this._config.slidingExpiry) {
       entry.lastAccessAt = Date.now();
       entry.expiresAt = entry.lastAccessAt + this._config.ttlMs;
@@ -226,7 +226,7 @@ export class SessionManager implements ISessionManager {
   }
 
   private _expireOne(entry: SessionEntry): void {
-    // exactly-once：每个 session 只触发一次过期回调
+    // exactly-once: the expiry callback fires once per session
     if (this._expiredIds.has(entry.id)) return;
     this._expiredIds.add(entry.id);
 
@@ -234,7 +234,7 @@ export class SessionManager implements ISessionManager {
       try {
         handler({ ...entry });
       } catch {
-        // 回调异常不阻断其他处理
+        // A throwing callback must not block the rest of the sweep
       }
     }
   }

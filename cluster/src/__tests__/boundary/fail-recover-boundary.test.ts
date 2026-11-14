@@ -100,9 +100,7 @@ describe('Boundary: Fail-Recover Cycles', () => {
       return { successes, crashes: 1, electionMs };
     }
 
-    console.log(
-      `[FC] ${cycleLabel}: new leader node-${newLeader.id} elected in ${electionMs}ms`,
-    );
+    console.log(`[FC] ${cycleLabel}: new leader node-${newLeader.id} elected in ${electionMs}ms`);
 
     return { successes, crashes: 1, electionMs };
   }
@@ -122,10 +120,7 @@ describe('Boundary: Fail-Recover Cycles', () => {
         expect(result.electionMs).toBeLessThan(30_000);
       }
 
-      console.log(
-        `[FC.1] ${totalSuccesses} entries across 5 cycles, ` +
-        `max election ${maxElectionMs}ms`,
-      );
+      console.log(`[FC.1] ${totalSuccesses} entries across 5 cycles, ` + `max election ${maxElectionMs}ms`);
 
       expect(totalSuccesses).toBeGreaterThan(500); // at least 50% of entries
       expect(totalCrashes).toBe(5);
@@ -147,10 +142,7 @@ describe('Boundary: Fail-Recover Cycles', () => {
         expect(result.electionMs).toBeLessThan(30_000);
       }
 
-      console.log(
-        `[FC.2] ${totalSuccesses} entries across 10 cycles, ` +
-        `max election ${maxElectionMs}ms`,
-      );
+      console.log(`[FC.2] ${totalSuccesses} entries across 10 cycles, ` + `max election ${maxElectionMs}ms`);
 
       expect(totalSuccesses).toBeGreaterThan(500);
       expect(maxElectionMs).toBeLessThan(30_000);
@@ -172,10 +164,7 @@ describe('Boundary: Fail-Recover Cycles', () => {
         expect(result.electionMs).toBeLessThan(45_000);
       }
 
-      console.log(
-        `[FC.3] ${totalSuccesses} entries across 20 cycles, ` +
-        `max election ${maxElectionMs}ms`,
-      );
+      console.log(`[FC.3] ${totalSuccesses} entries across 20 cycles, ` + `max election ${maxElectionMs}ms`);
 
       expect(totalSuccesses).toBeGreaterThan(500);
       expect(maxElectionMs).toBeLessThan(45_000);

@@ -25,12 +25,18 @@ import type {
   PauseRequest,
   RecurrenceMode,
   DayOfWeek,
-} from "../interfaces/IMaintenanceScheduler.js";
+} from '../interfaces/IMaintenanceScheduler.js';
 
 // ── Constants ───────────────────────────────────────────────
 
 const DAY_INDEX: Record<DayOfWeek, number> = {
-  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6,
 };
 
 const MINUTE_MS = 60_000;
@@ -49,12 +55,12 @@ interface CronSchedule {
 
 function parseCronField(field: string, min: number, max: number): Set<number> {
   const result = new Set<number>();
-  const parts = field.split(",");
+  const parts = field.split(',');
   for (const part of parts) {
-    if (part === "*") {
+    if (part === '*') {
       for (let i = min; i <= max; i++) result.add(i);
-    } else if (part.includes("/")) {
-      const [range, stepStr] = part.split("/");
+    } else if (part.includes('/')) {
+      const [range, stepStr] = part.split('/');
       // Malformed step expressions ("/5", "*/", "1-5/x") are skipped rather
       // than throwing inside the cron parser.
       if (range === undefined || stepStr === undefined) continue;
@@ -62,9 +68,9 @@ function parseCronField(field: string, min: number, max: number): Set<number> {
       if (!Number.isFinite(step) || step <= 0) continue;
       let rangeMin = min;
       let rangeMax = max;
-      if (range !== "*") {
-        if (range.includes("-")) {
-          const [rMin, rMax] = range.split("-");
+      if (range !== '*') {
+        if (range.includes('-')) {
+          const [rMin, rMax] = range.split('-');
           if (rMin === undefined || rMax === undefined) continue;
           rangeMin = parseInt(rMin, 10);
           rangeMax = parseInt(rMax, 10);
@@ -76,8 +82,8 @@ function parseCronField(field: string, min: number, max: number): Set<number> {
       for (let i = rangeMin; i <= rangeMax; i += step) {
         if (i >= min && i <= max) result.add(i);
       }
-    } else if (part.includes("-")) {
-      const [start, end] = part.split("-");
+    } else if (part.includes('-')) {
+      const [start, end] = part.split('-');
       for (let i = Math.max(parseInt(start!, 10), min); i <= Math.min(parseInt(end!, 10), max); i++) {
         result.add(i);
       }
@@ -122,20 +128,20 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
 
   approveWindow(instanceId: string, approvedBy: string): void {
     const inst = this._getInstance(instanceId);
-    if (inst.state !== "pending") {
+    if (inst.state !== 'pending') {
       throw new Error(`Cannot approve instance in state "${inst.state}"`);
     }
-    inst.state = "approved";
+    inst.state = 'approved';
     inst.approvedBy = approvedBy;
     inst.approvedAt = Date.now();
   }
 
   cancelWindow(instanceId: string, reason: string): void {
     const inst = this._getInstance(instanceId);
-    if (inst.state === "completed" || inst.state === "cancelled") {
+    if (inst.state === 'completed' || inst.state === 'cancelled') {
       throw new Error(`Cannot cancel instance in state "${inst.state}"`);
     }
-    inst.state = "cancelled";
+    inst.state = 'cancelled';
     inst.error = reason;
     inst.actualEnd = Date.now();
   }
@@ -149,7 +155,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
    * maintenance window finishes.
    */
   completeWindow(instanceId: string): WindowInstance {
-    return this._finishInstance(instanceId, "completed");
+    return this._finishInstance(instanceId, 'completed');
   }
 
   /**
@@ -160,20 +166,16 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
    * reflects reality.
    */
   failWindow(instanceId: string, reason: string): WindowInstance {
-    return this._finishInstance(instanceId, "failed", reason);
+    return this._finishInstance(instanceId, 'failed', reason);
   }
 
   /** Shared terminal transition for `completeWindow` / `failWindow`. */
-  private _finishInstance(
-    instanceId: string,
-    state: "completed" | "failed",
-    reason?: string,
-  ): WindowInstance {
+  private _finishInstance(instanceId: string, state: 'completed' | 'failed', reason?: string): WindowInstance {
     const inst = this._getInstance(instanceId);
-    if (inst.state === "completed" || inst.state === "failed") {
+    if (inst.state === 'completed' || inst.state === 'failed') {
       throw new Error(`Cannot finish instance in state "${inst.state}"`);
     }
-    if (inst.state === "cancelled") {
+    if (inst.state === 'cancelled') {
       throw new Error(`Cannot finish instance in state "${inst.state}"`);
     }
     inst.state = state;
@@ -188,7 +190,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     const instance: WindowInstance = {
       id: this._nextInstanceId(),
       windowId: win.id,
-      state: "force_override",
+      state: 'force_override',
       scheduledStart: now,
       scheduledEnd: win.maxDurationMin > 0 ? now + win.maxDurationMin * MINUTE_MS : now + HOUR_MS,
       actualStart: now,
@@ -219,25 +221,35 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
   checkConflict(a: WindowOccurrence, b: WindowOccurrence): WindowConflict {
     const sameWindow = a.windowId === b.windowId;
     if (sameWindow) {
-      return { hasConflict: false, conflictingWindowIds: [], description: "Same window", recommendation: "coexist" };
+      return {
+        hasConflict: false,
+        conflictingWindowIds: [],
+        description: 'Same window',
+        recommendation: 'coexist',
+      };
     }
 
     const aBeforeBEnd = a.start < b.end;
     const bBeforeAEnd = b.start < a.end;
     const overlap = aBeforeBEnd && bBeforeAEnd;
     if (!overlap) {
-      return { hasConflict: false, conflictingWindowIds: [], description: "No overlap", recommendation: "coexist" };
+      return {
+        hasConflict: false,
+        conflictingWindowIds: [],
+        description: 'No overlap',
+        recommendation: 'coexist',
+      };
     }
 
     const bothHighPriority = a.priority > 5 && b.priority > 5;
     const equalPriority = a.priority === b.priority;
-    let recommendation: WindowConflict["recommendation"];
+    let recommendation: WindowConflict['recommendation'];
     if (bothHighPriority) {
-      recommendation = "coexist";
+      recommendation = 'coexist';
     } else if (equalPriority) {
-      recommendation = "split";
+      recommendation = 'split';
     } else {
-      recommendation = "defer";
+      recommendation = 'defer';
     }
 
     return {
@@ -262,15 +274,12 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     return conflicts;
   }
 
-  resolveConflict(
-    conflict: WindowConflict,
-    strategy: "defer_lower" | "defer_newer" | "allow_both",
-  ): void {
+  resolveConflict(conflict: WindowConflict, strategy: 'defer_lower' | 'defer_newer' | 'allow_both'): void {
     if (!conflict.hasConflict) return;
-    if (strategy === "allow_both") return;
+    if (strategy === 'allow_both') return;
 
-    const isLowerStrategy = strategy === "defer_lower";
-    const isNewerStrategy = strategy === "defer_newer";
+    const isLowerStrategy = strategy === 'defer_lower';
+    const isNewerStrategy = strategy === 'defer_newer';
 
     if (isLowerStrategy) {
       const winA = this.windows.get(conflict.conflictingWindowIds[0]!);
@@ -280,11 +289,11 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
         const lowerAlone = winA.priority < winB.priority;
         const deferWin = lowerAlone ? winA : winB;
         for (const inst of this._getMutableInstances(deferWin.id)) {
-          const isSched = inst.state === "scheduled";
-          const isApproved = inst.state === "approved";
+          const isSched = inst.state === 'scheduled';
+          const isApproved = inst.state === 'approved';
           if (isSched || isApproved) {
-            inst.state = "cancelled";
-            inst.error = "Deferred due to conflict with higher-priority window";
+            inst.state = 'cancelled';
+            inst.error = 'Deferred due to conflict with higher-priority window';
           }
         }
       }
@@ -300,8 +309,8 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
         let newest: WindowInstance | null = null;
         let newestStart: number | null = null;
         for (const i of instances) {
-          const sched = i.state === "scheduled";
-          const approved = i.state === "approved";
+          const sched = i.state === 'scheduled';
+          const approved = i.state === 'approved';
           if (sched || approved) {
             const startVal = i.scheduledStart ?? 0;
             if (newestStart === null || startVal > newestStart) {
@@ -311,8 +320,8 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
           }
         }
         if (newest !== null) {
-          newest.state = "cancelled";
-          newest.error = "Deferred due to newer window conflict";
+          newest.state = 'cancelled';
+          newest.error = 'Deferred due to newer window conflict';
         }
       }
     }
@@ -355,11 +364,11 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       pendingApprovals: 0,
     };
     for (const i of allInstances) {
-      if (i.state === "in_progress" || i.state === "scheduled") counts.active++;
-      if (i.state === "completed") counts.completed++;
-      if (i.state === "failed") counts.failed++;
-      if (i.state === "cancelled") counts.cancelled++;
-      if (i.state === "pending") counts.pendingApprovals++;
+      if (i.state === 'in_progress' || i.state === 'scheduled') counts.active++;
+      if (i.state === 'completed') counts.completed++;
+      if (i.state === 'failed') counts.failed++;
+      if (i.state === 'cancelled') counts.cancelled++;
+      if (i.state === 'pending') counts.pendingApprovals++;
     }
     return {
       totalWindows: this.windows.size,
@@ -375,27 +384,23 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
 
   // ── Internal: Projection ─────────────────────────────────
 
-  private _projectOccurrences(
-    win: MaintenanceWindow,
-    fromMs: number,
-    toMs: number,
-  ): WindowOccurrence[] {
+  private _projectOccurrences(win: MaintenanceWindow, fromMs: number, toMs: number): WindowOccurrence[] {
     const results: WindowOccurrence[] = [];
 
     switch (win.recurrence) {
-      case "once":
+      case 'once':
         this._projectOnce(win, results, fromMs, toMs);
         break;
-      case "daily":
+      case 'daily':
         this._projectDaily(win, results, fromMs, toMs);
         break;
-      case "weekly":
+      case 'weekly':
         this._projectWeekly(win, results, fromMs, toMs);
         break;
-      case "monthly":
+      case 'monthly':
         this._projectMonthly(win, results, fromMs, toMs);
         break;
-      case "cron":
+      case 'cron':
         this._projectCron(win, results, fromMs, toMs);
         break;
     }
@@ -403,12 +408,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     return results;
   }
 
-  private _projectOnce(
-    win: MaintenanceWindow,
-    out: WindowOccurrence[],
-    fromMs: number,
-    toMs: number,
-  ): void {
+  private _projectOnce(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
     const start = new Date(win.at!).getTime();
     if (isNaN(start)) return;
     // Extract interval condition: start is inside [fromMs, toMs)
@@ -419,13 +419,8 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     }
   }
 
-  private _projectDaily(
-    win: MaintenanceWindow,
-    out: WindowOccurrence[],
-    fromMs: number,
-    toMs: number,
-  ): void {
-    const parts = win.startTime!.split(":");
+  private _projectDaily(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
+    const parts = win.startTime!.split(':');
     const h = Number(parts[0]);
     const m = Number(parts[1]);
     const hInvalid = isNaN(h);
@@ -443,25 +438,17 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       cursor = new Date(nextDayMs);
     }
 
-    // Iterate while inside the window range
+    // Iterate while inside the window range, advancing one day per step
     let currentMs = cursor.getTime();
     while (currentMs < toMs) {
       out.push(this._makeOccurrence(win, currentMs));
-      // Advance one day
-      const nextMs = currentMs + DAY_MS;
-      cursor = new Date(nextMs);
-      currentMs = nextMs;
+      currentMs += DAY_MS;
     }
   }
 
-  private _projectWeekly(
-    win: MaintenanceWindow,
-    out: WindowOccurrence[],
-    fromMs: number,
-    toMs: number,
-  ): void {
+  private _projectWeekly(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
     const daysArr = win.daysOfWeek!;
-    const parts = win.startTime!.split(":");
+    const parts = win.startTime!.split(':');
     const h = Number(parts[0]);
     const m = Number(parts[1]);
     const hInvalid = isNaN(h);
@@ -485,14 +472,9 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     }
   }
 
-  private _projectMonthly(
-    win: MaintenanceWindow,
-    out: WindowOccurrence[],
-    fromMs: number,
-    toMs: number,
-  ): void {
+  private _projectMonthly(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
     const daysArr = win.daysOfMonth!;
-    const parts = win.startTime!.split(":");
+    const parts = win.startTime!.split(':');
     const h = Number(parts[0]);
     const m = Number(parts[1]);
     const hInvalid = isNaN(h);
@@ -541,12 +523,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     }
   }
 
-  private _projectCron(
-    win: MaintenanceWindow,
-    out: WindowOccurrence[],
-    fromMs: number,
-    toMs: number,
-  ): void {
+  private _projectCron(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
     const cron = parseCron(win.cronExpression!);
 
     let cursor = new Date(fromMs);
@@ -586,9 +563,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     // Determine duration: use maxDurationMin if positive, otherwise default to HOUR_MS
     const maxDurVal = win.maxDurationMin;
     const hasValidDuration = maxDurVal > 0;
-    const durationMs = hasValidDuration
-      ? maxDurVal * MINUTE_MS
-      : HOUR_MS;
+    const durationMs = hasValidDuration ? maxDurVal * MINUTE_MS : HOUR_MS;
     const end = start + durationMs;
 
     // Idempotency guard: projection may run multiple times (e.g. once by
@@ -619,7 +594,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     };
 
     // Persist as a WindowInstance for lifecycle tracking
-    const state: WindowState = win.requiresApproval ? "pending" : "scheduled";
+    const state: WindowState = win.requiresApproval ? 'pending' : 'scheduled';
     this.instances.set(instanceId, {
       id: instanceId,
       windowId: win.id,
@@ -635,40 +610,38 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     const missingId = !win.id;
     const missingName = !win.name;
     if (missingId || missingName) {
-      throw new Error("Window id and name are required");
+      throw new Error('Window id and name are required');
     }
     const negativeMaxDuration = win.maxDurationMin < 0;
     if (negativeMaxDuration) {
-      throw new Error("maxDurationMin must be >= 0");
+      throw new Error('maxDurationMin must be >= 0');
     }
     const negativePriority = win.priority < 0;
     if (negativePriority) {
-      throw new Error("Priority must be >= 0");
+      throw new Error('Priority must be >= 0');
     }
-    const isOnce = win.recurrence === "once";
+    const isOnce = win.recurrence === 'once';
     const missingAt = !win.at;
     if (isOnce && missingAt) {
       throw new Error("One-shot windows require 'at' to be set");
     }
     const needsStartTimeRecurrences =
-      win.recurrence === "daily" ||
-      win.recurrence === "weekly" ||
-      win.recurrence === "monthly";
+      win.recurrence === 'daily' || win.recurrence === 'weekly' || win.recurrence === 'monthly';
     const missingStartTime = !win.startTime;
     if (needsStartTimeRecurrences && missingStartTime) {
       throw new Error(`${win.recurrence} windows require 'startTime'`);
     }
-    const isWeekly = win.recurrence === "weekly";
+    const isWeekly = win.recurrence === 'weekly';
     const missingDaysOfWeek = !win.daysOfWeek || win.daysOfWeek.length === 0;
     if (isWeekly && missingDaysOfWeek) {
       throw new Error("Weekly windows require 'daysOfWeek'");
     }
-    const isMonthly = win.recurrence === "monthly";
+    const isMonthly = win.recurrence === 'monthly';
     const missingDaysOfMonth = !win.daysOfMonth || win.daysOfMonth.length === 0;
     if (isMonthly && missingDaysOfMonth) {
       throw new Error("Monthly windows require 'daysOfMonth'");
     }
-    const isCron = win.recurrence === "cron";
+    const isCron = win.recurrence === 'cron';
     const missingCronExpression = !win.cronExpression;
     if (isCron && missingCronExpression) {
       throw new Error("Cron windows require 'cronExpression'");

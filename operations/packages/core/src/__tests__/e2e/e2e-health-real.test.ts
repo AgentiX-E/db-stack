@@ -9,12 +9,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import {
-  IN_MEM_FACTORY,
-  GRAPH_VEC_FACTORY,
-  SQL_VEC_FACTORY,
-  ENGINE_CASES,
-} from './engineFactories.js';
+import { IN_MEM_FACTORY, GRAPH_VEC_FACTORY, SQL_VEC_FACTORY, ENGINE_CASES } from './engineFactories.js';
 
 const inMemFactory = IN_MEM_FACTORY;
 const graphVecFactory = GRAPH_VEC_FACTORY;
@@ -78,11 +73,7 @@ describe.each(ENGINE_CASES)('$name E2E: HealthProbe', ({ factory }) => {
 
   it('should handle concurrent readiness calls', async () => {
     const probe = await factory.createHealthProbe();
-    const results = await Promise.all([
-      probe.readiness(),
-      probe.readiness(),
-      probe.readiness(),
-    ]);
+    const results = await Promise.all([probe.readiness(), probe.readiness(), probe.readiness()]);
     for (const r of results) {
       expect(r.ok).toBe(true);
     }

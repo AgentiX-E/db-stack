@@ -55,7 +55,10 @@ describe('IRBACProvider', () => {
 
 describe('IAuthProvider', () => {
   const mockAuth: IAuthProvider = {
-    authenticate: vi.fn().mockResolvedValue({ token: 'mock-token', expiresAt: new Date('2099-12-31') }),
+    authenticate: vi.fn().mockResolvedValue({
+      token: 'mock-token',
+      expiresAt: new Date('2099-12-31'),
+    }),
     validateToken: vi.fn().mockResolvedValue({ userId: 'user-1', roles: ['admin'] }),
     revokeToken: vi.fn().mockResolvedValue(undefined),
   };
@@ -105,8 +108,14 @@ describe('IAuditStore', () => {
   const events: AuditEvent[] = [];
 
   const mockAuditStore: IAuditStore = {
-    record: vi.fn().mockImplementation(async (event: AuditEvent) => { events.push(event); }),
-    query: vi.fn().mockImplementation(async (filters: AuditQuery) => events.filter(e => !filters.userId || e.userId === filters.userId)),
+    record: vi.fn().mockImplementation(async (event: AuditEvent) => {
+      events.push(event);
+    }),
+    query: vi
+      .fn()
+      .mockImplementation(async (filters: AuditQuery) =>
+        events.filter((e) => !filters.userId || e.userId === filters.userId),
+      ),
     export: vi.fn().mockResolvedValue(events),
   };
 
@@ -127,7 +136,11 @@ describe('IAuditStore', () => {
   });
 
   it('should create audit event with proper structure', () => {
-    const event = createMockAuditEvent({ action: 'delete', result: 'failure', details: { reason: 'unauthorized' } });
+    const event = createMockAuditEvent({
+      action: 'delete',
+      result: 'failure',
+      details: { reason: 'unauthorized' },
+    });
     expect(event).toHaveProperty('timestamp');
     expect(event).toHaveProperty('userId');
     expect(event).toHaveProperty('action');
@@ -300,7 +313,10 @@ describe('ISCIMSyncProvider', () => {
   });
 
   it('should update a user', async () => {
-    const updated = await mockSyncProvider.updateUser({ ...mockUser, displayName: 'John Updated' });
+    const updated = await mockSyncProvider.updateUser({
+      ...mockUser,
+      displayName: 'John Updated',
+    });
     expect(updated.displayName).toBe('John Updated');
   });
 

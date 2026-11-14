@@ -15,24 +15,36 @@
  *   - stop(): clears workers + removes listeners
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { MultiLeaderReplication } from "./MultiLeaderReplication";
-import { HLC } from "../hlc/HLC";
-import type { ReplicationConfig } from "../interfaces/replication/IMultiLeaderReplication";
-import type { IOutboxStore } from "../interfaces/outbox/IOutboxStore";
-import type { ITransport } from "../interfaces/transport/ITransport";
-import type { OutboxEntry } from "../interfaces/outbox/OutboxEntry";
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MultiLeaderReplication } from './MultiLeaderReplication';
+import { HLC } from '../hlc/HLC';
+import type { ReplicationConfig } from '../interfaces/replication/IMultiLeaderReplication';
+import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
+import type { ITransport } from '../interfaces/transport/ITransport';
+import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
 
 function makeConfig(overrides: Partial<ReplicationConfig> = {}): ReplicationConfig {
   return {
-    nodeId: "local",
-    dc: "dc-east",
-    curveDir: "/tmp/test",
+    nodeId: 'local',
+    dc: 'dc-east',
+    curveDir: '/tmp/test',
     tickMs: 10,
     batchSize: 100,
     targets: [
-      { nodeId: "t1", dc: "dc-east", address: "inproc://t1", topology: "intra-dc", maxBackoffSeconds: 3 },
-      { nodeId: "t2", dc: "dc-west", address: "inproc://t2", topology: "cross-dc", maxBackoffSeconds: 60 },
+      {
+        nodeId: 't1',
+        dc: 'dc-east',
+        address: 'inproc://t1',
+        topology: 'intra-dc',
+        maxBackoffSeconds: 3,
+      },
+      {
+        nodeId: 't2',
+        dc: 'dc-west',
+        address: 'inproc://t2',
+        topology: 'cross-dc',
+        maxBackoffSeconds: 60,
+      },
     ],
     ...overrides,
   };
@@ -40,11 +52,11 @@ function makeConfig(overrides: Partial<ReplicationConfig> = {}): ReplicationConf
 
 /** Build a minimal pending OutboxEntry targeting a given peer. */
 function entry(id: string, targetPeerIds: string[]): OutboxEntry {
-  const ts = new HLC("local").now();
+  const ts = new HLC('local').now();
   return {
     id,
     targetPeerIds,
-    payload: new TextEncoder().encode("x"),
+    payload: new TextEncoder().encode('x'),
     timestamp: {
       wallTime: ts.wallTime,
       logical: ts.logical,
@@ -53,8 +65,8 @@ function entry(id: string, targetPeerIds: string[]): OutboxEntry {
       serialize: ts.serialize.bind(ts),
       deserialize: ts.deserialize.bind(ts),
     },
-    type: "replicate",
-    status: "pending",
+    type: 'replicate',
+    status: 'pending',
     createdAt: 0,
     lastAttemptAt: null,
     attemptCount: 0,
@@ -75,11 +87,19 @@ function mockOutbox(): MockOutbox {
   const fetchOldestPending = vi.fn().mockResolvedValue([]);
   const markDelivered = vi.fn().mockResolvedValue(undefined);
   const markFailed = vi.fn().mockResolvedValue(undefined);
-  const store = { add, fetchOldestPending, markDelivered, markFailed } as unknown as IOutboxStore;
+  const store = {
+    add,
+    fetchOldestPending,
+    markDelivered,
+    markFailed,
+  } as unknown as IOutboxStore;
   return { store, add, fetchOldestPending, markDelivered, markFailed };
 }
 
-function mockTransport(sendImpl?: (msg: unknown) => Promise<boolean>): { transport: ITransport; send: ReturnType<typeof vi.fn> } {
+function mockTransport(sendImpl?: (msg: unknown) => Promise<boolean>): {
+  transport: ITransport;
+  send: ReturnType<typeof vi.fn>;
+} {
   const send = vi.fn(sendImpl ?? (async () => true));
   const transport = {
     send,
@@ -91,27 +111,41 @@ function mockTransport(sendImpl?: (msg: unknown) => Promise<boolean>): { transpo
   return { transport, send };
 }
 
-describe("MultiLeaderReplication — getStatus branches", () => {
-  it("reports lagMs=-1 when not started", async () => {
+describe('MultiLeaderReplication — getStatus branches', () => {
+  it('reports lagMs=-1 when not started', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
-    const mlr = new MultiLeaderReplication({ transport, outbox: store, config: makeConfig() });
+    const mlr = new MultiLeaderReplication({
+      transport,
+      outbox: store,
+      config: makeConfig(),
+    });
 
     const status = await mlr.getStatus();
     expect(status.targets).toEqual([]); // no workers yet (never started)
-    expect(status.nodeId).toBe("local");
-    expect(status.dc).toBe("dc-east");
+    expect(status.nodeId).toBe('local');
+    expect(status.dc).toBe('dc-east');
   });
 
-  it("reports lagMs computed from lastSuccessAt when started and delivered", async () => {
+  it('reports lagMs computed from lastSuccessAt when started and delivered', async () => {
     const { store } = mockOutbox();
     const { transport, send } = mockTransport(async () => true);
-    store.fetchOldestPending.mockResolvedValueOnce([entry("e1", ["t1", "t2"])]);
+    store.fetchOldestPending.mockResolvedValueOnce([entry('e1', ['t1', 't2'])]);
 
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
@@ -121,7 +155,7 @@ describe("MultiLeaderReplication — getStatus branches", () => {
     const status = await mlr.getStatus();
     expect(status.targets.length).toBe(1);
     const t = status.targets[0];
-    expect(t.targetNodeId).toBe("t1");
+    expect(t.targetNodeId).toBe('t1');
     expect(t.connected).toBe(true);
     // lastSuccessAt was set, so lagMs >= 0 and != -1
     expect(t.lagMs).toBeGreaterThanOrEqual(0);
@@ -129,7 +163,7 @@ describe("MultiLeaderReplication — getStatus branches", () => {
     await mlr.stop();
   });
 
-  it("reports lagMs=0 when lastSuccessAt is null but started", async () => {
+  it('reports lagMs=0 when lastSuccessAt is null but started', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport(async () => false); // always rejected → never succeeds
     store.fetchOldestPending.mockResolvedValue([]); // no pending → no delivery → lastSuccessAt stays null
@@ -137,7 +171,17 @@ describe("MultiLeaderReplication — getStatus branches", () => {
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
@@ -152,31 +196,45 @@ describe("MultiLeaderReplication — getStatus branches", () => {
   });
 });
 
-describe("MultiLeaderReplication — retryFailed branches", () => {
-  it("returns 0 for unknown target", async () => {
-    const { store } = mockOutbox();
-    const { transport } = mockTransport();
-    const mlr = new MultiLeaderReplication({ transport, outbox: store, config: makeConfig() });
-
-    const n = await mlr.retryFailed("does-not-exist");
-    expect(n).toBe(0);
-  });
-
-  it("returns 0 and resets worker when target exists", async () => {
+describe('MultiLeaderReplication — retryFailed branches', () => {
+  it('returns 0 for unknown target', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig(),
+    });
+
+    const n = await mlr.retryFailed('does-not-exist');
+    expect(n).toBe(0);
+  });
+
+  it('returns 0 and resets worker when target exists', async () => {
+    const { store } = mockOutbox();
+    const { transport } = mockTransport();
+    const mlr = new MultiLeaderReplication({
+      transport,
+      outbox: store,
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
     // mark a failure so consecutiveFailures is non-zero
-    const worker = (mlr as any).workers.get("t1");
+    const worker = (mlr as any).workers.get('t1');
     worker.consecutiveFailures = 3;
 
-    const n = await mlr.retryFailed("t1");
+    const n = await mlr.retryFailed('t1');
     expect(n).toBe(0);
     expect(worker.consecutiveFailures).toBe(0); // reset
 
@@ -184,24 +242,34 @@ describe("MultiLeaderReplication — retryFailed branches", () => {
   });
 });
 
-describe("MultiLeaderReplication — doTick branches", () => {
-  it("full success clears error state and resets consecutive failures", async () => {
+describe('MultiLeaderReplication — doTick branches', () => {
+  it('full success clears error state and resets consecutive failures', async () => {
     const { store } = mockOutbox();
     const { transport, send } = mockTransport(async () => true);
-    store.fetchOldestPending.mockResolvedValueOnce([entry("e1", ["t1"])]);
+    store.fetchOldestPending.mockResolvedValueOnce([entry('e1', ['t1'])]);
 
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
     await new Promise((r) => setTimeout(r, 50));
 
-    const worker = (mlr as any).workers.get("t1");
+    const worker = (mlr as any).workers.get('t1');
     expect(send).toHaveBeenCalled();
-    expect(store.markDelivered).toHaveBeenCalledWith("e1");
+    expect(store.markDelivered).toHaveBeenCalledWith('e1');
     expect(worker.lastSuccessAt).not.toBeNull();
     expect(worker.consecutiveFailures).toBe(0);
     expect(worker.lastErrorMessage).toBeNull();
@@ -209,70 +277,103 @@ describe("MultiLeaderReplication — doTick branches", () => {
     await mlr.stop();
   });
 
-  it("transport rejection → markFailed and backoff (partial failure)", async () => {
+  it('transport rejection → markFailed and backoff (partial failure)', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport(async () => false); // rejected
-    store.fetchOldestPending.mockResolvedValueOnce([entry("e1", ["t1"])]);
+    store.fetchOldestPending.mockResolvedValueOnce([entry('e1', ['t1'])]);
 
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(store.markFailed).toHaveBeenCalledWith("e1", expect.any(String));
-    const worker = (mlr as any).workers.get("t1");
+    expect(store.markFailed).toHaveBeenCalledWith('e1', expect.any(String));
+    const worker = (mlr as any).workers.get('t1');
     expect(worker.consecutiveFailures).toBeGreaterThan(0);
     expect(worker.lastErrorAt).not.toBeNull();
 
     await mlr.stop();
   });
 
-  it("worker-level throw (fetchOldestPending rejects) → error path + backoff", async () => {
+  it('worker-level throw (fetchOldestPending rejects) → error path + backoff', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
-    store.fetchOldestPending.mockRejectedValue(new Error("outbox read failure"));
+    store.fetchOldestPending.mockRejectedValue(new Error('outbox read failure'));
 
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
     await new Promise((r) => setTimeout(r, 50));
 
-    const worker = (mlr as any).workers.get("t1");
+    const worker = (mlr as any).workers.get('t1');
     expect(worker.lastErrorMessage).toMatch(/Worker error: outbox read failure/);
     expect(worker.consecutiveFailures).toBeGreaterThan(0);
 
     await mlr.stop();
   });
 
-  it("send rejects with a non-Error → String(err) fallback in inner catch", async () => {
+  it('send rejects with a non-Error → String(err) fallback in inner catch', async () => {
     const { store } = mockOutbox();
     // transport.send throws a plain string (non-Error), exercising the
     // `err instanceof Error ? err.message : String(err)` branch
-    const { transport } = mockTransport(async () => { throw "plain-string-error"; });
-    store.fetchOldestPending.mockResolvedValueOnce([entry("e1", ["t1"])]);
+    const { transport } = mockTransport(async () => {
+      // eslint-disable-next-line no-throw-literal -- a non-Error rejection is the fixture
+      throw 'plain-string-error';
+    });
+    store.fetchOldestPending.mockResolvedValueOnce([entry('e1', ['t1'])]);
 
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(store.markFailed).toHaveBeenCalledWith("e1", "plain-string-error");
+    expect(store.markFailed).toHaveBeenCalledWith('e1', 'plain-string-error');
     await mlr.stop();
   });
 
-  it("fetchOldestPending rejects with a non-Error → String(err) in outer catch", async () => {
+  it('fetchOldestPending rejects with a non-Error → String(err) in outer catch', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
     store.fetchOldestPending.mockRejectedValue(42); // non-Error value
@@ -280,18 +381,28 @@ describe("MultiLeaderReplication — doTick branches", () => {
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
     await new Promise((r) => setTimeout(r, 50));
 
-    const worker = (mlr as any).workers.get("t1");
+    const worker = (mlr as any).workers.get('t1');
     expect(worker.lastErrorMessage).toMatch(/Worker error: 42/);
     await mlr.stop();
   });
 
-  it("empty batch reschedules normally without touching worker state", async () => {
+  it('empty batch reschedules normally without touching worker state', async () => {
     const { store } = mockOutbox();
     const { transport, send } = mockTransport();
     store.fetchOldestPending.mockResolvedValue([]);
@@ -299,29 +410,49 @@ describe("MultiLeaderReplication — doTick branches", () => {
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
     await new Promise((r) => setTimeout(r, 30));
 
     expect(send).not.toHaveBeenCalled();
-    const worker = (mlr as any).workers.get("t1");
+    const worker = (mlr as any).workers.get('t1');
     expect(worker.lastSuccessAt).toBeNull();
 
     await mlr.stop();
   });
 });
 
-describe("MultiLeaderReplication — lifecycle & nullish branches", () => {
-  it("start() is idempotent (second call returns early)", async () => {
+describe('MultiLeaderReplication — lifecycle & nullish branches', () => {
+  it('start() is idempotent (second call returns early)', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
     store.fetchOldestPending.mockResolvedValue([]);
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
@@ -335,23 +466,37 @@ describe("MultiLeaderReplication — lifecycle & nullish branches", () => {
   it("replicate() defaults type to 'replicate' when undefined (?? nullish)", async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
-    const mlr = new MultiLeaderReplication({ transport, outbox: store, config: makeConfig() });
+    const mlr = new MultiLeaderReplication({
+      transport,
+      outbox: store,
+      config: makeConfig(),
+    });
 
-    await mlr.replicate(0, "data", undefined as any);
+    await mlr.replicate(0, 'data', undefined as any);
     expect(store.add).toHaveBeenCalled();
     const arg = store.add.mock.calls[0][0];
-    expect(arg.type).toBe("replicate");
+    expect(arg.type).toBe('replicate');
   });
 
-  it("getStatus reports lagMs=-1 for a worker when stopped", async () => {
+  it('getStatus reports lagMs=-1 for a worker when stopped', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport(async () => true);
-    store.fetchOldestPending.mockResolvedValue([entry("e1", ["t1"])]);
+    store.fetchOldestPending.mockResolvedValue([entry('e1', ['t1'])]);
 
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
@@ -363,83 +508,121 @@ describe("MultiLeaderReplication — lifecycle & nullish branches", () => {
     expect(status.targets).toEqual([]);
   });
 
-  it("getPendingCounts covers `?? 0` for a peer absent from config targets", async () => {
+  it('getPendingCounts covers `?? 0` for a peer absent from config targets', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
     // entry targets an unknown peer "ghost"
-    store.fetchOldestPending.mockResolvedValueOnce([entry("e-ghost", ["ghost"])]);
+    store.fetchOldestPending.mockResolvedValueOnce([entry('e-ghost', ['ghost'])]);
 
-    const mlr = new MultiLeaderReplication({ transport, outbox: store, config: makeConfig() });
+    const mlr = new MultiLeaderReplication({
+      transport,
+      outbox: store,
+      config: makeConfig(),
+    });
 
     const counts = await mlr.getPendingCounts();
     // "ghost" is not a configured target → the `counts[peerId] ?? 0` path runs
-    expect(counts["ghost"]).toBe(1);
+    expect(counts['ghost']).toBe(1);
   });
 
-  it("uses default tickMs (?? 100) when config lacks tickMs", async () => {
+  it('uses default tickMs (?? 100) when config lacks tickMs', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
     store.fetchOldestPending.mockResolvedValue([]);
 
-    const cfg = makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] });
+    const cfg = makeConfig({
+      targets: [
+        {
+          nodeId: 't1',
+          dc: 'dc-east',
+          address: 'x',
+          topology: 'intra-dc',
+          maxBackoffSeconds: 3,
+        },
+      ],
+    });
     delete (cfg as any).tickMs; // force `tickMs ?? 100`
     delete (cfg as any).batchSize; // force `batchSize ?? 1000`
 
-    const mlr = new MultiLeaderReplication({ transport, outbox: store, config: cfg });
+    const mlr = new MultiLeaderReplication({
+      transport,
+      outbox: store,
+      config: cfg,
+    });
     await mlr.start();
     await new Promise((r) => setTimeout(r, 30));
-    const worker = (mlr as any).workers.get("t1");
+    const worker = (mlr as any).workers.get('t1');
     expect(worker.tickMs).toBe(100);
     await mlr.stop();
   });
 
-  it("onTargetDisconnected registers and unregisters", () => {
+  it('onTargetDisconnected registers and unregisters', () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
-    const mlr = new MultiLeaderReplication({ transport, outbox: store, config: makeConfig() });
+    const mlr = new MultiLeaderReplication({
+      transport,
+      outbox: store,
+      config: makeConfig(),
+    });
 
     let calls = 0;
-    const unsub = mlr.onTargetDisconnected(() => { calls++; });
-    expect(typeof unsub).toBe("function");
+    const unsub = mlr.onTargetDisconnected(() => {
+      calls++;
+    });
+    expect(typeof unsub).toBe('function');
 
-    (mlr as any).emitter.emit("target-disconnected", "t1");
+    (mlr as any).emitter.emit('target-disconnected', 't1');
     expect(calls).toBe(1);
 
     unsub();
-    (mlr as any).emitter.emit("target-disconnected", "t2");
+    (mlr as any).emitter.emit('target-disconnected', 't2');
     expect(calls).toBe(1);
   });
 
-  it("onTargetConnected registers and unregisters", () => {
+  it('onTargetConnected registers and unregisters', () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
-    const mlr = new MultiLeaderReplication({ transport, outbox: store, config: makeConfig() });
+    const mlr = new MultiLeaderReplication({
+      transport,
+      outbox: store,
+      config: makeConfig(),
+    });
 
     const seen: string[] = [];
     const unsub = mlr.onTargetConnected((id) => seen.push(id));
-    (mlr as any).emitter.emit("target-connected", "t1");
-    expect(seen).toContain("t1");
+    (mlr as any).emitter.emit('target-connected', 't1');
+    expect(seen).toContain('t1');
     unsub();
   });
 });
 
-describe("MultiLeaderReplication — scheduleTick cap & stop", () => {
-  it("doTick returns early when stopRequested is set before the tick fires", async () => {
+describe('MultiLeaderReplication — scheduleTick cap & stop', () => {
+  it('doTick returns early when stopRequested is set before the tick fires', async () => {
     vi.useFakeTimers();
     try {
       const { store } = mockOutbox();
       const { transport, send } = mockTransport(async () => true);
-      store.fetchOldestPending.mockResolvedValueOnce([entry("e1", ["t1"])]);
+      store.fetchOldestPending.mockResolvedValueOnce([entry('e1', ['t1'])]);
 
       const mlr = new MultiLeaderReplication({
         transport,
         outbox: store,
-        config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+        config: makeConfig({
+          targets: [
+            {
+              nodeId: 't1',
+              dc: 'dc-east',
+              address: 'x',
+              topology: 'intra-dc',
+              maxBackoffSeconds: 3,
+            },
+          ],
+        }),
       });
 
       await mlr.start(); // schedules first doTick at delay 0
       // stop the worker before the timer callback runs
-      const worker = (mlr as any).workers.get("t1");
+      const worker = (mlr as any).workers.get('t1');
       await mlr.stop(); // sets stopRequested=true, clears timer
 
       // Even if a stale doTick were invoked, worker.stopRequested guards it.
@@ -452,24 +635,31 @@ describe("MultiLeaderReplication — scheduleTick cap & stop", () => {
     }
   });
 
-  it("doTick inner-loop returns early when stopRequested flips mid-batch", async () => {
+  it('doTick inner-loop returns early when stopRequested flips mid-batch', async () => {
     vi.useFakeTimers();
     try {
       const { store } = mockOutbox();
       const { transport, send } = mockTransport(async () => true);
-      store.fetchOldestPending.mockResolvedValueOnce([
-        entry("e1", ["t1"]),
-        entry("e2", ["t1"]),
-      ]);
+      store.fetchOldestPending.mockResolvedValueOnce([entry('e1', ['t1']), entry('e2', ['t1'])]);
 
       const mlr = new MultiLeaderReplication({
         transport,
         outbox: store,
-        config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+        config: makeConfig({
+          targets: [
+            {
+              nodeId: 't1',
+              dc: 'dc-east',
+              address: 'x',
+              topology: 'intra-dc',
+              maxBackoffSeconds: 3,
+            },
+          ],
+        }),
       });
 
       await mlr.start();
-      const worker = (mlr as any).workers.get("t1");
+      const worker = (mlr as any).workers.get('t1');
 
       // Trigger the first send, then mark stop mid-batch.
       const firstSend = vi.mocked(send).mockImplementationOnce(async () => {
@@ -489,7 +679,7 @@ describe("MultiLeaderReplication — scheduleTick cap & stop", () => {
     }
   });
 
-  it("caps backoff delay at 5000ms", () => {
+  it('caps backoff delay at 5000ms', () => {
     // Directly exercise scheduleTick with a huge delay and assert the worker
     // tickTimer is scheduled (cap is internal; verify stop clears it).
     const { store } = mockOutbox();
@@ -497,11 +687,21 @@ describe("MultiLeaderReplication — scheduleTick cap & stop", () => {
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
-    (mlr as any).startWorker("t1", "intra-dc", 3000);
-    const worker = (mlr as any).workers.get("t1");
+    (mlr as any).startWorker('t1', 'intra-dc', 3000);
+    const worker = (mlr as any).workers.get('t1');
     // scheduleTick with a delay larger than the 5s cap
     (mlr as any).scheduleTick(worker, 999_999);
     expect(worker.tickTimer).not.toBeNull();
@@ -510,14 +710,24 @@ describe("MultiLeaderReplication — scheduleTick cap & stop", () => {
     void mlr;
   });
 
-  it("stop() clears timers, workers, and listeners", async () => {
+  it('stop() clears timers, workers, and listeners', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
     store.fetchOldestPending.mockResolvedValue([]);
     const mlr = new MultiLeaderReplication({
       transport,
       outbox: store,
-      config: makeConfig({ targets: [{ nodeId: "t1", dc: "dc-east", address: "x", topology: "intra-dc", maxBackoffSeconds: 3 }] }),
+      config: makeConfig({
+        targets: [
+          {
+            nodeId: 't1',
+            dc: 'dc-east',
+            address: 'x',
+            topology: 'intra-dc',
+            maxBackoffSeconds: 3,
+          },
+        ],
+      }),
     });
 
     await mlr.start();
@@ -528,13 +738,17 @@ describe("MultiLeaderReplication — scheduleTick cap & stop", () => {
     expect((mlr as any).started).toBe(false);
   });
 
-  it("scheduleTick returns early when stopRequested", () => {
+  it('scheduleTick returns early when stopRequested', () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
-    const mlr = new MultiLeaderReplication({ transport, outbox: store, config: makeConfig() });
+    const mlr = new MultiLeaderReplication({
+      transport,
+      outbox: store,
+      config: makeConfig(),
+    });
 
     const worker = {
-      nodeId: "t1",
+      nodeId: 't1',
       backoffMs: 3000,
       tickMs: 10,
       lastAttemptAt: 0,

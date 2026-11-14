@@ -46,7 +46,7 @@ describe('SessionManager', () => {
 
   it('重复创建同一 id 应抛出', () => {
     sm.create('s1');
-    expect(() => sm.create('s1')).toThrow('Session \'s1\' already exists');
+    expect(() => sm.create('s1')).toThrow("Session 's1' already exists");
   });
 
   it('activeCount 准确反映活跃数量', () => {
@@ -64,7 +64,7 @@ describe('SessionManager', () => {
   it('过期 session get 返回 null', async () => {
     const shortSm = new SessionManager({ ttlMs: 10 });
     shortSm.create('s1');
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
     expect(shortSm.get('s1')).toBeNull();
     shortSm.shutdown();
   });
@@ -72,9 +72,9 @@ describe('SessionManager', () => {
   it('extend 延长过期时间', async () => {
     const shortSm = new SessionManager({ ttlMs: 100 });
     shortSm.create('s1');
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
     expect(shortSm.extend('s1')).toBe(true);
-    await new Promise(r => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 60));
     // 总共 110ms，但 extend 过了，所以未过期
     expect(shortSm.get('s1')).not.toBeNull();
     shortSm.shutdown();
@@ -92,7 +92,7 @@ describe('SessionManager', () => {
     shortSm.create('s2');
     shortSm.create('s3');
 
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
 
     const cleaned = shortSm.cleanup();
     expect(cleaned).toBe(3);
@@ -115,7 +115,7 @@ describe('SessionManager', () => {
     shortSm.onExpiry(handler);
 
     shortSm.create('s1');
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
 
     // cleanup 触发过期
     shortSm.cleanup();
@@ -130,7 +130,9 @@ describe('SessionManager', () => {
   });
 
   it('过期回调异常不影响其他处理器', async () => {
-    const crashHandler = vi.fn(() => { throw new Error('handler crashed'); });
+    const crashHandler = vi.fn(() => {
+      throw new Error('handler crashed');
+    });
     const normalHandler = vi.fn();
     const shortSm = new SessionManager({ ttlMs: 10 });
 
@@ -138,7 +140,7 @@ describe('SessionManager', () => {
     shortSm.onExpiry(normalHandler);
 
     shortSm.create('s1');
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
 
     expect(() => shortSm.cleanup()).not.toThrow();
     expect(crashHandler).toHaveBeenCalledTimes(1);
@@ -154,7 +156,7 @@ describe('SessionManager', () => {
     unsub();
 
     shortSm.create('s1');
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
     shortSm.cleanup();
     expect(handler).not.toHaveBeenCalled();
 
@@ -169,7 +171,7 @@ describe('SessionManager', () => {
 
     // 访问多次，每次延长 TTL
     for (let i = 0; i < 10; i++) {
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 10));
       expect(shortSm.get('s1')).not.toBeNull();
     }
 
@@ -192,7 +194,7 @@ describe('SessionManager', () => {
     cappedSm.create('s1');
     cappedSm.create('s2');
 
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
 
     // 清理后创建新 session
     cappedSm.cleanup();

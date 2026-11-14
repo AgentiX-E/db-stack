@@ -23,7 +23,10 @@ export class InMemoryDistributedTracer implements IDistributedTracer {
       traceId?: string;
       attributes?: Record<string, string | number | boolean>;
     },
-  ): { spanId: string; end: (status?: 'ok' | 'error', errorMessage?: string) => void } {
+  ): {
+    spanId: string;
+    end: (status?: 'ok' | 'error', errorMessage?: string) => void;
+  } {
     const spanId = nanoId();
     const current = this.currentSpanId ? this.active.get(this.currentSpanId) : undefined;
     const traceId = options?.traceId ?? current?.traceId ?? nanoId();

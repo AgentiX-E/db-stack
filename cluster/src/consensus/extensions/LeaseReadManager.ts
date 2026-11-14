@@ -61,7 +61,7 @@ export class LeaseReadManager {
    */
   isLeaseValid(): boolean {
     if (this.leaseMs <= 0) return false;
-    return (Date.now() - this.lastQuorumTime) < this.leaseMs;
+    return Date.now() - this.lastQuorumTime < this.leaseMs;
   }
 
   /**

@@ -394,7 +394,9 @@ describe('HAFailoverDetector — error isolation & RTT sampling', () => {
       { startupGracePeriodMs: 0 },
       createMockTopology(),
       createMockConsensusLayer({
-        getLeader: () => { throw new Error('down'); },
+        getLeader: () => {
+          throw new Error('down');
+        },
       }),
     );
     d.registerShard('s0');
@@ -407,7 +409,9 @@ describe('HAFailoverDetector — error isolation & RTT sampling', () => {
       { startupGracePeriodMs: 0 },
       createMockTopology(),
       createMockConsensusLayer({
-        getHealthStatus: () => { throw new Error('health-down'); },
+        getHealthStatus: () => {
+          throw new Error('health-down');
+        },
       }),
     );
     // No registered shards → shard discovery via getHealthStatus throws → [].
@@ -436,7 +440,9 @@ describe('HAFailoverDetector — error isolation & RTT sampling', () => {
       createMockConsensusLayer({ getLeader: () => null }),
     );
     const events: FailoverEventLike[] = [];
-    d.onFailover(() => { throw new Error('handler-boom'); });
+    d.onFailover(() => {
+      throw new Error('handler-boom');
+    });
     d.onFailover((e) => events.push(e as FailoverEventLike));
     d.registerShard('s0');
     d.start();
@@ -457,7 +463,9 @@ describe('HAFailoverDetector — error isolation & RTT sampling', () => {
       { checkIntervalMs: 10, startupGracePeriodMs: 0 },
       createMockTopology(),
       createMockConsensusLayer({
-        getHealthStatus: () => { throw new Error('boom'); },
+        getHealthStatus: () => {
+          throw new Error('boom');
+        },
       }),
     );
     d.start();
@@ -578,7 +586,9 @@ describe('HAFailoverDetector — error isolation & RTT sampling', () => {
   // AC 13.38: a throwing isPeerAlive propagates to the per-shard catch.
   it('AC 13.38: a throwing isPeerAlive is isolated by the shard loop', async () => {
     const t = createMockTopology('node-1', ['node-2']);
-    t.isPeerAlive = () => { throw new Error('gossip-down'); };
+    t.isPeerAlive = () => {
+      throw new Error('gossip-down');
+    };
 
     const d = new HAFailoverDetector(
       { startupGracePeriodMs: 0 },
@@ -592,13 +602,11 @@ describe('HAFailoverDetector — error isolation & RTT sampling', () => {
   // AC 13.39: a throwing getPeerIds propagates to the interval catch.
   it('AC 13.39: a throwing getPeerIds is caught by the interval callback', async () => {
     const t = createMockTopology();
-    t.getPeerIds = () => { throw new Error('topology-down'); };
+    t.getPeerIds = () => {
+      throw new Error('topology-down');
+    };
 
-    const d = new HAFailoverDetector(
-      { checkIntervalMs: 10, startupGracePeriodMs: 0 },
-      t,
-      createMockConsensusLayer(),
-    );
+    const d = new HAFailoverDetector({ checkIntervalMs: 10, startupGracePeriodMs: 0 }, t, createMockConsensusLayer());
     d.registerShard('s0');
     d.start();
     // The interval's .catch must swallow the rejection — no unhandled error.

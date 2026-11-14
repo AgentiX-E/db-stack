@@ -8,7 +8,12 @@
  * @module @agentix-e/db-operations-maintenance/interfaces
  */
 
-import type { MaintenanceOp, MaintenanceResult, StorageStats, IndexFragmentation } from '@agentix-e/db-operations-core/types';
+import type {
+  MaintenanceOp,
+  MaintenanceResult,
+  StorageStats,
+  IndexFragmentation,
+} from '@agentix-e/db-operations-core/types';
 
 /** Options common to all maintenance operations. */
 export interface MaintenanceOptions {

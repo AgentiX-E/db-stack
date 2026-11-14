@@ -21,10 +21,7 @@ export interface IComponentRegistrar {
    * @param probe - Health probe implementation.
    * @param options - Optional registration metadata.
    */
-  registerComponent(
-    probe: IHealthProbe,
-    options?: ComponentRegistrationOptions,
-  ): void;
+  registerComponent(probe: IHealthProbe, options?: ComponentRegistrationOptions): void;
 
   /**
    * Unregister a component by its probeId.
@@ -49,7 +46,10 @@ export interface IComponentRegistrar {
    * - 'degraded' if some components report warning or one is unhealthy
    * - 'unhealthy' if all components are unhealthy
    */
-  getAggregateStatus(): { status: 'healthy' | 'degraded' | 'unhealthy'; count: number };
+  getAggregateStatus(): {
+    status: 'healthy' | 'degraded' | 'unhealthy';
+    count: number;
+  };
 }
 
 export interface ComponentRegistrationOptions {

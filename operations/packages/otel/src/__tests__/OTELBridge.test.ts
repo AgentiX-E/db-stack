@@ -57,7 +57,13 @@ describe('InMemoryOTELBridge', () => {
 
   it('exportLog with trace context', () => {
     const otel = new InMemoryOTELBridge();
-    otel.exportLog({ severity: 'error', message: 'fail', attributes: {}, traceId: 'trace-abc', spanId: 'span-xyz' });
+    otel.exportLog({
+      severity: 'error',
+      message: 'fail',
+      attributes: {},
+      traceId: 'trace-abc',
+      spanId: 'span-xyz',
+    });
     expect(otel.getLogs()[0].traceId).toBe('trace-abc');
     expect(otel.getLogs()[0].spanId).toBe('span-xyz');
   });
@@ -85,11 +91,14 @@ describe('InMemoryOTELBridge', () => {
   it('parent-child span relationship via parentSpanId', () => {
     const otel = new InMemoryOTELBridge();
     const parent = otel.startSpan('parent', { attributes: {} });
-    const child = otel.startSpan('child', { parentSpanId: parent.spanId, attributes: {} });
+    const child = otel.startSpan('child', {
+      parentSpanId: parent.spanId,
+      attributes: {},
+    });
     child.end('ok');
     parent.end('ok');
     const spans = otel.getSpans();
-    const childSpan = spans.find(s => s.name === 'child');
+    const childSpan = spans.find((s) => s.name === 'child');
     expect(childSpan!.parentSpanId).toBe(parent.spanId);
   });
 

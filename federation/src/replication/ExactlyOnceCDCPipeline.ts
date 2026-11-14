@@ -134,7 +134,7 @@ export interface CDCPipelineMetrics {
 
 // ── Events ─────────────────────────────────────────────────
 
-export type CDCPipelineEventType = 
+export type CDCPipelineEventType =
   | 'event_produced'
   | 'event_delivered'
   | 'event_deduped'
@@ -191,10 +191,7 @@ export class ExactlyOnceCDCPipeline {
     this.outbox = new OutboxStore(this.config.outboxConfig);
     this.dedup = new DedupRing({ ttlMs: this.config.dedupTtlMs });
 
-    this.checkpointPath = path.join(
-      this.config.checkpointDir,
-      'cdc-checkpoint.json',
-    );
+    this.checkpointPath = path.join(this.config.checkpointDir, 'cdc-checkpoint.json');
   }
 
   // ── Lifecycle ────────────────────────────────────────────
@@ -214,7 +211,7 @@ export class ExactlyOnceCDCPipeline {
     // Start outbox pump
     this.startPump();
 
-    this.emit('checkpoint_advanced', { 
+    this.emit('checkpoint_advanced', {
       type: 'checkpoint_advanced',
       timestamp: Date.now(),
       lsn: Object.values(this.getCheckpoint()).join(','),
@@ -255,7 +252,10 @@ export class ExactlyOnceCDCPipeline {
    *
    * G2 — At-most-once delivery via DedupRing
    */
-  processInbound(message: TransportMessage): { accepted: boolean; event?: CDCChangeEvent } {
+  processInbound(message: TransportMessage): {
+    accepted: boolean;
+    event?: CDCChangeEvent;
+  } {
     const msgId = message.messageId;
 
     // G2: Check dedup before delivery
@@ -331,9 +331,7 @@ export class ExactlyOnceCDCPipeline {
    * Get current checkpoint state.
    */
   getCheckpoint(): CDCCheckpoint {
-    return JSON.parse(
-      fs.readFileSync(this.checkpointPath, 'utf-8'),
-    ) as CDCCheckpoint;
+    return JSON.parse(fs.readFileSync(this.checkpointPath, 'utf-8')) as CDCCheckpoint;
   }
 
   /**
@@ -348,10 +346,15 @@ export class ExactlyOnceCDCPipeline {
 
   onEvent(handler: CDCPipelineEventHandler): () => void {
     this.eventListeners.add(handler);
-    return () => { this.eventListeners.delete(handler); };
+    return () => {
+      this.eventListeners.delete(handler);
+    };
   }
 
-  private emit(type: CDCPipelineEventType, event: Omit<CDCPipelineEvent, 'type'> & { type: CDCPipelineEventType }): void {
+  private emit(
+    type: CDCPipelineEventType,
+    event: Omit<CDCPipelineEvent, 'type'> & { type: CDCPipelineEventType },
+  ): void {
     for (const listener of this.eventListeners) {
       listener(event as CDCPipelineEvent);
     }
@@ -406,9 +409,9 @@ export class ExactlyOnceCDCPipeline {
     this.outbox.add({
       id: msgId,
       targetPeerIds: this.config.remoteNodeId ? [this.config.remoteNodeId] : [],
-      payload: encoder.encode(JSON.stringify(event, (_key, value) =>
-        typeof value === 'bigint' ? value.toString() : value,
-      )),
+      payload: encoder.encode(
+        JSON.stringify(event, (_key, value) => (typeof value === 'bigint' ? value.toString() : value)),
+      ),
       timestamp: hlc.now() as any,
       type: 'cdc_event',
       status: 'pending',
@@ -469,9 +472,7 @@ export class ExactlyOnceCDCPipeline {
       }
 
       // G1: Fetch oldest pending entries (FIFO order)
-      const entries = await this.outbox.fetchOldestPending(
-        this.config.pumpBatchSize,
-      );
+      const entries = await this.outbox.fetchOldestPending(this.config.pumpBatchSize);
 
       for (const entry of entries) {
         try {

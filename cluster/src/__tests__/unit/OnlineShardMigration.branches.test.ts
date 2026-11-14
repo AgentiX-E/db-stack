@@ -62,26 +62,20 @@ describe('OnlineShardMigration — branch completion', () => {
 
   describe('cutover not found', () => {
     it('throws for an unknown migration', async () => {
-      await expect(migration.cutover('ghost')).rejects.toThrow(
-        'migration ghost not found',
-      );
+      await expect(migration.cutover('ghost')).rejects.toThrow('migration ghost not found');
     });
   });
 
   describe('cancel not found', () => {
     it('throws for an unknown migration', async () => {
-      await expect(migration.cancel('ghost')).rejects.toThrow(
-        'migration ghost not found',
-      );
+      await expect(migration.cancel('ghost')).rejects.toThrow('migration ghost not found');
     });
   });
 
   describe('runMigration failure catch', () => {
     it('marks the migration failed and records the error when the async run rejects', async () => {
       // Force the async migration to reject by making delayMs reject.
-      vi.spyOn(asAny(migration), 'delayMs').mockRejectedValue(
-        new Error('timer exploded'),
-      );
+      vi.spyOn(asAny(migration), 'delayMs').mockRejectedValue(new Error('timer exploded'));
 
       const { migrationId } = await migration.startMigration(config());
 

@@ -6,12 +6,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import {
-  IN_MEM_FACTORY,
-  GRAPH_VEC_FACTORY,
-  SQL_VEC_FACTORY,
-  ENGINE_CASES,
-} from './engineFactories.js';
+import { IN_MEM_FACTORY, GRAPH_VEC_FACTORY, SQL_VEC_FACTORY, ENGINE_CASES } from './engineFactories.js';
 
 const inMemFactory = IN_MEM_FACTORY;
 const graphVecFactory = GRAPH_VEC_FACTORY;
@@ -127,8 +122,18 @@ describe.each(ENGINE_CASES)('$name E2E: AuditStore', ({ factory }) => {
 
   it('should query audit entries by actor', async () => {
     const store = await factory.createAuditStore();
-    await store.write({ operation: 'READ', actor: 'bob', resource: 'doc/1', result: 'SUCCESS' });
-    await store.write({ operation: 'WRITE', actor: 'alice', resource: 'doc/2', result: 'SUCCESS' });
+    await store.write({
+      operation: 'READ',
+      actor: 'bob',
+      resource: 'doc/1',
+      result: 'SUCCESS',
+    });
+    await store.write({
+      operation: 'WRITE',
+      actor: 'alice',
+      resource: 'doc/2',
+      result: 'SUCCESS',
+    });
     const results = await store.query({ actor: 'bob' });
     expect(results.length).toBeGreaterThanOrEqual(1);
     for (const r of results) expect(r.actor).toBe('bob');
@@ -136,7 +141,12 @@ describe.each(ENGINE_CASES)('$name E2E: AuditStore', ({ factory }) => {
 
   it('should count audit entries', async () => {
     const store = await factory.createAuditStore();
-    await store.write({ operation: 'READ', actor: 'user1', resource: 'doc/x', result: 'SUCCESS' });
+    await store.write({
+      operation: 'READ',
+      actor: 'user1',
+      resource: 'doc/x',
+      result: 'SUCCESS',
+    });
     const count = await store.count();
     expect(typeof count).toBe('number');
     expect(count).toBeGreaterThanOrEqual(1);
@@ -144,7 +154,12 @@ describe.each(ENGINE_CASES)('$name E2E: AuditStore', ({ factory }) => {
 
   it('should prune old audit entries', async () => {
     const store = await factory.createAuditStore();
-    await store.write({ operation: 'READ', actor: 'user1', resource: 'doc/x', result: 'SUCCESS' });
+    await store.write({
+      operation: 'READ',
+      actor: 'user1',
+      resource: 'doc/x',
+      result: 'SUCCESS',
+    });
     const pruned = await store.pruneOlderThan(new Date(Date.now() + 86400000));
     expect(typeof pruned).toBe('number');
   });

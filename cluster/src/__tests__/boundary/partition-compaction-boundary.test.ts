@@ -27,16 +27,11 @@ const VERIFY_TIMEOUT = 15_000;
 const SINGLE_CALL_TIMEOUT = 2_000;
 
 /** Get applied index for a single node with timeout. */
-async function safeGetAppliedIndex(
-  node: TestNodeInfo,
-  timeoutMs = SINGLE_CALL_TIMEOUT,
-): Promise<number> {
+async function safeGetAppliedIndex(node: TestNodeInfo, timeoutMs = SINGLE_CALL_TIMEOUT): Promise<number> {
   try {
     const result = await Promise.race([
       node.adapter.getAppliedIndex(),
-      new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error('getAppliedIndex timeout')), timeoutMs),
-      ),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('getAppliedIndex timeout')), timeoutMs)),
     ]);
     return result;
   } catch {
@@ -44,10 +39,7 @@ async function safeGetAppliedIndex(
   }
 }
 
-async function waitForLeader(
-  cluster: ChaosCluster,
-  maxWait = 15_000,
-): Promise<number> {
+async function waitForLeader(cluster: ChaosCluster, maxWait = 15_000): Promise<number> {
   const deadline = Date.now() + maxWait;
   while (Date.now() < deadline) {
     for (const node of cluster.nodes) {
@@ -64,25 +56,18 @@ async function waitForLeader(
  * Check all nodes converge within maxWait.
  * Uses per-call timeouts to avoid indefinite hangs.
  */
-async function verifyConvergence(
-  cluster: ChaosCluster,
-  maxWait = VERIFY_TIMEOUT,
-): Promise<void> {
+async function verifyConvergence(cluster: ChaosCluster, maxWait = VERIFY_TIMEOUT): Promise<void> {
   const deadline = Date.now() + maxWait;
   let lastApplieds: number[] = [];
   while (Date.now() < deadline) {
-    const results = await Promise.all(
-      cluster.nodes.map((n) => safeGetAppliedIndex(n)),
-    );
+    const results = await Promise.all(cluster.nodes.map((n) => safeGetAppliedIndex(n)));
     lastApplieds = results;
     if (lastApplieds.every((v) => v === lastApplieds[0]) && lastApplieds[0] > 0) {
       return;
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  console.log(
-    `[WARN] Convergence not achieved: lastApplieds=${JSON.stringify(lastApplieds)}`,
-  );
+  console.log(`[WARN] Convergence not achieved: lastApplieds=${JSON.stringify(lastApplieds)}`);
 }
 
 async function compactAll(cluster: ChaosCluster): Promise<void> {
@@ -126,7 +111,9 @@ describe('Boundary: Partition + Compaction (BP)', () => {
             for (let i = 0; i < 10; i++) {
               try {
                 await node.adapter.proposeAndWait(`bp1-majority-${i}`);
-              } catch { /* node may not be leader */ }
+              } catch {
+                /* node may not be leader */
+              }
             }
           }
         }
@@ -178,14 +165,14 @@ describe('Boundary: Partition + Compaction (BP)', () => {
 
         await compactAll(cluster);
 
-        const minorityNodes = cluster.nodes.filter(
-          (n) => !majorityIds.includes(n.id),
-        );
+        const minorityNodes = cluster.nodes.filter((n) => !majorityIds.includes(n.id));
         for (const node of minorityNodes) {
           for (let i = 0; i < 10; i++) {
             try {
               await node.adapter.proposeAndWait(`bp2-minority-${i}`);
-            } catch { /* may not be leader */ }
+            } catch {
+              /* may not be leader */
+            }
           }
         }
 
@@ -232,7 +219,9 @@ describe('Boundary: Partition + Compaction (BP)', () => {
             try {
               leaderId = await waitForLeader(cluster, 5_000);
               activeLeader = cluster.nodes.find((n) => n.id === leaderId);
-            } catch { /* continue anyway */ }
+            } catch {
+              /* continue anyway */
+            }
           }
 
           if (activeLeader) {
@@ -240,7 +229,9 @@ describe('Boundary: Partition + Compaction (BP)', () => {
               try {
                 await activeLeader.adapter.proposeAndWait(`bp3-r${round}-${i}`);
                 totalWritten++;
-              } catch { /* may lose leadership */ }
+              } catch {
+                /* may lose leadership */
+              }
             }
           }
 

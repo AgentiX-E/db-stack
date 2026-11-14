@@ -27,10 +27,10 @@ import { TestCluster } from '../integration/TestCluster';
 /** A single Jepsen-style operation in the history */
 export interface JepsenOperation {
   type: 'invoke' | 'complete';
-  process: number;  // client/process id
+  process: number; // client/process id
   f: 'read' | 'write';
   value: [string, string | null]; // [key, value] — null for reads
-  time: number;     // nanoseconds (Jepsen uses microseconds; we use ms)
+  time: number; // nanoseconds (Jepsen uses microseconds; we use ms)
 }
 
 /** Fault injected into the cluster by Nemesis */
@@ -84,9 +84,7 @@ export class Nemesis {
     switch (fault.type) {
       case 'partition-majority': {
         // Isolate majority nodes (accept connections only from each other)
-        const minority = this.cluster.nodes.filter(
-          (n) => !fault.targetIds.includes(n.id),
-        );
+        const minority = this.cluster.nodes.filter((n) => !fault.targetIds.includes(n.id));
         // Pause minority nodes: they won't respond to heartbeat/append
         for (const node of minority) {
           await node.adapter.stop();
@@ -95,9 +93,7 @@ export class Nemesis {
       }
       case 'partition-minority': {
         // Isolate minority nodes from majority
-        const majority = this.cluster.nodes.filter(
-          (n) => !fault.targetIds.includes(n.id),
-        );
+        const majority = this.cluster.nodes.filter((n) => !fault.targetIds.includes(n.id));
         // Pause majority-nodes targeted communication
         // (simplified: stop target nodes)
         for (const node of this.cluster.nodes) {
@@ -276,10 +272,7 @@ export class JepsenController {
     // ── Phase 1: Concurrent client workload + nemesis faults ──
 
     const clientPromises: Promise<void>[] = [];
-    const clientIds = Array.from(
-      { length: config.concurrency },
-      (_, i) => `jepsen-client-${i}`,
-    );
+    const clientIds = Array.from({ length: config.concurrency }, (_, i) => `jepsen-client-${i}`);
 
     for (const clientId of clientIds) {
       clientPromises.push(this.runClient(clientId, config));
@@ -295,9 +288,7 @@ export class JepsenController {
         if (this.stopped) break;
 
         const applied = await this.nemesis.applyFault(fault);
-        console.log(
-          `[nemesis] ${fault.type} on nodes ${fault.targetIds} → ${applied ? 'OK' : 'FAIL'}`,
-        );
+        console.log(`[nemesis] ${fault.type} on nodes ${fault.targetIds} → ${applied ? 'OK' : 'FAIL'}`);
 
         // Wait for fault duration, then heal
         if (fault.endMs) {
@@ -340,7 +331,7 @@ export class JepsenController {
       for (const v of fuzzy.violations) {
         violations.push(
           `Fuzzy violation: read(k=${v.key}) returned "${v.readValue}" but ` +
-          `known writes were: ${[...v.knownValues].filter(Boolean).join(', ') || '(none)'}`,
+            `known writes were: ${[...v.knownValues].filter(Boolean).join(', ') || '(none)'}`,
         );
       }
     }
@@ -421,7 +412,10 @@ export class JepsenController {
    *
    * Returns a map of key → { values_by_node } showing any mismatches.
    */
-  async verifyEndState(keys: string[], timeoutMs: number = 10_000): Promise<{
+  async verifyEndState(
+    keys: string[],
+    timeoutMs: number = 10_000,
+  ): Promise<{
     consistent: boolean;
     stateByNode: Record<number, Record<string, string | null>>;
     mismatches: string[];
@@ -435,9 +429,7 @@ export class JepsenController {
       for (const key of keys) {
         try {
           // Read from this specific node via propose
-          const result = await node.adapter.propose(
-            JSON.stringify({ op: 'read', k: key }),
-          );
+          const result = await node.adapter.propose(JSON.stringify({ op: 'read', k: key }));
           const parsed = typeof result === 'string' ? JSON.parse(result) : result;
           nodeState[key] = parsed?.value ?? null;
         } catch {
@@ -458,9 +450,7 @@ export class JepsenController {
       for (const nid of nodeIds.slice(1)) {
         const val = stateByNode[nid]?.[key] ?? null;
         if (val !== baseline) {
-          mismatches.push(
-            `key=${key}: node${firstNodeId}=${baseline} vs node${nid}=${val}`,
-          );
+          mismatches.push(`key=${key}: node${firstNodeId}=${baseline} vs node${nid}=${val}`);
         }
       }
     }

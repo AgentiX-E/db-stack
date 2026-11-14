@@ -22,7 +22,10 @@ describe('NoopMaintenanceExecutor', () => {
   });
 
   it('vacuum dryRun returns success without side effects', async () => {
-    const result = await executor.vacuum({ target: 'table_orders', dryRun: true });
+    const result = await executor.vacuum({
+      target: 'table_orders',
+      dryRun: true,
+    });
     expect(result.success).toBe(true);
     expect(result.operation).toBe('VACUUM');
     expect(result.details).toHaveProperty('dryRun', true);

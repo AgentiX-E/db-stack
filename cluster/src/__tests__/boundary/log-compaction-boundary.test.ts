@@ -56,7 +56,9 @@ function dirSizeSync(dir: string): number {
         total += fs.statSync(full).size;
       }
     }
-  } catch { /* race with cleanup */ }
+  } catch {
+    /* race with cleanup */
+  }
   return total;
 }
 
@@ -131,9 +133,7 @@ describe('Boundary: Raft Log Compaction', () => {
           }
         }
 
-        console.log(
-          `[BC.3] Failed proposals during findLeader+compaction: ${failedAttempts.length}/500`,
-        );
+        console.log(`[BC.3] Failed proposals during findLeader+compaction: ${failedAttempts.length}/500`);
         expect(failedAttempts.length).toBeLessThan(50);
       });
     },
@@ -145,9 +145,7 @@ describe('Boundary: Raft Log Compaction', () => {
     async () => {
       await withCluster(async (cluster) => {
         const getAvgSize = () => {
-          const sizes = cluster.dataDirs
-            .filter((d): d is string => !!d && fs.existsSync(d))
-            .map((d) => dirSizeSync(d));
+          const sizes = cluster.dataDirs.filter((d): d is string => !!d && fs.existsSync(d)).map((d) => dirSizeSync(d));
           return sizes.reduce((a, b) => a + b, 0) / Math.max(sizes.length, 1);
         };
         const avgInitial = getAvgSize();
@@ -164,9 +162,7 @@ describe('Boundary: Raft Log Compaction', () => {
 
           const avgCurrent = getAvgSize();
           const ratio = avgCurrent / Math.max(avgInitial, 1);
-          console.log(
-            `[BC.4] Cycle ${cycle + 1}: store ratio vs initial: ${ratio.toFixed(2)}x`,
-          );
+          console.log(`[BC.4] Cycle ${cycle + 1}: store ratio vs initial: ${ratio.toFixed(2)}x`);
         }
 
         const avgFinal = getAvgSize();

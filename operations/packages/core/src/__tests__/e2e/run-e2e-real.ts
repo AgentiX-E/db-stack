@@ -61,7 +61,12 @@ function parseCLI(): { engines: string[]; skipInMem: boolean } {
   };
 }
 
-function parseVitestOutput(output: string): { passed: number; failed: number; skipped: number; errors: string[] } {
+function parseVitestOutput(output: string): {
+  passed: number;
+  failed: number;
+  skipped: number;
+  errors: string[];
+} {
   const passMatch = output.match(/(\d+)\s+passed/i);
   const failMatch = output.match(/(\d+)\s+failed/i);
   const skipMatch = output.match(/(\d+)\s+skipped/i);
@@ -72,26 +77,27 @@ function parseVitestOutput(output: string): { passed: number; failed: number; sk
 
   const errorLines = output
     .split('\n')
-    .filter(l => l.includes('FAIL') || l.includes('AssertionError:') || l.includes('expected'))
+    .filter((l) => l.includes('FAIL') || l.includes('AssertionError:') || l.includes('expected'))
     .slice(0, 5);
 
   return { passed, failed, skipped, errors: errorLines };
 }
 
-function runVitest(file: string): { output: string; durationMs: number; exitCode: number } {
+function runVitest(file: string): {
+  output: string;
+  durationMs: number;
+  exitCode: number;
+} {
   const startTime = Date.now();
 
   try {
-    const output = execSync(
-      `npx vitest run packages/core/src/__tests__/e2e/${file} --reporter=verbose`,
-      {
-        cwd: '/home/admin/openclaw/workspace/db-operations',
-        env: { ...process.env, FORCE_COLOR: '0' },
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 120_000, // 2 min per test file
-      },
-    );
+    const output = execSync(`npx vitest run packages/core/src/__tests__/e2e/${file} --reporter=verbose`, {
+      cwd: '/home/admin/openclaw/workspace/db-operations',
+      env: { ...process.env, FORCE_COLOR: '0' },
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 120_000, // 2 min per test file
+    });
     return { output, durationMs: Date.now() - startTime, exitCode: 0 };
   } catch (err: any) {
     return {
@@ -114,9 +120,7 @@ async function main(): Promise<void> {
     'e2e-adapters-real.test.ts',
   ];
 
-  const filteredEngines = skipInMem
-    ? engines.filter(e => e !== 'InMemory')
-    : engines;
+  const filteredEngines = skipInMem ? engines.filter((e) => e !== 'InMemory') : engines;
 
   console.log('╔══════════════════════════════════════════════════╗');
   console.log('║    E2E Real Engine Integration Tests            ║');
@@ -209,7 +213,7 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Fatal error:', err);
   process.exit(2);
 });

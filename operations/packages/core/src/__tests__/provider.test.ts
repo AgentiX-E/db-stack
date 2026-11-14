@@ -135,11 +135,7 @@ describe('ProviderRegistry', () => {
       registry.register(ITestService, mid, { priority: 50 });
 
       const all = registry.getAll(ITestService);
-      expect(all.map(p => p.greet())).toEqual([
-        'High, world!',
-        'Mid, world!',
-        'Low, world!',
-      ]);
+      expect(all.map((p) => p.greet())).toEqual(['High, world!', 'Mid, world!', 'Low, world!']);
     });
 
     it('should return empty array when no registration exists', () => {
@@ -331,9 +327,15 @@ describe('ProviderRegistry lifecycle', () => {
 
     // Hooks to track stop order
     const origStopA = a.stop.bind(a);
-    a.stop = async () => { order.push('a'); await origStopA(); };
+    a.stop = async () => {
+      order.push('a');
+      await origStopA();
+    };
     const origStopB = b.stop.bind(b);
-    b.stop = async () => { order.push('b'); await origStopB(); };
+    b.stop = async () => {
+      order.push('b');
+      await origStopB();
+    };
 
     registry.register(token<unknown>('a'), a);
     registry.register(token<unknown>('b'), b);

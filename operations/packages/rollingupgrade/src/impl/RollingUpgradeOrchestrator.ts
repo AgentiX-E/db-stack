@@ -25,7 +25,7 @@ import type {
   NodeUpgradeState,
   CanaryConfig,
   DrainConfig,
-} from "../interfaces/index.js";
+} from '../interfaces/index.js';
 
 /** Default drain configuration. */
 const DEFAULT_DRAIN: Required<DrainConfig> = {
@@ -41,15 +41,12 @@ const MIN_CANARY_BAKE_MS = 10_000;
 
 export class RollingUpgradeOrchestrator implements IRollingUpgrade {
   private plan: RollingUpgradePlan | null = null;
-  private phase: UpgradePhase = "idle";
+  private phase: UpgradePhase = 'idle';
   private batches: UpgradeBatch[] = [];
   private events: RollingUpgradeEvent[] = [];
   private paused = false;
   private stats: RollingUpgradeStats | null = null;
-  private healthChecks = new Map<
-    string,
-    (nodeId: string) => Promise<BatchHealth>
-  >();
+  private healthChecks = new Map<string, (nodeId: string) => Promise<BatchHealth>>();
   private startTime = 0;
 
   /** Injectable sleep for testing. Defaults to real setTimeout. */
@@ -85,30 +82,30 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
 
   async pause(): Promise<void> {
     this.paused = true;
-    this._emit("paused", { phase: this.phase });
+    this._emit('paused', { phase: this.phase });
   }
 
   async resume(): Promise<void> {
     this.paused = false;
-    this._emit("resumed", { phase: this.phase });
+    this._emit('resumed', { phase: this.phase });
   }
 
   async rollback(): Promise<RollingUpgradeStats> {
-    this._emit("rollback_triggered", { reason: "manual" });
+    this._emit('rollback_triggered', { reason: 'manual' });
 
     let rolledBack = 0;
     for (const batch of this.batches) {
       for (const node of batch.nodes) {
         if (this._rollbackNode(node)) rolledBack++;
       }
-      if (batch.nodes.some((n) => n.status === "rolled_back")) {
-        batch.status = "rolled_back";
+      if (batch.nodes.some((n) => n.status === 'rolled_back')) {
+        batch.status = 'rolled_back';
       }
     }
 
-    this.phase = "rolling_back";
-    this._emit("rollback_completed", { rolledBackNodes: rolledBack });
-    this.phase = "idle";
+    this.phase = 'rolling_back';
+    this._emit('rollback_completed', { rolledBackNodes: rolledBack });
+    this.phase = 'idle';
 
     return this._buildStats();
   }
@@ -121,22 +118,19 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
    */
   private _rollbackNode(node: NodeUpgradeState): boolean {
     const inFlightOrCompleted =
-      node.status === "completed" ||
-      node.status === "draining" ||
-      node.status === "upgrading" ||
-      node.status === "health_check";
+      node.status === 'completed' ||
+      node.status === 'draining' ||
+      node.status === 'upgrading' ||
+      node.status === 'health_check';
     if (inFlightOrCompleted) {
-      node.status = "rolled_back";
+      node.status = 'rolled_back';
       node.completedAt = Date.now();
       return true;
     }
     return false;
   }
 
-  registerHealthCheck(
-    name: string,
-    fn: (nodeId: string) => Promise<BatchHealth>,
-  ): void {
+  registerHealthCheck(name: string, fn: (nodeId: string) => Promise<BatchHealth>): void {
     this.healthChecks.set(name, fn);
   }
 
@@ -150,9 +144,9 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
     this.batches = this._buildBatches();
     this.events = [];
     this.paused = false;
-    this.phase = "validating";
+    this.phase = 'validating';
 
-    this._emit("plan_validated", {
+    this._emit('plan_validated', {
       totalNodes: plan.nodes.length,
       totalBatches: this.batches.length,
       hasCanary: !!plan.canary,
@@ -160,21 +154,21 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
 
     // ── Canary phase ──────────────────────────────────────
     if (plan.canary) {
-      this.phase = "canary";
+      this.phase = 'canary';
       const canaryBatch = this.batches.find((b) => b.isCanary);
       if (canaryBatch) {
         try {
           await this._executeCanary(canaryBatch, plan.canary);
         } catch {
           // Canary failed — rollback trigger
-          this._handleFailure("canary", canaryBatch, "Canary health check failed");
+          this._handleFailure('canary', canaryBatch, 'Canary health check failed');
           return this._buildStats();
         }
       }
     }
 
     // ── Rolling phase ──────────────────────────────────────
-    this.phase = "rolling";
+    this.phase = 'rolling';
 
     for (let i = 0; i < this.batches.length; i++) {
       const batch = this.batches[i]!;
@@ -184,7 +178,7 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
 
       // Time-bound abort
       if (plan.maxDurationMs && Date.now() - this.startTime > plan.maxDurationMs) {
-        return this._abort("Maximum duration exceeded");
+        return this._abort('Maximum duration exceeded');
       }
 
       // Pause gate
@@ -197,14 +191,14 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
     }
 
     // Determine final phase
-    if (this.phase === "rolling" || this.phase === "health_checking") {
+    if (this.phase === 'rolling' || this.phase === 'health_checking') {
       // No failures — complete
-      this.phase = "completing";
-      this._emit("upgrade_completed", {
+      this.phase = 'completing';
+      this._emit('upgrade_completed', {
         totalBatches: this.batches.length,
         upgradedNodes: plan.nodes.length,
       });
-      this.phase = "completed";
+      this.phase = 'completed';
     }
 
     return this._buildStats();
@@ -216,27 +210,27 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
     const missingId = !plan.id;
     const emptyNodes = !plan.nodes.length;
     if (missingId || emptyNodes) {
-      throw new Error("Invalid plan: id and nodes are required");
+      throw new Error('Invalid plan: id and nodes are required');
     }
     const zeroNodes = plan.nodes.length === 0;
     if (zeroNodes) {
-      throw new Error("Invalid plan: nodes list cannot be empty");
+      throw new Error('Invalid plan: nodes list cannot be empty');
     }
     if (plan.canary) {
       const fractionNotPositive = plan.canary.fraction <= 0;
       const fractionExceedsOne = plan.canary.fraction > 1;
       if (fractionNotPositive || fractionExceedsOne) {
-        throw new Error("Canary fraction must be between 0 and 1");
+        throw new Error('Canary fraction must be between 0 and 1');
       }
       const bakeTooShort = plan.canary.bakeTimeMs < this._minBakeMs;
       if (bakeTooShort) {
         throw new Error(`Canary bake time must be >= ${this._minBakeMs}ms`);
       }
     }
-    const isFixedSize = plan.batchStrategy === "fixed_size";
+    const isFixedSize = plan.batchStrategy === 'fixed_size';
     const batchSizeInvalid = !plan.batchSize || plan.batchSize < 1;
     if (isFixedSize && batchSizeInvalid) {
-      throw new Error("batchSize must be >= 1 for fixed_size strategy");
+      throw new Error('batchSize must be >= 1 for fixed_size strategy');
     }
     // Verify health checks exist
     for (const name of plan.healthCheckNames) {
@@ -252,7 +246,7 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
   private _buildBatches(): UpgradeBatch[] {
     const plan = this.plan!;
     const batches: UpgradeBatch[] = [];
-    let remainingNodes = [...plan.nodes];
+    const remainingNodes = [...plan.nodes];
 
     // Canary nodes first
     if (plan.canary) {
@@ -262,50 +256,40 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
       const floor = Math.min(fractionTimesLength, maxCanary);
       const canaryCount = Math.max(1, floor);
       const canaryNodes = remainingNodes.splice(0, canaryCount);
-      batches.push(
-        this._makeBatch(canaryNodes, batches.length + 1, true),
-      );
+      batches.push(this._makeBatch(canaryNodes, batches.length + 1, true));
     }
 
     // Remaining batches by strategy
     switch (plan.batchStrategy) {
-      case "one_by_one":
+      case 'one_by_one':
         while (remainingNodes.length > 0) {
-          batches.push(
-            this._makeBatch(remainingNodes.splice(0, 1), batches.length + 1, false),
-          );
+          batches.push(this._makeBatch(remainingNodes.splice(0, 1), batches.length + 1, false));
         }
         break;
 
-      case "all_at_once":
+      case 'all_at_once':
         if (remainingNodes.length > 0) {
-          batches.push(
-            this._makeBatch(remainingNodes.splice(0), batches.length + 1, false),
-          );
+          batches.push(this._makeBatch(remainingNodes.splice(0), batches.length + 1, false));
         }
         break;
 
-      case "percentage": {
+      case 'percentage': {
         const pct = plan.batchSize && plan.batchSize > 0 ? plan.batchSize : 20;
         while (remainingNodes.length > 0) {
           const pctDiv100 = pct / 100;
           const multiplied = remainingNodes.length * pctDiv100;
           const size = Math.max(1, Math.ceil(multiplied));
-          batches.push(
-            this._makeBatch(remainingNodes.splice(0, size), batches.length + 1, false),
-          );
+          batches.push(this._makeBatch(remainingNodes.splice(0, size), batches.length + 1, false));
         }
         break;
       }
 
-      case "fixed_size":
+      case 'fixed_size':
       default: {
         const size = plan.batchSize ?? 1;
         while (remainingNodes.length > 0) {
           const cappedSize = Math.min(size, remainingNodes.length);
-          batches.push(
-            this._makeBatch(remainingNodes.splice(0, cappedSize), batches.length + 1, false),
-          );
+          batches.push(this._makeBatch(remainingNodes.splice(0, cappedSize), batches.length + 1, false));
         }
         break;
       }
@@ -314,44 +298,40 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
     return batches;
   }
 
-  private _makeBatch(
-    nodes: string[],
-    index: number,
-    isCanary: boolean,
-  ): UpgradeBatch {
+  private _makeBatch(nodes: string[], index: number, isCanary: boolean): UpgradeBatch {
     return {
       index,
       isCanary,
-      status: "pending",
+      status: 'pending',
       nodes: nodes.map((nodeId) => ({
         nodeId,
-        status: "pending" as const,
+        status: 'pending' as const,
       })),
     };
   }
 
   // ── Internal: Canary Execution ───────────────────────────
 
-  private async _executeCanary(
-    batch: UpgradeBatch,
-    config: CanaryConfig,
-  ): Promise<void> {
-    this._emit("canary_started", { batchIndex: batch.index, nodes: batch.nodes.map((n) => n.nodeId) });
+  private async _executeCanary(batch: UpgradeBatch, config: CanaryConfig): Promise<void> {
+    this._emit('canary_started', {
+      batchIndex: batch.index,
+      nodes: batch.nodes.map((n) => n.nodeId),
+    });
 
     // Mark nodes as upgrading
     await this._drainAndUpgrade(batch);
 
     // Check canary health
-    batch.status = "running";
+    batch.status = 'running';
     const health = await this._checkBatchHealth(batch);
-    this._emit("canary_health_checked", {
+    this._emit('canary_health_checked', {
       batchIndex: batch.index,
       healthy: health.healthy,
     });
 
     if (!health.healthy) {
-      this._emit("canary_failed", { batchIndex: batch.index });
-      throw new Error("Canary health check failed");
+      this._emit('canary_failed', { batchIndex: batch.index });
+      throw new Error('Canary health check failed');
     }
 
     // Bake period
@@ -361,17 +341,17 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
 
     // Promote canary
     for (const node of batch.nodes) {
-      node.status = "completed";
+      node.status = 'completed';
       node.completedAt = Date.now();
     }
-    batch.status = "completed";
-    this._emit("canary_promoted", { batchIndex: batch.index });
+    batch.status = 'completed';
+    this._emit('canary_promoted', { batchIndex: batch.index });
   }
 
   // ── Internal: Batch Execution ────────────────────────────
 
   private async _executeBatch(batch: UpgradeBatch, _globalIndex: number): Promise<boolean> {
-    this._emit("batch_started", {
+    this._emit('batch_started', {
       batchIndex: batch.index,
       nodes: batch.nodes.map((n) => n.nodeId),
     });
@@ -380,10 +360,10 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
     await this._drainAndUpgrade(batch);
 
     // Health check
-    batch.status = "running";
-    this.phase = "health_checking";
+    batch.status = 'running';
+    this.phase = 'health_checking';
     const health = await this._checkBatchHealth(batch);
-    this._emit("batch_health_checked", {
+    this._emit('batch_health_checked', {
       batchIndex: batch.index,
       healthy: health.healthy,
     });
@@ -391,40 +371,40 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
     const plan = this.plan!;
 
     if (!health.healthy) {
-      if (plan.rollbackTrigger === "on_batch_threshold") {
+      if (plan.rollbackTrigger === 'on_batch_threshold') {
         const threshold = plan.batchFailureThreshold ?? 0.5;
-        const failed = batch.nodes.filter((n) => n.status === "failed").length;
+        const failed = batch.nodes.filter((n) => n.status === 'failed').length;
         if (failed / batch.nodes.length >= threshold) {
-          this._handleFailure("batch_threshold", batch, `Batch failure threshold ${threshold * 100}% reached`);
+          this._handleFailure('batch_threshold', batch, `Batch failure threshold ${threshold * 100}% reached`);
           return false;
         }
         // Below threshold: tolerate the partial failure. Promote the healthy
         // nodes to completed and leave the failed ones as-is, then continue
         // the rolling upgrade.
         for (const node of batch.nodes) {
-          if (node.status !== "failed") {
-            node.status = "completed";
+          if (node.status !== 'failed') {
+            node.status = 'completed';
             node.completedAt = Date.now();
           }
         }
-        batch.status = "completed";
-        this._emit("batch_promoted", { batchIndex: batch.index });
-        this.phase = "rolling";
+        batch.status = 'completed';
+        this._emit('batch_promoted', { batchIndex: batch.index });
+        this.phase = 'rolling';
         return true;
       }
 
-      this._handleFailure("batch", batch, "Batch health check failed");
+      this._handleFailure('batch', batch, 'Batch health check failed');
       return false;
     }
 
     // Promote batch
     for (const node of batch.nodes) {
-      node.status = "completed";
+      node.status = 'completed';
       node.completedAt = Date.now();
     }
-    batch.status = "completed";
-    this._emit("batch_promoted", { batchIndex: batch.index });
-    this.phase = "rolling";
+    batch.status = 'completed';
+    this._emit('batch_promoted', { batchIndex: batch.index });
+    this.phase = 'rolling';
     return true;
   }
 
@@ -434,20 +414,20 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
     const drain = this.plan?.drain ?? DEFAULT_DRAIN;
 
     for (const node of batch.nodes) {
-      if (node.status === "pending") {
+      if (node.status === 'pending') {
         // Phase 1: Drain connections
         if (drain.waitForInflight) {
-          node.status = "draining";
+          node.status = 'draining';
           node.startedAt = Date.now();
           await this._sleepFn(drain.connectionDrainMs);
         }
 
         // Phase 2: Upgrade (simulated)
-        node.status = "upgrading";
+        node.status = 'upgrading';
         await this._sleepFn(0); // yield event loop for async health checks
 
         // Phase 3: Health check post-upgrade
-        node.status = "health_check";
+        node.status = 'health_check';
       }
     }
   }
@@ -460,7 +440,7 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
       return { healthy: true, nodes: [], evaluatedAt: Date.now() };
     }
 
-    const nodeResults: BatchHealth["nodes"] = [];
+    const nodeResults: BatchHealth['nodes'] = [];
     let allHealthy = true;
 
     for (const node of batch.nodes) {
@@ -482,7 +462,7 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
       // their in-flight `health_check` state so callers (e.g. on_batch_threshold)
       // can distinguish a partial failure from a total one.
       if (!nodeHealthy) {
-        node.status = "failed";
+        node.status = 'failed';
         allHealthy = false;
       }
     }
@@ -496,28 +476,23 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
 
   // ── Internal: Failure Handling ───────────────────────────
 
-  private _handleFailure(
-    trigger: string,
-    batch: UpgradeBatch,
-    reason: string,
-  ): void {
-    batch.status = "failed";
+  private _handleFailure(trigger: string, batch: UpgradeBatch, reason: string): void {
+    batch.status = 'failed';
     for (const node of batch.nodes) {
-      if (node.status !== "completed") {
-        node.status = "failed";
+      if (node.status !== 'completed') {
+        node.status = 'failed';
         node.error = reason;
       }
     }
-    this._emit("batch_failed", { batchIndex: batch.index, reason });
+    this._emit('batch_failed', { batchIndex: batch.index, reason });
 
     const plan = this.plan!;
 
     // Determine rollback action based on trigger policy
-    const isFirstFailure = plan.rollbackTrigger === "on_first_failure";
-    const isCanaryFailure = plan.rollbackTrigger === "on_canary_failure";
-    const isDegradation = plan.rollbackTrigger === "on_degradation";
-    const isBatchThreshold =
-      trigger === "batch_threshold" && plan.rollbackTrigger === "on_batch_threshold";
+    const isFirstFailure = plan.rollbackTrigger === 'on_first_failure';
+    const isCanaryFailure = plan.rollbackTrigger === 'on_canary_failure';
+    const isDegradation = plan.rollbackTrigger === 'on_degradation';
+    const isBatchThreshold = trigger === 'batch_threshold' && plan.rollbackTrigger === 'on_batch_threshold';
 
     const shouldRollback = isFirstFailure || isCanaryFailure || isDegradation || isBatchThreshold;
 
@@ -525,32 +500,32 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
       this._rollbackAll(trigger);
     } else {
       // manual_only or no matching trigger → mark failed but don't rollback
-      this.phase = "failed";
+      this.phase = 'failed';
     }
   }
 
   private _rollbackAll(trigger: string): void {
-    this._emit("rollback_triggered", { reason: trigger });
-    this.phase = "rolling_back";
+    this._emit('rollback_triggered', { reason: trigger });
+    this.phase = 'rolling_back';
 
     for (const batch of this.batches) {
       for (const node of batch.nodes) {
         this._rollbackNode(node);
       }
-      if (batch.nodes.some((n) => n.status === "rolled_back")) {
-        batch.status = "rolled_back";
+      if (batch.nodes.some((n) => n.status === 'rolled_back')) {
+        batch.status = 'rolled_back';
       }
     }
 
-    this._emit("rollback_completed", {
-      rolledBackBatches: this.batches.filter((b) => b.status === "rolled_back").length,
+    this._emit('rollback_completed', {
+      rolledBackBatches: this.batches.filter((b) => b.status === 'rolled_back').length,
     });
-    this.phase = "failed";
+    this.phase = 'failed';
   }
 
   private _abort(reason: string): RollingUpgradeStats {
-    this._emit("upgrade_aborted", { reason });
-    this.phase = "aborted";
+    this._emit('upgrade_aborted', { reason });
+    this.phase = 'aborted';
     return this._buildStats();
   }
 
@@ -559,16 +534,10 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
   private _buildStats(): RollingUpgradeStats {
     const plan = this.plan!;
     const allNodes = this.batches.flatMap((b) => b.nodes);
-    const completedNodes = allNodes.filter(
-      (n) => n.status === "completed",
-    ).length;
-    const failedNodes = allNodes.filter(
-      (n) => n.status === "failed",
-    ).length;
-    const rolledBackNodes = allNodes.filter(
-      (n) => n.status === "rolled_back",
-    ).length;
-    const completedBatches = this.batches.filter((b) => b.status === "completed").length;
+    const completedNodes = allNodes.filter((n) => n.status === 'completed').length;
+    const failedNodes = allNodes.filter((n) => n.status === 'failed').length;
+    const rolledBackNodes = allNodes.filter((n) => n.status === 'rolled_back').length;
+    const completedBatches = this.batches.filter((b) => b.status === 'completed').length;
     const completedAt = Date.now();
     const durationMs = completedAt - this.startTime;
 
@@ -592,7 +561,7 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
   }
 
   private _emit(
-    type: RollingUpgradeEvent["type"],
+    type: RollingUpgradeEvent['type'],
     details: Record<string, unknown>,
     batchIndex?: number,
     nodeId?: string,
@@ -608,5 +577,4 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
   }
 
   // ── Utility ──────────────────────────────────────────────
-
 }
