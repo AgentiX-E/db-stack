@@ -15,3 +15,7 @@ coverage/
 core.[0-9]*
 *.core
 *.heapsnapshot
+
+# RaftGroup defaults its snapshot directory to ./data (cwd-relative), so running
+# the cluster suites from the package directory leaves snapshot files behind.
+cluster/data/
