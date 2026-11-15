@@ -369,6 +369,44 @@ jobs:
       - name: Cluster performance budgets
         run: pnpm --filter @agentix-e/db-cluster run test:perf
 
+  # ── Mutation testing ──────────────────────────────────────────────
+  #
+  # A green suite says the assertions pass; it does not say they would fail if the
+  # behaviour changed. Mutation testing answers that question by changing the code
+  # and counting how many alterations the suite notices.
+  #
+  # This is the only gate in the repository that measures the tests rather than the
+  # product, and it immediately found 130 changes in SqliteStorage that no test
+  # objected to — including an early return on an empty batch that is never reached.
+  #
+  # It runs in place (`--inPlace`): the sandbox Stryker builds is a copy of the
+  # package, and `vitest.setup.ts` imports a helper from the repository root, which
+  # the copy does not contain. In-place restores the sources when it finishes.
+  mutation:
+    name: Mutation (cluster + federation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Mutation score — cluster
+        run: pnpm --filter @agentix-e/db-cluster run test:mutation
+      - name: Mutation score — federation
+        run: pnpm --filter @agentix-e/db-federation run test:mutation
+      - name: Sources restored
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain -- '*/src')" ]; then
+            echo "::error::mutation run left modified sources behind"
+            git status --porcelain -- '*/src'
+            exit 1
+          fi
+
   # ── Supply chain ──────────────────────────────────────────────────
   security:
     name: Security (SCA + secret scan)
@@ -398,7 +436,7 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [typecheck, quality, unit, engine-conformance, integration, coverage, coverage-e2e, coverage-gate, e2e-cluster, e2e-federation, load, benchmark, security]
+    needs: [typecheck, quality, unit, engine-conformance, integration, coverage, coverage-e2e, coverage-gate, e2e-cluster, e2e-federation, load, benchmark, mutation, security]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -418,12 +456,14 @@ jobs:
           echo "| e2e-federation | ${{ needs.e2e-federation.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| load | ${{ needs.load.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| benchmark | ${{ needs.benchmark.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| mutation | ${{ needs.mutation.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
           for r in "${{ needs.typecheck.result }}" "${{ needs.quality.result }}" "${{ needs.unit.result }}" \
                    "${{ needs.engine-conformance.result }}" "${{ needs.integration.result }}" \
                    "${{ needs.coverage.result }}" "${{ needs.coverage-e2e.result }}" \
                    "${{ needs.coverage-gate.result }}" \
                    "${{ needs.e2e-cluster.result }}" "${{ needs.e2e-federation.result }}" "${{ needs.load.result }}" \
-                   "${{ needs.benchmark.result }}" "${{ needs.security.result }}"; do
+                   "${{ needs.benchmark.result }}" "${{ needs.mutation.result }}" \
+                   "${{ needs.security.result }}"; do
             if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then exit 1; fi
           done

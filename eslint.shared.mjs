@@ -80,6 +80,7 @@ export function createConfig(options = {}) {
         '**/node_modules/**',
         '**/coverage/**',
         '**/.turbo/**',
+        '**/.stryker-tmp/**',
         '**/data/**',
         '**/*.d.ts',
       ],

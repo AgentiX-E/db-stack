@@ -23,3 +23,10 @@ cluster/data/
 # Turbo build cache is a local artefact: committing it shipped stale, machine-specific
 # task outputs and made "cache hit" results unverifiable in review.
 .turbo/
+
+# Stryker's working directory: a copy of the package plus its backups. Left
+# behind by an interrupted run, it is 40 MB of duplicate sources that ESLint then
+# tries to lint — the sandbox's own eslint.config.mjs imports a file one level
+# up, which does not exist inside it.
+.stryker-tmp/
+reports/mutation/
