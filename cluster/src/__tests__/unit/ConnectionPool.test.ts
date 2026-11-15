@@ -458,6 +458,44 @@ describe('ConnectionPool circuit breaker reset', () => {
     await vi.waitFor(() => expect(connectSpy).toHaveBeenCalled(), { timeout: 2000 });
     await pool.stop();
   });
+
+  it('re-arms a peer whose connection exists but is not connected', async () => {
+    // The re-arm is conditional on the peer having no *usable* connection. A
+    // stale entry in `_connections` (socket gone, `connected` false) is exactly
+    // the case that used to look "already handled" and stayed down.
+    const pool = new ConnectionPool(makeConfig({ circuitResetTimeoutMs: 50, maxRetries: 3 }));
+    const conn = new PeerConnection(2, createMockSocket());
+    (conn as unknown as { _connected: boolean })._connected = false;
+    (pool as any)._connections.set(2, conn);
+    const connectSpy = vi.spyOn(pool as any, '_connect').mockRejectedValue(new Error('peer is down'));
+
+    (pool as any)._retryAttempts.set(2, 2);
+    (pool as any)._scheduleRetry(2, 0);
+
+    await vi.waitFor(() => expect(connectSpy).toHaveBeenCalled(), { timeout: 2000 });
+    await pool.stop();
+  });
+
+  it('leaves a live connection alone when the breaker resets', async () => {
+    // The other side of the same condition: a peer that came back on its own —
+    // an inbound socket, a successful retry - must not have its live connection
+    // replaced by a fresh dial on every breaker cycle.
+    const pool = new ConnectionPool(makeConfig({ circuitResetTimeoutMs: 50, maxRetries: 3 }));
+    const conn = new PeerConnection(2, createMockSocket());
+    (pool as any)._connections.set(2, conn);
+    const connectSpy = vi.spyOn(pool as any, '_connect').mockRejectedValue(new Error('peer is down'));
+
+    (pool as any)._retryAttempts.set(2, 2);
+    (pool as any)._scheduleRetry(2, 0);
+
+    await vi.waitFor(() => expect((pool as any)._circuitBreakers.get(2)?.isOpen).toBe(true));
+    // Give the reset window twice its length before concluding nothing happened.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(connectSpy).not.toHaveBeenCalled();
+    expect((pool as any)._connections.get(2)).toBe(conn);
+    await pool.stop();
+  });
 });
 
 describe('ConnectionPool getConnection', () => {
