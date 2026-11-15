@@ -65,6 +65,16 @@ export interface IAuditStore {
    * Delete entries older than the given timestamp.
    */
   pruneOlderThan(timestamp: Date): Promise<number>;
+
+  /**
+   * Graceful shutdown (optional).
+   *
+   * Stores that do background work after a write returns — compressing a rotated
+   * segment, flushing a buffer — implement this so a caller can wait for that work
+   * instead of discovering it as a file that disappears later. In-memory stores
+   * have nothing to drain and may omit it.
+   */
+  close?(): Promise<void>;
 }
 
 /** Options for audit log export. */
