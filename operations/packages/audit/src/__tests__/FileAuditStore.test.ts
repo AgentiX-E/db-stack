@@ -20,12 +20,19 @@ import {
   DEFAULT_MAX_FILE_SIZE,
   DEFAULT_MAX_AGE_MS,
 } from '../impl/FileAuditStore.js';
-import { existsSync, mkdirSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 
 // ── Test data dir ──────────────────────────────────────────
 
-const TEST_DIR = '/tmp/db-federation-test/audit-file-store';
+/**
+ * Per-process, not per-machine. The suite writes real ndjson segments and wipes
+ * them between cases, so a fixed path let a second run on the same machine
+ * delete the first run's segments — which surfaced here as "a segment appeared
+ * late" rather than as the cross-run collision it was.
+ */
+const TEST_DIR = mkdtempSync(join(tmpdir(), 'audit-file-store-'));
 
 /** Poll until the directory holds at least `count` segments, or fail loudly. */
 async function waitForSegments(count: number, deadlineMs = 5_000): Promise<void> {

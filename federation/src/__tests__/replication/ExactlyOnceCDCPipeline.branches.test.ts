@@ -13,20 +13,27 @@
  *   - outer pumpCycle catch (fetchOldestPending rejection)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { ExactlyOnceCDCPipeline, type ExactlyOnceCDCPipelineConfig } from '../../replication/ExactlyOnceCDCPipeline';
 import { mkdirSync, rmSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
 import * as path from 'path';
 import type { ITransport } from '../../interfaces/transport/ITransport';
 import type { TransportMessage } from '../../interfaces/transport/TransportMessage';
 import { HLC } from '../../hlc/HLC';
 
-const TEST_DIR = '/tmp/db-federation-test/cdc-pipeline-branches';
+// Scoped to this process so a concurrent run on the same machine cannot delete
+// this run's LMDB files. See the note in ExactlyOnceCDCPipeline.test.ts.
+const TEST_DIR = path.join(tmpdir(), `db-federation-cdc-branches-${process.pid}`);
 
 function cleanDir(): void {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
   mkdirSync(TEST_DIR, { recursive: true });
 }
+
+afterAll(() => {
+  rmSync(TEST_DIR, { recursive: true, force: true });
+});
 
 function makeConfig(overrides?: Partial<ExactlyOnceCDCPipelineConfig>): ExactlyOnceCDCPipelineConfig {
   return {

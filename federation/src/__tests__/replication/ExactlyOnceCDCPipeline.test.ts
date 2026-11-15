@@ -14,9 +14,10 @@
  * E2E.2 — Crash recovery test: simulate crash, verify checkpoint resume
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { ExactlyOnceCDCPipeline, type ExactlyOnceCDCPipelineConfig } from '../../replication/ExactlyOnceCDCPipeline';
 import { existsSync, readFileSync, mkdirSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import * as path from 'path';
 import type { ITransport } from '../../interfaces/transport/ITransport';
 import type { TransportMessage } from '../../interfaces/transport/TransportMessage';
@@ -24,12 +25,25 @@ import { HLC } from '../../hlc/HLC';
 
 // ── Test data dir ──────────────────────────────────────────
 
-const TEST_DIR = '/tmp/db-federation-test/cdc-pipeline';
+/**
+ * Scoped to this process, not to the machine.
+ *
+ * The suite writes real LMDB files and wipes them in `beforeEach`. With a fixed
+ * path, a second run on the same machine — a second worktree, or a second job on
+ * a self-hosted runner — deleted the first run's outbox mid-test, and the damage
+ * read as `ENOENT … cdc-checkpoint.json` or LMDB's `Attempting to setup locks`.
+ * Both look like product bugs and neither is one.
+ */
+const TEST_DIR = path.join(tmpdir(), `db-federation-cdc-${process.pid}`);
 
 function cleanDir(): void {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
   mkdirSync(TEST_DIR, { recursive: true });
 }
+
+afterAll(() => {
+  rmSync(TEST_DIR, { recursive: true, force: true });
+});
 
 // ── Mock transport ─────────────────────────────────────────
 

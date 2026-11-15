@@ -29,6 +29,7 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { InstallSnapshotHandler } from '../../consensus/extensions/InstallSnapshotHandler';
@@ -37,7 +38,14 @@ import type { RaftAdapter } from '../../consensus/core/RaftAdapter';
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-const SNAPSHOT_DIR = '/tmp/test-snapshots';
+/**
+ * Per-process, not per-machine.
+ *
+ * This suite wipes its snapshot directory before and after every case. A fixed
+ * path meant a second run on the same machine deleted the first run's files
+ * mid-test, which read as a snapshot-corruption failure in the product.
+ */
+const SNAPSHOT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cluster-snapshots-'));
 const NODE_ID = 1;
 
 /** Create a minimal mock RaftAdapter */
@@ -380,7 +388,8 @@ describe('InstallSnapshotHandler - Unit', () => {
     expect(chunks[0]!.done).toBe(true);
 
     // Phase 3: Receive and assemble on a new handler (receiver side)
-    const receiver = new InstallSnapshotHandler('/tmp/test-snapshots-receiver', 2);
+    const receiverDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cluster-snapshots-receiver-'));
+    const receiver = new InstallSnapshotHandler(receiverDir, 2);
     const raft = createMockRaft(5); // receiver term = 5, leader term = 5
     const installCallback = vi.fn().mockResolvedValue(undefined);
 
@@ -390,8 +399,8 @@ describe('InstallSnapshotHandler - Unit', () => {
 
     // Cleanup
     receiver.reset();
-    if (fs.existsSync('/tmp/test-snapshots-receiver')) {
-      fs.rmSync('/tmp/test-snapshots-receiver', { recursive: true, force: true });
+    if (fs.existsSync(receiverDir)) {
+      fs.rmSync(receiverDir, { recursive: true, force: true });
     }
   });
 
