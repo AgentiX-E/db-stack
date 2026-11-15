@@ -30,6 +30,7 @@ import type { ApplyEntry, IShardReplica } from '../interfaces/IShardReplica';
 import type { IStorageEngine } from '../interfaces/IStorageEngine';
 import { SqlVecError, SqlVecErrorCode } from '../interfaces/types';
 import { crc32 } from '../consensus/helpers/crc32';
+import { getErrorMessage } from '../consensus/helpers/errorUtils';
 
 /** Envelope magic. Chosen so a mis-framed buffer fails fast on the first four bytes. */
 const MAGIC = Buffer.from('DBSE', 'utf8');
@@ -146,6 +147,17 @@ export class EngineBackedReplica implements IShardReplica {
   private _forwardJumps = 0;
   /** Non-zero while an apply is running, so `snapshot()` can detect re-entrancy. */
   private _applyDepth = 0;
+  /**
+   * The error from the last failed `restore()`, cleared by the next successful one.
+   *
+   * A failed install is not a transient miss: raft has already discarded the log
+   * up to the snapshot's index, so the entries the snapshot was supposed to carry
+   * are gone from the log *and* absent from this engine. Applying the entries
+   * above the boundary anyway is how a replica ends up with an applied index that
+   * matches the cluster and state that does not — serving reads from a hole. It
+   * refuses until an install succeeds, which the leader retries on its own.
+   */
+  private _restoreFailure: unknown = null;
 
   constructor(options: EngineBackedReplicaOptions) {
     this.engine = options.engine;
@@ -156,6 +168,17 @@ export class EngineBackedReplica implements IShardReplica {
   /** Exposed for diagnostics: how many duplicate indexes the adapter suppressed. */
   get skippedReplays(): number {
     return this._skippedReplays;
+  }
+
+  /**
+   * Exposed for diagnostics: the error from the last failed `restore()`, or null.
+   *
+   * Non-null means this replica is refusing to apply until a snapshot install
+   * succeeds. It is the difference between "behind" and "wrong": a node that is
+   * behind catches up, and a node whose state has a hole must not answer reads.
+   */
+  get restoreFailure(): unknown {
+    return this._restoreFailure;
   }
 
   /**
@@ -185,6 +208,15 @@ export class EngineBackedReplica implements IShardReplica {
       throw new SqlVecError(
         `Entry index ${index} is not a safe non-negative integer`,
         SqlVecErrorCode.INVALID_ARGUMENT,
+      );
+    }
+    if (this._restoreFailure !== null) {
+      throw new SqlVecError(
+        `Refusing to apply index ${index}: the last snapshot install failed ` +
+          `(${getErrorMessage(this._restoreFailure)}), so the state the snapshot covered was never restored. ` +
+          'Applying past it would leave this replica with a current applied index and a hole in its state.',
+        SqlVecErrorCode.INTERNAL_ERROR,
+        { cause: this._restoreFailure },
       );
     }
     if (index <= this._appliedIndex) {
@@ -258,8 +290,17 @@ export class EngineBackedReplica implements IShardReplica {
   }
 
   async restore(snapshot: Buffer): Promise<void> {
-    const envelope = decodeSnapshotEnvelope(snapshot, this._shardId);
-    await this.engine.restore(envelope.payload);
+    let envelope: SnapshotEnvelope;
+    try {
+      envelope = decodeSnapshotEnvelope(snapshot, this._shardId);
+      await this.engine.restore(envelope.payload);
+    } catch (err) {
+      // Recorded, not swallowed: the caller still sees the failure, and every
+      // later apply is refused until a restore succeeds.
+      this._restoreFailure = err;
+      throw err;
+    }
+    this._restoreFailure = null;
     this._appliedIndex = envelope.index;
     this._appliedTerm = envelope.term;
   }

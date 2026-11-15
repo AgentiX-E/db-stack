@@ -45,6 +45,7 @@ vi.mock('../../consensus/transport/RaftTcpTransport', () => ({
 // ── SUT ──────────────────────────────────────────────────────────────────────
 
 import { BatchedRaftTransport } from '../../consensus/transport/BatchedRaftTransport';
+import { MessageCodec } from '../../consensus/transport/MessageCodec';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -83,6 +84,24 @@ function makeHandlerMsg(requestId?: string): any {
         direction: 'request',
         payload: { term: 1, candidateId: '1', lastLogIndex: 0, lastLogTerm: 0 },
       };
+}
+
+/** An InstallSnapshot request chunk as raft-core sends it. */
+function snapshotChunk(offset: number, done: boolean): RPCMessage {
+  return {
+    type: 'InstallSnapshot',
+    direction: 'request',
+    payload: {
+      term: 1,
+      leaderId: '1',
+      lastIncludedIndex: 12,
+      lastIncludedTerm: 1,
+      offset,
+      done,
+      data: Buffer.alloc(4, offset % 256),
+      config: { voters: [], learners: [] },
+    },
+  } as unknown as RPCMessage;
 }
 
 function parseRequestId(call: any): string {
@@ -289,6 +308,127 @@ describe('BatchedRaftTransport (Unit)', () => {
     await t.stop();
     expect(t.isStarted()).toBe(false);
   }, 5000);
+
+  it('frames an InstallSnapshot chunk as bytes, so the peer can install it', async () => {
+    // The batch frame is built by `MessageCodec`. It used to be built here with a
+    // local copy of the header and a bare `JSON.stringify`, which turned the
+    // chunk's `data` into `{type: 'Buffer', data: […]}`: a plain object whose
+    // `.length` is `undefined`. raft-core drops such a chunk
+    // (`if (request.data.length > 0)`) and the follower never installs a
+    // snapshot, so this asserts the wire bytes, not the in-memory object.
+    const chunk = Buffer.from([0, 1, 2, 250, 255]);
+    void transport
+      .send('2', {
+        type: 'InstallSnapshot',
+        direction: 'request',
+        payload: {
+          term: 1,
+          leaderId: '1',
+          lastIncludedIndex: 9,
+          lastIncludedTerm: 1,
+          offset: 0,
+          done: true,
+          data: chunk,
+        },
+      } as unknown as RPCMessage)
+      .catch(() => undefined);
+
+    await new Promise((resolve) => setImmediate(resolve));
+    const frame = mockSendToPeer.mock.calls[0]![1] as Buffer;
+    const decoded = MessageCodec.decode<{ msg: { payload: { data: Buffer } } }>(frame.subarray(4));
+
+    expect(Buffer.isBuffer(decoded.msg.payload.data)).toBe(true);
+    expect(decoded.msg.payload.data.equals(chunk)).toBe(true);
+  });
+
+  // ── AC 38.1–38.5: one snapshot transfer per peer ────────────────────
+
+  it('AC 38.1 — refuses a second snapshot transfer while one is in progress', async () => {
+    // raft-core starts `sendSnapshot` from its heartbeat loop, which does not
+    // await peers and holds no per-peer guard. A second transfer's first chunk
+    // resets the receiver's chunk assembly (`offset === 0`), so the accepted
+    // transfer's next chunk arrives at an offset the receiver no longer expects
+    // and both fail. Refusing the newcomer is the only outcome that lets the
+    // snapshot arrive at all.
+    const first = transport.send('2', snapshotChunk(0, false)).catch(() => undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await expect(transport.send('2', snapshotChunk(0, true))).rejects.toThrow(/second snapshot transfer/i);
+    // The refusal is local: nothing competing went on the wire.
+    expect(mockSendToPeer).toHaveBeenCalledTimes(1);
+
+    await transport.stop();
+    await first;
+  }, 5000);
+
+  it('AC 38.2 — the accepted transfer keeps sending its later chunks', async () => {
+    const first = transport.send('2', snapshotChunk(0, false)).catch(() => undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = transport.send('2', snapshotChunk(4096, false)).catch(() => undefined);
+    const third = transport.send('2', snapshotChunk(8192, true)).catch(() => undefined);
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockSendToPeer).toHaveBeenCalledTimes(3);
+
+    await transport.stop();
+    await Promise.all([first, second, third]);
+  }, 5000);
+
+  it('AC 38.3 — a finished transfer releases the peer immediately', async () => {
+    const done = transport.send('2', snapshotChunk(0, true));
+    await new Promise((resolve) => setImmediate(resolve));
+    const requestId = parseRequestId(mockSendToPeer.mock.calls[0]!);
+    simulateIncoming({
+      requestId,
+      msg: { type: 'InstallSnapshot', direction: 'response', payload: { term: 1, success: true } },
+    });
+    await expect(done).resolves.toBeDefined();
+
+    // The next transfer starts from offset 0 again: this is what a retry after a
+    // successful install looks like when the follower is still behind.
+    const retry = transport.send('2', snapshotChunk(0, true));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockSendToPeer).toHaveBeenCalledTimes(2);
+    await transport.stop();
+    await retry.catch(() => undefined);
+  }, 5000);
+
+  it('AC 38.4 — a failed chunk releases the peer so the retry can start over', async () => {
+    const failed = transport.send('2', snapshotChunk(0, false));
+    await new Promise((resolve) => setImmediate(resolve));
+    await expect(failed).rejects.toThrow(/timeout/i);
+
+    // No claim may outlive the transfer it belonged to: the leader aborts on a
+    // failed chunk and retries from offset 0 on the next heartbeat.
+    const retry = transport.send('2', snapshotChunk(0, true)).catch(() => undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockSendToPeer).toHaveBeenCalledTimes(2);
+    await transport.stop();
+    await retry;
+  }, 10_000);
+
+  it('AC 38.5 — a claim left idle past the lease does not block a new transfer', async () => {
+    // A leader can be left holding a transfer it never finished (it stepped down
+    // between chunks). Without an expiry that abandoned claim would block every
+    // future snapshot to the peer for the life of the process.
+    const stale = transport.send('2', snapshotChunk(0, false));
+    await new Promise((resolve) => setImmediate(resolve));
+    const requestId = parseRequestId(mockSendToPeer.mock.calls[0]!);
+    simulateIncoming({
+      requestId,
+      msg: { type: 'InstallSnapshot', direction: 'response', payload: { term: 1, success: true } },
+    });
+    await expect(stale).resolves.toBeDefined();
+
+    // requestTimeoutMs is 200 in this suite, so the lease is 400ms.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const fresh = transport.send('2', snapshotChunk(0, true)).catch(() => undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockSendToPeer).toHaveBeenCalledTimes(2);
+    await transport.stop();
+    await fresh;
+  }, 10_000);
 
   // ── AC 8.10: sendToPeer with invalid peerId ─────────────────────────
 

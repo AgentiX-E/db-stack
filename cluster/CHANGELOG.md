@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`TestClusterOptions.portAllocator`** — how the harness picks its ports is now injectable.
   The default asks the OS, which cannot reserve what it hands out, so a test could not
   reproduce a lost port race deterministically; it now can.
+- **`TestCluster.restartNode(id)`** — bring a killed node back on its own port and its own data
+  directory. The harness could already kill a node; it could not observe the half that matters
+  after a compaction, where a follower can only recover by *installing* a snapshot. A restart
+  keeps the node's id, port and certificate, so its peers address it the same way and the
+  leader has to re-establish replication with a lagging node — what a restart looks like in
+  production.
+- **`isPortFree(port)`** in `@agentix-e/db-cluster/testing` — whether loopback can bind the port
+  right now. `killNode` uses it to wait out the gap between "stop" and "the OS released the
+  socket", which a restart inside that window fails as `EADDRINUSE` with a node that comes up
+  deaf rather than an error at the call site.
+- **`RaftAdapter.getPeerProgress()`** — per-peer `{ next, match }` as the leader's own
+  replication state sees it. A follower stuck in snapshot transfer and a follower that is
+  merely slow are indistinguishable from the follower's side; this is the half of the picture
+  that says which one it is.
+- **`TestCluster.stateOf(id)`** — the commands a node's state machine has applied, in order.
+  The harness now runs a real (trivial) state machine and real snapshot hooks, so a snapshot
+  test transfers actual bytes. Before this, the harness registered no snapshot handler and
+  every snapshot on every test cluster was zero bytes: the tests passed without a byte moving,
+  which is how an encoding defect reached the acceptance suite.
 - **`ensureTestTmpRoot()`** in `scripts/test-tmpdir.mjs` — `TMPDIR` is process-wide, so one
   test that removes a path at or above the shared scratch root broke `mkdtempSync` for every
   later test on the same worker, reported as an ENOENT in an unrelated file. The setups
@@ -31,11 +50,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`RaftAdapter.proposeAndWait` returns `{ index, term }`** instead of `void`. It was the
   only caller that needed the position — `RaftGroup.proposeAndWait` — which appended the
   outbox record with `raftIndex: 0` and then had no way to correct it.
+- **`RaftConfig.enableInstallSnapshot` is a no-op and is marked deprecated.** Its documentation
+  claimed the adapter initialised `InstallSnapshotHandler` and routed type 14 to it; nothing in
+  the production path ever read the field. Chunked install is raft-core's own, and application
+  state is captured through `setApplicationSnapshotHandlers`. Kept so existing configurations
+  compile, documented so nobody trusts it.
 - **Breaking:** `IOutboxWriter` no longer declares `write` / `getLastWrittenIndex`. They were
   never called; the interface described a contract no implementation used.
 
 ### Fixed
 
+- **A snapshot larger than one chunk could never install.** raft-core starts `sendSnapshot`
+  from its heartbeat loop, which does not await peers (`for (const peer of allPeers)
+  this.sendAppendEntries(peer)`) and holds no per-peer guard, so several transfers to one peer
+  run at once. The receiver resets its chunk assembly on *every* `offset === 0` chunk, so the
+  second transfer wiped the first one's progress, the first one's next chunk arrived at an
+  offset the receiver no longer expected, both were answered `success: false`, and the next
+  heartbeat began the same race. Snapshots under raft-core's fixed 256 KiB chunk size hid the
+  defect — a single-chunk transfer has no assembly state to lose. `BatchedRaftTransport` now
+  allows one snapshot transfer per peer: a competing `offset === 0` chunk is refused locally
+  (nothing goes on the wire) and raft retries on the next heartbeat, while the accepted
+  transfer's later chunks pass through. The claim is released when the transfer finishes,
+  when a chunk fails, and after two request timeouts of silence, so an abandoned transfer
+  cannot block a peer forever. Measured on the multi-chunk recovery case: 63.7 s timeout before,
+  17 s and state-for-state equal after.
+- **A `Buffer` could not survive the JSON frame.** `MessageCodec` serialises frames with
+  `JSON.stringify` and read them back with `JSON.parse`, so a `Buffer` field reached the peer as
+  `{type: 'Buffer', data: […]}` — a plain object whose `.length` is `undefined` (measured: 5 bytes
+  in, `undefined` out). `@maboke123/raft-core` installs a snapshot chunk with
+  `if (request.data.length > 0)`, so the chunk was silently dropped, the assembled snapshot was
+  zero bytes, and the application's `restore` rejected it — once a second, forever, while the
+  follower kept answering reads from the state it had before. Both directions now normalise
+  binary: a replacer converts any `ArrayBufferView` to the `Buffer#toJSON` shape and a reviver
+  puts it back, accepting only that exact shape and only byte-range integers. `encode`/`decode`
+  are generic in the frame type, and `BatchedRaftTransport` no longer carries its own copy of the
+  framer — it was the copy that carried `InstallSnapshot` chunks.
+- **`RaftAdapter.stop()` returned before it had stopped.** Raft, the transport and the storage
+  were all stopped fire-and-forget: the socket was still bound and SQLite was closed under a
+  running node when the promise-free call returned. A node stopped and immediately started again
+  — a restart — raced its own previous incarnation for the port, and the loser came up unable to
+  receive anything. `stop()` returns a promise now; ignoring it behaves exactly as before.
+- **`takeSnapshot` could produce nothing and still be persisted.** A registered handler that
+  returned an empty buffer (or a non-Buffer) had its result written as the snapshot for the
+  applied index, after which raft truncates the log for an index whose state nobody captured and
+  every follower that installs it gets an empty application. Both cases now throw, naming the
+  handler contract. No handler at all still yields an empty snapshot: a group that owns no
+  application state has nothing to capture, and raft needs a boundary.
+- **A replica that failed to install a snapshot kept applying anyway.** Raft discards the log up
+  to the snapshot boundary *before* calling `installSnapshot`, so the entries the snapshot was
+  meant to carry are gone from the log and absent from the engine. Applying above the boundary
+  then leaves an applied index that matches the cluster and state that does not — measured as
+  `stateSize=31` next to `applied=52` on a node that was answering reads. The replica records the
+  failure and refuses to apply until a restore succeeds, which is what turns silent divergence
+  into a named error at the node that has the problem.
 - **A lost port race crashed the run instead of failing one cluster.**
   `RaftTcpTransport.start()` re-emitted the listening server's `error` event
   unconditionally, and `emit('error')` on an `EventEmitter` with no listener _throws_ — so a

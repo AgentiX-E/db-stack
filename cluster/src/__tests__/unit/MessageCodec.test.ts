@@ -364,18 +364,21 @@ describe('MessageCodec - Unit', () => {
     expect(decoded.msgType).toBe(9);
   });
 
-  it('decode()/decodeMsgPack handle a MsgPack message with no entries field', () => {
-    // Exercises normaliseEntryData's early-return when `entries` is absent.
+  it('decode()/decodeMsgPack leave an absent entries field absent', () => {
+    // A message without `entries` is not an AppendEntries: it may be a
+    // `{requestId, msg}` frame wrapper or a RequestVote. Normalisation only
+    // repairs a field that is present but not an array, so an absent one must
+    // stay absent — inventing `entries: []` changes the shape the caller framed.
     const msg: RaftMessage = { msgType: 14, from: '1', to: '2', term: '1' };
     const frame = MessageCodec.encodeMsgPack(msg).subarray(4);
     const decoded = MessageCodec.decode(frame);
     expect(decoded.msgType).toBe(14);
-    // decode() normalises an absent entries field to an empty array.
-    expect(decoded.entries).toEqual([]);
+    expect('entries' in decoded).toBe(false);
 
     const rawPayload = MessageCodec.encodeMsgPack(msg).subarray(5);
     const decoded2 = MessageCodec.decodeMsgPack(rawPayload);
     expect(decoded2.msgType).toBe(14);
+    expect('entries' in decoded2).toBe(false);
   });
 
   //

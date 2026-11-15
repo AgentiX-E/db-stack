@@ -26,6 +26,7 @@
  *   AC 34.18: snapshotInterval config
  *   AC 34.19: maxLogEntries config
  *   AC 34.20: init with invalid config throws
+ *   AC 34.21: getPeerProgress reports no peers before init
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -229,6 +230,64 @@ describe('AC 34.19: maxLogEntries', () => {
   it('accepts config', () => {
     const adapter = new RaftAdapter(minimalConfig({ maxLogEntries: 10000 }));
     expect(adapter).toBeInstanceOf(RaftAdapter);
+  });
+});
+
+describe('AC 34.21: getPeerProgress', () => {
+  it('reports no peers before init instead of throwing', async () => {
+    // Monitoring calls this on every node, including ones that never became
+    // leader. A follower has no per-peer view at all, and that is an empty map,
+    // not an error.
+    const adapter = new RaftAdapter(minimalConfig());
+    await expect(adapter.getPeerProgress()).resolves.toEqual({});
+  });
+
+  it('maps the leader state peer table to numbers', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).node = {
+      stateMachine: {
+        leaderState: {
+          snapshot: () =>
+            new Map([
+              ['2', { nextIndex: 11, matchIndex: 9 }],
+              ['3', { nextIndex: 5, matchIndex: 4 }],
+            ]),
+        },
+      },
+    };
+
+    await expect(adapter.getPeerProgress()).resolves.toEqual({
+      2: { next: 11, match: 9 },
+      3: { next: 5, match: 4 },
+    });
+  });
+
+  it('reports nothing when the node has no leader state', async () => {
+    // A follower, and a node still starting: both have no per-peer table. The
+    // shape has to be an empty map so a caller can iterate without a guard.
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).node = { stateMachine: {} };
+    await expect(adapter.getPeerProgress()).resolves.toEqual({});
+    (adapter as any).node = { stateMachine: { leaderState: null } };
+    await expect(adapter.getPeerProgress()).resolves.toEqual({});
+    (adapter as any).node = { stateMachine: { leaderState: {} } };
+    await expect(adapter.getPeerProgress()).resolves.toEqual({});
+  });
+
+  it('reports nothing when the library throws while reading it', async () => {
+    // Reaching into another package's internals is a diagnostics path; it must
+    // degrade to "unknown", never to a failure that breaks a status endpoint.
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).node = {
+      stateMachine: {
+        leaderState: {
+          snapshot: () => {
+            throw new Error('leader state busy');
+          },
+        },
+      },
+    };
+    await expect(adapter.getPeerProgress()).resolves.toEqual({});
   });
 });
 

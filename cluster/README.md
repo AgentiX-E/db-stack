@@ -163,6 +163,8 @@ class RaftAdapter {
   // Status
   getStatus(): Promise<ClusterStatus>;
   getProgress(): Promise<Record<string, number>>;
+  getPeerProgress(): Promise<Record<number, { next: number; match: number }>>;
+  getConnectedPeers(): number[];
   getAppliedIndex(): Promise<number>;
   getCommitIndex(): Promise<number>;
   
@@ -198,10 +200,39 @@ interface RaftConfig {
   
   // Advanced
   snapshotInterval?: number;   // Entries per snapshot (default: 100)
+  // @deprecated no-op: chunked snapshot install is unconditional.
   enableInstallSnapshot?: boolean;
   environment?: 'development' | 'production';
 }
 ```
+
+### Application snapshots
+
+Snapshots are the only way a follower that fell behind a compaction can recover, and they are
+only as good as the bytes your engine puts in them. Register both hooks **before** `init()` —
+raft-core restores the persisted snapshot while starting, so a handler registered afterwards
+misses the restore.
+
+```typescript
+const adapter = new RaftAdapter({ ... });
+
+adapter.setApplicationSnapshotHandlers({
+  // Return the engine's state *as of `boundaryIndex`*. It must be non-empty: a handler
+  // that returns 0 bytes is refused, because Raft would then truncate the log for an
+  // index whose state nobody captured.
+  takeSnapshot: (boundaryIndex) => engine.exportState(boundaryIndex),
+  // Replace the engine's state with the transferred bytes. Must be atomic: Raft has
+  // already discarded the log this snapshot replaces.
+  installSnapshot: (data) => engine.importState(data),
+});
+
+await adapter.init(apply);
+```
+
+An application that owns no state may omit both handlers; its snapshots are then empty,
+which is correct for a log-only group. A replica that fails to import a snapshot refuses to
+apply anything further rather than reporting the leader's index over an engine that never
+received it.
 
 ### HA Failover
 

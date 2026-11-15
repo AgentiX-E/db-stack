@@ -69,6 +69,29 @@ describe('TestCluster lifecycle', () => {
     );
   });
 
+  it('reports the commands a node has applied, and refuses an unknown node', async () => {
+    const leader = await cluster.findLeader();
+    const before = cluster.stateOf(leader.id);
+
+    await leader.adapter.proposeAndWait('state-of-probe');
+
+    // Applying is asynchronous by nature: the entry is committed before the
+    // state machine has run it, so the accessor is polled rather than assumed.
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && !cluster.stateOf(leader.id).includes('state-of-probe')) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    const after = cluster.stateOf(leader.id);
+    expect(after).toContain('state-of-probe');
+    expect(after.length).toBeGreaterThan(before.length);
+    // A copy, so a caller cannot mutate the node's state through the accessor.
+    after.push('mutated');
+    expect(cluster.stateOf(leader.id)).not.toContain('mutated');
+
+    expect(() => cluster.stateOf(99)).toThrow(/Node 99 is not running/);
+  }, 60_000);
+
   it('rejects a kill for an id the cluster does not know', async () => {
     await expect(cluster.killNode(99)).rejects.toThrow(/Node 99 not found/);
   });
@@ -85,6 +108,14 @@ describe('TestCluster lifecycle', () => {
     expect(successor.id).not.toBe(leader.id);
     expect(await successor.adapter.isLeader()).toBe(true);
   });
+
+  it('refuses to report the state of a node that has been killed', async () => {
+    const leader = await cluster.findLeader();
+    const victim = cluster.remainingNodes(leader.id)[0]!;
+    await cluster.killNode(victim.id);
+
+    expect(() => cluster.stateOf(victim.id)).toThrow(new RegExp(`Node ${victim.id} is not running`));
+  }, 60_000);
 
   it('stops the remaining nodes and forgets the cluster', async () => {
     await cluster.stop();
@@ -147,4 +178,29 @@ describe('TestCluster port allocation', () => {
     await expect(cluster.start()).rejects.toThrow(/allocator unavailable/);
     expect(allocations).toBe(1);
   }, 60_000);
+});
+
+describe('TestCluster restart', () => {
+  it('fails a restart whose node cannot reach its peers, naming both lists', async () => {
+    // A node whose transport is listening but whose peers never re-dial it is the
+    // worst kind of failure to debug: it is up, it accepts no traffic, and the
+    // symptom shows up as an unrelated convergence timeout. The restart refuses
+    // to call that success.
+    const cluster = new TestCluster({ nodeCount: 3, leaderTimeoutMs: 20_000, pollIntervalMs: 100 });
+    await cluster.start();
+
+    try {
+      await cluster.killNode(1);
+      await cluster.killNode(3);
+      // Node 2 itself has to be down for a restart; its peers are what it cannot
+      // reach when it comes back.
+      await cluster.killNode(2);
+
+      await expect(cluster.restartNode(2, { connectivityTimeoutMs: 1500 })).rejects.toThrow(
+        /Node 2 restarted but is connected to .* instead of \[1,3\]/,
+      );
+    } finally {
+      await cluster.stop();
+    }
+  }, 120_000);
 });

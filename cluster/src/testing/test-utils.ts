@@ -27,6 +27,24 @@ export async function getFreePorts(count: number): Promise<number[]> {
   return Promise.all(Array.from({ length: count }, () => getFreePort()));
 }
 
+/**
+ * Whether `port` on loopback can be bound right now.
+ *
+ * Used to wait out the gap between "the node was told to stop" and "the OS
+ * released its listening socket": a restart inside that window fails with
+ * EADDRINUSE, and the symptom is a node that never receives anything rather than
+ * a bind error at the call site.
+ */
+export function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
 /** Create an isolated temporary directory for Raft storage. */
 export function createTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `raft-test-${prefix}-`));

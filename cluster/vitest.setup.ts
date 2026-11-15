@@ -1,7 +1,10 @@
 // Forward pino output to /dev/null during tests
 import { beforeEach } from 'vitest';
 
-process.env.LOG_LEVEL = 'silent';
+// Silence by default, but let a run opt back in with `LOG_LEVEL=debug npx vitest…`:
+// the alternative is editing this file to diagnose one suite, which nobody does
+// twice, and the Raft log is the only place some failures are visible at all.
+process.env.LOG_LEVEL ??= 'silent';
 process.env.VITEST = 'true';
 
 // Materialize a `pg` package stub under node_modules so the production

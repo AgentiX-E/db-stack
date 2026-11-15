@@ -12,7 +12,7 @@
 
 import { RaftAdapter } from '../consensus/core/RaftAdapter';
 import { generateClusterCerts, type TestClusterCerts, type CertBundle } from './test-certs';
-import { getFreePorts, createTempDir, cleanupTempDir } from './test-utils';
+import { getFreePorts, createTempDir, cleanupTempDir, isPortFree } from './test-utils';
 import { join } from 'node:path';
 import * as fs from 'node:fs';
 
@@ -52,6 +52,17 @@ export interface TestNode {
   port: number;
   id: number;
   dir: string;
+  /**
+   * Everything this node's state machine has applied, in order.
+   *
+   * A real cluster of this middleware runs a database engine behind the Raft
+   * log; the harness keeps the smallest thing that behaves like one, because a
+   * node with *no* application state takes 0-byte snapshots and every snapshot
+   * test then passes without transferring a byte — which is how a snapshot
+   * encoding defect survived a green suite. See `createAdapter` for the
+   * serializer.
+   */
+  applied: string[];
 }
 
 // ── Defaults ──────────────────────────────────────────────────────
@@ -172,51 +183,87 @@ export class TestCluster {
 
     const instances: TestNode[] = [];
     for (let i = 0; i < this.opts.nodeCount; i++) {
-      const id = i + 1;
-      const nodePeers = this.peerConfigs.filter((p) => p.id !== id);
-      const adapter = new RaftAdapter({
-        id,
-        peers: nodePeers.map((p) => p.id),
-        electionTick: this.opts.electionTick,
-        heartbeatTick: this.opts.heartbeatTick,
-        tickIntervalMs: this.opts.tickIntervalMs,
-        storagePath: join(this.dataDirAt(i), 'raft.db'),
-        snapshotInterval: this.opts.snapshotInterval,
-        environment: 'development',
-        preVote: this.opts.preVote,
-        checkQuorum: this.opts.checkQuorum,
-        enableInstallSnapshot: this.opts.enableInstallSnapshot,
-      });
-      instances.push({ adapter, port: this.portAt(i), id, dir: this.dataDirAt(i) });
+      instances.push(this.createAdapter(i + 1));
     }
 
     this.nodes = instances;
 
     for (const inst of instances) {
-      const nodePeers = this.peerConfigs.filter((p) => p.id !== inst.id);
-      await inst.adapter.init(() => {}, {
-        node: { id: inst.id, host: '127.0.0.1', port: inst.port },
-        peers: nodePeers,
-        tls: {
-          cert: this.certAt(inst.id).cert,
-          key: this.certAt(inst.id).key,
-          ca: this.certs.caPem,
-        },
-        connectTimeoutMs: 5000,
-        initialRetryMs: 100,
-        maxRetryMs: 5000,
-      });
+      await this.initAdapter(inst);
     }
 
     this._started = true;
   }
 
   /**
+   * Build (but do not start) node `id`'s adapter against its own data directory.
+   *
+   * Split from `initAdapter` so a restart reuses exactly the same construction:
+   * a node that comes back with a different snapshot interval or election
+   * configuration is not the node that went down, and the difference would be
+   * invisible in a test that only checks that it caught up.
+   */
+  private createAdapter(id: number): TestNode {
+    const i = id - 1;
+    const nodePeers = this.peerConfigs.filter((p) => p.id !== id);
+    const adapter = new RaftAdapter({
+      id,
+      peers: nodePeers.map((p) => p.id),
+      electionTick: this.opts.electionTick,
+      heartbeatTick: this.opts.heartbeatTick,
+      tickIntervalMs: this.opts.tickIntervalMs,
+      storagePath: join(this.dataDirAt(i), 'raft.db'),
+      snapshotInterval: this.opts.snapshotInterval,
+      environment: 'development',
+      preVote: this.opts.preVote,
+      checkQuorum: this.opts.checkQuorum,
+      enableInstallSnapshot: this.opts.enableInstallSnapshot,
+    });
+    return { adapter, port: this.portAt(i), id, dir: this.dataDirAt(i), applied: [] };
+  }
+
+  /** Start one node's adapter and wait until it is listening. */
+  private async initAdapter(node: TestNode): Promise<void> {
+    const nodePeers = this.peerConfigs.filter((p) => p.id !== node.id);
+    // Snapshot hooks have to exist before `init`: raft-core restores the
+    // persisted snapshot while starting, so a handler registered afterwards
+    // would miss the restore and leave the node blank behind a current
+    // `lastApplied`. The serializer is deliberately trivial — the harness is not
+    // a database, it only has to make the bytes non-empty and verifiable.
+    node.adapter.setApplicationSnapshotHandlers({
+      takeSnapshot: () => Buffer.from(JSON.stringify(node.applied), 'utf8'),
+      installSnapshot: (data: Buffer) => {
+        node.applied = JSON.parse(data.toString('utf8')) as string[];
+      },
+    });
+    await node.adapter.init(
+      (data: string) => {
+        node.applied.push(data);
+      },
+      {
+        node: { id: node.id, host: '127.0.0.1', port: node.port },
+        peers: nodePeers,
+        tls: {
+          cert: this.certAt(node.id).cert,
+          key: this.certAt(node.id).key,
+          ca: this.certs.caPem,
+        },
+        connectTimeoutMs: 5000,
+        initialRetryMs: 100,
+        maxRetryMs: 5000,
+      },
+    );
+  }
+
+  /**
    * Stop all nodes and clean up temp dirs.
    */
   async stop(): Promise<void> {
+    // Awaited: see `RaftAdapter.stop`. A node that is still shutting down holds
+    // its port and its storage, so the next `start()` in the same test would race
+    // its own previous incarnation.
     for (const n of this.nodes) {
-      n.adapter.stop();
+      await n.adapter.stop();
     }
     this.nodes = [];
     for (const dir of this.dataDirs) {
@@ -267,9 +314,75 @@ export class TestCluster {
     this.requireStarted();
     const node = this.nodes.find((n) => n.id === id);
     if (!node) throw new Error(`Node ${id} not found`);
-    node.adapter.stop();
+    await node.adapter.stop();
     this.nodes = this.nodes.filter((n) => n.id !== id);
-    await this.sleep(200);
+    // The socket is closed by now, but the OS releases the port asynchronously;
+    // a restart that binds before that happens fails with EADDRINUSE and the node
+    // comes up deaf, which reads as "the follower never caught up" in a test.
+    await this.waitForPortRelease(node.port);
+  }
+
+  /** Poll until `port` can be bound again (or the deadline passes). */
+  private async waitForPortRelease(port: number, timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await isPortFree(port)) return;
+      await this.sleep(50);
+    }
+  }
+
+  /**
+   * Bring a killed node back, on its own port and its own data directory.
+   *
+   * This is the half of a fault injection that a kill-only harness cannot do, and
+   * it is the half where snapshots matter: a follower that was down while the
+   * leader compacted its log can only recover by *installing* a snapshot, not by
+   * replaying entries. Before `restartNode` the harness could produce that
+   * situation but never observe the recovery, so the transfer path was only
+   * exercised by the multi-process acceptance suite.
+   *
+   * The node keeps the id, port and certificate it had, which means the peers
+   * still address it the same way and the leader has to re-establish replication
+   * with a node that is behind — exactly what a restart looks like in production.
+   *
+   * @param id Node to bring back; it must not be running.
+   * @param options.connectivityTimeoutMs How long to wait for it to reach every
+   *        peer (default 20 s). Shortening it is how the "came up deaf" failure
+   *        is tested without spending the default budget.
+   */
+  async restartNode(id: number, options: { connectivityTimeoutMs?: number } = {}): Promise<TestNode> {
+    this.requireStarted();
+    if (this.nodes.some((n) => n.id === id)) {
+      throw new Error(`Node ${id} is still running; kill it before restarting it`);
+    }
+    const node = this.createAdapter(id);
+    await this.initAdapter(node);
+    this.nodes = [...this.nodes, node];
+    await this.waitForConnectivity(node, options.connectivityTimeoutMs);
+    return node;
+  }
+
+  /**
+   * Wait until a revived node holds a connection to every peer.
+   *
+   * A node whose transport is up but whose peers have not re-dialled it looks
+   * exactly like a node that is up: it accepts no traffic, applies nothing, and
+   * the symptom is a convergence timeout in whatever the test was measuring. The
+   * wait turns that into a failure at the restart, where it belongs.
+   */
+  private async waitForConnectivity(node: TestNode, timeoutMs = 20_000): Promise<void> {
+    const expected = this.peerConfigs.filter((p) => p.id !== node.id).map((p) => p.id);
+    const deadline = Date.now() + timeoutMs;
+    let connected: number[] = [];
+    while (Date.now() < deadline) {
+      connected = node.adapter.getConnectedPeers();
+      if (expected.every((id) => connected.includes(id))) return;
+      await this.sleep(100);
+    }
+    throw new Error(
+      `Node ${node.id} restarted but is connected to ${JSON.stringify(connected)} instead of ${JSON.stringify(expected)} ` +
+        `after ${timeoutMs}ms`,
+    );
   }
 
   /**
@@ -277,6 +390,20 @@ export class TestCluster {
    */
   remainingNodes(excludeId: number): TestNode[] {
     return this.nodes.filter((n) => n.id !== excludeId);
+  }
+
+  /**
+   * The commands the node with `id` has applied, in order.
+   *
+   * This is the harness's stand-in for an engine's visible state: two nodes that
+   * agree on Raft's `lastApplied` but disagree here have diverged, which an index
+   * comparison alone cannot detect — the exact false "caught up" that a 0-byte
+   * snapshot produced.
+   */
+  stateOf(id: number): string[] {
+    const node = this.nodes.find((n) => n.id === id);
+    if (!node) throw new Error(`Node ${id} is not running`);
+    return [...node.applied];
   }
 
   // ── Helpers ────────────────────────────────────────────────

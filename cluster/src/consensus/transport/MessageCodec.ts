@@ -61,6 +61,56 @@ export interface RaftEntry {
 // Convenience type for streams that support 'data' / 'end' / 'error' events
 type Readable = net.Socket | tls.TLSSocket | NodeJS.ReadableStream;
 
+// ─── Binary-safe JSON ────────────────────────────────────────────────────────
+
+/**
+ * JSON cannot carry bytes, and `JSON.parse` does not put them back.
+ *
+ * `JSON.stringify(new Uint8Array([1, 2, 3]))` is `{"0":1,"1":2,"2":3}` — an
+ * object with no `length`. A `Buffer` survives as `{"type":"Buffer","data":[…]}`
+ * only because `toJSON()` formats it that way, and `JSON.parse` still hands the
+ * reader a plain object: `data.length` is `undefined`.
+ *
+ * That difference is not cosmetic. `@maboke123/raft-core` installs a snapshot
+ * chunk with
+ *
+ *     if (request.data.length > 0) { session.chunks.push(request.data); … }
+ *
+ * so a chunk whose `data` arrived as a plain object is silently dropped, the
+ * assembled snapshot is `Buffer.alloc(0)`, and the application's `restore`
+ * rejects it — once a second, forever, while the follower keeps serving the
+ * state it had before. Measured on this codec: 5 bytes in, `undefined` length
+ * out, and every InstallSnapshot over the TCP transport failed the same way.
+ *
+ * The replacer and reviver below make the JSON frame binary-safe in both
+ * directions. The reviver accepts only the exact shape `Buffer#toJSON` produces
+ * and only with byte-range integers in `data`, so a user payload that happens to
+ * contain `{type: 'Buffer'}` is left alone.
+ */
+function encodeBinary(_key: string, value: unknown): unknown {
+  // A Buffer already serialises correctly through `toJSON`. A plain view has no
+  // `toJSON`, and returning a Buffer here would not help either: `JSON.stringify`
+  // does not re-run `toJSON` on a replacer's result, so the view would still
+  // become `{"0":7,"1":8}`. Emitting the shape the reviver expects is the only
+  // thing that survives both directions.
+  if (value instanceof Uint8Array && !Buffer.isBuffer(value)) {
+    return { type: 'Buffer', data: Array.from(value) };
+  }
+  return value;
+}
+
+function decodeBinary(_key: string, value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  const tagged = value as { type?: unknown; data?: unknown };
+  if (tagged.type !== 'Buffer' || !Array.isArray(tagged.data)) return value;
+  const bytes = tagged.data as unknown[];
+  for (let i = 0; i < bytes.length; i++) {
+    const byte = bytes[i];
+    if (typeof byte !== 'number' || !Number.isInteger(byte) || byte < 0 || byte > 255) return value;
+  }
+  return Buffer.from(bytes as number[]);
+}
+
 // ─── Codec ───────────────────────────────────────────────────────────────────
 
 export class MessageCodec {
@@ -82,10 +132,12 @@ export class MessageCodec {
    *   [1 byte: format version (0x00 = JSON)]
    *   [N bytes: JSON payload]
    *
+   * Binary fields survive the round trip: see {@link decodeBinary}.
+   *
    * @param msg  The message to serialize.
    */
-  static encode(msg: RaftMessage): Buffer {
-    const json = JSON.stringify(msg);
+  static encode<T extends object = RaftMessage>(msg: T): Buffer {
+    const json = JSON.stringify(msg, encodeBinary);
     const payload = Buffer.from(json, 'utf-8');
     const header = Buffer.alloc(5); // 4-byte length + 1-byte format
     header.writeUInt32BE(payload.length + 1, 0); // +1 for format byte
@@ -125,34 +177,42 @@ export class MessageCodec {
    *
    * @param buffer  The raw frame bytes (without the 4-byte length header).
    */
-  static decode(buffer: Buffer): RaftMessage {
-    let msg: RaftMessage;
-
+  static decode<T = RaftMessage>(buffer: Buffer): T {
     if (buffer.length === 0) {
       throw new Error('Empty decode buffer');
     }
 
+    let msg: unknown;
     if (buffer[0] === FORMAT_JSON) {
       // New JSON format: version byte + JSON payload
       const json = buffer.subarray(1).toString('utf-8');
-      msg = JSON.parse(json);
+      msg = JSON.parse(json, decodeBinary);
     } else if (buffer[0] === FORMAT_MSGPACK) {
       // MsgPack format: version byte + MsgPack payload
-      msg = msgpackDecode(buffer.subarray(1)) as RaftMessage;
+      msg = msgpackDecode(buffer.subarray(1));
       // Normalise binary data: MsgPack returns Uint8Array for binary fields
       MessageCodec.normaliseEntryData(msg);
     } else {
       // Old format (no version byte): entire buffer is JSON
       const json = buffer.toString('utf-8');
-      msg = JSON.parse(json);
+      msg = JSON.parse(json, decodeBinary);
     }
 
-    // Normalise: ensure entries exist as an array if present
-    if (msg.entries !== null && !Array.isArray(msg.entries)) {
-      msg.entries = [];
-    }
+    MessageCodec.normaliseEntries(msg);
+    return msg as T;
+  }
 
-    return msg;
+  /**
+   * Replace a non-array `entries` field with an empty array.
+   *
+   * Only applies to messages that *have* the field: `BatchedRaftTransport`
+   * frames are `{requestId, msg}`, and inventing `entries: []` on them would
+   * change the shape a caller receives.
+   */
+  private static normaliseEntries(msg: unknown): void {
+    if (msg === null || typeof msg !== 'object' || !('entries' in msg)) return;
+    const holder = msg as { entries: unknown };
+    if (holder.entries !== null && !Array.isArray(holder.entries)) holder.entries = [];
   }
 
   /**
@@ -174,10 +234,11 @@ export class MessageCodec {
 
     const msg = msgpackDecode(payload) as RaftMessage;
 
-    if (msg.entries !== null && !Array.isArray(msg.entries)) {
-      msg.entries = [];
-    }
-
+    // Same rule as the JSON path, and for the same reason: this used to be a
+    // second, subtly different copy (`undefined !== null` made an absent field
+    // become `entries: []`), so the two decoders disagreed about the shape a
+    // caller receives.
+    MessageCodec.normaliseEntries(msg);
     MessageCodec.normaliseEntryData(msg);
     return msg;
   }
@@ -190,12 +251,12 @@ export class MessageCodec {
    * Buffer type.  Call normaliseForWasm() separately before passing
    * messages to @maboke123/raft-core WASM, which converts Buffer → base64.
    */
-  private static normaliseEntryData(msg: RaftMessage): void {
-    if (!msg.entries) return;
-    for (let i = 0; i < msg.entries.length; i++) {
-      const entry = msg.entries[i]!;
+  private static normaliseEntryData(msg: unknown): void {
+    const entries = (msg as { entries?: unknown }).entries;
+    if (!Array.isArray(entries)) return;
+    for (const entry of entries as RaftEntry[]) {
       if (entry.data instanceof Uint8Array) {
-        (entry as any).data = Buffer.from(entry.data);
+        entry.data = Buffer.from(entry.data);
       }
     }
   }

@@ -9,6 +9,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { MessageCodec } from '../../consensus/transport/MessageCodec';
 import { RaftTcpTransport } from '../../consensus/transport/RaftTcpTransport';
 import type { RaftMessage } from '../../consensus/transport/MessageCodec';
 import { generateClusterCerts, type TestClusterCerts } from '../../testing/test-certs';
@@ -137,6 +139,31 @@ describe('RaftTcpTransport — message delivery', () => {
     expect(msg.msgType).toBe(1);
     expect(msg.term).toBe('7');
     expect(msg.entries?.[0]?.data).toBe('a-command');
+  });
+
+  it('carries an InstallSnapshot chunk as bytes, not as a JSON object', async () => {
+    // The end-to-end shape that failed: `BatchedRaftTransport` frames an
+    // InstallSnapshot request as `{requestId, msg}` and this transport JSON-encodes
+    // it. Before the codec was binary-safe, the chunk arrived as
+    // `{type: 'Buffer', data: [ … ]}` — an object whose `.length` is `undefined` —
+    // and raft-core drops a chunk with `if (request.data.length > 0)`, so the
+    // assembled snapshot was empty and the follower never installed it.
+    const chunk = randomBytes(4096);
+    const received = nextMessage(second);
+
+    first.sendToPeer(
+      2,
+      MessageCodec.encode({
+        requestId: 'r-1',
+        msg: { type: 'InstallSnapshot', direction: 'request', payload: { data: chunk } },
+      }),
+    );
+
+    const frame = (await received) as unknown as { requestId: string; msg: { payload: { data: Buffer } } };
+    expect(frame.requestId).toBe('r-1');
+    expect(Buffer.isBuffer(frame.msg.payload.data)).toBe(true);
+    expect(frame.msg.payload.data.length).toBe(chunk.length);
+    expect(frame.msg.payload.data.equals(chunk)).toBe(true);
   });
 
   it('delivers in the reverse direction over the same pair', async () => {

@@ -80,10 +80,18 @@ export interface RaftConfig {
    */
   useInMemoryTransport?: boolean;
   /**
-   * Enable InstallSnapshot RPC handler for streaming snapshot chunks (G17).
-   * When true, RaftGroup initializes InstallSnapshotHandler and routes
-   * MsgInstallSnapshot (type 14) messages to it for chunk reassembly.
-   * Default: false.
+   * Accepted and ignored.
+   *
+   * It used to be advertised as "RaftGroup initialises `InstallSnapshotHandler`
+   * and routes type 14 to it", which was never true of this adapter: chunked
+   * install is performed by raft-core itself, and the adapter only supplies the
+   * application hooks (`setApplicationSnapshotHandlers`). The field is kept so
+   * existing configurations keep compiling, but nothing reads it — a knob that
+   * silently does nothing is worse than no knob, which is why it is documented
+   * as dead rather than deleted.
+   *
+   * @deprecated Chunked snapshot install is unconditional; use
+   *   `setApplicationSnapshotHandlers` to capture and restore application state.
    */
   enableInstallSnapshot?: boolean;
   /**
@@ -318,10 +326,35 @@ export class RaftAdapter {
         // watermark: the difference is every non-command entry applied above the
         // last command, and a restore that lands short of the boundary makes the
         // next apply look like a gap.
-        takeSnapshotCallback: () =>
-          this.applicationSnapshotHandlers.takeSnapshot
-            ? this.applicationSnapshotHandlers.takeSnapshot(this.node?.getLastApplied() ?? 0)
-            : Buffer.alloc(0),
+        takeSnapshotCallback: async () => {
+          const handler = this.applicationSnapshotHandlers.takeSnapshot;
+          // No handler is a legitimate configuration: a group that holds no
+          // application state (log and configuration only) has nothing to
+          // capture, and raft still needs a boundary to truncate at.
+          if (!handler) return Buffer.alloc(0);
+
+          const data = await handler(this.node?.getLastApplied() ?? 0);
+          if (!Buffer.isBuffer(data)) {
+            throw new SqlVecError(
+              `takeSnapshot returned ${Object.prototype.toString.call(data)} instead of a Buffer. ` +
+                'A non-Buffer is stored as nothing, and the follower then installs an empty snapshot ' +
+                'while raft reports it as caught up.',
+              SqlVecErrorCode.INTERNAL_ERROR,
+            );
+          }
+          if (data.length === 0) {
+            // The dangerous case: a handler exists, so the application *does*
+            // own state, yet it produced no bytes. Persisting that snapshot
+            // truncates the log up to an index whose state nobody captured, and
+            // every follower that installs it gets an empty application.
+            throw new SqlVecError(
+              'takeSnapshot returned 0 bytes. An application that registers a snapshot handler owns ' +
+                'state, so an empty snapshot would truncate the log for an index it does not describe.',
+              SqlVecErrorCode.INTERNAL_ERROR,
+            );
+          }
+          return data;
+        },
         installSnapshotCallback: async (data: Buffer) => {
           if (this.applicationSnapshotHandlers.installSnapshot) {
             await this.applicationSnapshotHandlers.installSnapshot(data);
@@ -781,40 +814,55 @@ export class RaftAdapter {
   }
 
   /**
-   * Stop the Raft node and release resources.
+   * Stop the node: Raft first, then the transport, then storage.
+   *
+   * Returns a promise, and the ordering is why it has to. Every step was
+   * fire-and-forget, so `stop()` returned while raft-core was still flushing the
+   * log, the listening socket was still bound, and the SQLite handle was being
+   * closed under a running node. A node that is stopped and immediately started
+   * again — the normal shape of a restart, and what `TestCluster.restartNode`
+   * does — then races its own previous incarnation for the port, and the loser
+   * comes up unable to receive anything. Awaiting is source-compatible: a caller
+   * that ignores the promise behaves exactly as before.
    */
-  stop(): void {
-    if (this.node) {
+  async stop(): Promise<void> {
+    const node = this.node;
+    this.node = null;
+    if (node) {
       try {
-        this.node.stop();
+        await node.stop();
       } catch (err: unknown) {
         logger.warn({ err }, '[RaftAdapter] Error stopping RaftNode');
       }
-      this.node = null;
     }
 
-    if (this.transport) {
+    const transport = this.transport;
+    this.transport = null;
+    if (transport) {
       try {
-        this.transport.stop();
-      } catch (err: unknown) {
+        await transport.stop();
+      } catch (err) {
         console.warn('[RaftAdapter] Transport stop failed:', err);
       }
-      this.transport = null;
     }
 
-    if (this.originalTcpTransport) {
+    const original = this.originalTcpTransport;
+    this.originalTcpTransport = null;
+    // The batched wrapper owns the underlying transport; the reference is taken
+    // before the field is cleared so this only runs when they are different
+    // objects.
+    if (original && (original as unknown) !== transport) {
       try {
-        this.originalTcpTransport.stop();
-      } catch (err: unknown) {
+        await original.stop();
+      } catch (err) {
         console.warn('[RaftAdapter] Original TCP transport stop failed:', err);
       }
-      this.originalTcpTransport = null;
     }
 
     if (this.sqliteStorage) {
       try {
         this.sqliteStorage.close();
-      } catch (err: unknown) {
+      } catch (err) {
         console.warn('[RaftAdapter] SQLite storage close failed:', err);
       }
       this.sqliteStorage = null;
@@ -864,6 +912,57 @@ export class RaftAdapter {
       this._snapshotMeta = null;
     }
     return this._snapshotMeta;
+  }
+
+  /**
+   * Peers this node currently holds a live connection to.
+   *
+   * The counterpart of `getConnectedPeers()` on the transport, exposed at the
+   * node level because "which peers can I actually reach" is the first question
+   * about a cluster that is not converging, and reaching into the transport from
+   * outside is not possible through the published surface.
+   */
+  getConnectedPeers(): number[] {
+    type PeerReporter = { getConnectedPeers?: () => Array<number | { peerId: number }> };
+    const holder = this.transport as unknown as (PeerReporter & { underlying?: PeerReporter }) | null;
+    // `BatchedRaftTransport` is a request-response wrapper: it owns the framing
+    // but not the sockets, so the live connection table belongs to the transport
+    // it wraps. Asking only the outer object reports "no peers" on a perfectly
+    // healthy node, which is exactly the wrong signal when diagnosing a
+    // restarted node that is not catching up.
+    const reporter = typeof holder?.getConnectedPeers === 'function' ? holder : holder?.underlying;
+    if (!reporter || typeof reporter.getConnectedPeers !== 'function') return [];
+    return reporter.getConnectedPeers().map((peer) => (typeof peer === 'number' ? peer : peer.peerId));
+  }
+
+  /**
+   * How far each peer is replicated, as this node's leader state sees it.
+   *
+   * Returns an empty object on a follower (it holds no per-peer view) and on any
+   * node whose raft-core internals do not expose one. `match` is the highest
+   * index the peer is known to have, `next` the index the leader will send next;
+   * when `next` stays pinned at or below the leader's snapshot index while `match`
+   * does not move, the follower is stuck in snapshot transfer — which looks
+   * exactly like a healthy-but-slow follower from the follower's own side.
+   */
+  async getPeerProgress(): Promise<Record<number, { next: number; match: number }>> {
+    const leaderState = (
+      this.node as unknown as {
+        stateMachine?: {
+          leaderState?: { snapshot?: () => Map<string, { nextIndex: number; matchIndex: number }> } | null;
+        };
+      } | null
+    )?.stateMachine?.leaderState;
+    if (!leaderState || typeof leaderState.snapshot !== 'function') return {};
+    try {
+      const out: Record<number, { next: number; match: number }> = {};
+      for (const [peer, progress] of leaderState.snapshot()) {
+        out[Number(peer)] = { next: progress.nextIndex, match: progress.matchIndex };
+      }
+      return out;
+    } catch {
+      return {};
+    }
   }
 
   /**
