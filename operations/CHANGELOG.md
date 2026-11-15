@@ -41,6 +41,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`S3StorageBackend` uploaded 5-byte parts.** `DEFAULT_PART_SIZE` was
+  `(5 / 1024) * 1024`, which is 5, not 5 MiB. Every backup larger than the 10 MB
+  multipart threshold was sent as 5-byte parts, which S3 rejects for all but the
+  last part: the default configuration could not back up a large database at all.
+- **`S3StorageBackend` retried requests that could not succeed.** The retry helper
+  repeated every failure three times, including 403 and 404 — three wasted
+  requests and 1.5 s of backoff before the caller saw an error it could act on.
+  Only 5xx, 429 and transport-level failures are retried now.
+- **`AES256GCMEncryptionProvider` decrypted with the current key when the blob
+  named an unknown key version.** The version prefix is not covered by the AEAD
+  tag, so a blob could be relabelled with any version and still decrypt; and since
+  that prefix is the only record of which key encrypted a blob, a re-encryption
+  audit could be made to report the wrong key. An unknown version is rejected.
+- **`NoopLogger`'s methods were typed as `() => void`**, so the class declared
+  `implements ILogger` while `logger.info('message')` did not compile. The fields
+  carry the interface's types now.
 - **`AuditLogManager` built an entry with `hash: undefined as unknown as string`** and then
   patched it. The hash is now computed from the entry that is actually stored.
 - **`SchemaFederator.executeRepair` caught `err: any`**, the only untyped throw path left in
@@ -49,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs its own YCSB entry point.
 - **`FileAuditStore` deleted files it had not compressed.** Rotation reuses segment
   names (`audit-YYYYMMDD-0001.ndjson`), so a compressor that outlived its directory
-  found *a* file at its old path — the next run's — and unlinked it, because the
+  found _a_ file at its old path — the next run's — and unlinked it, because the
   name matched. The compressor now records the file's identity (inode and size)
   before reading and deletes only that exact file (`unlinkIfUnchanged`). Reproduced
   as a CI-only failure of the age-rotation test, which is what a cross-test file

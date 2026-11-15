@@ -338,6 +338,16 @@ describe('InMemoryStorageBackend', () => {
     const usage = await backend.getUsageBytes();
     expect(usage).toBe(15);
   });
+
+  it('rejects a download of an object that was never uploaded, without writing a file', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-test-'));
+    const destFile = path.join(tmpDir, 'never-written.bin');
+
+    await expect(backend.download('missing/object.bin', destFile)).rejects.toThrow(
+      'Object not found: missing/object.bin',
+    );
+    await expect(fs.stat(destFile)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });
 
 // ── B14–B15: RetentionPolicyEvaluator ────────────────────────────────

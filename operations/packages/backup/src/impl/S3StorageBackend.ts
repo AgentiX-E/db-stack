@@ -39,8 +39,8 @@ import type { IStorageBackend } from '../interfaces/index.js';
 /** Default multipart upload threshold: 10 MB. */
 const DEFAULT_MULTIPART_THRESHOLD = 10 * 1024 * 1024;
 
-/** Default part size for multipart upload: 5 MB. */
-const DEFAULT_PART_SIZE = (5 / 1024) * 1024;
+/** Default part size for multipart upload: 5 MB (S3's minimum part size). */
+const DEFAULT_PART_SIZE = 5 * 1024 * 1024;
 
 /** Maximum retries for transient errors. */
 const MAX_RETRIES = 3;
@@ -88,9 +88,25 @@ function sha256Hex(data: Buffer): string {
   return createHash('sha256').update(data).digest('hex');
 }
 
+/**
+ * Whether a failed request is worth repeating.
+ *
+ * Server-side faults (5xx) and throttling (429) are transient: the same request
+ * can succeed on a later attempt. A 4xx answer is the bucket rejecting this
+ * specific request — bad credentials, a missing key, a malformed key — so
+ * retrying it only multiplies the load and delays the error the caller needs.
+ * Errors without an HTTP status come from the transport (DNS, reset, timeout)
+ * or from a local failure, and stay retryable.
+ */
+function isRetryable(err: unknown): boolean {
+  const status = (err as { $metadata?: { httpStatusCode?: number } } | null)?.$metadata?.httpStatusCode;
+  if (typeof status !== 'number') return true;
+  return status >= 500 || status === 429;
+}
+
 function retry<T>(fn: () => Promise<T>, attempt = 1): Promise<T> {
   return fn().catch((err) => {
-    if (attempt >= MAX_RETRIES) throw err;
+    if (attempt >= MAX_RETRIES || !isRetryable(err)) throw err;
     const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1);
     return new Promise((resolve) => setTimeout(resolve, delay)).then(() => retry(fn, attempt + 1));
   });
