@@ -1,11 +1,10 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "One program over the umbrella barrel, the 21 packages and every test and benchmark, under exactly the production compiler options. The previous revision of this file switched `noUncheckedIndexedAccess` off; a gate that relaxes the rule it exists to enforce is not a gate, so the relaxation is gone and the code was made to satisfy the rule instead.",
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": true,
-    "rootDir": ".",
-    "noUncheckedIndexedAccess": false
+    "noEmit": true
   },
-  "include": ["packages/*/src/**/*.ts", "src/**/*.ts"],
+  "include": ["packages/*/src/**/*.ts", "src/**/*.ts", "bench/**/*.ts"],
   "exclude": ["node_modules", "dist", "packages/*/dist"]
 }

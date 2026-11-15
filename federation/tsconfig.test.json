@@ -1,7 +1,10 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "extends": "./tsconfig.build.json",
-  "compilerOptions": { "noEmit": true, "rootDir": "src" },
-  "include": ["src/**/*.ts"],
+  "//": "The whole tree — tests and benchmarks included — under exactly the production compiler options. Extending tsconfig.json (rather than tsconfig.build.json) keeps the workspace path mappings, so a test that imports the cluster's source is checked against the source and not against a stale dist.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "bench/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

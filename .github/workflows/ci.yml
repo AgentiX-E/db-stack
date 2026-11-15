@@ -49,6 +49,13 @@ jobs:
       # output (TS2307 on the `core/types` subpath).
       - name: Typecheck (builds workspace dependencies first)
         run: pnpm turbo run typecheck --filter=./${{ matrix.package }}
+      # The suite is code too. Until this step existed, 910 type errors were
+      # sitting in the three test trees — tests configuring options the product
+      # never reads, asserting on properties that do not exist, importing
+      # modules that are not there. Every one of them was invisible because
+      # nothing compiled the tests. Same compiler options, tests included.
+      - name: Typecheck the test tree (tests are code)
+        run: pnpm --filter ./${{ matrix.package }} run typecheck:tests
 
   # ── Style gates ────────────────────────────────────────────────────
   #
@@ -67,6 +74,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Structural gate check (no orphan configs, no scripts pointing at air)
+        run: pnpm check:gates
       - name: ESLint (one shared config for the whole workspace)
         run: pnpm lint
       - name: Prettier

@@ -11,6 +11,10 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "typecheck:tests": {
+      "dependsOn": [],
+      "outputs": []
+    },
     "test": {
       "dependsOn": [],
       "outputs": []

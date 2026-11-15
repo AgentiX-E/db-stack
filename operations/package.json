@@ -7,7 +7,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.umbrella.json && node ../scripts/fix-esm-extensions.mjs dist",
-    "typecheck": "tsc -p tsconfig.umbrella.json --noEmit",
+    "typecheck": "tsc -p tsconfig.prod.json --noEmit",
+    "typecheck:umbrella": "tsc -p tsconfig.umbrella.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run --exclude \"packages/*/src/__tests__/e2e/**\" --exclude \"packages/*/src/__tests__/mutation/**\"",
     "test:integration": "vitest run packages/core/src/__tests__/e2e",
@@ -16,7 +18,7 @@
     "format:check": "prettier --check \"packages/*/src/**/*.ts\"",
     "clean": "rm -rf dist packages/*/dist coverage",
     "bench": "tsx bench/run-all.ts",
-    "bench:ycsb": "tsx bench/ycsb/run-ycsb.ts",
+    "bench:ycsb": "tsx bench/ops-ycsb.ts",
     "docs": "typedoc",
     "test:mutation": "MUTATION=1 vitest run packages/core/src/__tests__/mutation"
   },
