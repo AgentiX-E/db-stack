@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   point-in-time recovery cannot place.
 - **`proposeBatch` passed an entry through `as any`** for no reason; the literal already
   satisfies `Partial<ApplyEntry>`.
+- **A peer could stay unreachable for the life of the process.** `ConnectionPool.addNode`
+  returned early for a peer it already knew, so the one call that says "this peer should be
+  reachable again" did nothing once the peer had been added once; and when a circuit breaker
+  closed after `circuitResetTimeoutMs` nothing re-armed the connection, because closing a
+  breaker only makes `getConnection()` *willing* to try again. The breaker exists to stop
+  hammering a dead peer, not to end the relationship with it. Both paths now re-arm, and
+  `addNode` on a known peer is idempotent but not inert.
 - **`bench:ycsb` pointed at `bench/ycsb/run-ycsb.ts`**, which does not exist. It now runs the
   package's own YCSB entry point (`bench/raft-ycsb.ts`).
 

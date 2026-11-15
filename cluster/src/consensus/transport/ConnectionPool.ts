@@ -487,13 +487,20 @@ export class ConnectionPool {
   // ──────────────────────────────────────────
 
   /**
-   * Dynamically add a new peer to the connection pool.
+   * Dynamically add a peer to the connection pool, or refresh one already known.
    * Initiates an mTLS connection to the peer on best-effort basis.
-   * If the peer is already known, this is a no-op.
+   * Calling it for a known peer is idempotent but not inert: it re-arms the
+   * connection when the peer has none. See the note below.
    */
   addNode(peer: PeerInfo): void {
-    if (this._peerInfo.has(peer.id)) return; // Already known
+    const known = this._peerInfo.has(peer.id);
 
+    // Refresh rather than ignore. Re-registering a peer is how a caller says
+    // "this peer should be reachable again" — the federation transport calls it
+    // on every send it has to refuse. Returning early for a known peer meant a
+    // channel that had lost its socket could not be re-armed by the only code
+    // that knew the socket was missing, so it stayed down until the process
+    // restarted. `getConnection` is a no-op when a live connection exists.
     this._peerInfo.set(peer.id, peer);
 
     // Create circuit breaker if not exists
@@ -508,7 +515,8 @@ export class ConnectionPool {
       });
     }
 
-    logger.info(`[ConnectionPool] Added peer ${peer.id} (${peer.host}:${peer.port})`);
+    if (known) logger.debug(`[ConnectionPool] Re-registered peer ${peer.id} (${peer.host}:${peer.port})`);
+    else logger.info(`[ConnectionPool] Added peer ${peer.id} (${peer.host}:${peer.port})`);
   }
 
   /**
@@ -1106,6 +1114,14 @@ export class ConnectionPool {
         logger.info(`[ConnectionPool] Circuit breaker RESET for peer ${peerId}`);
       }
       this._retryAttempts.delete(peerId);
+      // Closing the breaker only makes `getConnection()` willing to try again;
+      // it does not try. Without re-arming here, a peer that was unreachable for
+      // longer than the retry budget stayed unreachable — the breaker's job is
+      // to stop hammering a dead peer, not to end the relationship with it.
+      const active = this._connections.get(peerId);
+      if (!active || !active.connected) {
+        this._scheduleRetry(peerId, 0);
+      }
     }, this.config.circuitResetTimeoutMs);
   }
 

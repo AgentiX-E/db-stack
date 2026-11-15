@@ -8,7 +8,7 @@
  *
  * Acceptance Criteria:
  *   AC 31.10: constructor fills defaults and builds peer map + breakers
- *   AC 31.11: addNode no-ops on known peer, registers unknown peer
+ *   AC 31.11: addNode registers unknown peer, re-registers a known one and re-arms it
  *   AC 31.12: getConnection throws when stopped
  *   AC 31.13: getConnection fast-fails when the circuit breaker is OPEN
  *   AC 31.14: getConnection returns an existing connected connection
@@ -32,6 +32,7 @@
  *   AC 31.32: _scheduleRetry opens the breaker after maxRetries
  *   AC 31.33: _onDisconnect reconnects when no incoming latch exists
  *   AC 31.34: _waitForConnection resolves to the eventual connection
+ *   AC 31.35: a breaker reset re-arms the connection it stopped
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -398,11 +399,20 @@ describe('ConnectionPool constructor', () => {
 });
 
 describe('ConnectionPool addNode', () => {
-  it('no-ops on a known peer', () => {
+  it('re-registers a known peer and re-arms a connection it does not have', async () => {
+    // This used to be "no-ops on a known peer". That is the defect: re-registering
+    // is how a caller says "this peer should be reachable again" — the federation
+    // transport calls it on every send it has to refuse — and returning early left
+    // a peer whose socket had gone permanently unreachable.
     const pool = new ConnectionPool(makeConfig());
     const before = (pool as any)._peerInfo.size;
+    tlsConnectMock.mockClear();
+
     pool.addNode({ id: 2, host: 'peer-2.local', port: 5002 });
+
     expect((pool as any)._peerInfo.size).toBe(before);
+    await vi.waitFor(() => expect(tlsConnectMock).toHaveBeenCalled());
+    await pool.stop();
   });
 
   it('registers an unknown peer and initiates a best-effort connection', async () => {
@@ -421,6 +431,32 @@ describe('ConnectionPool addNode', () => {
     pool.addNode({ id: 9, host: 'peer-9.local', port: 5009 });
     expect((pool as any)._peerInfo.has(9)).toBe(true);
     expect(tlsConnectMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConnectionPool circuit breaker reset', () => {
+  it('re-arms the connection when the breaker resets', async () => {
+    // The breaker exists to stop hammering a dead peer, not to end the
+    // relationship with it. Closing it makes `getConnection()` willing to try
+    // again; something has to actually try, and nothing did: a peer that was
+    // down for longer than the retry budget stayed down until the process
+    // restarted (which is what failed AC-F5 on a slow runner).
+    const pool = new ConnectionPool(
+      makeConfig({ circuitResetTimeoutMs: 50, maxRetries: 3, initialRetryMs: 1, maxRetryMs: 2 }),
+    );
+    const connectSpy = vi.spyOn(pool as any, '_connect').mockRejectedValue(new Error('peer is down'));
+
+    // Two failures already spent; the next scheduled attempt is the one that
+    // exhausts the budget and opens the breaker.
+    (pool as any)._retryAttempts.set(2, 2);
+    (pool as any)._scheduleRetry(2, 0);
+
+    await vi.waitFor(() => expect((pool as any)._circuitBreakers.get(2)?.isOpen).toBe(true));
+    expect(connectSpy).not.toHaveBeenCalled();
+
+    // Breaker resets after circuitResetTimeoutMs, then re-arms one attempt.
+    await vi.waitFor(() => expect(connectSpy).toHaveBeenCalled(), { timeout: 2000 });
+    await pool.stop();
   });
 });
 
