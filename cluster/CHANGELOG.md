@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type errors were sitting under it, several of them in tests that could not fail.
 - **`OutboxRecord`** on the published surface, and `IOutboxWriter.append` / `appendBatch`
   declared on it. `RaftGroup` calls both — behind an `as any` — while `src/index.ts`
-  exported a *different* `IOutboxWriter` (`write`, `getLastWrittenIndex`) that no component
+  exported a _different_ `IOutboxWriter` (`write`, `getLastWrittenIndex`) that no component
   in the package calls. A third-party adapter could implement the documented interface and
   still be unable to satisfy `RaftGroup`.
 
@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`OperationRecorder` recorded the wrong client id on a return, and never read the map it
+  kept.** `recordReturn` re-derived the caller from `callId.split(':')[0]`, while
+  `pendingCalls` — written on every call — was read by nothing. A call id that does not encode
+  the client produced a return attributed to a client that never issued the operation, which
+  invalidates the history a linearizability check runs on. The map now stores
+  `callId -> clientId` and is read.
 - **Outbox records for entries proposed without a `msgId` carried `msgId: undefined`**, so
   every such entry collapsed onto one de-duplication key downstream. The record is now built
   in one place (`RaftGroup.buildOutboxRecord`) and an entry that arrives without an identity
@@ -41,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returned early for a peer it already knew, so the one call that says "this peer should be
   reachable again" did nothing once the peer had been added once; and when a circuit breaker
   closed after `circuitResetTimeoutMs` nothing re-armed the connection, because closing a
-  breaker only makes `getConnection()` *willing* to try again. The breaker exists to stop
+  breaker only makes `getConnection()` _willing_ to try again. The breaker exists to stop
   hammering a dead peer, not to end the relationship with it. Both paths now re-arm, and
   `addNode` on a known peer is idempotent but not inert.
 - **`bench:ycsb` pointed at `bench/ycsb/run-ycsb.ts`**, which does not exist. It now runs the
@@ -98,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshot file to delete or locate.
 - `RaftAdapter.shouldTakeSnapshot()`, `takeSnapshot(index)`, `resetCommittedCount()` and the
   `committedCount`/`lastSnapshotIndex` counters — the remains of the second loop.
-  `RaftAdapter.compactLogs()` stays as an explicit operator/test hook for *simulating* a
+  `RaftAdapter.compactLogs()` stays as an explicit operator/test hook for _simulating_ a
   compacted log (the boundary suites use it); nothing on a runtime path calls it, so it
   cannot truncate ahead of the snapshot raft-core holds.
 

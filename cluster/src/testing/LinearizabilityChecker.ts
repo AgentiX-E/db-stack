@@ -158,7 +158,6 @@ export class LinearizabilityChecker {
     if (n === 0) return true;
 
     // Step 3: Find a legal sequential ordering via DFS with pruning
-    const visited = new Set<string>();
     const used = new Array(n).fill(false);
     let stateCount = 0;
 
@@ -169,18 +168,14 @@ export class LinearizabilityChecker {
       if (seq.length === n) return true; // complete ordering found
 
       // Try each unused operation that is "ready" (all predecessors used)
-      for (let i = 0; i < n; i++) {
+      for (const [i, op] of operations.entries()) {
         if (used[i]) continue;
 
         // Check real-time precedence: all operations that returned before
         // this one's call must already be in seq
-        const op = operations[i];
-        if (!op) continue;
         let allPredecessorsUsed = true;
-        for (let j = 0; j < n; j++) {
+        for (const [j, other] of operations.entries()) {
           if (i === j || used[j]) continue;
-          const other = operations[j];
-          if (!other) continue;
           // j must precede i if j's return is before i's call
           if (other.ret.time < op.call.time) {
             allPredecessorsUsed = false;
@@ -321,7 +316,8 @@ export class LinearizabilityChecker {
 
 export class OperationRecorder {
   private events: Event[] = [];
-  private pendingCalls = new Map<string, number>();
+  /** Call id → client id, so a return is attributed to the caller that issued the call. */
+  private pendingCalls = new Map<string, string>();
   private callSeq = 0;
 
   /**
@@ -341,7 +337,7 @@ export class OperationRecorder {
       time: now,
     });
 
-    this.pendingCalls.set(callId, this.events.length - 1);
+    this.pendingCalls.set(callId, clientId);
     return callId;
   }
 
@@ -352,7 +348,7 @@ export class OperationRecorder {
     const now = Date.now();
     this.events.push({
       type: 'return',
-      clientId: callId.split(':')[0] ?? callId,
+      clientId: this.pendingCalls.get(callId) ?? callId,
       operation,
       key,
       value,

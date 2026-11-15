@@ -13,13 +13,10 @@ export function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      if (addr && typeof addr === 'object') {
-        const port = addr.port;
-        server.close(() => resolve(port));
-      } else {
-        server.close(() => reject(new Error('Failed to get port')));
-      }
+      // The listen callback runs only after a successful bind, so this socket is
+      // bound to a TCP address and never reports a pipe name or no address.
+      const { port } = server.address() as net.AddressInfo;
+      server.close(() => resolve(port));
     });
     server.on('error', reject);
   });

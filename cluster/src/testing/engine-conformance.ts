@@ -150,6 +150,15 @@ export function runEngineConformance(options: EngineConformanceOptions): void {
       });
     });
 
+    it('reports a stable, non-empty name', async () => {
+      await withReplica(async ({ engine }) => {
+        const name = engine.name;
+        assert.equal(typeof name, 'string');
+        assert.ok(name.length > 0, 'an engine must name itself for logs, metrics and conformance reports');
+        assert.equal(engine.name, name, 'the reported name must not change between reads');
+      });
+    });
+
     it('applies a put and reads it back', async () => {
       await withReplica(async ({ engine, replica }) => {
         await applyAt(replica, 1, codec.put('alpha', 'one'));

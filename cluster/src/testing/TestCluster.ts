@@ -156,19 +156,11 @@ export class TestCluster {
    */
   async stop(): Promise<void> {
     for (const n of this.nodes) {
-      try {
-        n.adapter.stop();
-      } catch {
-        /* ignore */
-      }
+      n.adapter.stop();
     }
     this.nodes = [];
     for (const dir of this.dataDirs) {
-      try {
-        cleanupTempDir(dir);
-      } catch {
-        /* ignore */
-      }
+      cleanupTempDir(dir);
     }
     this.dataDirs = [];
     this.ports = [];
@@ -240,25 +232,22 @@ export class TestCluster {
     }
   }
 
-  /** Port allocated for the i-th node; throws instead of yielding undefined. */
+  /**
+   * Port allocated for the i-th node. The array is sized from `nodeCount` in
+   * start(), so every index used here is in range.
+   */
   private portAt(i: number): number {
-    const port = this.ports[i];
-    if (port === undefined) throw new Error(`TestCluster: no port allocated for node index ${i}`);
-    return port;
+    return this.ports[i]!;
   }
 
-  /** Temporary storage directory for the i-th node. */
+  /** Temporary storage directory for the i-th node, allocated alongside the ports. */
   private dataDirAt(i: number): string {
-    const dir = this.dataDirs[i];
-    if (dir === undefined) throw new Error(`TestCluster: no data dir for node index ${i}`);
-    return dir;
+    return this.dataDirs[i]!;
   }
 
-  /** TLS material for node `id` (1-based). */
+  /** TLS material for node `id` (1-based), generated for exactly `nodeCount` nodes. */
   private certAt(id: number): CertBundle {
-    const bundle = this.certs.nodes[id - 1];
-    if (!bundle) throw new Error(`TestCluster: no certificate generated for node ${id}`);
-    return bundle;
+    return this.certs.nodes[id - 1]!;
   }
 
   private sleep(ms: number): Promise<void> {
