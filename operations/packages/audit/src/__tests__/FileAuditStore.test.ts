@@ -14,6 +14,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   FileAuditStore,
+  fileIdentity,
+  unlinkIfUnchanged,
   type FileAuditStoreConfig,
   DEFAULT_MAX_FILE_SIZE,
   DEFAULT_MAX_AGE_MS,
@@ -24,6 +26,22 @@ import { join } from 'path';
 // ── Test data dir ──────────────────────────────────────────
 
 const TEST_DIR = '/tmp/db-federation-test/audit-file-store';
+
+/** Poll until the directory holds at least `count` segments, or fail loudly. */
+async function waitForSegments(count: number, deadlineMs = 5_000): Promise<void> {
+  const started = Date.now();
+  for (;;) {
+    const found = readdirSync(TEST_DIR).filter((f) => /\.ndjson(\.gz)?$/.test(f)).length;
+    if (found >= count) return;
+    if (Date.now() - started > deadlineMs) {
+      throw new Error(
+        `expected at least ${count} audit segments in ${TEST_DIR}, found ${found} ` +
+          `after ${deadlineMs}ms: ${readdirSync(TEST_DIR).join(', ')}`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
 
 function cleanDir(): void {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
@@ -47,7 +65,11 @@ describe('FileAuditStore — AC 52.x: File-based Audit Store', () => {
     store = new FileAuditStore(config);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Awaiting `close()` is not politeness: a compressor still running when the
+    // directory is recreated deletes a segment of the *next* test, because rotation
+    // reuses segment names. That race failed this suite once on a loaded CI runner.
+    await store.close();
     cleanDir();
   });
 
@@ -331,8 +353,8 @@ describe('FileAuditStore — AC 52.x: File-based Audit Store', () => {
       });
     }
 
-    // Wait for the background gzip compression (setImmediate pipeline).
-    await new Promise((r) => setTimeout(r, 100));
+    // Await the background compression rather than sleeping for a guessed duration.
+    await store.close();
 
     const files = readdirSync(TEST_DIR);
     // A compressed .ndjson.gz file must exist (oldPath + '.gz').
@@ -362,9 +384,12 @@ describe('FileAuditStore — AC 52.x: File-based Audit Store', () => {
       resource: 'r',
       result: 'success',
     });
-    // Let the background gzip of the rotated segment settle so the assertion
-    // below is order-independent instead of racing the compression pipeline.
-    await new Promise((r) => setTimeout(r, 150));
+    // Two rotations have happened by now (the first write was already older than
+    // 1 ms, the second is older again). Drain the compression instead of sleeping,
+    // then assert with a bounded wait: the number of segments is not the property
+    // under test, the split of entries between them is.
+    await store.close();
+    await waitForSegments(2);
 
     const segments = readdirSync(TEST_DIR).filter((f) => /\.ndjson(\.gz)?$/.test(f));
     expect(segments.length).toBeGreaterThanOrEqual(2);
@@ -459,5 +484,69 @@ describe('FileAuditStore — AC 52.x: File-based Audit Store', () => {
     expect(beforeLate.some((e) => e.id === 't-2')).toBe(false);
     expect(beforeLate.some((e) => e.id === 't-1')).toBe(true);
     expect(beforeLate.some((e) => e.id === 't-0')).toBe(true);
+  });
+
+  // AC 52.11: a store owns the directory it is given, creating it if absent
+  it('AC 52.11: creates its data directory when it does not exist yet', async () => {
+    const nested = join(TEST_DIR, 'not', 'created', 'yet');
+    expect(existsSync(nested)).toBe(false);
+    const fresh = new FileAuditStore({ ...config, dataDir: nested });
+    try {
+      await fresh.write({ operation: 'MKDIR', actor: 'a', resource: 'r', result: 'success' });
+      const written = readdirSync(nested).filter((f) => f.endsWith('.ndjson'));
+      expect(written).toHaveLength(1);
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  // AC 52.12: shutdown is awaitable, so no compressor outlives the directory
+  it('AC 52.12: close() drains pending compression and is idempotent', async () => {
+    // Small segments so every write but the last rotates, which is what puts
+    // compressions in flight while `close()` is called.
+    store = new FileAuditStore({ ...config, maxFileSize: 120 });
+    for (let i = 0; i < 5; i++) {
+      await store.write({
+        operation: `DRAIN_${i}_${'y'.repeat(40)}`,
+        actor: 'a',
+        resource: 'r',
+        result: 'success',
+      });
+    }
+    await store.close();
+    const afterFirst = readdirSync(TEST_DIR).sort();
+    await expect(store.close()).resolves.toBeUndefined();
+    // Nothing was still in flight: a second close changes nothing on disk.
+    expect(readdirSync(TEST_DIR).sort()).toEqual(afterFirst);
+    // Every rotated segment was compressed and its uncompressed original removed.
+    const originals = afterFirst.filter((f) => f.endsWith('.ndjson'));
+    expect(originals.length).toBeLessThanOrEqual(1);
+    expect(afterFirst.some((f) => f.endsWith('.gz'))).toBe(true);
+  });
+
+  // AC 52.13: a stale compressor must not delete a namesake it never read
+  it('AC 52.13: unlinkIfUnchanged deletes only the file it compressed', () => {
+    const path = join(TEST_DIR, 'audit-20000101-0001.ndjson');
+    writeFileSync(path, 'first\n');
+    const identity = fileIdentity(path)!;
+
+    // Replaced by a namesake of a different size: the identity no longer matches.
+    writeFileSync(path, 'a different, longer content\n');
+    expect(unlinkIfUnchanged(path, identity)).toBe(false);
+    expect(existsSync(path)).toBe(true);
+
+    // The original file: deleted.
+    writeFileSync(path, 'first\n');
+    const sameIdentity = fileIdentity(path)!;
+    expect(unlinkIfUnchanged(path, sameIdentity)).toBe(true);
+    expect(existsSync(path)).toBe(false);
+
+    // Already gone is not an error, and neither is a path that cannot be unlinked.
+    expect(unlinkIfUnchanged(path, sameIdentity)).toBe(false);
+    const dirPath = join(TEST_DIR, 'a-directory');
+    mkdirSync(dirPath);
+    const dirIdentity = fileIdentity(dirPath)!;
+    expect(unlinkIfUnchanged(dirPath, dirIdentity)).toBe(false);
+    expect(existsSync(dirPath)).toBe(true);
   });
 });

@@ -131,7 +131,7 @@ because a harness bug produces confident, meaningless acceptance passes.
 |---|---|---|---|---|
 | `cluster` | 98.4 % | 98.4 % | 98.8 % | 97.3 % |
 | `federation` | 99.3 % | 99.3 % | 99.8 % | 97.8 % |
-| `operations` | 98.2 % | 98.2 % | 98.9 % | 95.9 % |
+| `operations` | 98.2 % | 98.2 % | 98.9 % | 96.0 % |
 | `e2e` (harness) | 100 % | 100 % | 100 % | 100 % |
 
 The `e2e` row covers `e2e/harness/support.ts` — process supervision, IPC, port allocation,

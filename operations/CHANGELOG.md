@@ -5,6 +5,32 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`FileAuditStore.close()`** — awaits every rotation compression still in flight.
+  Background gzip is off the write path by design, but it was not awaitable, so a
+  caller that shut the store down raced a compressor that still held a path.
+
+### Fixed
+
+- **`FileAuditStore` deleted files it had not compressed.** Rotation reuses segment
+  names (`audit-YYYYMMDD-0001.ndjson`), so a compressor that outlived its directory
+  found *a* file at its old path — the next run's — and unlinked it, because the
+  name matched. The compressor now records the file's identity (inode and size)
+  before reading and deletes only that exact file (`unlinkIfUnchanged`). Reproduced
+  as a CI-only failure of the age-rotation test, which is what a cross-test file
+  deletion looks like from the outside.
+- **A data directory that did not exist yet was never created.** The guard was
+  inverted (`if (existsSync(dir)) mkdirSync(dir)`), so a store pointed at a fresh
+  path failed on its first write with ENOENT. Only directories created beforehand
+  by the caller — as every test did — worked.
+- **The age-rotation test no longer sleeps for a guessed duration.** It awaits
+  `close()` and then polls, bounded, for the observable state. A fixed sleep plus an
+  exact file count is a coin flip on a loaded runner; the property under test is the
+  split of entries between segments.
+
 ## [1.2.0] — 2026-08-10
 
 ### Added

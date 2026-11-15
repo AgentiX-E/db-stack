@@ -62,6 +62,45 @@ export const DEFAULT_RETENTION_DAYS = 90;
 export const DEFAULT_FILE_PREFIX = 'audit';
 export const DEFAULT_MAX_SCAN_LINES = 10000;
 
+// ── File identity helpers ───────────────────────────────────────
+
+/** What identifies a specific file, so a later step can tell it from a namesake. */
+export interface FileIdentity {
+  size: number;
+  ino: number;
+}
+
+/** Identity of `path`, or `null` when it does not exist. */
+export function fileIdentity(path: string): FileIdentity | null {
+  try {
+    const stat = statSync(path);
+    return { size: stat.size, ino: stat.ino };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete `path` only if it is still the file described by `expected`.
+ *
+ * Rotation reuses segment names (`audit-YYYYMMDD-0001.ndjson`), so a background
+ * compressor that outlives its directory will find *a* file at its old path — the
+ * next test's or the next day's. Deleting that would be data loss caused by a
+ * cleanup, so identity is checked first. A missing file is not an error: something
+ * else already removed it.
+ */
+export function unlinkIfUnchanged(path: string, expected: FileIdentity): boolean {
+  const actual = fileIdentity(path);
+  if (!actual) return false;
+  if (actual.ino !== expected.ino || actual.size !== expected.size) return false;
+  try {
+    unlinkSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  FileAuditStore
 // ══════════════════════════════════════════════════════════════════
@@ -81,6 +120,17 @@ export class FileAuditStore implements IAuditStore {
   private currentSize = 0;
   private currentCreatedAt: number;
 
+  /**
+   * Rotated segments still being compressed in the background.
+   *
+   * Compression runs off the write path on purpose, but it must be awaitable:
+   * without this a caller that shuts the store down (or a test that recreates the
+   * directory) races a compressor that is holding a path into the old layout —
+   * and since the next segment reuses the same name, the stale compressor deletes
+   * a file it never read.
+   */
+  private readonly pendingCompressions = new Set<Promise<void>>();
+
   constructor(config: FileAuditStoreConfig) {
     this.dataDir = config.dataDir;
     this.maxFileSize = config.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
@@ -89,7 +139,9 @@ export class FileAuditStore implements IAuditStore {
     this.filePrefix = config.filePrefix ?? DEFAULT_FILE_PREFIX;
     this.maxScanLines = config.maxScanLines ?? DEFAULT_MAX_SCAN_LINES;
 
-    if (existsSync(this.dataDir)) {
+    // Inverted until now: the directory was created only if it already existed, so
+    // a store pointed at a fresh path failed on its first write with ENOENT.
+    if (!existsSync(this.dataDir)) {
       mkdirSync(this.dataDir, { recursive: true });
     }
 
@@ -164,27 +216,42 @@ export class FileAuditStore implements IAuditStore {
     this.currentSize = 0;
     this.currentCreatedAt = Date.now();
 
-    // Compress the rotated file in background (non-blocking)
-    setImmediate(() => {
-      try {
-        const gzPath = oldPath + '.gz';
-        const readStream = createReadStream(oldPath);
-        const writeStream = createWriteStream(gzPath);
-        const gzip = createGzip();
+    // What is being compressed, captured now rather than trusted later: segment
+    // names are reused after a directory is recreated, so "the file at oldPath" at
+    // completion time is not necessarily the file that was read.
+    const source = fileIdentity(oldPath);
+    if (!source) return;
 
-        pipeline(readStream, gzip, writeStream)
+    // Compress the rotated file in background (non-blocking), but tracked.
+    const job = new Promise<void>((resolve) => {
+      setImmediate(() => {
+        const gzPath = oldPath + '.gz';
+        pipeline(createReadStream(oldPath), createGzip(), createWriteStream(gzPath))
           .then(() => {
-            // Remove original after successful compression
-            unlinkSync(oldPath);
-            return undefined;
+            // Remove the original only if it is still the file that was compressed.
+            unlinkIfUnchanged(oldPath, source);
           })
           .catch(() => {
-            // Compression failed, keep original
-          });
-      } catch {
-        /* ignore compression failure */
-      }
+            // Compression failed: keep the original, drop the partial archive.
+            rmSync(gzPath, { force: true });
+          })
+          .finally(resolve);
+      });
     });
+    this.pendingCompressions.add(job);
+    void job.finally(() => this.pendingCompressions.delete(job));
+  }
+
+  /**
+   * Wait for a graceful stop: everything that was scheduled has finished.
+   *
+   * Call this before removing the data directory, or before asserting on its
+   * contents — otherwise the assertion races a compressor.
+   */
+  async close(): Promise<void> {
+    while (this.pendingCompressions.size > 0) {
+      await Promise.allSettled([...this.pendingCompressions]);
+    }
   }
 
   /**
