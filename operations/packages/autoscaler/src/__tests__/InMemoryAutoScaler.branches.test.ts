@@ -31,7 +31,7 @@ describe('IAS-branch: scale-up amount || 1 fallback', () => {
     const result = await scaler.evaluate({
       cpu: 0.3,
       qps: 15000,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     });
 
@@ -47,7 +47,7 @@ describe('IAS-branch: scale-up amount || 1 fallback', () => {
     const result = await scaler.evaluate({
       cpu: 0.9,
       qps: 1000,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     });
 

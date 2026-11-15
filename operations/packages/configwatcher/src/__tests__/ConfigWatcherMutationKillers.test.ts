@@ -46,7 +46,7 @@ describe('CW-MK: type/null/enum guards', () => {
     w.registerSchema({ k: { type: 'string', min: 10 } });
     // "5" is a string; original `typeof === "number" && !isNaN` is false -> no range check
     // mutant (&& -> ||) lets !isNaN("5") (true) enter range -> "5" < 10 flags error
-    const r = w.validateKey('k', '5' as unknown as string);
+    const r = w.validateKey('k', '5');
     expect(r.valid).toBe(true);
   });
 });

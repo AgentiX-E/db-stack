@@ -28,8 +28,8 @@ describe('InMemoryDistributedTracer', () => {
 
     const completed = tracer.getCompletedSpans();
     expect(completed).toHaveLength(1);
-    expect(completed[0].endTime).toBeDefined();
-    expect(completed[0].endTime!).toBeGreaterThanOrEqual(completed[0].startTime);
+    expect(completed[0]!.endTime).toBeDefined();
+    expect(completed[0]!.endTime!).toBeGreaterThanOrEqual(completed[0]!.startTime);
   });
 
   // O3: nested spans parent-child: child.parentSpanId === parent.spanId
@@ -141,7 +141,7 @@ describe('InMemoryDistributedTracer', () => {
     end();
 
     const completed = tracer.getCompletedSpans();
-    expect(completed[0].attributes).toEqual({
+    expect(completed[0]!.attributes).toEqual({
       key1: 'value1',
       key2: 42,
       key3: true,
@@ -194,8 +194,8 @@ describe('InMemoryDistributedTracer', () => {
     end('error', 'something went wrong');
 
     const completed = tracer.getCompletedSpans();
-    expect(completed[0].status).toBe('error');
-    expect(completed[0].errorMessage).toBe('something went wrong');
+    expect(completed[0]!.status).toBe('error');
+    expect(completed[0]!.errorMessage).toBe('something went wrong');
   });
 
   // Additional: default status is 'ok' when end is called without args
@@ -205,7 +205,7 @@ describe('InMemoryDistributedTracer', () => {
     end();
 
     const completed = tracer.getCompletedSpans();
-    expect(completed[0].status).toBe('ok');
+    expect(completed[0]!.status).toBe('ok');
   });
 
   // Additional: traceId not passed, no active span -> random traceId
@@ -215,8 +215,8 @@ describe('InMemoryDistributedTracer', () => {
     end();
 
     const completed = tracer.getCompletedSpans();
-    expect(completed[0].traceId).toBeTruthy();
-    expect(completed[0].traceId.length).toBeGreaterThan(0);
+    expect(completed[0]!.traceId).toBeTruthy();
+    expect(completed[0]!.traceId.length).toBeGreaterThan(0);
   });
 
   // Additional: injected carrier only when span active
@@ -241,7 +241,7 @@ describe('InMemoryTelemetryExporter', () => {
     await exporter.export(spans);
     expect(exporter.getExported()).toHaveLength(1);
     expect(exporter.getExported()[0]).toHaveLength(1);
-    expect(exporter.getExported()[0][0].name).toBe('export-me');
+    expect(exporter.getExported()[0]![0]!.name).toBe('export-me');
   });
 
   // O10: exporter shutdown: isConnected() = false
@@ -274,8 +274,8 @@ describe('InMemoryTelemetryExporter', () => {
     await exporter.export(tracer.getCompletedSpans());
 
     expect(exporter.getExported()).toHaveLength(2);
-    expect(exporter.getExported()[0][0].name).toBe('batch1');
-    expect(exporter.getExported()[1][0].name).toBe('batch2');
+    expect(exporter.getExported()[0]![0]!.name).toBe('batch1');
+    expect(exporter.getExported()[1]![0]!.name).toBe('batch2');
   });
 
   // Reconnect not possible after shutdown

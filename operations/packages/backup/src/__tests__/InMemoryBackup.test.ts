@@ -389,7 +389,7 @@ describe('RetentionPolicyEvaluator', () => {
     // old-snap is 60d old, exceeds keepRecent → deletable
     // recent-snap is 10d old, within keepRecent → NOT deletable
     expect(toDelete.length).toBe(1);
-    expect(toDelete[0].snapshotId).toBe('old-snap');
+    expect(toDelete[0]!.snapshotId).toBe('old-snap');
   });
 
   it('returns empty array for empty input', () => {
@@ -416,7 +416,7 @@ describe('RetentionPolicyEvaluator', () => {
     // young is 5d old, minAge=10d → NOT old enough
     // old is 20d old, minAge=10d → old enough
     expect(toDelete.length).toBe(1);
-    expect(toDelete[0].snapshotId).toBe('old');
+    expect(toDelete[0]!.snapshotId).toBe('old');
   });
 
   it('getConfig returns current policy', () => {

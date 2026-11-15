@@ -26,7 +26,7 @@ describe('INT1: Security ↔ Backup Integration', () => {
 
   it('INT1.1: encrypt → backup → list → decrypt round-trip', async () => {
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     // Encrypt sensitive data
     const original = Buffer.from('sensitive-payload-42');
@@ -50,7 +50,7 @@ describe('INT1: Security ↔ Backup Integration', () => {
 
   it('INT1.2: multiple encrypted items survive full backup cycle', async () => {
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     const payloads = ['user-data-1', 'config-data-2', 'log-data-3'];
     const encrypted = await Promise.all(payloads.map((p, i) => enc.encrypt(Buffer.from(p), `ctx-${i}`)));
@@ -73,7 +73,7 @@ describe('INT1: Security ↔ Backup Integration', () => {
 
   it('INT1.3: encryption is deterministic for identical inputs', async () => {
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     const data = Buffer.from('same-data');
     const ctx1 = await enc.encrypt(data);
@@ -91,7 +91,7 @@ describe('INT1: Security ↔ Backup Integration', () => {
 
   it('INT1.4: XOR tampered ciphertext decrypts to garbage', async () => {
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     const original = Buffer.from('tamper-test');
     const encrypted = await enc.encrypt(original);
@@ -118,7 +118,7 @@ describe('INT1: Security ↔ Backup Integration', () => {
 
     // Initialize encryption (simulates enabling at-rest encryption)
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     // Second backup after encryption enabled
     const r2 = await backup.createBackup({ type: 'incremental' });
@@ -132,7 +132,7 @@ describe('INT1: Security ↔ Backup Integration', () => {
 
   it('INT1.6: retention policy works alongside encryption', async () => {
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     const backup = factory.createBackupManager();
 

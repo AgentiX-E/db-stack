@@ -100,7 +100,7 @@ describe('B-M: InMemoryBackupManager listBackups sort/filter', () => {
     const times = items.map((s) => new Date(s.createdAt).getTime());
     // Explicit if-else sort: newer (higher ms) comes first
     for (let i = 1; i < times.length; i++) {
-      expect(times[i - 1]).toBeGreaterThanOrEqual(times[i]);
+      expect(times[i - 1]).toBeGreaterThanOrEqual(times[i]!);
     }
   });
 
@@ -148,7 +148,8 @@ describe('B-M: InMemoryBackupManager listBackups sort/filter', () => {
   it('B10: newerThan partial match', async () => {
     // Get middle snapshot time and filter to only include newer ones
     const all = await manager.listBackups({});
-    const oldest = all[all.length - 1];
+    expect(all.length).toBeGreaterThanOrEqual(3);
+    const oldest = all[all.length - 1]!;
     const cutoff = new Date(new Date(oldest.createdAt).getTime() + 1).toISOString();
     const filtered = await manager.listBackups({ newerThan: cutoff });
     expect(filtered.length).toBeLessThan(all.length);
@@ -156,7 +157,7 @@ describe('B-M: InMemoryBackupManager listBackups sort/filter', () => {
 
   it('B11: deleteBackup works', async () => {
     const items = await manager.listBackups({});
-    const id = items[0].snapshotId;
+    const id = items[0]!.snapshotId;
     expect(await manager.deleteBackup(id)).toBe(true);
   });
 
@@ -166,7 +167,7 @@ describe('B-M: InMemoryBackupManager listBackups sort/filter', () => {
 
   it('B13: getBackup returns by ID', async () => {
     const items = await manager.listBackups({});
-    const snap = await manager.getBackup(items[0].snapshotId);
+    const snap = await manager.getBackup(items[0]!.snapshotId);
     expect(snap).toBeDefined();
   });
 

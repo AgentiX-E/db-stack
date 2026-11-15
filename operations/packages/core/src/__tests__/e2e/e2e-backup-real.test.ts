@@ -26,15 +26,17 @@ describe.each(ENGINE_CASES)('$name E2E: BackupManager', ({ factory }) => {
     const mgr = await factory.createBackupManager();
     const result = await mgr.createBackup({ type: 'full' });
     expect(result.success).toBe(true);
-    expect(result.snapshot.snapshotId).toBeDefined();
-    expect(result.snapshot.type).toBe('full');
+    expect(result.snapshot).toBeDefined();
+    expect(result.snapshot!.snapshotId).toBeDefined();
+    expect(result.snapshot!.type).toBe('full');
   });
 
   it('should create an incremental backup successfully', async () => {
     const mgr = await factory.createBackupManager();
     const result = await mgr.createBackup({ type: 'incremental' });
     expect(result.success).toBe(true);
-    expect(result.snapshot.snapshotId).toBeDefined();
+    expect(result.snapshot).toBeDefined();
+    expect(result.snapshot!.snapshotId).toBeDefined();
   });
 
   it('should list created backups', async () => {
@@ -63,9 +65,10 @@ describe.each(ENGINE_CASES)('$name E2E: BackupManager', ({ factory }) => {
   it('should get a specific backup by id', async () => {
     const mgr = await factory.createBackupManager();
     const created = await mgr.createBackup({ type: 'full' });
-    const found = await mgr.getBackup(created.snapshot.snapshotId);
+    expect(created.snapshot).toBeDefined();
+    const found = await mgr.getBackup(created.snapshot!.snapshotId);
     expect(found).not.toBeNull();
-    expect(found.snapshotId).toBe(created.snapshot.snapshotId);
+    expect(found!.snapshotId).toBe(created.snapshot!.snapshotId);
   });
 
   it('should return null for non-existent backup', async () => {
@@ -77,7 +80,8 @@ describe.each(ENGINE_CASES)('$name E2E: BackupManager', ({ factory }) => {
   it('should restore from snapshot successfully', async () => {
     const mgr = await factory.createBackupManager();
     const created = await mgr.createBackup({ type: 'full' });
-    const result = await mgr.restoreFromSnapshot(created.snapshot.snapshotId);
+    expect(created.snapshot).toBeDefined();
+    const result = await mgr.restoreFromSnapshot(created.snapshot!.snapshotId);
     expect(result.success).toBe(true);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
@@ -120,14 +124,15 @@ describe.each(ENGINE_CASES)('$name E2E: BackupManager', ({ factory }) => {
     const mgr = await factory.createBackupManager();
     const b1 = await mgr.createBackup({ type: 'full' });
     const b2 = await mgr.createBackup({ type: 'full' });
-    expect(b1.snapshot.snapshotId).not.toBe(b2.snapshot.snapshotId);
+    expect(b1.snapshot).toBeDefined();
+    expect(b2.snapshot).toBeDefined();
+    expect(b1.snapshot!.snapshotId).not.toBe(b2.snapshot!.snapshotId);
   });
 
   it('should handle PITR gracefully', async () => {
     const mgr = await factory.createBackupManager();
     const result = await mgr.pitr({
-      type: 'timestamp',
-      value: new Date().toISOString(),
+      targetTime: new Date().toISOString(),
     });
     // PITR may not be configured — graceful handling expected
     expect(result).toBeDefined();

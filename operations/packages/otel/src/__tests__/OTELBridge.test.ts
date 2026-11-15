@@ -16,14 +16,14 @@ describe('InMemoryOTELBridge', () => {
     expect(s.spanId.length).toBeGreaterThan(0);
     s.end('ok');
     expect(otel.getSpans()).toHaveLength(1);
-    expect(otel.getSpans()[0].name).toBe('query');
+    expect(otel.getSpans()[0]!.name).toBe('query');
   });
 
   it('end sets status correctly', () => {
     const otel = new InMemoryOTELBridge();
     const s = otel.startSpan('db-call');
     s.end('error');
-    expect(otel.getSpans()[0].status).toBe('error');
+    expect(otel.getSpans()[0]!.status).toBe('error');
   });
 
   it('end span records endTime', () => {
@@ -31,7 +31,9 @@ describe('InMemoryOTELBridge', () => {
     const s = otel.startSpan('timed');
     const before = Date.now();
     s.end('ok');
-    const span = otel.getSpans()[0];
+    const spans = otel.getSpans();
+    expect(spans).toHaveLength(1);
+    const span = spans[0]!;
     expect(span.endTime).toBeGreaterThanOrEqual(span.startTime);
   });
 
@@ -39,20 +41,20 @@ describe('InMemoryOTELBridge', () => {
     const otel = new InMemoryOTELBridge();
     otel.recordMetric('db.queries', 42, { db: 'main' });
     expect(otel.getMetrics()).toHaveLength(1);
-    expect(otel.getMetrics()[0].value).toBe(42);
+    expect(otel.getMetrics()[0]!.value).toBe(42);
   });
 
   it('recordMetric without labels', () => {
     const otel = new InMemoryOTELBridge();
     otel.recordMetric('cpu.usage', 0.85);
-    expect(otel.getMetrics()[0].labels).toEqual({});
+    expect(otel.getMetrics()[0]!.labels).toEqual({});
   });
 
   it('exportLog stores log entry', () => {
     const otel = new InMemoryOTELBridge();
     otel.exportLog({ severity: 'info', message: 'started', attributes: {} });
     expect(otel.getLogs()).toHaveLength(1);
-    expect(otel.getLogs()[0].severity).toBe('info');
+    expect(otel.getLogs()[0]!.severity).toBe('info');
   });
 
   it('exportLog with trace context', () => {
@@ -64,8 +66,8 @@ describe('InMemoryOTELBridge', () => {
       traceId: 'trace-abc',
       spanId: 'span-xyz',
     });
-    expect(otel.getLogs()[0].traceId).toBe('trace-abc');
-    expect(otel.getLogs()[0].spanId).toBe('span-xyz');
+    expect(otel.getLogs()[0]!.traceId).toBe('trace-abc');
+    expect(otel.getLogs()[0]!.spanId).toBe('span-xyz');
   });
 
   it('shutdown does not throw', async () => {
@@ -85,7 +87,7 @@ describe('InMemoryOTELBridge', () => {
     const s = otel.startSpan('root');
     expect(s.spanId).toBeTruthy();
     s.end('ok');
-    expect(otel.getSpans()[0].traceId).toBeTruthy();
+    expect(otel.getSpans()[0]!.traceId).toBeTruthy();
   });
 
   it('parent-child span relationship via parentSpanId', () => {
@@ -114,6 +116,6 @@ describe('InMemoryOTELBridge', () => {
     const otel = new InMemoryOTELBridge();
     const s = otel.startSpan('default-status');
     s.end();
-    expect(otel.getSpans()[0].status).toBe('ok');
+    expect(otel.getSpans()[0]!.status).toBe('ok');
   });
 });

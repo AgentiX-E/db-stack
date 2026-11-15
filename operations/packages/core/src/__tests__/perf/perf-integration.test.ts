@@ -273,7 +273,8 @@ describe('Cross-Engine Integration', () => {
       const deserialized: AuditEntry[] = JSON.parse(serialized);
 
       expect(deserialized.length).toBe(1000);
-      expect(deserialized[0].action).toBe('READ');
+      expect(deserialized[0]).toBeDefined();
+      expect(deserialized[0]!.action).toBe('READ');
     },
     100_000_000,
   );

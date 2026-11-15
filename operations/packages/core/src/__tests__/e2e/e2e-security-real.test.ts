@@ -85,7 +85,7 @@ describe.each(ENGINE_CASES)('$name E2E: AuditStore', ({ factory }) => {
       operation: 'CREATE_USER',
       actor: 'admin',
       resource: 'users/123',
-      result: 'SUCCESS',
+      result: 'success',
     });
     expect(id).toBeDefined();
     expect(typeof id).toBe('string');
@@ -98,7 +98,7 @@ describe.each(ENGINE_CASES)('$name E2E: AuditStore', ({ factory }) => {
       operation: 'DELETE',
       actor: 'admin',
       resource: 'data/456',
-      result: 'SUCCESS',
+      result: 'success',
     });
     const entry = await store.get(id);
     // Note: Some adapters (SqlVec) use native log IDs internally and return
@@ -126,13 +126,13 @@ describe.each(ENGINE_CASES)('$name E2E: AuditStore', ({ factory }) => {
       operation: 'READ',
       actor: 'bob',
       resource: 'doc/1',
-      result: 'SUCCESS',
+      result: 'success',
     });
     await store.write({
       operation: 'WRITE',
       actor: 'alice',
       resource: 'doc/2',
-      result: 'SUCCESS',
+      result: 'success',
     });
     const results = await store.query({ actor: 'bob' });
     expect(results.length).toBeGreaterThanOrEqual(1);
@@ -145,7 +145,7 @@ describe.each(ENGINE_CASES)('$name E2E: AuditStore', ({ factory }) => {
       operation: 'READ',
       actor: 'user1',
       resource: 'doc/x',
-      result: 'SUCCESS',
+      result: 'success',
     });
     const count = await store.count();
     expect(typeof count).toBe('number');
@@ -158,7 +158,7 @@ describe.each(ENGINE_CASES)('$name E2E: AuditStore', ({ factory }) => {
       operation: 'READ',
       actor: 'user1',
       resource: 'doc/x',
-      result: 'SUCCESS',
+      result: 'success',
     });
     const pruned = await store.pruneOlderThan(new Date(Date.now() + 86400000));
     expect(typeof pruned).toBe('number');

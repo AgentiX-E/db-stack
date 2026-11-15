@@ -128,8 +128,9 @@ describe('InMemoryAuditStore', () => {
     }
     const all = await store.query({});
     const offset5 = await store.query({ offset: 5 });
+    expect(all).toHaveLength(10);
     expect(offset5).toHaveLength(5); // 10 - 5
-    expect(offset5[0].operation).toBe(all[5].operation);
+    expect(offset5[0]!.operation).toBe(all[5]!.operation);
   });
 
   // ── A12: query filters by severity ─────────────────────────────
@@ -141,11 +142,11 @@ describe('InMemoryAuditStore', () => {
 
     const warnings = await store.query({ severity: 'warning' });
     expect(warnings).toHaveLength(1);
-    expect(warnings[0].severity).toBe('warning');
+    expect(warnings[0]!.severity).toBe('warning');
 
     const errors = await store.query({ severity: 'error' });
     expect(errors).toHaveLength(1);
-    expect(errors[0].severity).toBe('error');
+    expect(errors[0]!.severity).toBe('error');
   });
 
   // ── A13: query filters by startTime/endTime range ──────────────
@@ -264,11 +265,11 @@ describe('InMemoryAuditStore', () => {
 
     const failures = await store.query({ result: 'failure' });
     expect(failures).toHaveLength(1);
-    expect(failures[0].result).toBe('failure');
+    expect(failures[0]!.result).toBe('failure');
 
     const denied = await store.query({ result: 'denied' });
     expect(denied).toHaveLength(1);
-    expect(denied[0].result).toBe('denied');
+    expect(denied[0]!.result).toBe('denied');
   });
 
   // ── write stores details and traceId ───────────────────────────
@@ -343,8 +344,8 @@ describe('JsonAuditExporter', () => {
 
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(2);
-    expect(parsed[0].operation).toBe('str1');
-    expect(parsed[1].operation).toBe('str2');
+    expect(parsed[0]!.operation).toBe('str1');
+    expect(parsed[1]!.operation).toBe('str2');
   });
 
   // ── exportToFile returns 0 if no entries ───────────────────────
@@ -370,7 +371,7 @@ describe('JsonAuditExporter', () => {
     });
     const parsed: AuditEntry[] = JSON.parse(jsonStr);
     expect(parsed).toHaveLength(1);
-    expect(parsed[0].actor).toBe('alice');
+    expect(parsed[0]!.actor).toBe('alice');
   });
 });
 

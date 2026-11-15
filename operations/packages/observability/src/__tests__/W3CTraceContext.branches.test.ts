@@ -28,7 +28,9 @@ describe('W3CTC-branch: span accessor and end() optional args', () => {
     const span = ctx.createChildSpan('failing');
     span.end('error', 'socket hang up');
 
-    const [data] = ctx.flush();
+    const flushed = ctx.flush();
+    expect(flushed).toHaveLength(1);
+    const data = flushed[0]!;
     expect(data.status).toBe('error');
     expect(data.errorMessage).toBe('socket hang up');
   });
@@ -40,7 +42,9 @@ describe('W3CTC-branch: span accessor and end() optional args', () => {
     // Explicitly-undefined status/errorMessage must not override defaults.
     span.end(undefined, undefined);
 
-    const [data] = ctx.flush();
+    const flushed = ctx.flush();
+    expect(flushed).toHaveLength(1);
+    const data = flushed[0]!;
     expect(data.status).toBe('ok');
     expect(data.errorMessage).toBeUndefined();
     // The child is no longer active after end().

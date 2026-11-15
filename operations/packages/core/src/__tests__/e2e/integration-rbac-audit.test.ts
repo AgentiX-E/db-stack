@@ -27,7 +27,7 @@ describe('INT2: RBAC ↔ Audit Integration', () => {
   const noRoleIdentity: Identity = { id: 'nobody', roles: [] };
 
   const readPerm: Permission = { resource: 'db', action: 'read' };
-  const writePerm: Permission = { resource: 'db', action: 'write' };
+  const writePerm: Permission = { resource: 'db', action: 'update' };
   const adminPerm: Permission = { resource: 'db', action: 'admin' };
 
   // ── INT2.1: Admin has all permissions via role ─
@@ -111,9 +111,9 @@ describe('INT2: RBAC ↔ Audit Integration', () => {
     const identity: Identity = { id: 'combo', roles: ['role-a', 'role-b'] };
     const perms = rbac.getPermissions(identity);
 
-    expect(perms.length).toBe(2); // read + write, deduplicated
+    expect(perms.length).toBe(2); // read + update, deduplicated
     expect(perms.find((p) => p.resource === 'db' && p.action === 'read')).toBeTruthy();
-    expect(perms.find((p) => p.resource === 'db' && p.action === 'write')).toBeTruthy();
+    expect(perms.find((p) => p.resource === 'db' && p.action === 'update')).toBeTruthy();
   });
 
   // ── INT2.6: getRoles reflects current state ─
@@ -143,7 +143,7 @@ describe('INT2: RBAC ↔ Audit Integration', () => {
     expect(rbac.hasPermission(adminIdentity, readPerm)).toBe(true);
 
     // Audit store is usable and distinct from RBAC
-    const storeName = (audit as any).store || (audit as any).entries;
     expect(audit).toBeDefined();
+    expect(audit).not.toBe(rbac);
   });
 });

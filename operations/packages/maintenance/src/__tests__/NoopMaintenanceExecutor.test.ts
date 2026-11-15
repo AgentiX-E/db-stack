@@ -4,7 +4,7 @@
  * Covers all maintenance operations returning fixed/empty results.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { NoopMaintenanceExecutor } from '../impl/NoopMaintenanceExecutor.js';
 
 describe('NoopMaintenanceExecutor', () => {

@@ -19,6 +19,24 @@ import type { RollingUpgradePlan, BatchHealth } from '../interfaces/types.js';
 // observable test failure.
 const instantSleep = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+/**
+ * The orchestrator keeps its pause flag private; the pause/resume tests pin it
+ * because the public surface exposes no paused state. A renamed field throws at
+ * this call site rather than leaving the assertion comparing nothing.
+ */
+function isPaused(e: RollingUpgradeOrchestrator): boolean {
+  return Boolean(Reflect.get(e, 'paused'));
+}
+
+/**
+ * The plan validator rejects a non-numeric batchSize, which the type system
+ * cannot express. This helper states that one value is deliberately out of
+ * contract.
+ */
+function offContract<T>(value: unknown): T {
+  return value as T;
+}
+
 function makePlan(overrides: Partial<RollingUpgradePlan> = {}): RollingUpgradePlan {
   return {
     id: 'p',
@@ -548,7 +566,7 @@ describe('rollingupgrade fixed_size batchSize validation', () => {
 
   it('rejects fixed_size when batchSize is a string "0" (non-numeric)', async () => {
     const e = engine();
-    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: '0' as any }))).rejects.toThrow(
+    await expect(e.execute(makePlan({ batchStrategy: 'fixed_size', batchSize: offContract('0') }))).rejects.toThrow(
       'batchSize',
     );
   });
@@ -613,9 +631,9 @@ describe('rollingupgrade pause/resume state', () => {
   it('pause sets paused=true and resume sets paused=false', async () => {
     const e = engine();
     await e.pause();
-    expect((e as any).paused).toBe(true);
+    expect(isPaused(e)).toBe(true);
     await e.resume();
-    expect((e as any).paused).toBe(false);
+    expect(isPaused(e)).toBe(false);
   });
 
   it('execute begins from an unpaused state even after a prior pause', async () => {
@@ -626,7 +644,7 @@ describe('rollingupgrade pause/resume state', () => {
     await e.pause();
     const s = await e.execute(makePlan({ nodes: ['a', 'b'], batchSize: 1, healthCheckNames: ['ok'] }));
     expect(s.phase).toBe('completed');
-    expect((e as any).paused).toBe(false);
+    expect(isPaused(e)).toBe(false);
   });
 });
 
@@ -713,7 +731,7 @@ describe('rollingupgrade rollback trigger observable rollback', () => {
     );
     const ev = e.getEvents().find((x) => x.type === 'rollback_completed');
     expect(ev).toBeDefined();
-    expect((ev!.details as any).rolledBackBatches).toBe(2);
+    expect(ev!.details).toHaveProperty('rolledBackBatches', 2);
   });
 
   it('on_degradation emits rollback_triggered event', async () => {
@@ -970,7 +988,7 @@ describe('rollingupgrade in-flight rollback (draining/upgrading/health_check)', 
     await e.rollback();
     const ev = e.getEvents().find((x) => x.type === 'rollback_completed');
     expect(ev).toBeDefined();
-    expect((ev!.details as any).rolledBackNodes).toBe(2);
+    expect(ev!.details).toHaveProperty('rolledBackNodes', 2);
   });
 });
 
@@ -1063,7 +1081,7 @@ describe('rollingupgrade batch_threshold failure reason precision', () => {
     const ev = e.getEvents().find((x) => x.type === 'batch_failed');
     expect(ev).toBeDefined();
     // `threshold * 100` renders "50" (mutant `*`->`/` would render "0.005").
-    expect((ev!.details as any).reason).toContain('50%');
+    expect(String(ev!.details['reason'])).toContain('50%');
   });
 });
 
@@ -1147,7 +1165,7 @@ describe('rollingupgrade rollback excludes failed nodes', () => {
     expect(statuses).toEqual(['failed', 'rolled_back', 'rolled_back']);
     const ev = e.getEvents().find((x) => x.type === 'rollback_completed');
     expect(ev).toBeDefined();
-    expect((ev!.details as any).rolledBackNodes).toBe(2);
+    expect(ev!.details).toHaveProperty('rolledBackNodes', 2);
   });
 });
 
@@ -1250,7 +1268,7 @@ describe('rollingupgrade canary failure with on_batch_threshold policy', () => {
         healthCheckNames: ['bad'],
         rollbackTrigger: 'on_batch_threshold',
         batchFailureThreshold: 0.5,
-        canary: { fraction: 0.34, bakeTimeMs: 0, requiredChecks: ['bad'] },
+        canary: { fraction: 0.34, bakeTimeMs: 0, requiredChecks: ['bad'], autoPromote: false },
       }),
     );
     expect(s.phase).toBe('failed');

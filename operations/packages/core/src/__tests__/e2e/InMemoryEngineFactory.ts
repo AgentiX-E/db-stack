@@ -1,15 +1,10 @@
 import type { EngineFactory } from './EngineFactory.js';
-import type { IHealthProbe, IHealthOrchestrator } from '@agentix-e/db-operations-health';
+import type { IHealthProbe } from '@agentix-e/db-operations-health';
 import type { IMetricsRegistry } from '@agentix-e/db-operations-metrics';
 import type { IBackupManager, IStorageBackend, IBackupRetentionPolicy } from '@agentix-e/db-operations-backup';
 import type { IAuditStore } from '@agentix-e/db-operations-audit';
 import type { IDistributedTracer } from '@agentix-e/db-operations-observability';
-import type {
-  IDeadlockDetector,
-  IAlertRuleManager,
-  ISlowQueryRecorder,
-  IConnectionMonitor,
-} from '@agentix-e/db-operations-monitor';
+import type { IDeadlockDetector, ISlowQueryRecorder } from '@agentix-e/db-operations-monitor';
 import type { IMaintenanceExecutor } from '@agentix-e/db-operations-maintenance';
 import type { IAuthProvider } from '@agentix-e/db-operations-auth';
 import type { ILogger } from '@agentix-e/db-operations-logger';
@@ -43,7 +38,7 @@ export class InMemoryEngineFactory implements EngineFactory {
     });
   }
 
-  createHealthOrchestrator(): IHealthOrchestrator {
+  createHealthOrchestrator(): HealthOrchestrator {
     const orch = new HealthOrchestrator();
     orch.registerFunctional('probe', 'Default Probe', {
       liveness: () => ({ ok: true }),
@@ -88,7 +83,7 @@ export class InMemoryEngineFactory implements EngineFactory {
     return new InMemoryDeadlockDetector();
   }
 
-  createAlertRuleManager(): IAlertRuleManager {
+  createAlertRuleManager(): InMemoryAlertRuleManager {
     return new InMemoryAlertRuleManager();
   }
 
@@ -96,7 +91,7 @@ export class InMemoryEngineFactory implements EngineFactory {
     return new InMemorySlowQueryRecorder(100);
   }
 
-  createConnectionMonitor(): IConnectionMonitor {
+  createConnectionMonitor(): InMemoryConnectionMonitor {
     return new InMemoryConnectionMonitor();
   }
 

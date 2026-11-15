@@ -20,6 +20,12 @@ import { S3StorageBackend } from '../impl/S3StorageBackend.js';
 
 // ── Mock S3 client via vi.mock ──────────────────────────────
 
+/** The command object the SDK hands to `send`: a class name plus its input payload. */
+interface MockCommand {
+  input: Record<string, unknown>;
+  constructor: { name: string };
+}
+
 let _mockShouldFail = false; // fault injection toggle
 
 vi.mock('@aws-sdk/client-s3', () => {
@@ -28,8 +34,8 @@ vi.mock('@aws-sdk/client-s3', () => {
   class MockS3Client {
     config = { region: 'us-east-1' };
 
-    async send(command: any): Promise<any> {
-      const cmdName = command.constructor?.name;
+    async send(command: MockCommand): Promise<unknown> {
+      const cmdName = command.constructor.name;
 
       if (_mockShouldFail) {
         _mockShouldFail = false;
@@ -43,8 +49,8 @@ vi.mock('@aws-sdk/client-s3', () => {
           return {};
         case 'PutObjectCommand':
           putObjectCalls.push({
-            Bucket: command.input.Bucket,
-            Key: command.input.Key,
+            Bucket: String(command.input['Bucket']),
+            Key: String(command.input['Key']),
           });
           return { ETag: '"mock-etag"' };
         case 'GetObjectCommand':
@@ -64,56 +70,56 @@ vi.mock('@aws-sdk/client-s3', () => {
   return {
     S3Client: MockS3Client,
     PutObjectCommand: class {
-      input: any;
-      constructor(i: any) {
+      input: unknown;
+      constructor(i: unknown) {
         this.input = i;
       }
     },
     GetObjectCommand: class {
-      input: any;
-      constructor(i: any) {
+      input: unknown;
+      constructor(i: unknown) {
         this.input = i;
       }
     },
     ListObjectsV2Command: class {
-      input: any;
-      constructor(i: any) {
+      input: unknown;
+      constructor(i: unknown) {
         this.input = i;
       }
     },
     DeleteObjectCommand: class {
-      input: any;
-      constructor(i: any) {
+      input: unknown;
+      constructor(i: unknown) {
         this.input = i;
       }
     },
     HeadObjectCommand: class {
-      input: any;
-      constructor(i: any) {
+      input: unknown;
+      constructor(i: unknown) {
         this.input = i;
       }
     },
     CreateMultipartUploadCommand: class {
-      input: any;
-      constructor(i: any) {
+      input: unknown;
+      constructor(i: unknown) {
         this.input = i;
       }
     },
     UploadPartCommand: class {
-      input: any;
-      constructor(i: any) {
+      input: unknown;
+      constructor(i: unknown) {
         this.input = i;
       }
     },
     CompleteMultipartUploadCommand: class {
-      input: any;
-      constructor(i: any) {
+      input: unknown;
+      constructor(i: unknown) {
         this.input = i;
       }
     },
     AbortMultipartUploadCommand: class {
-      input: any;
-      constructor(i: any) {
+      input: unknown;
+      constructor(i: unknown) {
         this.input = i;
       }
     },
@@ -123,7 +129,7 @@ vi.mock('@aws-sdk/client-s3', () => {
 vi.mock('@aws-sdk/lib-storage', () => {
   return {
     Upload: class {
-      constructor(public opts: any) {}
+      constructor(public opts: unknown) {}
       async done() {
         return {};
       }
@@ -163,7 +169,7 @@ describe('S3StorageBackend Chaos (D2)', () => {
     // Attempt upload under timeout — should not crash process
     try {
       await backend.upload(tmpFile, 'test/timeout-key');
-    } catch (err: any) {
+    } catch (err) {
       // S1: Network errors are expected; verify no crash
       expect(err).toBeDefined();
     }

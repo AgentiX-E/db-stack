@@ -54,7 +54,7 @@ describe('PrometheusPushExporter — AC 51.x: Prometheus Push Exporter', () => {
     await exporter.push();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [url, opts] = mockFetch.mock.calls[0];
+    const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toContain('http://pushgateway:9091/metrics/job/sqlvec-db/instance/node-1');
     expect(opts.method).toBe('PUT');
     expect(opts.body).toContain('# HELP test_requests_total Counter metric');
@@ -74,7 +74,7 @@ describe('PrometheusPushExporter — AC 51.x: Prometheus Push Exporter', () => {
 
     await exporter.push();
 
-    const body = mockFetch.mock.calls[0][1].body;
+    const body = mockFetch.mock.calls[0]![1].body;
     expect(body).toContain('# HELP db_connections Gauge metric');
     expect(body).toContain('# TYPE db_connections gauge');
     expect(body).toContain('db_connections 15');
@@ -94,7 +94,7 @@ describe('PrometheusPushExporter — AC 51.x: Prometheus Push Exporter', () => {
 
     await exporter.push();
 
-    const body = mockFetch.mock.calls[0][1].body;
+    const body = mockFetch.mock.calls[0]![1].body;
     expect(body).toContain('# HELP query_duration_ms Histogram metric');
     expect(body).toContain('# TYPE query_duration_ms histogram');
     expect(body).toContain('query_duration_ms_count{endpoint="/users"} 3');
@@ -113,7 +113,7 @@ describe('PrometheusPushExporter — AC 51.x: Prometheus Push Exporter', () => {
 
     await exporter.push();
 
-    const body = mockFetch.mock.calls[0][1].body;
+    const body = mockFetch.mock.calls[0]![1].body;
     expect(body).toContain('simple_total 1');
   });
 
@@ -131,7 +131,7 @@ describe('PrometheusPushExporter — AC 51.x: Prometheus Push Exporter', () => {
 
     await exporter.push();
 
-    const body = mockFetch.mock.calls[0][1].body;
+    const body = mockFetch.mock.calls[0]![1].body;
     // baseName strips the _count suffix → "requests"; type must be counter.
     expect(body).toContain('# TYPE requests counter');
     expect(body).not.toContain('# TYPE requests histogram');
@@ -150,7 +150,7 @@ describe('PrometheusPushExporter — AC 51.x: Prometheus Push Exporter', () => {
 
     await exporter.push();
 
-    const url = mockFetch.mock.calls[0][0];
+    const url = mockFetch.mock.calls[0]![0];
     expect(url).toContain('job/sqlvec-db');
     expect(url).toContain('instance/node-1');
     expect(url).toContain('dc/us-east-1');
@@ -202,7 +202,7 @@ describe('PrometheusPushExporter — AC 51.x: Prometheus Push Exporter', () => {
 
     await exporter.push();
 
-    const body = mockFetch.mock.calls[0][1].body;
+    const body = mockFetch.mock.calls[0]![1].body;
     expect(body).toContain('path="');
     expect(body).toContain('\\"');
     expect(body).toContain('\\n');

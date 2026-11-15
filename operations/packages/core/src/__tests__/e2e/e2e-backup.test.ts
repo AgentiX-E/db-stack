@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { InMemoryEngineFactory } from './InMemoryEngineFactory.js';
 
 describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$name e2e: Backup', ({ factory }) => {

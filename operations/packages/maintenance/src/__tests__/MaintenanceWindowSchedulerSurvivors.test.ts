@@ -355,7 +355,7 @@ describe('MWS-S: projection loop boundaries', () => {
         id: 'w1',
         recurrence: 'weekly',
         startTime: '02:00',
-        daysOfWeek: ['mon'] as any,
+        daysOfWeek: ['mon'],
       }),
     );
     s.getUpcomingOccurrences(NOW, NOW + 8 * D_MS);
@@ -500,7 +500,7 @@ describe('MWS-S: weekly/monthly validation', () => {
     const w = win({
       id: 'vw',
       recurrence: 'weekly',
-      daysOfWeek: ['mon'] as any,
+      daysOfWeek: ['mon'],
       startTime: undefined,
     });
     expect(() => s.registerWindow(w)).toThrow(/startTime/);
@@ -546,7 +546,7 @@ describe('MWS-S: daily projection invalid/edge startTime', () => {
         id: 'wi',
         recurrence: 'weekly',
         startTime: 'xx:30',
-        daysOfWeek: ['mon'] as any,
+        daysOfWeek: ['mon'],
       }),
     );
     s.getUpcomingOccurrences(NOW, NOW + D_MS);
@@ -560,7 +560,7 @@ describe('MWS-S: daily projection invalid/edge startTime', () => {
         id: 'wi2',
         recurrence: 'weekly',
         startTime: '03:xx',
-        daysOfWeek: ['mon'] as any,
+        daysOfWeek: ['mon'],
       }),
     );
     s.getUpcomingOccurrences(NOW, NOW + D_MS);

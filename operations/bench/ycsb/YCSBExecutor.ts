@@ -38,7 +38,9 @@ function computeLatencyStats(sortedLatencies: number[]): LatencyStats {
   const p50Index = Math.floor(sortedLatencies.length * 0.5);
   const p95Index = Math.floor(sortedLatencies.length * 0.95);
   const p99Index = Math.floor(sortedLatencies.length * 0.99);
-  const last = sortedLatencies[sortedLatencies.length - 1];
+  // Guarded by the emptiness check above; the index is inside the array bounds
+  // because every percentile factor is strictly below 1.
+  const last = sortedLatencies[sortedLatencies.length - 1]!;
   return {
     p50: sortedLatencies[p50Index] ?? last,
     p95: sortedLatencies[p95Index] ?? last,

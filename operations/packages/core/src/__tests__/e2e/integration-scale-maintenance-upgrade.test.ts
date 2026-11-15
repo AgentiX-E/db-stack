@@ -131,7 +131,7 @@ describe('INT3: AutoScale ↔ Maintenance ↔ RollingUpgrade', () => {
 
   it('INT3.5: maintenance executor vacuum task succeeds', async () => {
     const exec = factory.createMaintenanceExecutor();
-    const result = await exec.vacuum({ tables: ['test_table'] });
+    const result = await exec.vacuum({ target: 'test_table' });
     expect(result).toBeDefined();
     expect(result.success).toBe(true);
   });
@@ -140,7 +140,7 @@ describe('INT3: AutoScale ↔ Maintenance ↔ RollingUpgrade', () => {
 
   it('INT3.6: maintenance executor analyze task succeeds', async () => {
     const exec = factory.createMaintenanceExecutor();
-    const result = await exec.analyze({ tables: ['metrics'] });
+    const result = await exec.analyze({ target: 'metrics' });
     expect(result.success).toBe(true);
   });
 
@@ -148,7 +148,7 @@ describe('INT3: AutoScale ↔ Maintenance ↔ RollingUpgrade', () => {
 
   it('INT3.7: maintenance executor reindex task succeeds', async () => {
     const exec = factory.createMaintenanceExecutor();
-    const result = await exec.reindex({ index: 'idx_users' });
+    const result = await exec.reindex({ target: 'idx_users' });
     expect(result.success).toBe(true);
   });
 
@@ -158,7 +158,7 @@ describe('INT3: AutoScale ↔ Maintenance ↔ RollingUpgrade', () => {
     const exec = factory.createMaintenanceExecutor();
     const upgrade = factory.createRollingUpgrade();
 
-    const mResult = await exec.reindex({ index: 'pk_users' });
+    const mResult = await exec.reindex({ target: 'pk_users' });
     const plan: RollingUpgradePlan = {
       id: 'int3-8',
       name: 'rolling-upgrade',

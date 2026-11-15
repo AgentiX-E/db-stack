@@ -81,7 +81,7 @@ describe('M-M: InMemoryMaintenanceExecutor', () => {
   it('M7: analyze dryRun flag in details', async () => {
     const m = fresh();
     const r = await m.analyze({ target: 'orders', dryRun: true });
-    expect(r.details.dryRun).toBe(true);
+    expect(r.details).toHaveProperty('dryRun', true);
     expect(m.opsLog.length).toBe(1);
   });
 
@@ -90,19 +90,19 @@ describe('M-M: InMemoryMaintenanceExecutor', () => {
   it('M8: reindex reduces fragmentation for matching index', async () => {
     const m = fresh();
     const before = await m.getIndexFragmentation('idx_users_email');
-    expect(before[0].fragmentationRatio).toBe(0.45);
+    expect(before[0]!.fragmentationRatio).toBe(0.45);
     await m.reindex({ target: 'idx_users_email' });
     const after = await m.getIndexFragmentation('idx_users_email');
-    expect(after[0].fragmentationRatio).toBe(0.045);
+    expect(after[0]!.fragmentationRatio).toBe(0.045);
   });
 
   it('M9: reindex reduces pageCount for matching index', async () => {
     const m = fresh();
     const before = await m.getIndexFragmentation('idx_users_email');
-    expect(before[0].pageCount).toBe(1200);
+    expect(before[0]!.pageCount).toBe(1200);
     await m.reindex({ target: 'idx_users_email' });
     const after = await m.getIndexFragmentation('idx_users_email');
-    expect(after[0].pageCount).toBe(840);
+    expect(after[0]!.pageCount).toBe(840);
   });
 
   it('M10: reindex table flag matches all table indexes', async () => {
@@ -123,7 +123,7 @@ describe('M-M: InMemoryMaintenanceExecutor', () => {
     await m.reindex({ target: 'idx_products_name' }); // → 0.0012 → floor 0.02
     const after = await m.getIndexFragmentation('idx_products_name');
     // Never below 0.02 (Math.max guard)
-    expect(after[0].fragmentationRatio).toBeGreaterThanOrEqual(0.02);
+    expect(after[0]!.fragmentationRatio).toBeGreaterThanOrEqual(0.02);
   });
 
   it('M12: reindex pageCount floor boundary', async () => {
@@ -133,7 +133,7 @@ describe('M-M: InMemoryMaintenanceExecutor', () => {
       await m.reindex({ target: 'idx_products_name' });
     }
     const after = await m.getIndexFragmentation('idx_products_name');
-    expect(after[0].pageCount).toBeGreaterThanOrEqual(10);
+    expect(after[0]!.pageCount).toBeGreaterThanOrEqual(10);
   });
 
   // --- getStorageStats ---
@@ -222,7 +222,7 @@ describe('M-M: InMemoryMaintenanceExecutor', () => {
     ]);
     const frags = await m.getIndexFragmentation('*');
     expect(frags.length).toBe(1);
-    expect(frags[0].indexName).toBe('custom');
+    expect(frags[0]!.indexName).toBe('custom');
   });
 
   // --- opsLog ---
@@ -312,10 +312,14 @@ function mkW(overrides: Partial<MaintenanceWindow> = {}): MaintenanceWindow {
   return {
     id: overrides.id ?? 'win-1',
     name: overrides.name ?? 'test-window',
+    operationType: overrides.operationType ?? 'VACUUM',
+    targets: overrides.targets ?? [],
+    owner: overrides.owner ?? 'test-owner',
     recurrence: overrides.recurrence ?? 'daily',
     startTime: overrides.startTime ?? '03:00',
     priority: overrides.priority ?? 5,
     maxDurationMin: overrides.maxDurationMin ?? 60,
+    requiresApproval: overrides.requiresApproval ?? false,
     ...overrides,
   };
 }
@@ -333,9 +337,13 @@ describe('M-M: MaintenanceWindowScheduler', () => {
       s.registerWindow({
         id: '',
         name: '',
+        operationType: 'VACUUM',
+        targets: [],
+        owner: 'test-owner',
         recurrence: 'daily',
         priority: 0,
         maxDurationMin: 0,
+        requiresApproval: false,
       }),
     ).toThrow();
   });
@@ -374,7 +382,7 @@ describe('M-M: MaintenanceWindowScheduler', () => {
 
   it("MWS8: weekly recurrence on today's weekday", () => {
     const s = new MaintenanceWindowScheduler();
-    const dw = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][new Date().getDay()] as any;
+    const dw = (['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const)[new Date().getDay()]!;
     s.registerWindow(mkW({ recurrence: 'weekly', startTime: '23:00', daysOfWeek: [dw] }));
     expect(s.getUpcomingOccurrences(Date.now(), Date.now() + D_MS * 7).length).toBe(1);
   });
@@ -500,12 +508,14 @@ describe('M-M: MaintenanceWindowScheduler', () => {
     const s = new MaintenanceWindowScheduler();
     const paused: string[] = [];
     await s.requestPause({
-      windowId: 'w',
-      reason: 'test',
+      instanceId: 'w',
       resources: ['r1', 'r2'],
+      pauseAt: Date.now(),
+      resumeAt: Date.now() + H_MS,
       onPaused: async (r) => {
         paused.push(r);
       },
+      onResume: async () => {},
     });
     expect(paused).toEqual(['r1', 'r2']);
   });

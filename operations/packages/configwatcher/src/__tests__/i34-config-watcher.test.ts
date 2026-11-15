@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ConfigWatcher } from '../impl/ConfigWatcher.js';
-import type { ConfigSchema, ConfigChangeEvent } from '../interfaces/index.js';
+import type { ConfigSchema, ConfigChangeEvent, NotificationFilter } from '../interfaces/index.js';
 
 // ── Helpers ────────────────────────────────────────────────
 

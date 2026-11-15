@@ -13,21 +13,32 @@
  *   - L120-127 (parseDurationToMs arithmetic)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RetentionPolicyEvaluator, parseDurationToMs } from '../impl/RetentionPolicyEvaluator.js';
-import type { BackupMetadata, RetentionPolicy } from '@agentix-e/db-operations-core/types';
+import type { BackupMetadata } from '@agentix-e/db-operations-core/types';
 
-function makeSnapshot(overrides: Partial<BackupMetadata> & { id: string }): BackupMetadata {
-  const ts = new Date(overrides.createdAt ?? Date.now()).toISOString();
+/**
+ * A snapshot to be built: the caller names the snapshot and the creation time,
+ * which the product stores as an ISO-8601 string.
+ */
+interface SnapshotDraft {
+  id: string;
+  /** Epoch milliseconds or an absolute Date. */
+  createdAt?: number | Date;
+  sizeBytes?: number;
+}
+
+function makeSnapshot(overrides: SnapshotDraft): BackupMetadata {
+  const created = overrides.createdAt ?? Date.now();
   return {
     snapshotId: overrides.id,
     type: 'full',
     state: 'completed',
-    sizeBytes: 1024 * 1024, // 1 MB
-    createdAt: ts,
-    dbName: 'test-db',
-    ...overrides,
-  } as BackupMetadata;
+    sizeBytes: overrides.sizeBytes ?? 1024 * 1024, // 1 MB
+    createdAt: (created instanceof Date ? created : new Date(created)).toISOString(),
+    fileCount: 1,
+    location: `file:///backups/${overrides.id}.tar`,
+  };
 }
 
 describe('RET: RetentionPolicyEvaluator', () => {

@@ -146,7 +146,7 @@ describe('HealthOrchestrator (OBS7)', () => {
   it('OBS7.2: liveness probe can be independently checked', () => {
     const result = probe1.liveness();
     expect(result.ok).toBe(true);
-    probe1.setLiveness({ ok: false, reason: 'test failure' });
+    probe1.setLiveness({ ok: false, message: 'test failure' });
     expect(probe1.liveness().ok).toBe(false);
   });
 
@@ -216,6 +216,8 @@ describe('Metrics + Prometheus (OBS8)', () => {
   it('OBS8.5: PrometheusPushExporter constructs with config', () => {
     const exporter = new PrometheusPushExporter(registry, {
       pushGatewayUrl: 'http://localhost:9091',
+      job: 'db-stack',
+      instance: 'observability-e2e',
       pushIntervalMs: 60000,
     });
     // Exporter exists and has a push method
@@ -274,10 +276,8 @@ describe('DistributedTracer + W3CTraceContext (OBS9)', () => {
 
   it('OBS9.4: span trace context links parent to child', () => {
     const tracer = new InMemoryDistributedTracer();
-    tracer.startSpan('parent', { traceId: 't2' });
-    const spans = tracer.getFlushedSpans?.() ?? [];
-    const parentSpanId = spans[0]?.spanId;
-    tracer.startSpan('child', { traceId: 't2', parentSpanId });
+    const parent = tracer.startSpan('parent', { traceId: 't2' });
+    tracer.startSpan('child', { traceId: 't2', parentSpanId: parent.spanId });
     expect(typeof tracer).toBe('object');
     // Span relationships tracked internally
   });
@@ -309,15 +309,15 @@ describe('Monitor components (OBS10)', () => {
     // record() uses SlowQueryRecord, but getSlowQueries(thresholdMs) fetches
     // queries that exceed the given threshold and persist them
     await recorder.record({
-      sql: 'SELECT * FROM t WHERE x > 1000000',
-      duration: 250,
-      timestamp: Date.now(),
+      query: 'SELECT * FROM t WHERE x > 1000000',
+      durationMs: 250,
+      timestamp: new Date(),
       database: 'main',
     });
     await recorder.record({
-      sql: 'SELECT * FROM t WHERE x < 10',
-      duration: 5,
-      timestamp: Date.now(),
+      query: 'SELECT * FROM t WHERE x < 10',
+      durationMs: 5,
+      timestamp: new Date(),
       database: 'main',
     });
     // getRecentSlowQueries returns in-memory cache
@@ -350,9 +350,9 @@ describe('HealthOrchestrator lifecycle (OBS11)', () => {
   it('OBS11.1: probe can report unhealthy on shutdown', () => {
     const probe = new MockProbe('component');
     expect(probe.readiness().ok).toBe(true);
-    probe.setReadiness({ ok: false, reason: 'shutting down' });
+    probe.setReadiness({ ok: false, message: 'shutting down' });
     expect(probe.readiness().ok).toBe(false);
-    expect(probe.readiness().reason).toBe('shutting down');
+    expect(probe.readiness().message).toBe('shutting down');
   });
 
   it('OBS11.2: unregisterComponent removes probe', () => {
@@ -363,6 +363,6 @@ describe('HealthOrchestrator lifecycle (OBS11)', () => {
 
     orchestrator.unregisterComponent('temp');
     const after = orchestrator.getComponentHealth();
-    expect(after.find((c: { probeId: string }) => c.probeId === 'temp')).toBeUndefined();
+    expect(after.find((c) => c.componentId === 'temp')).toBeUndefined();
   });
 });

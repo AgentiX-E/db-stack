@@ -139,7 +139,7 @@ class DL {
             if (dfs(nn)) return true;
           } else if (rs.has(nn)) {
             p.slice(p.indexOf(nn));
-            g.delete(p[p.length - 1]);
+            g.delete(p[p.length - 1]!);
             return true;
           }
         }
@@ -158,8 +158,14 @@ class DL {
   }
 }
 
+/** Span record kept by the benchmark tracer stub. */
+interface BenchSpan {
+  id: string;
+  n: string;
+}
+
 const AuditS = class {
-  _o: any[] = [];
+  _o: unknown[] = [];
   write() {
     this._o.push({});
   }
@@ -169,8 +175,8 @@ const AuditS = class {
 };
 
 const TracR = class {
-  _s: any[] = [];
-  _a = new Map<string, any>();
+  _s: BenchSpan[] = [];
+  _a = new Map<string, BenchSpan>();
   _c: string | null = null;
 
   start(n: string) {
@@ -192,12 +198,12 @@ const TracR = class {
     return [...this._s];
   }
 
-  inject(c: any) {
-    c.tp = '1';
+  inject(c: Record<string, string>) {
+    c['tp'] = '1';
   }
 
-  extract(c: any) {
-    return c.tp ? { traceId: 'a', parentSpanId: 'b' } : undefined;
+  extract(c: Record<string, string>) {
+    return c['tp'] ? { traceId: 'a', parentSpanId: 'b' } : undefined;
   }
 };
 
@@ -332,7 +338,7 @@ describe('TR', () => {
     'inject 1000',
     () => {
       const t = new TracR();
-      const c: any = {};
+      const c: Record<string, string> = {};
       for (let i = 0; i < 1_000; i++) t.inject(c);
     },
     2_500_000,

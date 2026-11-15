@@ -292,7 +292,7 @@ class MutantGenerator {
     if (ts.isPrefixUnaryExpression(node)) {
       const op = node.operator;
       if (op === ts.SyntaxKind.ExclamationToken) {
-        this.add('Negation', '!', '', node.operatorToken!);
+        this.add('Negation', '!', '', node);
       }
     }
   }
@@ -344,6 +344,23 @@ interface TestRunResult {
   durationMs: number;
 }
 
+/** Per-package mutation tallies accumulated while the run is in progress. */
+interface PackageResult {
+  generated: number;
+  executed: number;
+  killed: number;
+  survived: number;
+  timeout: number;
+  compileError: number;
+  noCoverage: number;
+  topSurvivors: Array<{
+    id: string;
+    operator: string;
+    line: number;
+    original: string;
+  }>;
+}
+
 function runTests(root: string): TestRunResult {
   const start = Date.now();
   try {
@@ -382,11 +399,13 @@ function runTests(root: string): TestRunResult {
     }
 
     return { ok: true, failures: 0, durationMs };
-  } catch (err: any) {
+  } catch (err) {
+    // child_process errors carry stderr/message beside the stack trace.
+    const execErr = err as { stderr?: string; message?: string };
     return {
       ok: false,
       failures: 1,
-      error: err.stderr?.slice(0, 200) || err.message?.slice(0, 200),
+      error: execErr.stderr?.slice(0, 200) || execErr.message?.slice(0, 200),
       durationMs: Date.now() - start,
     };
   }
@@ -422,24 +441,7 @@ export async function runMutationTests(root: string): Promise<MutationReport> {
 
   // Phase 2: Execute each mutant
   const startTime = Date.now();
-  const packageResults = new Map<
-    string,
-    {
-      generated: number;
-      executed: number;
-      killed: number;
-      survived: number;
-      timeout: number;
-      compileError: number;
-      noCoverage: number;
-      topSurvivors: Array<{
-        id: string;
-        operator: string;
-        line: number;
-        original: string;
-      }>;
-    }
-  >();
+  const packageResults = new Map<string, PackageResult>();
 
   const slowestMutants: Array<{
     id: string;
@@ -499,9 +501,9 @@ export async function runMutationTests(root: string): Promise<MutationReport> {
         // At least one test failed = mutation killed (GOOD)
         result.status = 'killed';
       }
-    } catch (err: any) {
+    } catch (err) {
       result.status = 'compileError';
-      result.error = err.message?.slice(0, 200);
+      result.error = err instanceof Error ? err.message.slice(0, 200) : String(err);
     } finally {
       // ALWAYS restore original source
       writeFileSync(filePath, originalSource);
@@ -510,7 +512,7 @@ export async function runMutationTests(root: string): Promise<MutationReport> {
     const pkg = extractPackageName(filePath, root);
     const pkgResult = packageResults.get(pkg)!;
     pkgResult.executed++;
-    (pkgResult as any)[result.status]++;
+    pkgResult[result.status]++;
 
     if (result.durationMs > 5000) {
       slowestMutants.push({

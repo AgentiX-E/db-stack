@@ -23,8 +23,6 @@ import type { IAuthProvider } from '@agentix-e/db-operations-auth';
 import type { ILogger } from '@agentix-e/db-operations-logger';
 import type { IEncryptionManager } from '@agentix-e/db-operations-security';
 import type { IRBACProvider } from '@agentix-e/db-operations-security';
-import type { IAuditLogger } from '@agentix-e/db-operations-security';
-import type { IKeyRotationManager } from '@agentix-e/db-operations-security';
 import type { IAutoScaler } from '@agentix-e/db-operations-autoscaler';
 import type { IRollingUpgrade } from '@agentix-e/db-operations-rollingupgrade';
 import type { ICircuitBreaker } from '@agentix-e/db-operations-circuitbreaker';
@@ -50,7 +48,7 @@ import { InMemoryLogger } from '@agentix-e/db-operations-logger';
 import { InMemoryEncryptionManager } from '@agentix-e/db-operations-security';
 import { InMemoryRBACProvider } from '@agentix-e/db-operations-security';
 import { InMemoryCircuitBreaker } from '@agentix-e/db-operations-circuitbreaker';
-import { AutoScaler } from '@agentix-e/db-operations-autoscaler';
+import { InMemoryAutoScaler } from '@agentix-e/db-operations-autoscaler';
 import { InMemoryRollingUpgrade } from '@agentix-e/db-operations-rollingupgrade';
 
 /**
@@ -73,7 +71,7 @@ export class IntegratedFactory {
 
   // ── Getters (lazy optional) ─────────────────────────
 
-  getLogger(): ILogger {
+  getLogger(): InMemoryLogger {
     return this.logger;
   }
 
@@ -154,7 +152,7 @@ export class IntegratedFactory {
   // ── AutoScaler ─────────────────────────────────────
 
   createAutoScaler(): IAutoScaler {
-    return new AutoScaler();
+    return new InMemoryAutoScaler();
   }
 
   // ── RollingUpgrade ─────────────────────────────────

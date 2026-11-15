@@ -1,5 +1,4 @@
-import type { IHealthProbe } from '@agentix-e/db-operations-health';
-import type { IHealthOrchestrator } from '@agentix-e/db-operations-health';
+import type { IHealthProbe, IHealthOrchestrator } from '@agentix-e/db-operations-health';
 import type { IMetricsRegistry } from '@agentix-e/db-operations-metrics';
 import type { IBackupManager } from '@agentix-e/db-operations-backup';
 import type { IStorageBackend } from '@agentix-e/db-operations-backup';

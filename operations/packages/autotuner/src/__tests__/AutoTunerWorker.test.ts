@@ -169,7 +169,7 @@ describe('AutoTunerWorker — AC 53.x: Auto Tuner Worker', () => {
 
     const history = worker.getAppliedHistory();
     expect(history.length).toBeGreaterThanOrEqual(1);
-    const last = history[history.length - 1];
+    const last = history[history.length - 1]!;
     expect(last.metricAfter).toBeDefined();
     expect(last.metricBefore.cpu).toBeCloseTo(0.9, 1);
     expect(last.metricAfter!.cpu).toBeCloseTo(0.5, 1);

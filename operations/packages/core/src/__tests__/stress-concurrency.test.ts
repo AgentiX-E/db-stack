@@ -167,7 +167,7 @@ describe('Section 3: Concurrent DeadlockDetector', () => {
     expect(events.length).toBeGreaterThanOrEqual(1);
 
     // Verify cycle involves both transactions
-    const deadlock = events[0];
+    const deadlock = events[0]!;
     expect(deadlock.transactions).toContain('tx-A');
     expect(deadlock.transactions).toContain('tx-B');
   });
@@ -276,8 +276,8 @@ describe('Section 4: Concurrent AlertRuleManager', () => {
     // Evaluate with snapshot
     const result = manager.evaluateSnapshot({ cpu_usage: 95 });
     expect(result).toHaveLength(1);
-    expect(result[0].ruleId).toBe(ruleId);
-    expect(result[0].value).toBe(95);
+    expect(result[0]!.ruleId).toBe(ruleId);
+    expect(result[0]!.value).toBe(95);
   });
 
   it('Concurrent enable/disable + evaluate → rule state eventually consistent', () => {

@@ -9,16 +9,19 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MaintenanceWindowScheduler } from '../impl/MaintenanceWindowScheduler.js';
-import type { MaintenanceWindow, PauseRequest } from '@agentix-e/db-operations-core/types';
+import type { MaintenanceWindow, PauseRequest } from '../interfaces/IMaintenanceScheduler.js';
 
 function makeWindow(overrides: Partial<MaintenanceWindow> & { id: string; name: string }): MaintenanceWindow {
   return {
+    operationType: 'VACUUM',
+    targets: [],
+    owner: 'test-owner',
     recurrence: 'once',
     priority: 5,
     maxDurationMin: 60,
     requiresApproval: false,
     ...overrides,
-  } as MaintenanceWindow;
+  };
 }
 
 describe('MWS: MaintenanceWindowScheduler', () => {

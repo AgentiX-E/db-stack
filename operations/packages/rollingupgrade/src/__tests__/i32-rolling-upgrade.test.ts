@@ -555,7 +555,7 @@ describe('ROL7: Statistics', () => {
     await engine.execute(plan({ nodes: ['a', 'b'], healthCheckNames: ['ok'], canary: undefined }));
 
     const batches = engine.getBatches();
-    batches[0]!.status = 'failed' as any; // mutate copy
+    batches[0]!.status = 'failed'; // mutate copy
     expect(engine.getBatches()[0]!.status).toBe('completed'); // original unaffected
   });
 
@@ -566,7 +566,7 @@ describe('ROL7: Statistics', () => {
     await engine.execute(plan({ nodes: ['a'], healthCheckNames: ['ok'], canary: undefined }));
 
     const events = engine.getEvents();
-    events.push({ type: 'paused', timestamp: 0, details: {} } as any);
+    events.push({ type: 'paused', timestamp: 0, details: {} });
     expect(engine.getEvents().length).toBeLessThan(events.length);
   });
 });

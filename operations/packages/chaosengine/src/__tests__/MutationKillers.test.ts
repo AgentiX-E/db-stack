@@ -8,7 +8,14 @@
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ChaosEngineV2, SeededRNG, MULBERRY32_A, MULBERRY32_MAX } from '../impl/ChaosEngineV2.js';
-import type { IChaosTransport, ChaosFaultV2, ChaosScenario } from '../interfaces/v2-types.js';
+import type {
+  IChaosTransport,
+  IChaoticInvariantChecker,
+  ChaosFaultV2,
+  ChaosScenario,
+  ChaoticInvariant,
+  ChaosTransportStats,
+} from '../interfaces/v2-types.js';
 
 // ── Mock Transport ───────────────────────────────────────
 
@@ -16,8 +23,7 @@ function makeTransport(id: string): IChaosTransport {
   let latency = 0,
     lossRate = 0,
     isolated: string[] = [],
-    running = true,
-    stopped = false;
+    running = true;
   const healAll = vi.fn(() => {
     latency = 0;
     lossRate = 0;
@@ -27,11 +33,9 @@ function makeTransport(id: string): IChaosTransport {
     transportId: id,
     start: vi.fn(async () => {
       running = true;
-      stopped = false;
     }),
     stop: vi.fn(async () => {
       running = false;
-      stopped = true;
     }),
     isolate: vi.fn((peers: string[]) => {
       isolated = peers;
@@ -42,16 +46,43 @@ function makeTransport(id: string): IChaosTransport {
     setMessageLoss: vi.fn((rate: number) => {
       lossRate = rate;
     }),
+    heal: vi.fn((peers: string[]) => {
+      isolated = isolated.filter((p) => !peers.includes(p));
+    }),
     healAll,
-    getStats: vi.fn(() => ({
-      transportId: id,
-      latency,
-      lossRate,
-      isolated,
-      running,
-      stopped,
+    isHealthy: vi.fn(() => running),
+    getStats: vi.fn((): ChaosTransportStats => ({
+      messagesSent: 0,
+      messagesLost: 0,
+      messagesDelayed: 0,
+      partitioned: isolated.length,
+      avgLatencyMs: latency,
+      connectedPeers: running ? 1 : 0,
+      totalPeers: 1,
     })),
-  } as any;
+  };
+}
+
+/**
+ * Build a fault whose `type` is deliberately outside `FaultTypeV2`, so the
+ * engine's runtime rejection of unknown types can be exercised. The contract
+ * type cannot describe such a value, so the single assertion is made here and
+ * nowhere else.
+ */
+function unknownTypeFault(type: string, targets: string[]): ChaosFaultV2 {
+  return { type, targets, config: {}, durationMs: 0 } as ChaosFaultV2;
+}
+
+/**
+ * Stub invariant checker for scenarios that declare no invariants. It still
+ * implements `check` as well as `checkAll` so it honours the interface the
+ * engine actually consumes.
+ */
+function stubChecker(): IChaoticInvariantChecker {
+  return {
+    check: async (invariant) => ({ invariant, passed: true, detail: 'not checked' }),
+    checkAll: async (invariants) => invariants.map((invariant) => ({ invariant, passed: true, detail: 'not checked' })),
+  };
 }
 
 // ── SeededRNG ───────────────────────────────────────────
@@ -177,7 +208,9 @@ describe('CHAOS-M: ChaosEngineV2 Lifecycle', () => {
   });
 
   it('M11: inject before start throws', async () => {
-    await expect(engine.inject({ type: 'node-crash', targets: ['t1'] })).rejects.toThrow('not started');
+    await expect(engine.inject({ type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 })).rejects.toThrow(
+      'not started',
+    );
   });
 
   it('M12: stop heals all faults', async () => {
@@ -215,6 +248,7 @@ describe('CHAOS-M: ChaosEngineV2 Fault Injection', () => {
     const id = await engine.inject({
       type: 'node-crash',
       targets: ['t1'],
+      config: {},
       durationMs: 0,
     });
     expect(typeof id).toBe('string');
@@ -223,7 +257,7 @@ describe('CHAOS-M: ChaosEngineV2 Fault Injection', () => {
 
   it('M14: injectMany injects multiple faults and returns IDs', async () => {
     const ids = await engine.injectMany([
-      { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+      { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
       {
         type: 'message-loss',
         targets: ['t2'],
@@ -249,7 +283,7 @@ describe('CHAOS-M: ChaosEngineV2 Fault Injection', () => {
   });
 
   it('M17: getHistory returns all injected faults', async () => {
-    await engine.inject({ type: 'node-crash', targets: ['t1'], durationMs: 0 });
+    await engine.inject({ type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 });
     await engine.inject({
       type: 'message-loss',
       targets: ['t2'],
@@ -275,7 +309,7 @@ describe('CHAOS-M: ChaosEngineV2 Fault Injection', () => {
   });
 
   it('M20: healAll clears all active faults', async () => {
-    await engine.inject({ type: 'node-crash', targets: ['t1'], durationMs: 0 });
+    await engine.inject({ type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 });
     await engine.inject({
       type: 'message-loss',
       targets: ['t2'],
@@ -316,13 +350,14 @@ describe('CHAOS-M: ChaosEngineV2 Fault Types', () => {
     await engine.inject({
       type: 'network-partition',
       targets: ['t1'],
+      config: {},
       durationMs: 0,
     });
     expect(t1.isolate).toHaveBeenCalled();
   });
 
   it('M23: node-crash stops target', async () => {
-    await engine.inject({ type: 'node-crash', targets: ['t1'], durationMs: 0 });
+    await engine.inject({ type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 });
     expect(t1.stop).toHaveBeenCalled();
   });
 
@@ -400,6 +435,7 @@ describe('CHAOS-M: ChaosEngineV2 Fault Types', () => {
     await engine.inject({
       type: 'leadership-flap',
       targets: ['t1'],
+      config: {},
       durationMs: 0,
     });
     expect(t1.setMessageLoss).toHaveBeenCalledWith(0.5);
@@ -417,7 +453,7 @@ describe('CHAOS-M: ChaosEngineV2 Fault Types', () => {
   });
 
   it('M33: unknown fault type throws', async () => {
-    await expect(engine.inject({ type: 'nonexistent', targets: ['t1'] } as any)).rejects.toThrow('Unknown fault type');
+    await expect(engine.inject(unknownTypeFault('nonexistent', ['t1']))).rejects.toThrow('Unknown fault type');
   });
 });
 
@@ -492,6 +528,7 @@ describe('CHAOS-M: ChaosEngineV2 Target Resolution', () => {
     const id = await engine.inject({
       type: 'node-crash',
       targets: ['*'],
+      config: {},
       durationMs: 0,
     });
     const active = engine.getActiveFaults();
@@ -513,6 +550,7 @@ describe('CHAOS-M: ChaosEngineV2 Target Resolution', () => {
     const id = await engine.inject({
       type: 'node-crash',
       targets: ['dc2:n1'],
+      config: {},
       durationMs: 0,
     });
     const active = engine.getActiveFaults();
@@ -552,7 +590,7 @@ describe('CHAOS-M: ChaosEngineV2 Events', () => {
     const fn = vi.fn();
     const unsub = engine.onFaultInjected(fn);
     unsub();
-    await engine.inject({ type: 'node-crash', targets: ['t1'], durationMs: 0 });
+    await engine.inject({ type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 });
     expect(fn).not.toHaveBeenCalled();
   });
 
@@ -578,10 +616,12 @@ describe('CHAOS-M: ChaosEngineV2 Events', () => {
 
     const scenario: ChaosScenario = {
       name: 'test-scenario',
+      description: '',
       seed: 42,
       maxDurationMs: 5000,
       steps: [
         {
+          name: 'message-loss',
           fault: {
             type: 'message-loss',
             targets: ['t1'],
@@ -592,6 +632,7 @@ describe('CHAOS-M: ChaosEngineV2 Events', () => {
           invariants: [],
         },
         {
+          name: 'latency-injection',
           fault: {
             type: 'latency-injection',
             targets: ['t1'],
@@ -604,7 +645,7 @@ describe('CHAOS-M: ChaosEngineV2 Events', () => {
       ],
     };
 
-    await engine.runScenario(scenario, { checkAll: async () => [] });
+    await engine.runScenario(scenario, stubChecker());
     expect(stepFn).toHaveBeenCalledTimes(2);
     expect(scenarioFn).toHaveBeenCalledTimes(1);
   });
@@ -617,18 +658,20 @@ describe('CHAOS-M: ChaosEngineV2 Events', () => {
 
     const scenario: ChaosScenario = {
       name: 'multi-listener',
+      description: '',
       seed: 1,
       maxDurationMs: 5000,
       steps: [
         {
-          fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+          name: 'node-crash',
+          fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
           waitMs: 0,
           invariants: [],
         },
       ],
     };
 
-    await engine.runScenario(scenario, { checkAll: async () => [] });
+    await engine.runScenario(scenario, stubChecker());
     expect(fn1).toHaveBeenCalledTimes(1);
     expect(fn2).toHaveBeenCalledTimes(1);
   });
@@ -652,17 +695,19 @@ describe('CHAOS-M: ChaosEngineV2 Scenario Runner', () => {
     const result = await engine.runScenario(
       {
         name: 'single',
+        description: '',
         seed: 0,
         maxDurationMs: 10000,
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
             invariants: [],
           },
         ],
       },
-      { checkAll: async () => [] },
+      stubChecker(),
     );
 
     expect(result.passed).toBe(true);
@@ -676,17 +721,19 @@ describe('CHAOS-M: ChaosEngineV2 Scenario Runner', () => {
     const result = await engine.runScenario(
       {
         name: 'failing',
+        description: '',
         seed: 0,
         maxDurationMs: 10000,
         steps: [
           {
-            fault: { type: 'nonexistent', targets: ['t1'] } as any,
+            name: 'nonexistent',
+            fault: unknownTypeFault('nonexistent', ['t1']),
             waitMs: 0,
             invariants: [],
           },
         ],
       },
-      { checkAll: async () => [] },
+      stubChecker(),
     );
 
     expect(result.errors).toHaveLength(1);
@@ -698,41 +745,49 @@ describe('CHAOS-M: ChaosEngineV2 Scenario Runner', () => {
     const result = await engine.runScenario(
       {
         name: 'waiting',
+        description: '',
         seed: 0,
         maxDurationMs: 10000,
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 50,
             invariants: [],
           },
           {
-            fault: { type: 'node-crash', targets: ['t2'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t2'], config: {}, durationMs: 0 },
             waitMs: 50,
             invariants: [],
           },
         ],
       },
-      { checkAll: async () => [] },
+      stubChecker(),
     );
     expect(result.stepsExecuted).toBe(2);
     expect(result.passed).toBe(true);
   });
 
   it('M48: runScenario with invariants checks them', async () => {
-    const checker = {
-      checkAll: vi.fn(async () => [{ invariant: 'nodes-up', passed: true, message: 'ok' }]),
+    const checker: IChaoticInvariantChecker = {
+      check: async (invariant) => ({ invariant, passed: true, detail: 'ok' }),
+      checkAll: vi.fn(async (invariants: readonly ChaoticInvariant[]) =>
+        invariants.map((invariant) => ({ invariant, passed: true, detail: 'ok' })),
+      ),
     };
     const result = await engine.runScenario(
       {
         name: 'invariant-check',
+        description: '',
         seed: 0,
         maxDurationMs: 10000,
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
-            invariants: [{ name: 'nodes-up', threshold: 0 } as any],
+            invariants: ['leader-exists'],
           },
         ],
       },
@@ -747,17 +802,22 @@ describe('CHAOS-M: ChaosEngineV2 Scenario Runner', () => {
     const result = await engine.runScenario(
       {
         name: 'all-pass',
+        description: '',
         seed: 0,
         maxDurationMs: 10000,
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
-            invariants: [{ name: 'up', threshold: 0 } as any],
+            invariants: ['leader-exists'],
           },
         ],
       },
-      { checkAll: async () => [{ passed: true, invariant: 'up' }] },
+      {
+        check: async (invariant) => ({ invariant, passed: true, detail: '' }),
+        checkAll: async (invariants) => invariants.map((invariant) => ({ invariant, passed: true, detail: '' })),
+      },
     );
 
     expect(result.passed).toBe(true);
@@ -767,11 +827,12 @@ describe('CHAOS-M: ChaosEngineV2 Scenario Runner', () => {
     const result = await engine.runScenario(
       {
         name: 'empty',
+        description: '',
         seed: 0,
         maxDurationMs: 10000,
         steps: [],
       },
-      { checkAll: async () => [] },
+      stubChecker(),
     );
     expect(result.passed).toBe(true);
     expect(result.stepsExecuted).toBe(0);
@@ -781,27 +842,31 @@ describe('CHAOS-M: ChaosEngineV2 Scenario Runner', () => {
     const result = await engine.runScenario(
       {
         name: 'timeout',
+        description: '',
         seed: 0,
         maxDurationMs: 10, // very short timeout — first step's wait will exceed it
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
             invariants: [],
           },
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
             invariants: [],
           },
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
             invariants: [],
           },
         ],
       },
-      { checkAll: async () => [] },
+      stubChecker(),
     );
 
     // After scenario completes, timeout message should be in errors if it fired
@@ -815,17 +880,22 @@ describe('CHAOS-M: ChaosEngineV2 Scenario Runner', () => {
     const result = await engine.runScenario(
       {
         name: 'check-error',
+        description: '',
         seed: 0,
         maxDurationMs: 10000,
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
-            invariants: [{ name: 'up', threshold: 0 } as any],
+            invariants: ['leader-exists'],
           },
         ],
       },
       {
+        check: async () => {
+          throw new Error('check failed');
+        },
         checkAll: async () => {
           throw new Error('check failed');
         },
@@ -863,24 +933,28 @@ describe('CHAOS-M: post-fix exact survivors', () => {
   it('L114 stop() clears started flag (false -> true)', async () => {
     await engine.stop();
     // after stop, inject must fail with not-started; mutant (started=true) would proceed
-    await expect(engine.inject({ type: 'node-crash', targets: ['t1'], durationMs: 0 })).rejects.toThrow('not started');
+    await expect(engine.inject({ type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 })).rejects.toThrow(
+      'not started',
+    );
   });
 
   it('L269 duration is elapsed (Date.now - startTime)', async () => {
     const result = await engine.runScenario(
       {
         name: 'dur',
+        description: '',
         seed: 0,
         maxDurationMs: 60000,
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
             invariants: [],
           },
         ],
       },
-      { checkAll: async () => [] },
+      stubChecker(),
     );
     // elapsed must be a small non-negative value; a `-` -> `+` mutant yields a huge ~2*epoch value
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
@@ -893,17 +967,19 @@ describe('CHAOS-M: post-fix exact survivors', () => {
     await engine.runScenario(
       {
         name: 'steps',
+        description: '',
         seed: 0,
         maxDurationMs: 60000,
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
             invariants: [],
           },
         ],
       },
-      { checkAll: async () => [] },
+      stubChecker(),
     );
     // single step -> step 1, total 1 (i+1 = 1, not -1)
     expect(received).toEqual([[1, 1]]);
@@ -913,21 +989,19 @@ describe('CHAOS-M: post-fix exact survivors', () => {
     const result = await engine.runScenario(
       {
         name: 'injfail',
+        description: '',
         seed: 0,
         maxDurationMs: 60000,
         steps: [
           {
-            fault: {
-              type: 'nonexistent-fault' as any,
-              targets: ['t1'],
-              durationMs: 0,
-            },
+            name: 'nonexistent-fault',
+            fault: unknownTypeFault('nonexistent-fault', ['t1']),
             waitMs: 0,
             invariants: [],
           },
         ],
       },
-      { checkAll: async () => [] },
+      stubChecker(),
     );
     expect(result.errors.length).toBeGreaterThan(0);
     expect(result.errors[0]).toContain('step 1:');
@@ -937,17 +1011,22 @@ describe('CHAOS-M: post-fix exact survivors', () => {
     const result = await engine.runScenario(
       {
         name: 'invfail',
+        description: '',
         seed: 0,
         maxDurationMs: 60000,
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 0,
-            invariants: [{ name: 'up', threshold: 0 } as any],
+            invariants: ['leader-exists'],
           },
         ],
       },
       {
+        check: async () => {
+          throw new Error('boom');
+        },
         checkAll: async () => {
           throw new Error('boom');
         },
@@ -958,25 +1037,12 @@ describe('CHAOS-M: post-fix exact survivors', () => {
   });
 
   it('L329 network-partition excludes self from peers (!== -> ===)', async () => {
-    // fresh engine with a transport that records its isolate() peers
-    const isolatedCalls: Record<string, string[]> = {};
-    const mk = (id: string) => ({
-      transportId: id,
-      start: vi.fn(async () => {}),
-      stop: vi.fn(async () => {}),
-      isolate: vi.fn((peers: string[]) => {
-        isolatedCalls[id] = peers;
-      }),
-      setLatency: vi.fn(),
-      setMessageLoss: vi.fn(),
-      healAll: vi.fn(),
-      getStats: vi.fn(() => ({ transportId: id })),
-    });
+    // fresh engine whose transport records the peers passed to isolate()
     const e = new ChaosEngineV2();
-    const a = mk('a'),
-      b = mk('b'),
-      c = mk('c');
-    await e.start([a as any, b as any, c as any]);
+    const a = makeTransport('a'),
+      b = makeTransport('b'),
+      c = makeTransport('c');
+    await e.start([a, b, c]);
     await e.inject({
       type: 'network-partition',
       targets: ['a'],
@@ -984,10 +1050,11 @@ describe('CHAOS-M: post-fix exact survivors', () => {
       durationMs: 0,
     });
     // a isolates its peers b and c, never itself
-    expect(isolatedCalls['a']).toBeDefined();
-    expect(isolatedCalls['a']).not.toContain('a');
-    expect(isolatedCalls['a']).toContain('b');
-    expect(isolatedCalls['a']).toContain('c');
+    const peers = vi.mocked(a.isolate).mock.calls[0]?.[0];
+    expect(peers).toBeDefined();
+    expect(peers).not.toContain('a');
+    expect(peers).toContain('b');
+    expect(peers).toContain('c');
   });
 });
 
@@ -1010,22 +1077,25 @@ describe('CHAOS-M: timeout + cascade stagger survivors', () => {
     const result = await engine.runScenario(
       {
         name: 'timeout',
+        description: '',
         seed: 0,
         maxDurationMs: 5,
         steps: [
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 15,
             invariants: [],
           },
           {
-            fault: { type: 'node-crash', targets: ['t1'], durationMs: 0 },
+            name: 'node-crash',
+            fault: { type: 'node-crash', targets: ['t1'], config: {}, durationMs: 0 },
             waitMs: 1,
             invariants: [],
           },
         ],
       },
-      { checkAll: async () => [] },
+      stubChecker(),
     );
     expect(result.errors.length).toBeGreaterThan(0);
     expect(result.errors[0]).toContain('step 2/2');
@@ -1033,12 +1103,7 @@ describe('CHAOS-M: timeout + cascade stagger survivors', () => {
 
   it('L394 cascading-failure staggers between non-final targets (< -> >=, - -> +)', async () => {
     // spy setTimeout to count stagger sleeps for a 3-target cascading failure
-    const realSetTimeout = globalThis.setTimeout;
-    let sleepCount = 0;
-    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: (...args: unknown[]) => void, ms?: number) => {
-      sleepCount++;
-      return realSetTimeout(() => fn(), 0) as any;
-    }) as any);
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     await engine.inject({
       type: 'cascading-failure',
       targets: ['t1', 't2', 't3'],
@@ -1046,7 +1111,7 @@ describe('CHAOS-M: timeout + cascade stagger survivors', () => {
       durationMs: 0,
     });
     // 3 targets -> 2 stagger sleeps (not 1, not 3)
-    expect(sleepCount).toBe(2);
+    expect(timeoutSpy).toHaveBeenCalledTimes(2);
     vi.restoreAllMocks();
   });
 });

@@ -18,6 +18,123 @@ function coin(): boolean {
   return Math.random() > 0.5;
 }
 
+/** Rate-limiter configuration consumed by the fuzz stubs. */
+interface FuzzRateLimitConfig {
+  maxRequests: number;
+  windowMs: number;
+}
+
+/** Permission triple held by the RBAC fuzz stubs. */
+interface FuzzPermission {
+  resource: string;
+  action: string;
+}
+
+/** Alert rule accepted by the alert-rule fuzz stub. */
+interface FuzzAlertRule {
+  id?: string;
+  name?: string;
+  metric: string;
+  condition: 'gt' | 'lt' | 'eq' | 'gte' | 'lte';
+  threshold: number;
+  severity?: string;
+  enabled?: boolean;
+}
+
+/** Alert rule as stored, with its assigned id and enabled flag. */
+interface FuzzStoredAlert extends FuzzAlertRule {
+  id: string;
+  en: boolean;
+}
+
+/** Alert fired by the alert-rule fuzz stub. */
+interface FuzzAlertFiring {
+  ruleId: string;
+  value: number;
+  threshold: number;
+}
+
+/** Snapshot record held by the backup fuzz stub. */
+interface FuzzBackupSnapshot {
+  id: string;
+  type: string;
+  createdAt: string;
+}
+
+/** Audit entry held by the audit fuzz stubs. */
+interface FuzzAuditEntry {
+  id: string;
+  timestamp: string;
+  operation: string;
+  actor: string;
+  resource: string;
+  result: string;
+  severity: string;
+}
+
+/** Fields accepted by the audit fuzz stub's write(). */
+interface FuzzAuditWrite {
+  operation: string;
+  actor: string;
+  resource: string;
+  result: string;
+  severity?: string;
+}
+
+/** Filter accepted by the audit fuzz stub's query(). */
+interface FuzzAuditQuery {
+  operation?: string;
+  result?: string;
+  severity?: string;
+  offset?: number;
+  limit?: number;
+}
+
+/** Slow query record held by the slow-query fuzz stubs. */
+interface FuzzSlowQuery {
+  query: string;
+  durationMs: number;
+  timestamp: Date;
+  database: string;
+}
+
+/** Metric point produced by the metrics fuzz stub. */
+interface FuzzMetricPoint {
+  name: string;
+  type: string;
+  value: number;
+  timestamp: number;
+}
+
+/** Span record held by the tracer fuzz stub. */
+interface FuzzSpan {
+  spanId: string;
+  traceId: string;
+  parentSpanId: string | null | undefined;
+  name: string;
+  startTime: number;
+  endTime?: number;
+  status?: string;
+  errorMessage?: string;
+  attributes: Record<string, string | number | boolean>;
+}
+
+/** Options accepted by the tracer fuzz stub's start(). */
+interface FuzzSpanOptions {
+  traceId?: string;
+  parentSpanId?: string;
+  attributes?: Record<string, string | number | boolean>;
+}
+
+/** Security check held by the compliance fuzz stub. */
+interface FuzzSecurityCheck {
+  name: string;
+  category: string;
+  severity: string;
+  message: string;
+  timestamp?: string;
+}
+
 // ═══════════════════════════════════════════════════
 // SECTION 1: FUZZ TESTS
 // ═══════════════════════════════════════════════════
@@ -72,7 +189,7 @@ describe('Fuzz RateLimiter', () => {
   it('empty / long / special keys', () => {
     const lim = new (class {
       _w = new Map();
-      check(k: string, c: any) {
+      check(k: string, c: FuzzRateLimitConfig) {
         const n = Date.now();
         const e = this._w.get(k);
         if (!e) {
@@ -120,24 +237,24 @@ describe('Fuzz RBAC', () => {
       rbac.reg(
         'r-' + randStr(5),
         Array.from({ length: rng(10) }, () => ({
-          resource: resources[rng(4)],
-          action: actions[rng(4)],
+          resource: resources[rng(4)]!,
+          action: actions[rng(4)]!,
         })),
       );
     }
     for (let i = 0; i < 100; i++) {
-      expect(typeof rbac.has('x', 'r-' + randStr(5), resources[rng(4)], actions[rng(4)])).toBe('boolean');
+      expect(typeof rbac.has('x', 'r-' + randStr(5), resources[rng(4)]!, actions[rng(4)]!)).toBe('boolean');
     }
   });
 
   it('empty / long / special role names', () => {
     const rbac = new (class {
-      _r = new Map();
-      reg(r: string, p: any[]) {
+      _r = new Map<string, FuzzPermission[]>();
+      reg(r: string, p: FuzzPermission[]) {
         this._r.set(r, [...p]);
       }
       has(id: string, r: string, res: string, act: string) {
-        return (this._r.get(r) ?? []).some((x: any) => x.resource === res && x.action === act);
+        return (this._r.get(r) ?? []).some((x) => x.resource === res && x.action === act);
       }
       getPerms(id: string, roles: string[]) {
         const m = new Map();
@@ -161,14 +278,14 @@ describe('Fuzz RBAC', () => {
 describe('Fuzz AlertRule', () => {
   it('500 random evaluations', async () => {
     const mgr = new (class {
-      _r = new Map<string, any>();
-      async add(r: any) {
+      _r = new Map<string, FuzzStoredAlert>();
+      async add(r: FuzzAlertRule) {
         const id = r.id ?? Math.random().toString(36);
         this._r.set(id, { ...r, id, en: r.enabled !== false });
         return id;
       }
       eval(s: Record<string, number>) {
-        const t: any[] = [];
+        const t: FuzzAlertFiring[] = [];
         for (const [k, e] of this._r) {
           if (!e.en) continue;
           const v = s[e.metric];
@@ -204,7 +321,7 @@ describe('Fuzz AlertRule', () => {
       await mgr.add({
         name: 'r' + i,
         metric: 'm_' + rng(20),
-        condition: ['gt', 'lt', 'eq', 'gte', 'lte'][rng(5)],
+        condition: (['gt', 'lt', 'eq', 'gte', 'lte'] as const)[rng(5)]!,
         threshold: rng(100) - 50,
         severity: 'info',
         enabled: coin(),
@@ -257,9 +374,9 @@ describe('Fuzz DeadlockDetector', () => {
 /* 1.5 BackupManager */
 describe('Fuzz Backup', () => {
   it('200 random backup ops', async () => {
-    const snaps = new Map<string, any>();
+    const snaps = new Map<string, FuzzBackupSnapshot>();
     const bm = new (class {
-      async create(opts: any) {
+      async create(opts: { type: string }) {
         const id = randomUUID();
         snaps.set(id, {
           id,
@@ -284,9 +401,9 @@ describe('Fuzz Backup', () => {
       if (op === 0) {
         const r = await bm.create({ type: coin() ? 'full' : 'incr' });
         if (r.snapshot) ids.push(r.snapshot.snapshotId);
-      } else if (op === 1) await bm.del(ids.length && Math.random() > 0.3 ? ids[rng(ids.length)] : 'bad-' + rng(9999));
+      } else if (op === 1) await bm.del(ids.length && Math.random() > 0.3 ? ids[rng(ids.length)]! : 'bad-' + rng(9999));
       else if (op === 2) {
-        const id = ids.length && Math.random() > 0.3 ? ids[rng(ids.length)] : 'bad';
+        const id = ids.length && Math.random() > 0.3 ? ids[rng(ids.length)]! : 'bad';
         const b = await bm.get(id);
         if (b) expect(b.id).toBe(id);
       } else {
@@ -303,10 +420,10 @@ describe('Fuzz Backup', () => {
 /* 1.6 AuditStore */
 describe('Fuzz Audit', () => {
   it('300 random write/query/prune', async () => {
-    const entries = new Map<string, any>();
-    const ordered: any[] = [];
+    const entries = new Map<string, FuzzAuditEntry>();
+    const ordered: FuzzAuditEntry[] = [];
     const store = new (class {
-      async write(opts: any) {
+      async write(opts: FuzzAuditWrite) {
         const id = randomUUID();
         const e = {
           id,
@@ -321,7 +438,7 @@ describe('Fuzz Audit', () => {
         ordered.push(e);
         return id;
       }
-      async query(f: any) {
+      async query(f: FuzzAuditQuery) {
         return ordered
           .filter((e) => {
             if (f.operation && e.operation !== f.operation) return false;
@@ -349,8 +466,8 @@ describe('Fuzz Audit', () => {
           operation: randStr(5),
           actor: randStr(3),
           resource: 'r-' + rng(20),
-          result: ['success', 'failure'][rng(2)],
-          severity: ['info', 'warning', 'error'][rng(3)],
+          result: ['success', 'failure'][rng(2)]!,
+          severity: ['info', 'warning', 'error'][rng(3)]!,
         });
       else if (op === 1) {
         const q = await store.query({
@@ -369,9 +486,9 @@ describe('Fuzz Audit', () => {
 /* 1.7 SlowQueryRecorder */
 describe('Fuzz SlowQuery', () => {
   it('300 random records', async () => {
-    const entries: any[] = [];
+    const entries: FuzzSlowQuery[] = [];
     const rec = new (class {
-      async record(q: any) {
+      async record(q: FuzzSlowQuery) {
         entries.push(q);
       }
       getSlowQueries() {
@@ -407,7 +524,7 @@ describe('Fuzz Metrics', () => {
     const counters = new Map<string, number>();
     const gauges = new Map<string, number>();
     const reg = new (class {
-      counter(n: string, _l?: any) {
+      counter(n: string, _l?: Record<string, string>) {
         const k = n;
         if (!counters.has(k)) counters.set(k, 0);
         return {
@@ -415,7 +532,7 @@ describe('Fuzz Metrics', () => {
           get: () => counters.get(k)!,
         };
       }
-      gauge(n: string, _l?: any) {
+      gauge(n: string, _l?: Record<string, string>) {
         const k = n;
         if (!gauges.has(k)) gauges.set(k, 0);
         return {
@@ -426,7 +543,7 @@ describe('Fuzz Metrics', () => {
         };
       }
       snapshot() {
-        const points: any[] = [];
+        const points: FuzzMetricPoint[] = [];
         for (const [k, v] of counters)
           points.push({
             name: k,
@@ -477,13 +594,13 @@ describe('Fuzz Encryption', () => {
       async enc(pt: Buffer) {
         if (!init) throw Error('not init');
         const r = Buffer.alloc(pt.length);
-        for (let i = 0; i < pt.length; i++) r[i] = pt[i] ^ 0xab;
+        for (let i = 0; i < pt.length; i++) r[i] = pt[i]! ^ 0xab;
         return r;
       }
       async dec(ct: Buffer) {
         if (!init) throw Error('not init');
         const r = Buffer.alloc(ct.length);
-        for (let i = 0; i < ct.length; i++) r[i] = ct[i] ^ 0xab;
+        for (let i = 0; i < ct.length; i++) r[i] = ct[i]! ^ 0xab;
         return r;
       }
       isInit() {
@@ -515,9 +632,9 @@ describe('Fuzz Encryption', () => {
 /* 1.10 SecurityCompliance */
 describe('Fuzz SecurityCompliance', () => {
   it('200 random checks', async () => {
-    const checks: any[] = [];
+    const checks: FuzzSecurityCheck[] = [];
     const mgr = new (class {
-      reg(c: any[]) {
+      reg(c: FuzzSecurityCheck[]) {
         checks.push(...c);
       }
       async runCat(cat: string) {
@@ -543,8 +660,8 @@ describe('Fuzz SecurityCompliance', () => {
       mgr.reg([
         {
           name: 'chk-' + i,
-          category: ['system', 'network', 'access', 'data', 'auth'][rng(5)],
-          severity: ['PASS', 'WARN', 'FAIL'][rng(3)],
+          category: ['system', 'network', 'access', 'data', 'auth'][rng(5)]!,
+          severity: ['PASS', 'WARN', 'FAIL'][rng(3)]!,
           message: randStr(20),
         },
       ]);
@@ -564,11 +681,11 @@ describe('Fuzz SecurityCompliance', () => {
 /* 1.11 Tracer */
 describe('Fuzz Tracer', () => {
   it('200 random trace ops', () => {
-    const spans: any[] = [];
-    const active = new Map<string, any>();
+    const spans: FuzzSpan[] = [];
+    const active = new Map<string, FuzzSpan>();
     let current: string | null = null;
     const tracer = new (class {
-      start(name: string, opts?: any) {
+      start(name: string, opts?: FuzzSpanOptions) {
         const spanId = randomUUID();
         const cur = current ? active.get(current) : undefined;
         const traceId = opts?.traceId ?? cur?.traceId ?? randomUUID();
@@ -605,11 +722,11 @@ describe('Fuzz Tracer', () => {
       clear() {
         spans.length = 0;
       }
-      inject(c: any) {
+      inject(c: Record<string, string>) {
         const cur = this.getCurrent();
         if (cur) c['traceparent'] = '00-' + cur.traceId + '-' + randomUUID() + '-01';
       }
-      extract(c: any) {
+      extract(c: Record<string, string>) {
         const h = c['traceparent'];
         if (!h) return undefined;
         const p = h.split('-');
@@ -622,14 +739,14 @@ describe('Fuzz Tracer', () => {
       else span.end();
     }
     expect(tracer.getCompleted().length).toBeGreaterThan(0);
-    const carrier: any = {};
+    const carrier: Record<string, string> = {};
     tracer.inject(carrier);
     const extracted = tracer.extract(carrier);
     if (extracted) expect(typeof extracted.traceId).toBe('string');
-    const carrier2: any = {};
+    const carrier2: Record<string, string> = {};
     const ex2 = tracer.extract(carrier2);
     expect(ex2).toBeUndefined();
-    const carrier3: any = { traceparent: 'malformed' };
+    const carrier3: Record<string, string> = { traceparent: 'malformed' };
     const ex3 = tracer.extract(carrier3);
     expect(ex3).toBeDefined();
   });
@@ -643,10 +760,10 @@ describe('Fuzz Tracer', () => {
 describe('Leak: Instance isolation', () => {
   it('SlowQueryRecorder instances have independent state', async () => {
     const a = new (class {
-      _e: any[] = [];
+      _e: FuzzSlowQuery[] = [];
       _t = 100;
       _m = 1000;
-      async record(q: any) {
+      async record(q: FuzzSlowQuery) {
         if (q.durationMs >= this._t) {
           if (this._e.length >= this._m) this._e.shift();
           this._e.push(q);
@@ -660,10 +777,10 @@ describe('Leak: Instance isolation', () => {
       }
     })();
     const b = new (class {
-      _e: any[] = [];
+      _e: FuzzSlowQuery[] = [];
       _t = 100;
       _m = 1000;
-      async record(q: any) {
+      async record(q: FuzzSlowQuery) {
         if (q.durationMs >= this._t) {
           if (this._e.length >= this._m) this._e.shift();
           this._e.push(q);
@@ -689,14 +806,14 @@ describe('Leak: Instance isolation', () => {
   it('RateLimiter instances independent', () => {
     const a = new (class {
       _w = new Map();
-      check(k: string, c: any) {
+      check(k: string, c: FuzzRateLimitConfig) {
         this._w.set(k, 1);
         return { allowed: true };
       }
     })();
     const b = new (class {
       _w = new Map();
-      check(k: string, c: any) {
+      check(k: string, c: FuzzRateLimitConfig) {
         this._w.set(k, 1);
         return { allowed: true };
       }
@@ -708,8 +825,8 @@ describe('Leak: Instance isolation', () => {
   it('AuditStore instances independent', async () => {
     const a = new (class {
       _e = new Map();
-      _o: any[] = [];
-      async write(opts: any) {
+      _o: Array<{ id: string; op: string }> = [];
+      async write(opts: FuzzAuditWrite) {
         const id = randomUUID();
         this._e.set(id, { id, op: opts.operation });
         this._o.push({ id, op: opts.operation });
@@ -720,8 +837,8 @@ describe('Leak: Instance isolation', () => {
     })();
     const b = new (class {
       _e = new Map();
-      _o: any[] = [];
-      async write(opts: any) {
+      _o: Array<{ id: string; op: string }> = [];
+      async write(opts: FuzzAuditWrite) {
         const id = randomUUID();
         this._e.set(id, { id, op: opts.operation });
         this._o.push({ id, op: opts.operation });
@@ -745,10 +862,10 @@ describe('Leak: Instance isolation', () => {
 describe('Leak: Reset/clear verification', () => {
   it('SlowQueryRecorder clear() empties state', async () => {
     const r = new (class {
-      _e: any[] = [];
+      _e: FuzzSlowQuery[] = [];
       _t = 0;
       _m = 1000;
-      async record(q: any) {
+      async record(q: FuzzSlowQuery) {
         this._e.push(q);
       }
       getRecentSlowQueries() {
@@ -771,7 +888,7 @@ describe('Leak: Reset/clear verification', () => {
 
   it('Tracer clearCompletedSpans removes all', () => {
     const t = new (class {
-      _s: any[] = [];
+      _s: Array<{ id: string }> = [];
       start() {
         const id = randomUUID();
         return {
@@ -800,13 +917,13 @@ describe('Leak: Constructor resilience', () => {
   it('all constructors handle empty/no-arg instantiation', () => {
     const types = [
       class {
-        constructor(..._: any[]) {}
+        constructor(..._: unknown[]) {}
       },
       class {
-        constructor(..._: any[]) {}
+        constructor(..._: unknown[]) {}
       },
       class {
-        constructor(..._: any[]) {}
+        constructor(..._: unknown[]) {}
       },
     ];
     for (const T of types) {

@@ -29,9 +29,10 @@ export function formatMarkdown(results: YCSBResult[]): string {
 
   lines.push('');
   if (results.length > 0) {
-    lines.push(`**Run at:** ${results[0].timestamp}`);
-    lines.push(`**Node.js:** ${results[0].nodeVersion}`);
-    lines.push(`**Platform:** ${results[0].platform}`);
+    const first = results[0]!;
+    lines.push(`**Run at:** ${first.timestamp}`);
+    lines.push(`**Node.js:** ${first.nodeVersion}`);
+    lines.push(`**Platform:** ${first.platform}`);
     lines.push('');
   }
 

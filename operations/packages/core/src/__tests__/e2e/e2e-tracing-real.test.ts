@@ -55,7 +55,7 @@ describe.each(ENGINE_CASES)('$name E2E: DistributedTracer', ({ factory }) => {
     tracer.inject(carrier);
     expect(carrier.traceparent).toBeDefined();
     expect(typeof carrier.traceparent).toBe('string');
-    expect(carrier.traceparent.length).toBeGreaterThan(0);
+    expect(carrier['traceparent']!.length).toBeGreaterThan(0);
   });
 
   it('injected traceparent should start with W3C version prefix', async () => {
@@ -117,7 +117,7 @@ describe.each(ENGINE_CASES)('$name E2E: DistributedTracer', ({ factory }) => {
     end('ok');
     const completed = tracer.getCompletedSpans();
     if (completed.length > 0) {
-      expect(completed[0].spanId).toBeDefined();
+      expect(completed[0]!.spanId).toBeDefined();
     }
   });
 

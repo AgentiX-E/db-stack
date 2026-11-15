@@ -25,7 +25,7 @@ describe('INT4: ConfigWatcher ↔ Security Integration', () => {
 
   it('INT4.1: config operations work alongside active encryption', async () => {
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     // Encrypt some config data
     const dbPass = await enc.encrypt(Buffer.from('db-password-123'));
@@ -40,7 +40,7 @@ describe('INT4: ConfigWatcher ↔ Security Integration', () => {
 
   it('INT4.2: RBAC permissions work while encryption is active', async () => {
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     const rbac = factory.getRBACProvider();
     rbac.registerRole({
@@ -60,7 +60,7 @@ describe('INT4: ConfigWatcher ↔ Security Integration', () => {
 
   it('INT4.3: unauthorized user denied key access', async () => {
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     const rbac = factory.getRBACProvider();
     rbac.registerRole({
@@ -82,7 +82,7 @@ describe('INT4: ConfigWatcher ↔ Security Integration', () => {
     const audit = factory.getAuditStore();
     const enc = factory.getEncryptionManager();
 
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     // Audit should be queryable
     const entries = await audit.query({});

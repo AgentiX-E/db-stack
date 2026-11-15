@@ -205,10 +205,10 @@ describe('MetricsRegistry', () => {
 
       const snapshot = registry.snapshot();
       expect(snapshot.points).toHaveLength(1);
-      expect(snapshot.points[0].name).toBe('http_requests');
-      expect(snapshot.points[0].type).toBe('counter');
-      expect(snapshot.points[0].value).toBe(10);
-      expect(snapshot.points[0].labels).toContainEqual({
+      expect(snapshot.points[0]!.name).toBe('http_requests');
+      expect(snapshot.points[0]!.type).toBe('counter');
+      expect(snapshot.points[0]!.value).toBe(10);
+      expect(snapshot.points[0]!.labels).toContainEqual({
         key: 'method',
         value: 'GET',
       });
@@ -257,7 +257,7 @@ describe('MetricsRegistry', () => {
       registry.counter('requests', { env: 'prod', service: 'api' }).inc();
 
       const snapshot = registry.snapshot();
-      expect(snapshot.points[0].labels).toHaveLength(2);
+      expect(snapshot.points[0]!.labels).toHaveLength(2);
     });
 
     it('snapshot() returns empty points for empty registry', () => {

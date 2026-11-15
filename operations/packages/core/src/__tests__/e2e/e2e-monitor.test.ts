@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { InMemoryEngineFactory } from './InMemoryEngineFactory.js';
 
 describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$name e2e: Monitor', ({ factory }) => {
@@ -76,7 +76,7 @@ describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$na
     });
     const alerts = rules.evaluateSnapshot({ cpu: 95 });
     expect(alerts.length).toBeGreaterThan(0);
-    expect(alerts[0].severity).toBe('critical');
+    expect(alerts[0]!.severity).toBe('critical');
   });
 
   it('counter with labels', () => {

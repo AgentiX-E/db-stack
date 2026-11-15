@@ -34,7 +34,7 @@ describe('InMemorySLACollector', () => {
     });
     const violations = col.getViolations();
     expect(violations).toHaveLength(1);
-    expect(violations[0].violated).toBe(true);
+    expect(violations[0]!.violated).toBe(true);
   });
 
   it('calculates compliance percentage per metric', () => {
@@ -80,7 +80,7 @@ describe('InMemorySLACollector', () => {
     });
     const violations = col.getViolations(new Date('2026-01-01'));
     expect(violations).toHaveLength(1);
-    expect(violations[0].timestamp).toEqual(recent);
+    expect(violations[0]!.timestamp).toEqual(recent);
   });
 
   it('calculates uptime correctly', () => {
@@ -216,6 +216,6 @@ describe('InMemorySLACollector', () => {
       threshold: 5,
     });
     expect(col.getViolations()).toHaveLength(1);
-    expect(col.getViolations()[0].metric).toBe('error_rate');
+    expect(col.getViolations()[0]!.metric).toBe('error_rate');
   });
 });

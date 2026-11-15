@@ -14,40 +14,56 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { PrometheusPushExporter } from '../impl/PrometheusPushExporter.js';
-import type { IMetricsRegistry } from '../interfaces/IMetricsRegistry.js';
-import type { MetricsSnapshot } from '@agentix-e/db-operations-core/types';
+import type { ICounter, IGauge, IHistogram, IMetricsRegistry } from '../interfaces/IMetricsRegistry.js';
+import type { MetricPoint, MetricsSnapshot } from '@agentix-e/db-operations-core/types';
 
 function mockRegistry(snapshot: MetricsSnapshot): IMetricsRegistry {
-  const noop = {
+  const counter: ICounter = {
     inc: () => {},
     incBy: () => {},
     reset: () => {},
     get: () => 0,
+  };
+  const gauge: IGauge = {
     set: () => {},
+    inc: () => {},
     dec: () => {},
     add: () => {},
+    get: () => 0,
+  };
+  const histogram: IHistogram = {
     observe: () => {},
     getCount: () => 0,
     getSum: () => 0,
     getQuantile: () => undefined,
+    reset: () => {},
   };
   return {
-    counter: () => noop as any,
-    gauge: () => noop as any,
-    histogram: () => noop as any,
+    counter: () => counter,
+    gauge: () => gauge,
+    histogram: () => histogram,
     snapshot: () => snapshot,
   };
 }
 
-function makePoint(overrides: Record<string, unknown>): any {
-  return {
+/**
+ * The branches pinned here only run for a snapshot from a registry that omits
+ * the optional-in-practice `type`/`labels` fields — a payload that is
+ * deliberately out of contract. This helper is the single place that says so.
+ */
+function incomplete<T>(value: unknown): T {
+  return value as T;
+}
+
+function makePoint(overrides: Partial<MetricPoint>): MetricPoint {
+  return incomplete<MetricPoint>({
     name: 'metric',
     type: 'gauge',
     value: 1,
     labels: [],
     timestamp: 0,
     ...overrides,
-  };
+  });
 }
 
 describe('PPE-branch: incomplete snapshot payloads', () => {
@@ -59,11 +75,13 @@ describe('PPE-branch: incomplete snapshot payloads', () => {
 
   function installMockFetch() {
     originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true });
+    const mock = vi.fn().mockResolvedValue({ ok: true });
+    globalThis.fetch = mock;
+    return mock;
   }
 
   it('falls back to gauge when a metric point omits its type', async () => {
-    installMockFetch();
+    const fetchMock = installMockFetch();
     const snapshot: MetricsSnapshot = {
       points: [makePoint({ name: 'no_type_metric', type: undefined })],
       capturedAt: Date.now(),
@@ -77,12 +95,12 @@ describe('PPE-branch: incomplete snapshot payloads', () => {
 
     await exporter.push();
 
-    const body = (globalThis.fetch as any).mock.calls[0][1].body;
+    const body = fetchMock.mock.calls[0]![1].body;
     expect(body).toContain('# TYPE no_type_metric gauge');
   });
 
   it('treats absent histogram labels as empty', async () => {
-    installMockFetch();
+    const fetchMock = installMockFetch();
     const snapshot: MetricsSnapshot = {
       points: [
         makePoint({ name: 'hist_count', type: 'gauge', labels: undefined }),
@@ -99,13 +117,13 @@ describe('PPE-branch: incomplete snapshot payloads', () => {
 
     await exporter.push();
 
-    const body = (globalThis.fetch as any).mock.calls[0][1].body;
+    const body = fetchMock.mock.calls[0]![1].body;
     expect(body).toContain('# TYPE hist histogram');
     expect(body).toContain('hist_count 1');
   });
 
   it('treats absent counter/gauge labels as empty', async () => {
-    installMockFetch();
+    const fetchMock = installMockFetch();
     const snapshot: MetricsSnapshot = {
       points: [makePoint({ name: 'bare_gauge', labels: undefined })],
       capturedAt: Date.now(),
@@ -119,7 +137,7 @@ describe('PPE-branch: incomplete snapshot payloads', () => {
 
     await exporter.push();
 
-    const body = (globalThis.fetch as any).mock.calls[0][1].body;
+    const body = fetchMock.mock.calls[0]![1].body;
     expect(body).toContain('bare_gauge 1');
   });
 

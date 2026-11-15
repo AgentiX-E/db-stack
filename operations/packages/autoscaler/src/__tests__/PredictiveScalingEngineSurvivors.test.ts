@@ -139,11 +139,8 @@ describe('PSE-S: memory gap arithmetic', () => {
 
 describe('PSE-S: QPS gap arithmetic', () => {
   it('computes QPS target nodes (ceil(qps/(perNode*0.7)))', async () => {
-    const e = new PredictiveScalingEngine(makePolicy({ qpsPerNode: 1000, cpuTarget: 10 /* disable cpu */ }));
     // qps 3000, nodes 3 -> capacity 3000 -> util 1.0 > 0.85 -> up
     // targetNodes = ceil(3000/(1000*0.7)) = ceil(4.285) = 5, severity = 5-3 = 2
-    const r = await e.evaluate(barePolicy({ qpsPerNode: 1000, cpuTarget: 10, strategy: 'custom' })).catch(() => null);
-    // simpler: use bare policy with only qps
     const e2 = new PredictiveScalingEngine(
       barePolicy({
         cpuTarget: 10, // way above any cpu -> cpu never triggers up
@@ -154,7 +151,6 @@ describe('PSE-S: QPS gap arithmetic', () => {
     const r2 = await e2.evaluate(m({ cpu: 0.5, qps: 3000, currentNodeCount: 3 }));
     expect(r2!.amount).toBe(2); // severity 2, custom up 1.0
     expect(r2!.targetCount).toBe(5);
-    void r;
   });
 });
 
@@ -300,10 +296,6 @@ describe('PSE-S: confidence arithmetic', () => {
 
 describe('PSE-S: memory gap down branch (wellBelow, severity gap*3)', () => {
   it('scale_down via memory well below target', async () => {
-    const e = new PredictiveScalingEngine(
-      (barePolicy({ cpuTarget: 10, strategy: 'custom' }).memoryTarget = undefined as any),
-      {},
-    );
     // use makePolicy with only memory target and high cpuTarget so only memory triggers down
     const e2 = new PredictiveScalingEngine(
       makePolicy({
@@ -577,7 +569,7 @@ describe('PSE-S: default policy predictiveScaling is false', () => {
   it('defaults predictiveScaling to false', () => {
     // DEFAULT_POLICY export: predictiveScaling: false (the `false`→`true` mutant)
     // A policy without explicit predictiveScaling should not predict.
-    const e = new PredictiveScalingEngine(makePolicy({ predictiveScaling: false as any }));
+    const e = new PredictiveScalingEngine(makePolicy({ predictiveScaling: false }));
     // Force a clear discrimination: with predictive disabled, _predictMetric returns current
     expect(e).toBeDefined();
   });
@@ -856,7 +848,7 @@ describe('PSE-S: short-circuit edge cases', () => {
 describe('PSE-S: default-policy predictiveScaling false + remaining short-circuits', () => {
   it('L38 default predictiveScaling is false (no prediction without explicit opt-in)', async () => {
     // Construct WITHOUT predictiveScaling -> spread from DEFAULT_POLICY (false)
-    const e = new PredictiveScalingEngine({ cpuTarget: 0.5 } as any);
+    const e = new PredictiveScalingEngine({ cpuTarget: 0.5 });
     expect(e.getPolicy()!.predictiveScaling).toBe(false);
   });
 

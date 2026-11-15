@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { InMemoryEngineFactory } from './InMemoryEngineFactory.js';
 
 describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$name e2e: Tracing', ({ factory }) => {
@@ -18,7 +18,7 @@ describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$na
     span.end('ok');
     const completed = tracer.getCompletedSpans();
     expect(completed).toHaveLength(1);
-    expect(completed[0].name).toBe('op1');
+    expect(completed[0]!.name).toBe('op1');
   });
 
   it('should create nested spans with parent-child relationship', () => {
@@ -89,7 +89,7 @@ describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$na
     const tracer = factory.createDistributedTracer();
     const span = tracer.startSpan('failing');
     span.end('error');
-    expect(tracer.getCompletedSpans()[0].status).toBe('error');
+    expect(tracer.getCompletedSpans()[0]!.status).toBe('error');
   });
 
   it('should handle span with attributes', () => {
@@ -98,7 +98,7 @@ describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$na
       attributes: { db: 'main', query: 'SELECT' },
     });
     span.end('ok');
-    expect(tracer.getCompletedSpans()[0].attributes.db).toBe('main');
+    expect(tracer.getCompletedSpans()[0]!.attributes.db).toBe('main');
   });
 
   it('should return undefined for extract without header', () => {

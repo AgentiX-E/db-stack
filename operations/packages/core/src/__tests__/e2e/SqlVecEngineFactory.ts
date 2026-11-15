@@ -14,14 +14,22 @@ import type { EngineFactory } from './EngineFactory.js';
 import { HealthOrchestrator } from '@agentix-e/db-operations-health';
 import type { IHealthProbe, IHealthOrchestrator } from '@agentix-e/db-operations-health';
 import type { IMetricsRegistry } from '@agentix-e/db-operations-metrics';
-import type { IBackupManager, IStorageBackend, IBackupRetentionPolicy } from '@agentix-e/db-operations-backup';
+import {
+  InMemoryStorageBackend,
+  RetentionPolicyEvaluator,
+  type IBackupManager,
+  type IStorageBackend,
+  type IBackupRetentionPolicy,
+} from '@agentix-e/db-operations-backup';
 import type { IAuditStore } from '@agentix-e/db-operations-audit';
 import type { IDistributedTracer } from '@agentix-e/db-operations-observability';
-import type {
-  IDeadlockDetector,
-  IAlertRuleManager,
-  ISlowQueryRecorder,
-  IConnectionMonitor,
+import {
+  InMemoryAlertRuleManager,
+  InMemoryConnectionMonitor,
+  type IDeadlockDetector,
+  type IAlertRuleManager,
+  type ISlowQueryRecorder,
+  type IConnectionMonitor,
 } from '@agentix-e/db-operations-monitor';
 import type { IMaintenanceExecutor } from '@agentix-e/db-operations-maintenance';
 import type { IAuthProvider } from '@agentix-e/db-operations-auth';
@@ -59,13 +67,62 @@ export function isSqlVecAdapterAvailable(): boolean {
 
 // ── Native engine stubs (mimic sqlvec-db engine behavior) ────────
 
+/** A shard entry inside a native backup manifest. */
+interface NativeBackupShard {
+  shardId: number;
+  path: string;
+  originalPath: string;
+  checksum: string;
+  size: number;
+  compressed: boolean;
+}
+
+/** Backup manifest as produced by the native backup API. */
+interface NativeBackupManifest {
+  backupId: string;
+  timestamp: number;
+  shards: NativeBackupShard[];
+  config: {
+    backupDir: string;
+    enabled: boolean;
+    intervalMs: number;
+    retentionCount: number;
+    compress: boolean;
+  };
+  sizeBytes: number;
+}
+
+/** An audit record as stored by the native audit log. */
+interface NativeAuditRecord {
+  id: string;
+  timestamp: string;
+  user?: string;
+  actionType: string;
+  object: string;
+  detail?: string;
+}
+
+/** Filter passed to the native audit log query. */
+interface NativeAuditFilter {
+  user?: string;
+  actionType?: string;
+}
+
+/** A detected deadlock as reported by the native session monitor. */
+interface NativeDeadlock {
+  cycle: string[];
+  resources: string[];
+  victim: string;
+  detectedAt: number;
+}
+
 class NativeBackupStub {
-  private manifests: Array<Record<string, any>> = [];
+  private manifests: NativeBackupManifest[] = [];
   private counter = 0;
 
-  async createBackup(): Promise<Record<string, any>> {
+  async createBackup(): Promise<NativeBackupManifest> {
     const id = `bkp-${++this.counter}-${Date.now()}`;
-    const m = {
+    const m: NativeBackupManifest = {
       backupId: id,
       timestamp: Date.now(),
       shards: [
@@ -91,7 +148,7 @@ class NativeBackupStub {
     return m;
   }
 
-  async listBackups(): Promise<Array<Record<string, any>>> {
+  async listBackups(): Promise<NativeBackupManifest[]> {
     return [...this.manifests];
   }
 
@@ -133,12 +190,7 @@ class NativeDeadlockStub {
     this.lockResources.set(r, sid);
   }
 
-  detectDeadlocks(): Array<{
-    cycle: string[];
-    resources: string[];
-    victim: string;
-    detectedAt: number;
-  }> {
+  detectDeadlocks(): NativeDeadlock[] {
     const waitFor = new Map<string, Set<string>>();
     for (const [sid, s] of this.sessions) {
       const w = new Set<string>();
@@ -148,7 +200,7 @@ class NativeDeadlockStub {
       }
       waitFor.set(sid, w);
     }
-    const res: Array<any> = [];
+    const res: NativeDeadlock[] = [];
     const visited = new Set<string>(),
       inStack = new Set<string>();
     const dfs = (node: string, p: string[]): void => {
@@ -161,7 +213,7 @@ class NativeDeadlockStub {
           res.push({
             cycle: c,
             resources: c.map((s) => [...(this.sessions.get(s)?.resources ?? [])][0] ?? '?'),
-            victim: c[c.length - 1],
+            victim: c[c.length - 1]!,
             detectedAt: Date.now(),
           });
         } else if (!visited.has(n)) {
@@ -179,55 +231,65 @@ class NativeDeadlockStub {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  Module Loader (lazy, one-shot)
+//  Module Loader (one-shot, at module evaluation)
 // ══════════════════════════════════════════════════════════════════
 
-let _adapters: Record<string, any> | null = null;
+const ADAPTER_EXPORTS = [
+  'SqlVecHealthAdapter',
+  'SqlVecMetricAdapter',
+  'SqlVecBackupAdapter',
+  'SqlVecAuditAdapter',
+  'SqlVecTracerAdapter',
+  'SqlVecDeadlockAdapter',
+  'SqlVecSlowQueryAdapter',
+  'SqlVecMaintenanceAdapter',
+  'SqlVecAuthAdapter',
+] as const;
 
-async function ensureAdaptersLoaded(): Promise<Record<string, any>> {
-  if (_adapters) return _adapters;
-  if (!isSqlVecAdapterAvailable()) {
+/** Typed handle on a class exported by the untyped sqlvec-db adapter bundle. */
+interface ExternalCtor<T> {
+  new (...args: unknown[]): T;
+}
+
+let _adapters: Record<string, unknown> | null = null;
+
+/**
+ * The bundle is loaded once, at module evaluation. `EngineFactory` promises
+ * synchronous construction (the health orchestrator calls `readiness()` on the
+ * probe it is given, without awaiting), so the dynamic `import()` of the
+ * external bundle cannot happen inside `create*()`. When the bundle is absent
+ * the load is skipped and the factory reports that it is unavailable.
+ */
+if (isSqlVecAdapterAvailable()) {
+  const base = ADAPTER_DIR;
+  try {
+    const modules = await Promise.all(
+      ADAPTER_EXPORTS.map(
+        (name) => import(`file://${path.resolve(base, `${name}.js`)}`) as Promise<Record<string, unknown>>,
+      ),
+    );
+    const bundle: Record<string, unknown> = {};
+    for (const mod of modules) Object.assign(bundle, mod);
+    _adapters = bundle;
+  } catch {
+    _adapters = null;
+  }
+}
+
+/** Resolve an adapter class from the bundle, or explain why it is unavailable. */
+function adapterClass<T>(name: string): ExternalCtor<T> {
+  if (!_adapters) {
     throw new Error(
       'sqlvec-db adapter bundle not found. Set SQLVEC_ADAPTER_DIR to ' +
         '<sqlvec-db>/packages/sqlvec-adapter/dist, or skip the SqlVec engine ' +
         `(searched: ${ADAPTER_DIR_CANDIDATES.join(', ')})`,
     );
   }
-  const base = ADAPTER_DIR;
-  const load = (fn: string) => import(`file://${path.resolve(base, fn)}`);
-  const [
-    { SqlVecHealthAdapter },
-    { SqlVecMetricAdapter },
-    { SqlVecBackupAdapter },
-    { SqlVecAuditAdapter },
-    { SqlVecTracerAdapter },
-    { SqlVecDeadlockAdapter },
-    { SqlVecSlowQueryAdapter },
-    { SqlVecMaintenanceAdapter },
-    { SqlVecAuthAdapter },
-  ] = await Promise.all([
-    load('SqlVecHealthAdapter.js'),
-    load('SqlVecMetricAdapter.js'),
-    load('SqlVecBackupAdapter.js'),
-    load('SqlVecAuditAdapter.js'),
-    load('SqlVecTracerAdapter.js'),
-    load('SqlVecDeadlockAdapter.js'),
-    load('SqlVecSlowQueryAdapter.js'),
-    load('SqlVecMaintenanceAdapter.js'),
-    load('SqlVecAuthAdapter.js'),
-  ]);
-  _adapters = {
-    SqlVecHealthAdapter,
-    SqlVecMetricAdapter,
-    SqlVecBackupAdapter,
-    SqlVecAuditAdapter,
-    SqlVecTracerAdapter,
-    SqlVecDeadlockAdapter,
-    SqlVecSlowQueryAdapter,
-    SqlVecMaintenanceAdapter,
-    SqlVecAuthAdapter,
-  };
-  return _adapters;
+  const ctor = _adapters[name];
+  if (typeof ctor !== 'function') {
+    throw new Error(`sqlvec-db adapter bundle has no class export named ${name}`);
+  }
+  return ctor as ExternalCtor<T>;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -244,12 +306,12 @@ export class SqlVecEngineFactory implements EngineFactory {
   private deadlockNative = new NativeDeadlockStub();
   private _logger?: ILogger;
 
-  get engineRef(): Record<string, any> {
+  get engineRef(): Record<string, unknown> {
     return { backupManager: this.backupNative, getEngineType: () => 'sqlvec' };
   }
 
-  async createHealthProbe(): Promise<IHealthProbe> {
-    const { SqlVecHealthAdapter } = await ensureAdaptersLoaded();
+  createHealthProbe(): IHealthProbe {
+    const SqlVecHealthAdapter = adapterClass<IHealthProbe & { markStarted(): void }>('SqlVecHealthAdapter');
     const probe = new SqlVecHealthAdapter('sqlvec-e2e', {
       isStarted: () => true,
       isLeaderElected: () => true,
@@ -261,7 +323,7 @@ export class SqlVecEngineFactory implements EngineFactory {
     return probe;
   }
 
-  createHealthOrchestrator(): IHealthOrchestrator {
+  createHealthOrchestrator(): HealthOrchestrator {
     const orch = new HealthOrchestrator();
     orch.registerFunctional('sqlvec-orch', 'SqlVec Orchestrator', {
       liveness: () => ({ ok: true }),
@@ -270,46 +332,43 @@ export class SqlVecEngineFactory implements EngineFactory {
     return orch;
   }
 
-  async createMetricsRegistry(): Promise<IMetricsRegistry> {
-    const { SqlVecMetricAdapter } = await ensureAdaptersLoaded();
+  createMetricsRegistry(): IMetricsRegistry {
+    const SqlVecMetricAdapter = adapterClass<IMetricsRegistry>('SqlVecMetricAdapter');
     return new SqlVecMetricAdapter();
   }
 
-  async createBackupManager(): Promise<IBackupManager> {
-    const { SqlVecBackupAdapter } = await ensureAdaptersLoaded();
+  createBackupManager(): IBackupManager {
+    const SqlVecBackupAdapter = adapterClass<IBackupManager>('SqlVecBackupAdapter');
     return new SqlVecBackupAdapter(this.engineRef);
   }
 
-  async createStorageBackend(): Promise<IStorageBackend> {
-    const { InMemoryStorageBackend } = await import('@agentix-e/db-operations-backup');
+  createStorageBackend(): IStorageBackend {
     return new InMemoryStorageBackend();
   }
 
-  async createRetentionPolicy(): Promise<IBackupRetentionPolicy> {
-    const { RetentionPolicyEvaluator } = await import('@agentix-e/db-operations-backup');
+  createRetentionPolicy(): IBackupRetentionPolicy {
     return new RetentionPolicyEvaluator({
       maxFullSnapshots: 3,
       maxTotalBytes: 1_000_000_000,
     });
   }
 
-  async createAuditStore(): Promise<IAuditStore> {
-    const { SqlVecAuditAdapter } = await ensureAdaptersLoaded();
-    const auditEntries: Array<any> = [];
+  createAuditStore(): IAuditStore {
+    const SqlVecAuditAdapter = adapterClass<IAuditStore>('SqlVecAuditAdapter');
+    const auditEntries: NativeAuditRecord[] = [];
     const native = {
       init: async () => {},
-      record: (entry: any) => {
+      record: (entry: NativeAuditRecord) => {
         auditEntries.push({
-          id: auditEntries.length + 1,
+          id: String(auditEntries.length + 1),
           timestamp: entry.timestamp ?? new Date().toISOString(),
-          sessionId: entry.sessionId,
-          user: entry.user,
           actionType: entry.actionType,
           object: entry.object,
           detail: entry.detail,
+          user: entry.user,
         });
       },
-      queryAuditLog: async (_from: Date, _to: Date, filter?: any) => {
+      queryAuditLog: async (_from: Date, _to: Date, filter?: NativeAuditFilter) => {
         let results = [...auditEntries];
         if (filter?.user) results = results.filter((e) => e.user === filter.user);
         if (filter?.actionType) results = results.filter((e) => e.actionType === filter.actionType);
@@ -320,8 +379,8 @@ export class SqlVecEngineFactory implements EngineFactory {
     return new SqlVecAuditAdapter(native);
   }
 
-  async createDistributedTracer(): Promise<IDistributedTracer> {
-    const { SqlVecTracerAdapter } = await ensureAdaptersLoaded();
+  createDistributedTracer(): IDistributedTracer {
+    const SqlVecTracerAdapter = adapterClass<IDistributedTracer>('SqlVecTracerAdapter');
     return new SqlVecTracerAdapter({
       startTrace: (_n: string, _a?: Record<string, string | number | boolean>) => `trace-${Date.now()}`,
       endTrace: () => {},
@@ -335,28 +394,26 @@ export class SqlVecEngineFactory implements EngineFactory {
     });
   }
 
-  async createDeadlockDetector(): Promise<IDeadlockDetector> {
-    const { SqlVecDeadlockAdapter } = await ensureAdaptersLoaded();
+  createDeadlockDetector(): IDeadlockDetector {
+    const SqlVecDeadlockAdapter = adapterClass<IDeadlockDetector>('SqlVecDeadlockAdapter');
     return new SqlVecDeadlockAdapter(this.deadlockNative, 500, 100);
   }
 
-  async createAlertRuleManager(): Promise<IAlertRuleManager> {
-    const { InMemoryAlertRuleManager } = await import('@agentix-e/db-operations-monitor');
+  createAlertRuleManager(): IAlertRuleManager {
     return new InMemoryAlertRuleManager();
   }
 
-  async createSlowQueryRecorder(): Promise<ISlowQueryRecorder> {
-    const { SqlVecSlowQueryAdapter } = await ensureAdaptersLoaded();
+  createSlowQueryRecorder(): ISlowQueryRecorder {
+    const SqlVecSlowQueryAdapter = adapterClass<ISlowQueryRecorder>('SqlVecSlowQueryAdapter');
     return new SqlVecSlowQueryAdapter(100, 1000, {});
   }
 
-  async createConnectionMonitor(): Promise<IConnectionMonitor> {
-    const { InMemoryConnectionMonitor } = await import('@agentix-e/db-operations-monitor');
+  createConnectionMonitor(): IConnectionMonitor {
     return new InMemoryConnectionMonitor();
   }
 
-  async createMaintenanceExecutor(): Promise<IMaintenanceExecutor> {
-    const { SqlVecMaintenanceAdapter } = await ensureAdaptersLoaded();
+  createMaintenanceExecutor(): IMaintenanceExecutor {
+    const SqlVecMaintenanceAdapter = adapterClass<IMaintenanceExecutor>('SqlVecMaintenanceAdapter');
     return new SqlVecMaintenanceAdapter({
       vacuum: (_s: number, _t?: string, _f?: boolean) => ({
         success: true,
@@ -387,8 +444,8 @@ export class SqlVecEngineFactory implements EngineFactory {
     });
   }
 
-  async createAuthProvider(): Promise<IAuthProvider> {
-    const { SqlVecAuthAdapter } = await ensureAdaptersLoaded();
+  createAuthProvider(): IAuthProvider {
+    const SqlVecAuthAdapter = adapterClass<IAuthProvider>('SqlVecAuthAdapter');
     return new SqlVecAuthAdapter(
       {
         verifyPassword: async (u: string, p: string) => u === 'admin' && p === 'pass',
@@ -423,22 +480,22 @@ class E2ELogger implements ILogger {
   child(_b: Record<string, unknown>): ILogger {
     return new E2ELogger(`${this.component}-child`);
   }
-  trace(...a: any[]): void {
+  trace(...a: unknown[]): void {
     /* captured in e2e context */
   }
-  debug(...a: any[]): void {
+  debug(...a: unknown[]): void {
     /* captured in e2e context */
   }
-  info(...a: any[]): void {
+  info(...a: unknown[]): void {
     /* captured in e2e context */
   }
-  warn(...a: any[]): void {
+  warn(...a: unknown[]): void {
     /* captured in e2e context */
   }
-  error(...a: any[]): void {
+  error(...a: unknown[]): void {
     /* captured in e2e context */
   }
-  fatal(...a: any[]): void {
+  fatal(...a: unknown[]): void {
     /* captured in e2e context */
   }
 }

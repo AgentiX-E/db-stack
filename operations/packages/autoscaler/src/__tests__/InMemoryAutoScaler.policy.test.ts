@@ -26,11 +26,16 @@ function metrics(overrides: Partial<AutoScalerMetrics> = {}): AutoScalerMetrics 
 function policy(overrides: Partial<ScalingPolicy> = {}): ScalingPolicy {
   return {
     id: 'standard',
+    name: 'Standard',
+    strategy: 'custom',
     minNodes: 2,
     maxNodes: 4,
     cpuTarget: 0.7,
     scaleUpCooldownMs: 60_000,
     scaleDownCooldownMs: 60_000,
+    predictiveScaling: false,
+    overProvisionFactor: 1.0,
+    evaluationIntervalMs: 0,
     ...overrides,
   };
 }

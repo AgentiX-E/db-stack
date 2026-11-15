@@ -9,7 +9,7 @@ describe('InMemoryAutoScaler', () => {
     const metrics: AutoScalerMetrics = {
       cpu: 0.5,
       qps: 1000,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     };
     const result = await scaler.evaluate(metrics);
@@ -21,7 +21,7 @@ describe('InMemoryAutoScaler', () => {
     const metrics: AutoScalerMetrics = {
       cpu: 0.9,
       qps: 1000,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     };
     const result = await scaler.evaluate(metrics);
@@ -34,7 +34,7 @@ describe('InMemoryAutoScaler', () => {
     const metrics: AutoScalerMetrics = {
       cpu: 0.1,
       qps: 100,
-      latency: 10,
+      latencyP95: 10,
       connectionCount: 2,
     };
     const result = await scaler.evaluate(metrics);
@@ -48,7 +48,7 @@ describe('InMemoryAutoScaler', () => {
     const metrics: AutoScalerMetrics = {
       cpu: 0.6,
       qps: 100,
-      latency: 10,
+      latencyP95: 10,
       connectionCount: 2,
     };
     const result = await scaler.evaluate(metrics);
@@ -61,7 +61,7 @@ describe('InMemoryAutoScaler', () => {
     const metrics: AutoScalerMetrics = {
       cpu: 0.3,
       qps: 15000,
-      latency: 100,
+      latencyP95: 100,
       connectionCount: 10,
     };
     const result = await scaler.evaluate(metrics);
@@ -74,19 +74,19 @@ describe('InMemoryAutoScaler', () => {
     await scaler.evaluate({
       cpu: 0.9,
       qps: 100,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     });
     await scaler.evaluate({
       cpu: 0.5,
       qps: 100,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     });
     await scaler.evaluate({
       cpu: 0.1,
       qps: 100,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     });
     expect(scaler.getHistory()).toHaveLength(2);
@@ -102,7 +102,7 @@ describe('InMemoryAutoScaler', () => {
     const result = await scaler.evaluate({
       cpu: 0.95,
       qps: 100,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     });
     expect(result!.reason).toContain('CPU at 95%');
@@ -113,7 +113,7 @@ describe('InMemoryAutoScaler', () => {
     const result = await scaler.evaluate({
       cpu: 0.1,
       qps: 100,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     });
     expect(result!.reason).toContain('CPU at 10%');
@@ -124,7 +124,7 @@ describe('InMemoryAutoScaler', () => {
     const result = await scaler.evaluate({
       cpu: 0,
       qps: 0,
-      latency: 0,
+      latencyP95: 0,
       connectionCount: 0,
     });
     expect(result).not.toBeNull();
@@ -137,7 +137,7 @@ describe('InMemoryAutoScaler', () => {
     const result = await scaler.evaluate({
       cpu: 0.5,
       qps: 1000,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     });
     expect(result).toBeNull();
@@ -149,7 +149,7 @@ describe('InMemoryAutoScaler', () => {
     const result = await scaler.evaluate({
       cpu: 0.5,
       qps: 1000,
-      latency: 50,
+      latencyP95: 50,
       connectionCount: 5,
     });
     expect(result).toBeNull();
@@ -163,7 +163,7 @@ it('scale_up amount is exactly ceil((cpu+threshold)*10)', async () => {
   const result = await scaler.evaluate({
     cpu: 0.9,
     qps: 1000,
-    latency: 50,
+    latencyP95: 50,
     connectionCount: 5,
   });
   // (0.9 + 0.8) * 10 = 17 → ceil = 17
@@ -175,7 +175,7 @@ it('scale_up reason shows the exact CPU percentage', async () => {
   const result = await scaler.evaluate({
     cpu: 0.95,
     qps: 1000,
-    latency: 50,
+    latencyP95: 50,
     connectionCount: 5,
   });
   expect(result!.reason).toContain('CPU at 95%');
@@ -188,7 +188,7 @@ it('amount falls back to 1 when the computed amount is zero or falsy', async () 
   const result = await scaler.evaluate({
     cpu: 0.81,
     qps: 1000,
-    latency: 50,
+    latencyP95: 50,
     connectionCount: 5,
   });
   expect(result!.amount).toBeGreaterThanOrEqual(1);

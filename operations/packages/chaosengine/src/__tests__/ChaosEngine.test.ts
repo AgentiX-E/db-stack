@@ -16,8 +16,8 @@ describe('InMemoryChaosEngine', () => {
     const engine = new InMemoryChaosEngine();
     await engine.inject({ type: 'latency', target: 'db-1', durationMs: 1000 });
     expect(engine.getActiveFaults()).toHaveLength(1);
-    expect(engine.getActiveFaults()[0].type).toBe('latency');
-    expect(engine.getActiveFaults()[0].target).toBe('db-1');
+    expect(engine.getActiveFaults()[0]!.type).toBe('latency');
+    expect(engine.getActiveFaults()[0]!.target).toBe('db-1');
   });
 
   it('adds fault to history after injection', async () => {
@@ -66,7 +66,8 @@ describe('InMemoryChaosEngine', () => {
       durationMs: 30000,
       config: { limit: '2GB' },
     });
-    expect(engine.getActiveFaults()[0].config).toEqual({ limit: '2GB' });
+    expect(engine.getActiveFaults()).toHaveLength(1);
+    expect(engine.getActiveFaults()[0]!.config).toEqual({ limit: '2GB' });
   });
 
   it('does not mutate original config in history', async () => {
@@ -74,13 +75,15 @@ describe('InMemoryChaosEngine', () => {
     const fault = { type: 'error' as const, target: 'svc', durationMs: 100 };
     await engine.inject(fault);
     fault.target = 'modified';
-    expect(engine.getHistory()[0].target).toBe('svc');
+    expect(engine.getHistory()).toHaveLength(1);
+    expect(engine.getHistory()[0]!.target).toBe('svc');
   });
 
   it('injects fault with zero duration', async () => {
     const engine = new InMemoryChaosEngine();
     await engine.inject({ type: 'crash', target: 'node-1', durationMs: 0 });
-    expect(engine.getActiveFaults()[0].durationMs).toBe(0);
+    expect(engine.getActiveFaults()).toHaveLength(1);
+    expect(engine.getActiveFaults()[0]!.durationMs).toBe(0);
   });
 
   it('handles resource_exhaustion fault type', async () => {

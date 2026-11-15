@@ -48,7 +48,7 @@ function parseCLI(): { engines: string[]; skipInMem: boolean } {
 
   for (const arg of args) {
     if (arg.startsWith('--engine=')) {
-      engines.push(arg.split('=')[1]);
+      engines.push(arg.slice('--engine='.length));
     }
     if (arg === '--skip-inmem') {
       skipInMem = true;
@@ -71,9 +71,9 @@ function parseVitestOutput(output: string): {
   const failMatch = output.match(/(\d+)\s+failed/i);
   const skipMatch = output.match(/(\d+)\s+skipped/i);
 
-  const passed = passMatch ? parseInt(passMatch[1], 10) : 0;
-  const failed = failMatch ? parseInt(failMatch[1], 10) : 0;
-  const skipped = skipMatch ? parseInt(skipMatch[1], 10) : 0;
+  const passed = passMatch ? parseInt(passMatch[1]!, 10) : 0;
+  const failed = failMatch ? parseInt(failMatch[1]!, 10) : 0;
+  const skipped = skipMatch ? parseInt(skipMatch[1]!, 10) : 0;
 
   const errorLines = output
     .split('\n')
@@ -99,11 +99,13 @@ function runVitest(file: string): {
       timeout: 120_000, // 2 min per test file
     });
     return { output, durationMs: Date.now() - startTime, exitCode: 0 };
-  } catch (err: any) {
+  } catch (err) {
+    // execSync throws a Node error that carries stdout/stderr/status beside message.
+    const execErr = err as { stdout?: Buffer | string; message?: string; status?: number };
     return {
-      output: err.stdout?.toString() ?? err.message ?? '',
+      output: execErr.stdout?.toString() ?? execErr.message ?? '',
       durationMs: Date.now() - startTime,
-      exitCode: err.status ?? 1,
+      exitCode: execErr.status ?? 1,
     };
   }
 }

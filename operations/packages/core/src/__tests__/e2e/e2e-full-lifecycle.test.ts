@@ -119,7 +119,7 @@ describe('E2E: Full Operational Lifecycle', () => {
 
   it('E2E3: encryption initialize → encrypt → decrypt round-trip', async () => {
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     const plaintext = Buffer.from('critical-secret-data-for-cluster-ops');
     const ciphertext = await enc.encrypt(plaintext);
@@ -141,7 +141,7 @@ describe('E2E: Full Operational Lifecycle', () => {
   it('E2E4: backup create → list → get → verify metadata', async () => {
     const backup = factory.createBackupManager();
     const enc = factory.getEncryptionManager();
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
 
     // Encrypt payload for backup
     const payload = await enc.encrypt(Buffer.from('e2e-backup-payload-v1'));
@@ -217,15 +217,15 @@ describe('E2E: Full Operational Lifecycle', () => {
   it('E2E6: maintenance vacuum → analyze → reindex after upgrade', async () => {
     const maint = factory.createMaintenanceExecutor();
 
-    const vacuumResult = await maint.vacuum({ tables: ['users', 'sessions'] });
+    const vacuumResult = await maint.vacuum({ target: '*' });
     expect(vacuumResult.success).toBe(true);
     expect(vacuumResult.operation).toBe('VACUUM');
 
-    const analyzeResult = await maint.analyze({ tables: ['users'] });
+    const analyzeResult = await maint.analyze({ target: 'users' });
     expect(analyzeResult.success).toBe(true);
     expect(analyzeResult.operation).toBe('ANALYZE');
 
-    const reindexResult = await maint.reindex({ index: 'idx_users_email' });
+    const reindexResult = await maint.reindex({ target: 'idx_users_email' });
     expect(reindexResult.success).toBe(true);
     expect(reindexResult.operation).toBe('REINDEX');
 
@@ -307,7 +307,7 @@ describe('E2E: Full Operational Lifecycle', () => {
     const entries = await audit.query({});
     expect(entries.length).toBeGreaterThanOrEqual(4);
 
-    const operations = entries.map((e: any) => e.operation);
+    const operations = entries.map((e) => e.operation);
     expect(operations).toContain('CLUSTER_BOOTSTRAP');
     expect(operations).toContain('BACKUP_CREATED');
     expect(operations).toContain('UPGRADE_ROLLING');
@@ -369,7 +369,7 @@ describe('E2E: Full Operational Lifecycle', () => {
     expect(rbac.hasPermission(adminId, { resource: 'backup', action: 'admin' })).toBe(true);
 
     // ── 3. Encryption ─────────────────────────────────
-    await enc.initialize({ algorithm: 'aes-256-gcm', keySize: 256 });
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     const secret = await enc.encrypt(Buffer.from('lifecycle-secret'));
     const recovered = await enc.decrypt(secret);
     expect(recovered.toString()).toBe('lifecycle-secret');
@@ -397,7 +397,7 @@ describe('E2E: Full Operational Lifecycle', () => {
     expect(upgradeStats.completedBatches).toBeGreaterThanOrEqual(2);
 
     // ── 6. Maintenance ────────────────────────────────
-    const vacuumResult = await maint.vacuum({ tables: ['lifecycle_data'] });
+    const vacuumResult = await maint.vacuum({ target: 'lifecycle_data' });
     expect(vacuumResult.success).toBe(true);
     expect(vacuumResult.operation).toBe('VACUUM');
 
@@ -417,7 +417,7 @@ describe('E2E: Full Operational Lifecycle', () => {
       result: 'success',
     });
     const entries = await audit.query({});
-    expect(entries.some((e: any) => e.operation === 'LIFECYCLE_COMPLETE')).toBe(true);
+    expect(entries.some((e) => e.operation === 'LIFECYCLE_COMPLETE')).toBe(true);
 
     // ── 9. Metrics ────────────────────────────────────
     const meter = metrics.counter('lifecycle.ops');
@@ -465,7 +465,7 @@ describe('E2E: Full Operational Lifecycle', () => {
     );
 
     const allLogs = logger.getEntries();
-    const lifecycleLogs = allLogs.filter((l: any) => l.message === 'lifecycle-complete');
+    const lifecycleLogs = allLogs.filter((l) => l.message === 'lifecycle-complete');
     expect(lifecycleLogs.length).toBeGreaterThanOrEqual(1);
   });
 });

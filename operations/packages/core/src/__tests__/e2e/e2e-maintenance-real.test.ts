@@ -6,7 +6,22 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
+import { InMemoryAlertRuleManager } from '@agentix-e/db-operations-monitor';
+import type { IAlertRuleManager } from '@agentix-e/db-operations-monitor';
 import { IN_MEM_FACTORY, GRAPH_VEC_FACTORY, SQL_VEC_FACTORY, ENGINE_CASES } from './engineFactories.js';
+
+/**
+ * `IAlertRuleManager` does not declare `addRule`/`evaluateSnapshot` although
+ * every engine factory returns an `InMemoryAlertRuleManager` that exposes them.
+ * Narrow through `instanceof` rather than a cast so a factory that starts
+ * returning something else fails loudly here.
+ */
+function asInMemoryAlertRuleManager(manager: IAlertRuleManager): InMemoryAlertRuleManager {
+  if (!(manager instanceof InMemoryAlertRuleManager)) {
+    throw new Error('expected the factory to return an InMemoryAlertRuleManager');
+  }
+  return manager;
+}
 
 const inMemFactory = IN_MEM_FACTORY;
 const graphVecFactory = GRAPH_VEC_FACTORY;
@@ -41,7 +56,7 @@ describe.each(ENGINE_CASES)('$name E2E: MaintenanceExecutor', ({ factory }) => {
 
   it('should execute reindex successfully', async () => {
     const exec = await factory.createMaintenanceExecutor();
-    const result = await exec.reindex({ target: 'users_pkey', type: 'index' });
+    const result = await exec.reindex({ target: 'users_pkey', isTable: false });
     expect(result.success).toBe(true);
     expect(result.operation).toBe('REINDEX');
   });
@@ -103,7 +118,7 @@ describe.each(ENGINE_CASES)('$name E2E: AlertRuleManager', ({ factory }) => {
   it('should create an alert rule manager', async () => {
     const mgr = await factory.createAlertRuleManager();
     expect(mgr).toBeDefined();
-    expect(typeof mgr.addRule).toBe('function');
+    expect(typeof asInMemoryAlertRuleManager(mgr).addRule).toBe('function');
   });
 
   it('should add and evaluate alert rules', async () => {
@@ -141,7 +156,10 @@ describe.each(ENGINE_CASES)('$name E2E: AlertRuleManager', ({ factory }) => {
       severity: 'warning',
       enabled: true,
     });
-    const results = await mgr.evaluate();
-    expect(results).toBeInstanceOf(Array);
+    // A snapshot is the input an alert rule needs. The interface used to offer
+    // `evaluate()` with no argument, which this case could only assert was an
+    // array — an assertion no implementation could fail.
+    expect(mgr.evaluateSnapshot({ cpu_usage: 95 })).toHaveLength(1);
+    expect(mgr.evaluateSnapshot({ cpu_usage: 50 })).toHaveLength(0);
   });
 });

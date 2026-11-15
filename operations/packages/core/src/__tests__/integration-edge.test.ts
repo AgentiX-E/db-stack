@@ -38,6 +38,19 @@ import type {
 //  contained within the core package.
 // ══════════════════════════════════════════════════════════════════════
 
+/**
+ * Invoke a method with arguments its declared signature rejects, so that
+ * defensive-input behaviour can be exercised. `Reflect.apply` accepts any
+ * runtime value, which keeps the deliberately invalid call out of the type
+ * system's way without casting the argument.
+ */
+function invokeWithInvalidArgs<R>(fn: (...args: never[]) => R, self: unknown, args: unknown[]): R;
+function invokeWithInvalidArgs<R>(fn: (...args: never[]) => unknown, self: unknown, args: unknown[]): R;
+function invokeWithInvalidArgs<R>(fn: (...args: never[]) => unknown, self: unknown, args: unknown[]): R {
+  const result: R = Reflect.apply(fn, self, args);
+  return result;
+}
+
 import { randomUUID } from 'node:crypto';
 
 // ── Health ──────────────────────────────────────────────────────────
@@ -74,9 +87,10 @@ class HealthOrchestrator {
         const r = entry.probe.liveness();
         if (!r.ok) errors.push(`[${entry.probe.probeId}] ${r.message ?? 'fail'}`);
         else entry.lastError = null;
-      } catch (err: any) {
-        errors.push(`[${entry.probe.probeId}] ${err.message}`);
-        entry.lastError = err.message;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push(`[${entry.probe.probeId}] ${message}`);
+        entry.lastError = message;
       }
     }
     return { ok: errors.length === 0, errors };
@@ -87,8 +101,8 @@ class HealthOrchestrator {
       try {
         const r = entry.probe.readiness();
         if (!r.ok) errors.push(`[${entry.probe.probeId}] ${r.message ?? 'fail'}`);
-      } catch (err: any) {
-        errors.push(`[${entry.probe.probeId}] ${err.message}`);
+      } catch (err) {
+        errors.push(`[${entry.probe.probeId}] ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     return { ok: errors.length === 0, errors };
@@ -139,8 +153,8 @@ class HealthOrchestrator {
   private _safe(fn: () => ProbeResult): ProbeResult {
     try {
       return fn();
-    } catch (err: any) {
-      return { ok: false, message: err.message };
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
   }
 }
@@ -464,7 +478,7 @@ class InMemoryDeadlockDetector {
                 if (h) for (const r of h) res.push(r);
                 if (w) for (const r of w) res.push(r);
               }
-              const victim = cycle[cycle.length - 1];
+              const victim = cycle[cycle.length - 1]!;
               const event: DeadlockEventLike = {
                 timestamp: new Date().toISOString(),
                 transactions: [...cycle],
@@ -833,13 +847,13 @@ class InMemoryEncryptionManager {
   async encrypt(plaintext: Buffer): Promise<Buffer> {
     if (!this._initialized) throw new Error('EncryptionManager: not initialized');
     const r = Buffer.alloc(plaintext.length);
-    for (let i = 0; i < plaintext.length; i++) r[i] = plaintext[i] ^ this._key[i % this._key.length];
+    for (let i = 0; i < plaintext.length; i++) r[i] = plaintext[i]! ^ this._key[i % this._key.length]!;
     return r;
   }
   async decrypt(ciphertext: Buffer): Promise<Buffer> {
     if (!this._initialized) throw new Error('EncryptionManager: not initialized');
     const r = Buffer.alloc(ciphertext.length);
-    for (let i = 0; i < ciphertext.length; i++) r[i] = ciphertext[i] ^ this._key[i % this._key.length];
+    for (let i = 0; i < ciphertext.length; i++) r[i] = ciphertext[i]! ^ this._key[i % this._key.length]!;
     return r;
   }
 }
@@ -979,7 +993,7 @@ class InMemoryDistributedTracer {
     const span: SpanLike = {
       spanId,
       traceId,
-      parentSpanId,
+      parentSpanId: parentSpanId ?? undefined,
       name,
       startTime: Date.now(),
       attributes: options?.attributes ?? {},
@@ -1444,7 +1458,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
       });
       health.registerComponent(okProbe);
 
-      const IHealth = token<any>('health.orchestrator');
+      const IHealth = token<HealthOrchestrator>('health.orchestrator');
       reg.register(IHealth, health);
       const resolved = reg.get(IHealth);
       expect(resolved).toBe(health);
@@ -1458,7 +1472,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
       const low = new HealthOrchestrator();
       const high = new HealthOrchestrator();
 
-      const IHealth = token<any>('health.orchestrator2');
+      const IHealth = token<HealthOrchestrator>('health.orchestrator2');
       reg.register(IHealth, low, { priority: 1, name: 'low' });
       reg.register(IHealth, high, { priority: 100, name: 'high' });
 
@@ -1469,7 +1483,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
     it('resolve still works after stop (re-entrant)', () => {
       const reg = new ProviderRegistry();
       const health = new HealthOrchestrator();
-      const IHealth = token<any>('health.reen');
+      const IHealth = token<HealthOrchestrator>('health.reen');
       reg.register(IHealth, health);
 
       // stop without start is a no-op
@@ -1497,7 +1511,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
         },
       };
 
-      reg.register(token<any>('lifecycle'), lifecycleProvider);
+      reg.register(token<IProviderLifecycle>('lifecycle'), lifecycleProvider);
       await reg.start();
       expect(started).toBe(true);
 
@@ -1526,7 +1540,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
 
       const list = await mgr.listBackups();
       expect(list.length).toBe(1);
-      expect(list[0].snapshotId).toBe(id);
+      expect(list[0]!.snapshotId).toBe(id);
 
       const got = await mgr.getBackup(id);
       expect(got).not.toBeNull();
@@ -1741,7 +1755,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
 
       const remaining = await store.query({});
       expect(remaining.length).toBe(1);
-      expect(remaining[0].operation).toBe('NEW');
+      expect(remaining[0]!.operation).toBe('NEW');
     });
   });
 
@@ -1824,7 +1838,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
       const extracted = tracer.extract(carrier);
       expect(extracted).toBeDefined();
       // The original traceId matches what was injected
-      expect(extracted!.traceId).toBe(carrier['traceparent'].split('-')[1]);
+      expect(extracted!.traceId).toBe(carrier['traceparent']!.split('-')[1]);
     });
   });
 });
@@ -1867,7 +1881,8 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
   describe('B2: Health edge cases', () => {
     it('componentProbe() with liveness returning null → handled gracefully as ok:false', () => {
       const probe = componentProbe('null-test', 'Null Probe', {
-        liveness: () => null as unknown as ProbeResult,
+        // Returns null on purpose, to exercise the null-liveness branch.
+        liveness: () => invokeWithInvalidArgs<ProbeResult>(() => null, undefined, []),
         readiness: () => ({ ok: true }),
       });
       const result = probe.liveness();
@@ -2028,7 +2043,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       });
       const q = r.getRecentSlowQueries();
       expect(q.length).toBe(1);
-      expect(q[0].query).toBe('second');
+      expect(q[0]!.query).toBe('second');
     });
 
     it('record with empty string query', async () => {
@@ -2041,7 +2056,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       });
       const q = r.getRecentSlowQueries();
       expect(q.length).toBe(1);
-      expect(q[0].query).toBe('');
+      expect(q[0]!.query).toBe('');
     });
 
     it('clear() then getRecentSlowQueries() → empty', async () => {
@@ -2065,8 +2080,9 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
         database: 'shard-1',
       });
       const q = r.getRecentSlowQueries();
-      expect(q[0].database).toBe('shard-1');
-      expect(q[0].user).toBeUndefined();
+      expect(q).toHaveLength(1);
+      expect(q[0]!.database).toBe('shard-1');
+      expect(q[0]!.user).toBeUndefined();
     });
   });
 
@@ -2148,7 +2164,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       });
       const rules = m.getRules();
       expect(rules.length).toBe(1);
-      expect(rules[0].threshold).toBe(90);
+      expect(rules[0]!.threshold).toBe(90);
     });
   });
 
@@ -2203,8 +2219,8 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
         maxTotalBytes: 0,
       });
       const mgr = new InMemoryBackupManager(storage, retention);
-      const result1 = await mgr.getBackup(null as unknown as string);
-      const result2 = await mgr.getBackup(undefined as unknown as string);
+      const result1 = await invokeWithInvalidArgs(mgr.getBackup, mgr, [null]);
+      const result2 = await invokeWithInvalidArgs(mgr.getBackup, mgr, [undefined]);
       expect(result1).toBeNull();
       expect(result2).toBeNull();
     });
@@ -2273,7 +2289,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
       // Mutate snapshot
       for (const p of snap.points) {
-        (p as any).value = 999;
+        p.value = 999;
       }
 
       // Registry should be unchanged
@@ -2290,7 +2306,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       log.info('second');
       const entries = log.getEntries();
       expect(entries.length).toBe(1);
-      expect(entries[0].message).toBe('second');
+      expect(entries[0]!.message).toBe('second');
     });
 
     it('child(bindings) with empty bindings → returns new instance', () => {
@@ -2302,8 +2318,8 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
     it('child(bindings) with null/undefined bindings → handled', () => {
       const log = new InMemoryLogger(10);
-      const child1 = log.child(null as unknown as Record<string, unknown>);
-      const child2 = log.child(undefined as unknown as Record<string, unknown>);
+      const child1 = invokeWithInvalidArgs(log.child, log, [null]);
+      const child2 = invokeWithInvalidArgs(log.child, log, [undefined]);
       expect(child1).toBeInstanceOf(InMemoryLogger);
       expect(child2).toBeInstanceOf(InMemoryLogger);
     });
@@ -2314,10 +2330,10 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       log.error(err);
       const entries = log.getEntries();
       expect(entries.length).toBe(1);
-      expect(entries[0].level).toBe('error');
-      expect(entries[0].error).toBeDefined();
-      expect(entries[0].error!.message).toBe('something broke');
-      expect(entries[0].error!.stack).toBeDefined();
+      expect(entries[0]!.level).toBe('error');
+      expect(entries[0]!.error).toBeDefined();
+      expect(entries[0]!.error!.message).toBe('something broke');
+      expect(entries[0]!.error!.stack).toBeDefined();
     });
 
     it('all six levels create correct LogEntry', () => {
@@ -2330,12 +2346,12 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       log.fatal('fatal msg');
       const entries = log.getEntries();
       expect(entries.length).toBe(6);
-      expect(entries[0].level).toBe('trace');
-      expect(entries[1].level).toBe('debug');
-      expect(entries[2].level).toBe('info');
-      expect(entries[3].level).toBe('warn');
-      expect(entries[4].level).toBe('error');
-      expect(entries[5].level).toBe('fatal');
+      expect(entries[0]!.level).toBe('trace');
+      expect(entries[1]!.level).toBe('debug');
+      expect(entries[2]!.level).toBe('info');
+      expect(entries[3]!.level).toBe('warn');
+      expect(entries[4]!.level).toBe('error');
+      expect(entries[5]!.level).toBe('fatal');
     });
   });
 
@@ -2396,11 +2412,11 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       const tracer = new InMemoryDistributedTracer();
       const span = tracer.startSpan('test');
       span.end();
-      const firstEndTime = tracer.getCompletedSpans()[0].endTime;
+      const firstEndTime = tracer.getCompletedSpans()[0]!.endTime;
       span.end(); // Second call
       const spans = tracer.getCompletedSpans();
       expect(spans.length).toBe(1);
-      expect(spans[0].endTime).toBe(firstEndTime);
+      expect(spans[0]!.endTime).toBe(firstEndTime);
     });
 
     it('startSpan after previous span ended → new root span (no parent)', () => {
@@ -2414,10 +2430,10 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
 
       const spans = tracer.getCompletedSpans();
       expect(spans.length).toBe(2);
-      // After ending span1, currentSpanId is reset, so span2 has no parent
-      // (parentSpanId is null when using InMemoryDistributedTracer since it
-      // returns this._currentSpanId which is set to s.parentSpanId ?? null)
-      expect(spans[1].parentSpanId).toBeNull();
+      // After ending span1, currentSpanId is reset, so span2 has no parent.
+      // SpanLike.parentSpanId is optional (mirroring the real Span type), so an
+      // absent parent is represented as undefined rather than null.
+      expect(spans[1]!.parentSpanId).toBeUndefined();
     });
 
     it('inject with no active span → carrier unchanged', () => {
@@ -2445,7 +2461,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
   describe('B11: Maintenance edge cases', () => {
     it('vacuum with null/undefined target → throws or handled', async () => {
       const me = new InMemoryMaintenanceExecutor();
-      await expect(me.vacuum(null as unknown as { target: string })).rejects.toThrow();
+      await expect(invokeWithInvalidArgs(me.vacuum, me, [null])).rejects.toThrow();
     });
 
     it('getStorageStats on non-existent target → returns default stats', async () => {
@@ -2477,9 +2493,9 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
       await me.reindex({ target: 'idx_users_email' });
       const log = me.opsLog;
       expect(log.length).toBe(3);
-      expect(log[0].operation).toBe('VACUUM');
-      expect(log[1].operation).toBe('ANALYZE');
-      expect(log[2].operation).toBe('REINDEX');
+      expect(log[0]!.operation).toBe('VACUUM');
+      expect(log[1]!.operation).toBe('ANALYZE');
+      expect(log[2]!.operation).toBe('REINDEX');
     });
   });
 
@@ -2512,7 +2528,7 @@ describe('SECTION C: Serialization / Immutability', () => {
       expect(hitsPoint.value).toBe(5);
 
       // Modify point value (snapshot is an array, let's verify the registry is independent)
-      (hitsPoint as any).value = 100;
+      hitsPoint.value = 100;
       expect(registry.counter('hits').get()).toBe(5);
     });
 
@@ -2569,7 +2585,6 @@ describe('SECTION C: Serialization / Immutability', () => {
         sizeBytes: 2048,
         fileCount: 3,
         location: '/backups/snap-1',
-        tags: { env: 'test' },
       };
       const json = JSON.stringify(snap);
       const parsed = JSON.parse(json);
@@ -2585,7 +2600,7 @@ describe('SECTION C: Serialization / Immutability', () => {
       const span = tracer.startSpan('op1', { attributes: { key: 'val' } });
       span.end();
       const spans = tracer.getCompletedSpans();
-      const s = spans[0];
+      const s = spans[0]!;
       const json = JSON.stringify(s);
       const parsed = JSON.parse(json);
       expect(parsed.spanId).toBe(s.spanId);
@@ -2640,10 +2655,10 @@ describe('SECTION C: Serialization / Immutability', () => {
       const checkTypes: SecurityCheck = {
         id: 'c1',
         category: 'network',
-        name: 'Test Check',
-        severity: 'PASS',
         description: 'A test',
-        remediation: '',
+        severity: 'PASS',
+        message: 'TLS is enabled',
+        timestamp: new Date().toISOString(),
       };
       expect(checkTypes.category).toBe('network');
     });

@@ -14,6 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { S3StorageBackend, type S3StorageBackendConfig } from '../impl/S3StorageBackend.js';
+import type { S3Client } from '@aws-sdk/client-s3';
 import { mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -26,6 +27,21 @@ function createTempFile(name: string, content: string): string {
   const p = join(dir, name);
   writeFileSync(p, content, 'utf-8');
   return p;
+}
+
+/**
+ * S3StorageBackend constructs its own S3 client and keeps it private, so
+ * stubbing that client is the only way to exercise the request/response
+ * translation. This is the single reflection edge in the file: a renamed member
+ * throws at the stub site instead of leaving the assertions comparing nothing.
+ */
+function clientOf(backend: S3StorageBackend): S3Client {
+  return Reflect.get(backend, 'client') as S3Client;
+}
+
+/** Whether the backend considers itself closed (private lifecycle flag). */
+function isClosed(backend: S3StorageBackend): boolean {
+  return Boolean(Reflect.get(backend, 'closed'));
 }
 
 /** Create S3StorageBackend with a mocked S3Client. */
@@ -48,7 +64,7 @@ function makeBackend(overrides?: Partial<S3StorageBackendConfig>): {
   });
 
   // Override the internal client.send method
-  (backend as any).client.send = mockSend;
+  Object.assign(clientOf(backend), { send: mockSend });
 
   return { backend, mockSend };
 }
@@ -82,7 +98,7 @@ describe('S3StorageBackend — AC 50.x: Production S3 Storage Backend', () => {
     await backend.upload(sourcePath, 'backups/test.txt');
 
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const command = mockSend.mock.calls[0][0];
+    const command = mockSend.mock.calls[0]![0];
     expect(command.constructor.name).toBe('PutObjectCommand');
     expect(command.input.Bucket).toBe('test-bucket');
     expect(command.input.Key).toBe('backups/test.txt');
@@ -99,14 +115,16 @@ describe('S3StorageBackend — AC 50.x: Production S3 Storage Backend', () => {
     // Mock GetObject response
     const { Readable } = await import('stream');
     const mockBody = Readable.from([Buffer.from('downloaded content')]);
-    (mockBody as any).transformToByteArray = vi.fn(async () => Buffer.from('downloaded content'));
+    Object.assign(mockBody, {
+      transformToByteArray: vi.fn(async () => Buffer.from('downloaded content')),
+    });
 
     mockSend.mockResolvedValueOnce({ Body: mockBody });
 
     await backend.download('backups/backup-1.snapshot', destPath);
 
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const command = mockSend.mock.calls[0][0];
+    const command = mockSend.mock.calls[0]![0];
     expect(command.constructor.name).toBe('GetObjectCommand');
     expect(command.input.Key).toBe('backups/backup-1.snapshot');
 
@@ -136,12 +154,12 @@ describe('S3StorageBackend — AC 50.x: Production S3 Storage Backend', () => {
     const results = await backend.list('backups/');
 
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const command = mockSend.mock.calls[0][0];
+    const command = mockSend.mock.calls[0]![0];
     expect(command.constructor.name).toBe('ListObjectsV2Command');
     expect(command.input.Prefix).toBe('backups/');
     expect(results).toHaveLength(2);
-    expect(results[0].key).toBe('backups/snap-1');
-    expect(results[0].size).toBe(100);
+    expect(results[0]!.key).toBe('backups/snap-1');
+    expect(results[0]!.size).toBe(100);
   });
 
   // AC 50.4: Delete
@@ -153,7 +171,7 @@ describe('S3StorageBackend — AC 50.x: Production S3 Storage Backend', () => {
     await backend.delete('backups/snap-1');
 
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const command = mockSend.mock.calls[0][0];
+    const command = mockSend.mock.calls[0]![0];
     expect(command.constructor.name).toBe('DeleteObjectCommand');
     expect(command.input.Key).toBe('backups/snap-1');
   });
@@ -196,7 +214,7 @@ describe('S3StorageBackend — AC 50.x: Production S3 Storage Backend', () => {
     uploadedFiles.push(sourcePath);
     await backend.upload(sourcePath, 'backups/test.txt');
 
-    const command = mockSend.mock.calls[0][0];
+    const command = mockSend.mock.calls[0]![0];
     expect(command.input.Key).toBe('production/backups/test.txt');
 
     // List
@@ -211,7 +229,7 @@ describe('S3StorageBackend — AC 50.x: Production S3 Storage Backend', () => {
     });
 
     const results = await backend.list('backups/');
-    expect(results[0].key).toBe('backups/snap-1');
+    expect(results[0]!.key).toBe('backups/snap-1');
   });
 
   // AC 50.8: SSE-S3 encryption
@@ -224,7 +242,7 @@ describe('S3StorageBackend — AC 50.x: Production S3 Storage Backend', () => {
     uploadedFiles.push(sourcePath);
     await backend.upload(sourcePath, 'backups/sse-test');
 
-    const command = mockSend.mock.calls[0][0];
+    const command = mockSend.mock.calls[0]![0];
     expect(command.input.ServerSideEncryption).toBe('AES256');
   });
 
@@ -247,12 +265,12 @@ describe('S3StorageBackend — AC 50.x: Production S3 Storage Backend', () => {
   it('AC 50.10: destroy() should close S3 client', async () => {
     const { backend } = makeBackend();
     const destroySpy = vi.fn();
-    (backend as any).client.destroy = destroySpy;
-    (backend as any).closed = false;
+    Object.assign(clientOf(backend), { destroy: destroySpy });
+    Object.assign(backend, { closed: false });
 
     backend.destroy();
     expect(destroySpy).toHaveBeenCalled();
-    expect((backend as any).closed).toBe(true);
+    expect(isClosed(backend)).toBe(true);
 
     // Second call should be noop
     backend.destroy();
@@ -275,7 +293,7 @@ describe('S3StorageBackend — AC 50.x: Production S3 Storage Backend', () => {
     uploadedFiles.push(sourcePath);
     await backend.upload(sourcePath, 'backups/kms-test');
 
-    const command = mockSend.mock.calls[0][0];
+    const command = mockSend.mock.calls[0]![0];
     expect(command.input.ServerSideEncryption).toBe('aws:kms');
     expect(command.input.SSEKMSKeyId).toBe('arn:aws:kms:us-east-1:123456789:key/my-key');
   });

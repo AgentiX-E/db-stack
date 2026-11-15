@@ -20,8 +20,9 @@
  *   M13 – repeated operations idempotent
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { InMemoryMaintenanceExecutor } from '../impl/InMemoryMaintenanceExecutor.js';
+import type { MaintenanceResult } from '@agentix-e/db-operations-core/types';
 
 describe('InMemoryMaintenanceExecutor', () => {
   let executor: InMemoryMaintenanceExecutor;
@@ -148,13 +149,13 @@ describe('InMemoryMaintenanceExecutor', () => {
   it('getIndexFragmentation filters by table name', async () => {
     const frag = await executor.getIndexFragmentation('users');
     expect(frag.length).toBe(1);
-    expect(frag[0].tableName).toBe('users');
+    expect(frag[0]!.tableName).toBe('users');
   });
 
   it('getIndexFragmentation filters by index name', async () => {
     const frag = await executor.getIndexFragmentation('idx_orders_user_id');
     expect(frag.length).toBe(1);
-    expect(frag[0].indexName).toBe('idx_orders_user_id');
+    expect(frag[0]!.indexName).toBe('idx_orders_user_id');
   });
 
   // ── M10: getAutoVacuumStatus returns config ────────────────────────
@@ -203,8 +204,8 @@ describe('InMemoryMaintenanceExecutor', () => {
 
     const log = executor.opsLog;
     expect(log).toHaveLength(2);
-    expect(log[0].operation).toBe('VACUUM');
-    expect(log[1].operation).toBe('VACUUM');
+    expect(log[0]!.operation).toBe('VACUUM');
+    expect(log[1]!.operation).toBe('VACUUM');
   });
 
   it('M12: opsLog accumulates all operation types', async () => {
@@ -221,7 +222,7 @@ describe('InMemoryMaintenanceExecutor', () => {
     await executor.vacuum({ target: '*', dryRun: true });
     const log = executor.opsLog;
     expect(log).toHaveLength(1);
-    expect(log[0].details).toHaveProperty('dryRun', true);
+    expect(log[0]!.details).toHaveProperty('dryRun', true);
   });
 
   // ── M13: repeated operations idempotent ────────────────────────────
@@ -249,12 +250,12 @@ describe('InMemoryMaintenanceExecutor', () => {
   it('M13: repeated reindex calls are safe and keep fragmentation low', async () => {
     await executor.reindex({ target: 'idx_users_email' });
     const fragAfterFirst = await executor.getIndexFragmentation('idx_users_email');
-    const ratioAfterFirst = fragAfterFirst[0].fragmentationRatio;
+    const ratioAfterFirst = fragAfterFirst[0]!.fragmentationRatio;
 
     // Second reindex should keep ratio at or below first reindex result
     await executor.reindex({ target: 'idx_users_email' });
     const fragAfterSecond = await executor.getIndexFragmentation('idx_users_email');
-    const ratioAfterSecond = fragAfterSecond[0].fragmentationRatio;
+    const ratioAfterSecond = fragAfterSecond[0]!.fragmentationRatio;
 
     expect(ratioAfterSecond).toBeLessThanOrEqual(ratioAfterFirst);
   });
@@ -289,8 +290,8 @@ describe('InMemoryMaintenanceExecutor', () => {
 
     const frag = await custom.getIndexFragmentation('*');
     expect(frag).toHaveLength(1);
-    expect(frag[0].indexName).toBe('idx_custom');
-    expect(frag[0].fragmentationRatio).toBe(0.9);
+    expect(frag[0]!.indexName).toBe('idx_custom');
+    expect(frag[0]!.fragmentationRatio).toBe(0.9);
   });
 
   it('vacuum incremental (non-full) reduces free space but not pageCount', async () => {
@@ -319,7 +320,7 @@ describe('InMemoryMaintenanceExecutor', () => {
 
     // All indexes on 'orders' should have reduced fragmentation
     for (let i = 0; i < ratiosBefore.length; i++) {
-      expect(ratiosAfter[i]).toBeLessThan(ratiosBefore[i]);
+      expect(ratiosAfter[i]).toBeLessThan(ratiosBefore[i]!);
     }
   });
 
@@ -327,7 +328,14 @@ describe('InMemoryMaintenanceExecutor', () => {
     const log = executor.opsLog;
     expect(log).toHaveLength(0);
     // Modifying the returned array should not affect internal state
-    (log as any[]).push({ test: true });
+    // The getter is typed readonly, so mutating it takes an explicit widening.
+    (log as MaintenanceResult[]).push({
+      success: true,
+      operation: 'VACUUM',
+      target: 'injected',
+      message: 'injected by the test',
+      durationMs: 0,
+    });
     expect(executor.opsLog).toHaveLength(0);
   });
 

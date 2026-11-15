@@ -867,7 +867,7 @@ describe('Coverage: uncovered fault types & edges', () => {
         description: '',
         seed: 3,
         maxDurationMs: 10_000,
-        steps: [{ name: 's1', faults: [] }],
+        steps: [{ name: 's1', fault: makeFault(), waitMs: 0 }],
       },
       new MockInvariantChecker(),
     );
@@ -880,8 +880,11 @@ describe('Coverage: uncovered fault types & edges', () => {
     // TypeScript prevents unknown types at compile time, but runtime
     // default branch in applyFault must be exercised for coverage.
     const injector = async () => {
-      await (engine as any).inject?.({
-        type: 'invalid-fault-type-xyz',
+      // `FaultTypeV2` rejects this value at compile time; `string` widens the
+      // literal so the runtime path can still be reached.
+      const invalidType: string = 'invalid-fault-type-xyz';
+      await engine.inject({
+        type: invalidType as ChaosFaultV2['type'],
         targets: ['node-a'],
         durationMs: 0,
         config: {},

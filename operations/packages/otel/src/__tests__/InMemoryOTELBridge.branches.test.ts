@@ -26,6 +26,6 @@ describe('IOTEL-branch: idempotent span end', () => {
     const spans = otel.getSpans();
     expect(spans).toHaveLength(1);
     // Status remains 'ok' (first end) — the second call must be a no-op.
-    expect(spans[0].status).toBe('ok');
+    expect(spans[0]!.status).toBe('ok');
   });
 });
