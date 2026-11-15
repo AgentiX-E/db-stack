@@ -39,7 +39,7 @@ export class AuditLogManager implements IAuditLogger {
   private buffer: AuditEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private logFilePath: string;
-  private retention: AuditRetentionPolicy;
+  private retention: Required<AuditRetentionPolicy>;
 
   constructor(options?: { logFilePath?: string; retention?: AuditRetentionPolicy; autoStart?: boolean }) {
     this.logFilePath = options?.logFilePath ?? path.join(process.cwd(), 'audit.jsonl');
@@ -213,7 +213,7 @@ export class AuditLogManager implements IAuditLogger {
     const before = this.events.length;
 
     // Keep minRetain events regardless of age
-    const minRetain = this.retention.minRetain ?? 0;
+    const minRetain = this.retention.minRetain;
     const eligible = this.events.filter((e) => e.timestamp < cutoff);
 
     if (eligible.length <= minRetain) return 0;
@@ -243,7 +243,7 @@ export class AuditLogManager implements IAuditLogger {
     // Auto-prune after flush
     if (this.retention.maxEvents && this.events.length > this.retention.maxEvents) {
       const excess = this.events.length - this.retention.maxEvents;
-      const minRetain = this.retention.minRetain ?? 0;
+      const minRetain = this.retention.minRetain;
       const toRemove = Math.min(excess, this.events.length - minRetain);
       if (toRemove > 0) {
         this.events = this.events.slice(toRemove);
@@ -293,16 +293,6 @@ export class AuditLogManager implements IAuditLogger {
     this.events.push(event);
     this.buffer.push(event);
 
-    if (this.buffer.length >= MAX_BUFFER_SIZE) {
-      void this.flush();
-    }
-  }
-
-  private _appendBatch(events: AuditEvent[]): void {
-    for (const event of events) {
-      this.events.push(event);
-      this.buffer.push(event);
-    }
     if (this.buffer.length >= MAX_BUFFER_SIZE) {
       void this.flush();
     }
