@@ -36,7 +36,6 @@ concurrency:
 
 env:
   NODE_VERSION: '22'
-  TMPDIR: ${{ github.workspace }}/.tmp
 
 jobs:
   raft-ycsb:
@@ -60,8 +59,10 @@ jobs:
           RECORDS: ${{ inputs.records || '300' }}
           OPS: ${{ inputs.ops || '900' }}
           THREADS: ${{ inputs.threads || '4' }}
+          TMPDIR: ${{ github.workspace }}/.tmp
         run: |
           set -o pipefail
+          mkdir -p "$TMPDIR"
           npx tsx bench/real-ycsb.ts \
             --workload "$WORKLOADS" \
             --records "$RECORDS" \
@@ -100,4 +101,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Long-term stability (memory / commit-index monotonicity)
-        run: pnpm --filter @agentix-e/db-cluster run test:soak
+        env:
+          TMPDIR: ${{ github.workspace }}/.tmp
+        run: |
+          mkdir -p "$TMPDIR"
+          pnpm --filter @agentix-e/db-cluster run test:soak

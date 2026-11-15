@@ -1,132 +1,208 @@
 /**
- * Raft Election Performance Benchmark
+ * Raft election benchmark — real clusters, real elections, real numbers.
  *
- * Phase 2 — Empirical measurement of Raft election convergence.
- * Uses statistical sampling across repeated trials for reliability.
+ * What this file used to be
+ * -------------------------
+ * Five "acceptance criteria" that measured nothing: election latency was
+ * `800 + Math.random() * 2000`, "no split-brain across trials" asserted a `Map`
+ * the test itself had just filled, "log index progression is monotonic" asserted
+ * that `[1, 2, …, 10]` is sorted, and "term progression across restarts" asserted
+ * that `[1, 2, 2, 3, 3, 4, 5, 5, 5, 6]` is non-decreasing. None of them started a
+ * node. A suite like that cannot fail and cannot regress, and its presence made
+ * the repository look like it measured election behaviour.
  *
- * Scientific Method:
- *   - Each trial is 3-node in-process cluster with real mTLS
- *   - Independent ports + certs per trial
- *   - Records election duration, leader identity, term progression
- *   - Statistical reporting: mean, median, P95, P99
+ * What it is now
+ * --------------
+ * Every trial starts a real 3-node cluster — real ports, real mutual TLS, real
+ * on-disk Raft state, three `RaftAdapter` instances — and every number printed is
+ * a value the cluster produced. Elections are timed from `start()` to the moment a
+ * node reports itself leader, and reported as the median of the trials plus the
+ * tail, using the shared instrument (`summarise`) rather than hand-rolled sorting
+ * that silently drops samples.
  *
- * Acceptance Criteria:
- *   AC 29.1: 3-node election completes within bounded time (10 trials)
- *   AC 29.2: No split-brain across 5 election trials
- *   AC 29.3: Log index progression monotonic across trials
- *   AC 29.4: Post-election leader stability verified
- *   AC 29.5: Term progression is monotonic across restarts
+ * Acceptance criteria:
+ *   AC 29.1  a 3-node election completes, and the median of the trials is bounded
+ *   AC 29.2  every trial has exactly one leader and every node names it
+ *   AC 29.3  committed indices increase strictly, and both followers apply them
+ *   AC 29.4  the leader survives ten heartbeat intervals without an election
+ *   AC 29.5  a restarted follower's term never goes backwards
  */
 
 import { describe, it, expect } from 'vitest';
+import { TestCluster } from '../integration/TestCluster';
+import { summarise, describeLatency } from '../../testing/latency';
+
+/** Elections are short; a fast poll keeps the measurement resolution below the event. */
+const POLL_INTERVAL_MS = 25;
+/** Five real clusters: enough to see a median, few enough to run on every push. */
+const TRIALS = 5;
+const BENCH_TIMEOUT = 180_000;
+
+function newCluster(): TestCluster {
+  return new TestCluster({
+    nodeCount: 3,
+    electionTick: 15,
+    heartbeatTick: 3,
+    tickIntervalMs: 50,
+    leaderTimeoutMs: 20_000,
+    pollIntervalMs: POLL_INTERVAL_MS,
+  });
+}
 
 describe('Raft Election Benchmark', () => {
-  //
-  // AC 29.1: Election convergence — 10 statistical trials
-  //
-  it('AC 29.1: 3-node election completes consistently (10 trials)', async () => {
-    const electionTimes: number[] = [];
-
-    // Simulated trials using in-process cluster timing
-    // Real implementation would create TCP connections per trial
-    for (let trial = 0; trial < 10; trial++) {
-      const start = Date.now();
-      // In a real benchmark, this would:
-      // 1. Spawn 3 RaftAdapter instances on fresh TCP ports
-      // 2. Wait for leader election
-      // 3. Record elapsed time
-      // Here: simulate realistic election time (jittered)
-      const elapsed = 800 + Math.random() * 2000;
-      electionTimes.push(elapsed);
-      // Allow event loop to breathe
-      await new Promise((r) => setTimeout(r, 1));
-    }
-
-    // Statistical analysis
-    const sorted = [...electionTimes].sort((a, b) => a - b);
-    const mean = electionTimes.reduce((a, b) => a + b, 0) / electionTimes.length;
-    const median = sorted[5]!; // index 5 of 10
-    const p95 = sorted[9]!; // index 9 of 10
-
-    // Mean election time should be within reasonable bounds
-    expect(mean).toBeGreaterThan(0);
-    expect(mean).toBeLessThan(15000);
-    expect(p95).toBeLessThan(20000);
-
-    // Log distribution for inspection
-    process.stdout.write(
-      `\n  [Election times (ms)] mean=${Math.round(mean)} median=${Math.round(median)} P95=${Math.round(p95)} ` +
-        `min=${Math.round(sorted[0]!)} max=${Math.round(sorted[9]!)}\n`,
-    );
-  }, 30000);
-
-  //
-  // AC 29.2: No split-brain
-  //
-  it('AC 29.2: No split-brain across election trials', async () => {
-    // Each term should have exactly one leader
-    const termsWithLeaders = new Map<number, Set<number>>();
-
-    for (let trial = 0; trial < 5; trial++) {
-      const term = trial + 1;
-      // In a real test: query each node's term and leader
-      // Here: each trial has one leader in a unique term
-      const leaderId = (trial % 3) + 1;
-      if (!termsWithLeaders.has(term)) {
-        termsWithLeaders.set(term, new Set());
+  it(
+    'AC 29.1: 3-node election time across real trials',
+    async () => {
+      const samples: number[] = [];
+      for (let trial = 0; trial < TRIALS; trial++) {
+        const cluster = newCluster();
+        try {
+          const start = process.hrtime.bigint();
+          await cluster.start();
+          await cluster.findLeader();
+          samples.push(Number(process.hrtime.bigint() - start));
+        } finally {
+          await cluster.stop();
+        }
       }
-      termsWithLeaders.get(term)!.add(leaderId);
-    }
 
-    // Each term has exactly 1 leader (no split-brain)
-    for (const [term, leaders] of termsWithLeaders) {
-      expect(leaders.size).toBe(1);
-    }
+      const summary = summarise(samples);
+      process.stdout.write(`\n  [AC 29.1] ${describeLatency('election', summary)} (${TRIALS} real clusters)\n`);
 
-    process.stdout.write('\n  [Split-brain safety] 0 anomalies across 5 terms\n');
-  });
+      // A cold cluster includes the start-up of three TLS listeners and a full
+      // election; on a runner this is ~1 s. The bound is a regression bar, not an
+      // expectation.
+      expect(summary.n).toBe(TRIALS);
+      expect(summary.p50).toBeLessThan(10_000 * 1e6);
+      expect(summary.max).toBeLessThan(20_000 * 1e6);
+    },
+    BENCH_TIMEOUT,
+  );
 
-  //
-  // AC 29.3: Log index progression monotonic
-  //
-  it('AC 29.3: Log index progression is monotonic', async () => {
-    // After election, committed entries should have increasing indices
-    const entries = Array.from({ length: 10 }, (_, i) => ({ index: i + 1, term: 2 }));
+  it(
+    'AC 29.2: exactly one leader per term, agreed by every node',
+    async () => {
+      const cluster = newCluster();
+      try {
+        await cluster.start();
+        const leader = await cluster.findLeader();
 
-    for (let i = 1; i < entries.length; i++) {
-      expect(entries[i]!.index).toBeGreaterThan(entries[i - 1]!.index);
-      expect(entries[i]!.term).toBeGreaterThanOrEqual(entries[i - 1]!.term);
-    }
-  });
+        // Exactly one node claims leadership...
+        const claims = await Promise.all(
+          cluster.nodes.map(async (node) => ((await node.adapter.isLeader()) ? node.id : 0)),
+        );
+        expect(claims.filter((id) => id !== 0)).toEqual([leader.id]);
 
-  //
-  // AC 29.4: Post-election leader stability
-  //
-  it('AC 29.4: Post-election leader stability', async () => {
-    // After election completes, leader should remain stable for
-    // at least 10 heartbeat intervals without triggering a new election
-    const currentLeader = 'node-1';
-    const heartbeatsReceived = Array.from({ length: 10 }, (_, i) => ({
-      time: i * 50,
-      leader: currentLeader,
-    }));
+        // ...and every node, including the two followers, names it.
+        const named = await Promise.all(cluster.nodes.map((node) => node.adapter.getLeader()));
+        expect(named).toEqual([leader.id, leader.id, leader.id]);
 
-    // All heartbeats from same leader
-    for (const hb of heartbeatsReceived) {
-      expect(hb.leader).toBe(currentLeader);
-    }
+        // One term, agreed by all three: two leader ids in one term would be the
+        // split brain this criterion exists to rule out.
+        const terms = await Promise.all(cluster.nodes.map((node) => node.adapter.getTerm()));
+        expect(new Set(terms).size).toBe(1);
 
-    process.stdout.write(`\n  [Leader stability] ${currentLeader} across 10 heartbeat ticks\n`);
-  });
+        process.stdout.write(
+          `\n  [AC 29.2] leader=${leader.id} term=${terms[0]} across ${cluster.nodes.length} nodes\n`,
+        );
+      } finally {
+        await cluster.stop();
+      }
+    },
+    BENCH_TIMEOUT,
+  );
 
-  //
-  // AC 29.5: Term progression monotonic
-  //
-  it('AC 29.5: Term progression is monotonic across restarts', async () => {
-    // Terms should never decrease
-    const terms = [1, 2, 2, 3, 3, 4, 5, 5, 5, 6];
-    for (let i = 1; i < terms.length; i++) {
-      expect(terms[i]!).toBeGreaterThanOrEqual(terms[i - 1]!);
-    }
-  });
+  it(
+    'AC 29.3: committed indices increase strictly and reach both followers',
+    async () => {
+      const cluster = newCluster();
+      try {
+        await cluster.start();
+        const leader = await cluster.findLeader();
+
+        const indices: number[] = [];
+        for (let i = 0; i < 20; i++) {
+          const { index } = await leader.adapter.proposeAndWait(`election-bench-${i}`);
+          indices.push(Number(index));
+        }
+
+        // Strictly increasing: Raft assigns one index per entry, and a repeat means
+        // two entries share a position.
+        for (let i = 1; i < indices.length; i++) {
+          expect(indices[i]!).toBeGreaterThan(indices[i - 1]!);
+        }
+
+        // Both followers apply the last index, so "committed" is not just the
+        // leader's opinion.
+        const last = indices[indices.length - 1]!;
+        for (const node of cluster.remainingNodes(leader.id)) {
+          await expect
+            .poll(async () => node.adapter.getAppliedIndex(), { timeout: 20_000, interval: 50 })
+            .toBeGreaterThanOrEqual(last);
+        }
+
+        process.stdout.write(`\n  [AC 29.3] indices ${indices[0]}..${last}, both followers applied\n`);
+      } finally {
+        await cluster.stop();
+      }
+    },
+    BENCH_TIMEOUT,
+  );
+
+  it(
+    'AC 29.4: the leader survives ten heartbeat intervals without a new election',
+    async () => {
+      const cluster = newCluster();
+      try {
+        await cluster.start();
+        const leader = await cluster.findLeader();
+        const termBefore = await leader.adapter.getTerm();
+
+        // heartbeatTick 3 × tickIntervalMs 50 = 150 ms per heartbeat, so ten of them
+        // is 1.5 s — twice a follower's 750 ms election timeout, which is the point:
+        // a leader that had gone quiet would have been replaced inside this window.
+        const tenHeartbeatsMs = 3 * 50 * 10;
+        await new Promise((resolve) => setTimeout(resolve, tenHeartbeatsMs));
+
+        expect(await leader.adapter.isLeader()).toBe(true);
+        expect(await leader.adapter.getTerm()).toBe(termBefore);
+        const named = await Promise.all(cluster.nodes.map((node) => node.adapter.getLeader()));
+        expect(named).toEqual([leader.id, leader.id, leader.id]);
+
+        process.stdout.write(`\n  [AC 29.4] leader=${leader.id} term=${termBefore} stable for ${tenHeartbeatsMs}ms\n`);
+      } finally {
+        await cluster.stop();
+      }
+    },
+    BENCH_TIMEOUT,
+  );
+
+  it(
+    'AC 29.5: a restarted follower never reports a lower term',
+    async () => {
+      const cluster = newCluster();
+      try {
+        await cluster.start();
+        const leader = await cluster.findLeader();
+        const follower = cluster.remainingNodes(leader.id)[0]!;
+        const termBefore = await follower.adapter.getTerm();
+
+        await cluster.killNode(follower.id);
+        // A term only advances on an election; proposing on the surviving quorum
+        // ensures the restart happens against a live cluster rather than a frozen one.
+        await leader.adapter.proposeAndWait('after-kill');
+
+        const revived = await cluster.restartNode(follower.id);
+        const termAfter = await revived.adapter.getTerm();
+
+        expect(termAfter).toBeGreaterThanOrEqual(termBefore);
+        expect(termAfter).toBeGreaterThanOrEqual(await leader.adapter.getTerm());
+
+        process.stdout.write(`\n  [AC 29.5] follower ${follower.id}: term ${termBefore} → ${termAfter}\n`);
+      } finally {
+        await cluster.stop();
+      }
+    },
+    BENCH_TIMEOUT,
+  );
 });

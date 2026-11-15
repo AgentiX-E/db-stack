@@ -18,8 +18,8 @@
     "test": "vitest run",
     "test:unit": "vitest run --exclude \"src/__tests__/integration/**\" --exclude \"src/__tests__/chaos/**\" --exclude \"src/__tests__/linearizability/**\" --exclude \"src/__tests__/snapshot/**\" --exclude \"src/__tests__/shard/**\" --exclude \"src/__tests__/consensus/**\" --exclude \"src/__tests__/boundary/**\"",
     "test:integration": "vitest run src/__tests__/integration src/__tests__/chaos src/__tests__/linearizability src/__tests__/snapshot src/__tests__/shard src/__tests__/consensus",
-    "test:soak": "vitest run --testTimeout=3600000 src/__tests__/longrun",
-    "test:perf": "vitest run --testTimeout=3600000 src/__tests__/performance",
+    "test:soak": "vitest run --config vitest.soak.config.ts",
+    "test:perf": "NODE_OPTIONS=--expose-gc vitest run --config vitest.performance.config.ts",
     "coverage": "vitest run --coverage",
     "lint": "eslint .",
     "format:check": "prettier --check \"src/**/*.ts\"",
@@ -28,7 +28,9 @@
     "bench:ycsb": "tsx bench/raft-ycsb.ts",
     "tla-check": "bash tla/tla-check.sh",
     "docs": "typedoc",
-    "test:load": "vitest run --testTimeout=1800000 src/__tests__/boundary"
+    "test:load": "vitest run --testTimeout=1800000 src/__tests__/boundary",
+    "bench:snapshot": "tsx bench/snapshot-threshold-sweep.ts",
+    "bench:concurrency": "tsx bench/proposal-concurrency-curve.ts"
   },
   "files": [
     "dist",

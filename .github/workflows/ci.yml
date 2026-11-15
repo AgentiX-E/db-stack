@@ -343,6 +343,32 @@ jobs:
       - run: pnpm --filter @agentix-e/db-cluster run test:load
       - run: pnpm --filter @agentix-e/db-federation run test:perf
 
+  # ── Performance tier ──────────────────────────────────────────────
+  #
+  # The cluster performance suite asserts budgets (proposal latency, throughput,
+  # read-index cost, bounded retained log, heap per proposal) on a real 3-node
+  # mTLS cluster. It is separated from the unit/integration tiers because the
+  # numbers depend on the runner, and run on every push so a regression is caught
+  # by the commit that caused it.
+  #
+  # Until this job existed the script was never invoked by any workflow, and could
+  # not have run if it had been: `test:perf` filtered on a directory the vitest
+  # config excludes, so it printed "No test files found" and exited 1.
+  benchmark:
+    name: Benchmark (cluster, real 3-node mTLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Cluster performance budgets
+        run: pnpm --filter @agentix-e/db-cluster run test:perf
+
   # ── Supply chain ──────────────────────────────────────────────────
   security:
     name: Security (SCA + secret scan)
@@ -372,7 +398,7 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [typecheck, quality, unit, engine-conformance, integration, coverage, coverage-e2e, coverage-gate, e2e-cluster, e2e-federation, load, security]
+    needs: [typecheck, quality, unit, engine-conformance, integration, coverage, coverage-e2e, coverage-gate, e2e-cluster, e2e-federation, load, benchmark, security]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -391,12 +417,13 @@ jobs:
           echo "| e2e-cluster | ${{ needs.e2e-cluster.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| e2e-federation | ${{ needs.e2e-federation.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| load | ${{ needs.load.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| benchmark | ${{ needs.benchmark.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
           for r in "${{ needs.typecheck.result }}" "${{ needs.quality.result }}" "${{ needs.unit.result }}" \
                    "${{ needs.engine-conformance.result }}" "${{ needs.integration.result }}" \
                    "${{ needs.coverage.result }}" "${{ needs.coverage-e2e.result }}" \
                    "${{ needs.coverage-gate.result }}" \
                    "${{ needs.e2e-cluster.result }}" "${{ needs.e2e-federation.result }}" "${{ needs.load.result }}" \
-                   "${{ needs.security.result }}"; do
+                   "${{ needs.benchmark.result }}" "${{ needs.security.result }}"; do
             if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then exit 1; fi
           done

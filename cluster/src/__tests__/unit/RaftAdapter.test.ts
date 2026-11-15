@@ -93,27 +93,50 @@ describe('AC 34.6: getAppliedIndex', () => {
 });
 
 describe('AC 34.6b: getRetainedLogLength', () => {
-  it('returns 0 before init (empty progress)', async () => {
+  it('returns 0 before init', async () => {
     await expect(new RaftAdapter(minimalConfig()).getRetainedLogLength()).resolves.toBe(0);
   });
 
-  it('computes lastLog - applied when progress is available', async () => {
+  it('counts the entries the log still holds, not the un-applied tail', async () => {
+    // The previous implementation returned `lastLog - applied`, which is 0 or 1 on a
+    // live node — the apply loop keeps `applied` one step behind the head — so a log
+    // holding 600 entries measured as 1 and every "bounded log" assertion passed
+    // without measuring anything. The count comes from the log's own bounds.
     const adapter = new RaftAdapter(minimalConfig());
-    // Simulate a healthy node with a bounded retained log.
     (adapter as any).node = {
-      getCommittedIndex: () => 150,
       getLastApplied: () => 140,
       getLastLogIndex: () => 142,
+      logManager: { getFirstIndex: () => 1, getLastIndex: () => 142 },
     };
-    await expect(adapter.getRetainedLogLength()).resolves.toBe(2);
+    await expect(adapter.getRetainedLogLength()).resolves.toBe(142);
   });
 
-  it('clamps negative values to zero (applied ahead of lastLog)', async () => {
+  it('counts only what survives compaction', async () => {
     const adapter = new RaftAdapter(minimalConfig());
     (adapter as any).node = {
-      getCommittedIndex: () => 100,
-      getLastApplied: () => 101,
-      getLastLogIndex: () => 100,
+      logManager: { getFirstIndex: () => 101, getLastIndex: () => 142 },
+    };
+    await expect(adapter.getRetainedLogLength()).resolves.toBe(42);
+  });
+
+  it('returns 0 for an empty log and for one that is compacted away entirely', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).node = { logManager: { getFirstIndex: () => 1, getLastIndex: () => 0 } };
+    await expect(adapter.getRetainedLogLength()).resolves.toBe(0);
+  });
+
+  it('returns 0 when the node exposes no log manager, and when reading it throws', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).node = {};
+    await expect(adapter.getRetainedLogLength()).resolves.toBe(0);
+
+    (adapter as any).node = {
+      logManager: {
+        getFirstIndex: () => {
+          throw new Error('storage closed');
+        },
+        getLastIndex: () => 1,
+      },
     };
     await expect(adapter.getRetainedLogLength()).resolves.toBe(0);
   });

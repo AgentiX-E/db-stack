@@ -21,10 +21,12 @@
  *   AC 39.3  a handler that returns 0 bytes is refused, naming the consequence
  *   AC 39.4  a handler that returns bytes is stored verbatim
  *   AC 39.5  an install calls the handler with the transferred bytes
+ *   AC 39.6  the snapshot threshold reaches raft-core even when unset, as this
+ *            package's documented default rather than the library's whim
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { RaftAdapter, type RaftConfig } from '../../consensus/core/RaftAdapter';
+import { RaftAdapter, DEFAULT_SNAPSHOT_INTERVAL, type RaftConfig } from '../../consensus/core/RaftAdapter';
 import { generateClusterCerts } from '../../testing/test-certs';
 import { getFreePorts } from '../../testing/test-utils';
 
@@ -67,11 +69,14 @@ describe('RaftAdapter application snapshot hooks', () => {
    * node owns: real storage, real TLS listener, real `RaftNode`. Nothing about
    * the callbacks is stubbed.
    */
-  async function started(handlers?: Parameters<RaftAdapter['setApplicationSnapshotHandlers']>[0]) {
+  async function started(
+    handlers?: Parameters<RaftAdapter['setApplicationSnapshotHandlers']>[0],
+    overrides: Partial<RaftConfig> = {},
+  ) {
     const [port] = await getFreePorts(1);
     const certs = generateClusterCerts(1);
     const bundle = certs.nodes[0]!;
-    adapter = new RaftAdapter(config({ peers: [] }));
+    adapter = new RaftAdapter(config({ peers: [], ...overrides }));
     if (handlers) adapter.setApplicationSnapshotHandlers(handlers);
     await adapter.init(() => {}, {
       node: { id: 1, host: '127.0.0.1', port: port! },
@@ -133,4 +138,19 @@ describe('RaftAdapter application snapshot hooks', () => {
     await stateMachineOf(a).installSnapshot(Buffer.from('restored'));
     expect(seen.map((b) => b.toString())).toEqual(['restored']);
   }, 30_000);
+
+  it('AC 39.6 — the snapshot threshold is the one this package documents, set or unset', async () => {
+    // Read from the node raft-core built, because that is where the number is used:
+    // a config field that never arrives there is exactly the defect this closes
+    // (`snapshotInterval` was documented for two releases and never forwarded).
+    const thresholdOf = (a: RaftAdapter) =>
+      (a as unknown as { node: { snapshotThreshold: number } }).node.snapshotThreshold;
+
+    const byDefault = await started();
+    expect(thresholdOf(byDefault)).toBe(DEFAULT_SNAPSHOT_INTERVAL);
+    await byDefault.stop();
+
+    const configured = await started(undefined, { snapshotInterval: 50 });
+    expect(thresholdOf(configured)).toBe(50);
+  }, 60_000);
 });
