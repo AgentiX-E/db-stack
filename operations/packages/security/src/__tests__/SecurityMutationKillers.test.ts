@@ -99,7 +99,7 @@ describe('SEC-MK: InMemoryRateLimiter resetMs/remaining arithmetic', () => {
 describe('SEC-MK: InMemoryTLSManager date arithmetic', () => {
   it('validFrom is ~60 days in the past, validTo ~30 days ahead (loadConfig)', async () => {
     const tls = new InMemoryTLSManager();
-    await tls.loadConfig({ certPath: '/c.crt', keyPath: '/c.key' } as any);
+    await tls.loadConfig({ certPath: '/c.crt', keyPath: '/c.key' });
     const info = await tls.getCertInfo();
     const now = Date.now();
     const DAY = 86_400_000;
@@ -115,7 +115,7 @@ describe('SEC-MK: InMemoryTLSManager date arithmetic', () => {
 
   it('reloadCerts: validFrom ~30 days in the past, validTo ~60 days ahead (L37/L38)', async () => {
     const tls = new InMemoryTLSManager();
-    await tls.loadConfig({ certPath: '/c.crt', keyPath: '/c.key' } as any);
+    await tls.loadConfig({ certPath: '/c.crt', keyPath: '/c.key' });
     await tls.reloadCerts();
     const info = await tls.getCertInfo();
     const now = Date.now();
@@ -133,10 +133,7 @@ describe('SEC-MK: InMemoryTLSManager date arithmetic', () => {
 describe('SEC-MK: AES256GCM minimum ciphertext length guard', () => {
   it('rejects ciphertext shorter than version+iv+tag (32B)', async () => {
     const enc = new AES256GCMEncryptionProvider();
-    await enc.initialize({
-      algorithm: 'aes-256-gcm',
-      keyDerivation: 'pbkdf2',
-    } as any);
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     // 16 bytes < KEY_VERSION_PREFIX(4)+IV(12)+TAG(16) = 32.
     // `+`→`-` mutants lower the threshold (4-12+16=8 etc.), so a 16-byte input
     // would wrongly pass. Original throws.
@@ -145,10 +142,7 @@ describe('SEC-MK: AES256GCM minimum ciphertext length guard', () => {
 
   it('error message reports the exact minimum length 32 (L89)', async () => {
     const enc = new AES256GCMEncryptionProvider();
-    await enc.initialize({
-      algorithm: 'aes-256-gcm',
-      keyDerivation: 'pbkdf2',
-    } as any);
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     // The guard already rejects, but the message interpolates
     // `KEY_VERSION_PREFIX_LENGTH + IV_LENGTH + TAG_LENGTH` = 4+12+16 = 32 (L89).
     // A `+`→`-` mutant changes the message to "minimum 8B" or "minimum 0B".
@@ -157,10 +151,7 @@ describe('SEC-MK: AES256GCM minimum ciphertext length guard', () => {
 
   it('accepts a 32-byte (empty-plaintext) ciphertext produced by encrypt', async () => {
     const enc = new AES256GCMEncryptionProvider();
-    await enc.initialize({
-      algorithm: 'aes-256-gcm',
-      keyDerivation: 'pbkdf2',
-    } as any);
+    await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     const ct = await enc.encrypt(Buffer.alloc(0));
     // [version 4][iv 12][empty 0][tag 16] = 32 bytes, exactly at the guard.
     expect(ct.length).toBe(32);
@@ -174,7 +165,7 @@ describe('SEC-MK: KeyManager version bump on loadKey', () => {
     const km = new KeyManager({
       masterSecret: 'mk-secret',
       iterations: 1000,
-    } as any);
+    });
     // Wrap a DEK with an explicit high version.
     const wrapped = await km.wrapKey(Buffer.from('dek-0123456789'), 5);
     const loadedVersion = await km.loadKey(wrapped);

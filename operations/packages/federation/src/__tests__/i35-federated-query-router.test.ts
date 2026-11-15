@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { FederatedQueryRouter } from '../impl/FederatedQueryRouter.js';
-import type { FederatedNode, FederatedQuery, RoutingPolicy, NodeResult } from '../interfaces/index.js';
+import type { FederatedNode, FederatedQuery, RoutingPolicy, NodeExecutor, NodeResult } from '../interfaces/index.js';
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ function makeQuery(overrides: Partial<FederatedQuery> = {}): FederatedQuery {
   };
 }
 
-function makeExecutor(shouldSucceed = true, rows: unknown[] = [{ id: 1 }]): () => Promise<NodeResult> {
+function makeExecutor(shouldSucceed = true, rows: unknown[] = [{ id: 1 }]): NodeExecutor {
   return async (node, query, shardIds) => ({
     nodeId: node.id,
     shardIds,
@@ -57,7 +57,7 @@ function makeExecutor(shouldSucceed = true, rows: unknown[] = [{ id: 1 }]): () =
   });
 }
 
-function makeFailingExecutor(error = 'connection refused'): () => Promise<NodeResult> {
+function makeFailingExecutor(error = 'connection refused'): NodeExecutor {
   return async (node, query, shardIds) => ({
     nodeId: node.id,
     shardIds,
@@ -119,7 +119,15 @@ describe('FQR1: Node registration and management', () => {
 
   it('update non-existent node is no-op', () => {
     expect(() => router.updateNodeHealth('nope', 'healthy')).not.toThrow();
-    expect(() => router.updateNodeLoad('nope', {} as any)).not.toThrow();
+    expect(() =>
+      router.updateNodeLoad('nope', {
+        cpuPercent: 0,
+        memoryPercent: 0,
+        activeConnections: 0,
+        pendingQueries: 0,
+        avgLatencyMs: 0,
+      }),
+    ).not.toThrow();
   });
 
   it('nodes are deep-copied on register', () => {
@@ -578,7 +586,7 @@ describe('FQR9: Fan-out/fan-in execution', () => {
     router.registerNode(makeNode({ id: 'n2' }));
     router.registerNode(makeNode({ id: 'n3' }));
     const delays: number[] = [];
-    const slowExec = async (node: any, query: any, shardIds: any) => {
+    const slowExec = async (node: FederatedNode, query: FederatedQuery, shardIds: string[]) => {
       const delay = 10 + Math.random() * 20;
       delays.push(delay);
       await new Promise((r) => setTimeout(r, delay));
@@ -609,7 +617,7 @@ describe('FQR9: Fan-out/fan-in execution', () => {
     });
     router.registerNode(makeNode({ id: 'good', shardIds: ['s1'] }));
     router.registerNode(makeNode({ id: 'bad', shardIds: ['s2'] }));
-    const mixedExec = async (node: any, query: any, shardIds: any) => {
+    const mixedExec = async (node: FederatedNode, query: FederatedQuery, shardIds: string[]) => {
       if (node.id === 'bad')
         return {
           nodeId: node.id,
@@ -653,7 +661,7 @@ describe('FQR10: Failover and retry', () => {
     router.registerNode(makeNode({ id: 'bad', health: 'healthy', shardIds: ['s1'] }));
     router.registerNode(makeNode({ id: 'backup', health: 'healthy', shardIds: ['s1'] }));
     let calls = 0;
-    const exec = async (node: any, query: any, shardIds: any) => {
+    const exec = async (node: FederatedNode, query: FederatedQuery, shardIds: string[]) => {
       calls++;
       if (node.id === 'bad')
         return {
@@ -691,7 +699,7 @@ describe('FQR10: Failover and retry', () => {
     });
     router.registerNode(makeNode({ id: 'fail', health: 'healthy', shardIds: ['s1'] }));
     router.registerNode(makeNode({ id: 'spare', health: 'healthy', shardIds: ['s1'] }));
-    const exec = async (node: any) => ({
+    const exec = async (node: FederatedNode) => ({
       nodeId: node.id,
       shardIds: ['s1'],
       rows: [],
@@ -1034,7 +1042,7 @@ describe('FQR14: Production workflow', () => {
     expect(plan.assignments.length).toBeGreaterThan(0);
 
     // Execute with a real-ish executor
-    const exec = async (node: any, query: any, shardIds: any) => ({
+    const exec = async (node: FederatedNode, query: FederatedQuery, shardIds: string[]) => ({
       nodeId: node.id,
       shardIds,
       rows: shardIds.map((s: string, i: number) => ({
@@ -1087,7 +1095,7 @@ describe('FQR14: Production workflow', () => {
     const plan = router.planQuery(makeQuery({ id: 'geo-q' }));
     expect(plan.assignments[0]!.reason).toContain('geo_affinity');
 
-    const exec = async (node: any, query: any, shardIds: any) => ({
+    const exec = async (node: FederatedNode, query: FederatedQuery, shardIds: string[]) => ({
       nodeId: node.id,
       shardIds,
       rows: [{ x: 1 }],

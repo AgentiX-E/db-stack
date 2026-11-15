@@ -369,7 +369,11 @@ describe('coordination completion', () => {
     // verify=false: after all shards succeed, the coordinator skips the
     // "verifying" branch and jumps straight to "completed" (the `&&`/`||`
     // and `===` gate in the third else-if).
-    const coord = f.startCoordinatedMigration({ currentVersion: 1, targetVersion: 2, pending: [] }, 'all', false);
+    const coord = f.startCoordinatedMigration(
+      { currentVersion: 1, targetVersion: 2, pending: [], namespace: 'test-namespace' },
+      'all',
+      false,
+    );
 
     f.reportShardResult(coord.id, {
       shardId: 's1',
@@ -392,7 +396,11 @@ describe('coordination completion', () => {
     f.registerShard(makeSnapshot('s1', [makeMigration(1)]));
     f.registerShard(makeSnapshot('s2', [makeMigration(1)]));
 
-    const coord = f.startCoordinatedMigration({ currentVersion: 1, targetVersion: 2, pending: [] }, 'all', true);
+    const coord = f.startCoordinatedMigration(
+      { currentVersion: 1, targetVersion: 2, pending: [], namespace: 'test-namespace' },
+      'all',
+      true,
+    );
 
     f.reportShardResult(coord.id, {
       shardId: 's1',

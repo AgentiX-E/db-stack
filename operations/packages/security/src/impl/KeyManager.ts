@@ -27,14 +27,14 @@ import crypto from 'crypto';
 export interface KeyManagerConfig {
   /** Password or secret from which the KEK is derived. */
   masterSecret: string;
-  /** Salt for PBKDF2 derivation (should be stored alongside wrapped key). */
+  /** Salt for PBKDF2 derivation (should be stored alongside wrapped key). Default: 32 random bytes. */
   salt?: Buffer;
   /** PBKDF2 iterations. Default: 600_000 (OWASP 2024 recommendation). */
-  iterations: number;
+  iterations?: number;
   /** Key length in bytes. Default: 32 (256-bit). */
-  keyLength: number;
+  keyLength?: number;
   /** Hash algorithm for PBKDF2. Default: "sha256". */
-  hashAlgorithm: string;
+  hashAlgorithm?: string;
 }
 
 export interface WrappedKey {
@@ -60,7 +60,7 @@ export interface KeyPair {
   createdAt: number;
 }
 
-const DEFAULT_CONFIG: Omit<KeyManagerConfig, 'masterSecret'> = {
+const DEFAULT_CONFIG: Omit<Required<KeyManagerConfig>, 'masterSecret' | 'salt'> = {
   iterations: 600_000,
   keyLength: 32,
   hashAlgorithm: 'sha256',
@@ -69,15 +69,20 @@ const DEFAULT_CONFIG: Omit<KeyManagerConfig, 'masterSecret'> = {
 // ── KeyManager ─────────────────────────────────────────────
 
 export class KeyManager {
-  private config: KeyManagerConfig;
+  private config: Required<KeyManagerConfig>;
   private keyHistory = new Map<number, KeyPair>();
   private currentVersion = 0;
 
   constructor(config: KeyManagerConfig) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
-    if (!this.config.salt) {
-      this.config.salt = crypto.randomBytes(32);
-    }
+    // Resolve documented defaults explicitly: a spread would let an explicit
+    // `undefined` overwrite the default it is supposed to select.
+    this.config = {
+      masterSecret: config.masterSecret,
+      salt: config.salt ?? crypto.randomBytes(32),
+      iterations: config.iterations ?? DEFAULT_CONFIG.iterations,
+      keyLength: config.keyLength ?? DEFAULT_CONFIG.keyLength,
+      hashAlgorithm: config.hashAlgorithm ?? DEFAULT_CONFIG.hashAlgorithm,
+    };
   }
 
   // ── Key Generation ───────────────────────────────────────
@@ -157,7 +162,7 @@ export class KeyManager {
       iv,
       encryptedKey,
       authTag,
-      salt: this.config.salt!,
+      salt: this.config.salt,
       iterations: this.config.iterations,
       createdAt: Date.now(),
     };
@@ -253,7 +258,7 @@ export class KeyManager {
   // ── Internal ─────────────────────────────────────────────
 
   private async _deriveKEK(salt?: Buffer, iterations?: number): Promise<Buffer> {
-    const effectiveSalt = salt ?? this.config.salt!;
+    const effectiveSalt = salt ?? this.config.salt;
     const effectiveIterations = iterations ?? this.config.iterations;
 
     return new Promise<Buffer>((resolve, reject) => {

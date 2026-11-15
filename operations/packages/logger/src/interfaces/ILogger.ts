@@ -28,13 +28,17 @@ export interface LogEntry {
 /**
  * Logger interface.
  *
- * All methods accept either a simple message or a (context, message) pair.
+ * All methods accept a simple message, a (context, message) pair, or a
+ * (message, context) pair — the last form keeps the message first while
+ * attaching structured context, and is part of the runtime contract every
+ * implementation dispatches on.
  * Error-level methods accept an optional Error object.
  *
  * @example
  * ```ts
  * logger.info('Server started');
  * logger.info({ port: 3000, host: '0.0.0.0' }, 'Server started');
+ * logger.info('Server started', { port: 3000 });
  * logger.error(err, 'Failed to connect');
  * logger.error({ peerId: 'node-2' }, err, 'Connection failed');
  * ```
@@ -45,23 +49,29 @@ export interface ILogger {
 
   trace(msg: string): void;
   trace(context: Record<string, unknown>, msg: string): void;
+  trace(msg: string, context: Record<string, unknown>): void;
 
   debug(msg: string): void;
   debug(context: Record<string, unknown>, msg: string): void;
+  debug(msg: string, context: Record<string, unknown>): void;
 
   info(msg: string): void;
   info(context: Record<string, unknown>, msg: string): void;
+  info(msg: string, context: Record<string, unknown>): void;
 
   warn(msg: string): void;
   warn(context: Record<string, unknown>, msg: string): void;
+  warn(msg: string, context: Record<string, unknown>): void;
 
   error(msg: string): void;
   error(context: Record<string, unknown>, msg: string): void;
+  error(msg: string, context: Record<string, unknown>): void;
   error(err: Error, msg?: string): void;
   error(context: Record<string, unknown>, err: Error, msg?: string): void;
 
   fatal(msg: string): void;
   fatal(context: Record<string, unknown>, msg: string): void;
+  fatal(msg: string, context: Record<string, unknown>): void;
   fatal(err: Error, msg?: string): void;
   fatal(context: Record<string, unknown>, err: Error, msg?: string): void;
 }

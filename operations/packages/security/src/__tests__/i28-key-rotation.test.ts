@@ -565,7 +565,8 @@ describe('ROT11: Emergency rotation', () => {
     const event = await manager.emergencyRotate('emergency-p1', 'key leaked to public repository');
     expect(event.success).toBe(true);
     expect(event.trigger.kind).toBe('compromise');
-    expect((event.trigger as any).reason).toBe('key leaked to public repository');
+    if (event.trigger.kind !== 'compromise') throw new Error('expected a compromise trigger');
+    expect(event.trigger.reason).toBe('key leaked to public repository');
   });
 
   it('data encrypted pre-compromise is still decryptable', async () => {

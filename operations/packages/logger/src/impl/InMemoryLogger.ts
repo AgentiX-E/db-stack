@@ -26,7 +26,7 @@ export class InMemoryLogger implements ILogger {
 
   // ── ILogger implementation ──
 
-  child(bindings: Record<string, unknown>): ILogger {
+  child(bindings: Record<string, unknown>): InMemoryLogger {
     const child = new InMemoryLogger(this._component, this._maxEntries);
     // Copy parent entries to child (child starts fresh but inherits context)
     Object.assign(child._context, this._context, bindings);
@@ -35,30 +35,35 @@ export class InMemoryLogger implements ILogger {
 
   trace(msg: string): void;
   trace(context: Record<string, unknown>, msg: string): void;
-  trace(contextOrMsg: unknown, msg?: string): void {
-    this._log('trace', contextOrMsg, msg);
+  trace(msg: string, context: Record<string, unknown>): void;
+  trace(contextOrMsg: unknown, extra?: unknown): void {
+    this._log('trace', contextOrMsg, extra);
   }
 
   debug(msg: string): void;
   debug(context: Record<string, unknown>, msg: string): void;
-  debug(contextOrMsg: unknown, msg?: string): void {
-    this._log('debug', contextOrMsg, msg);
+  debug(msg: string, context: Record<string, unknown>): void;
+  debug(contextOrMsg: unknown, extra?: unknown): void {
+    this._log('debug', contextOrMsg, extra);
   }
 
   info(msg: string): void;
   info(context: Record<string, unknown>, msg: string): void;
-  info(contextOrMsg: unknown, msg?: string): void {
-    this._log('info', contextOrMsg, msg);
+  info(msg: string, context: Record<string, unknown>): void;
+  info(contextOrMsg: unknown, extra?: unknown): void {
+    this._log('info', contextOrMsg, extra);
   }
 
   warn(msg: string): void;
   warn(context: Record<string, unknown>, msg: string): void;
-  warn(contextOrMsg: unknown, msg?: string): void {
-    this._log('warn', contextOrMsg, msg);
+  warn(msg: string, context: Record<string, unknown>): void;
+  warn(contextOrMsg: unknown, extra?: unknown): void {
+    this._log('warn', contextOrMsg, extra);
   }
 
   error(msg: string): void;
   error(context: Record<string, unknown>, msg: string): void;
+  error(msg: string, context: Record<string, unknown>): void;
   error(err: Error, msg?: string): void;
   error(context: Record<string, unknown>, err: Error, msg?: string): void;
   error(...args: unknown[]): void {
@@ -67,6 +72,7 @@ export class InMemoryLogger implements ILogger {
 
   fatal(msg: string): void;
   fatal(context: Record<string, unknown>, msg: string): void;
+  fatal(msg: string, context: Record<string, unknown>): void;
   fatal(err: Error, msg?: string): void;
   fatal(context: Record<string, unknown>, err: Error, msg?: string): void;
   fatal(...args: unknown[]): void {

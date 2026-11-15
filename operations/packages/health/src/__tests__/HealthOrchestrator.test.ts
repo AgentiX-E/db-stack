@@ -211,7 +211,7 @@ describe('HealthOrchestrator', () => {
         readiness: { ok: false, message: 'Not connected to peers' },
         lastError: null,
       });
-      expect(components[0].uptimeSeconds).toBeGreaterThanOrEqual(0);
+      expect(components[0]!.uptimeSeconds).toBeGreaterThanOrEqual(0);
     });
   });
 

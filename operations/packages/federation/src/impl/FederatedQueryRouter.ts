@@ -82,7 +82,7 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
 
   // ── Policy ────────────────────────────────────────────────
 
-  setRoutingPolicy(policy: RoutingPolicy): void {
+  setRoutingPolicy(policy: Partial<RoutingPolicy>): void {
     this.policy = { ...DEFAULT_POLICY, ...policy };
   }
 

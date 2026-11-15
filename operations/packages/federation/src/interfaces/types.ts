@@ -222,7 +222,7 @@ export interface IFederatedQueryRouter {
   updateNodeHealth(nodeId: string, health: NodeHealth): void;
 
   /** Set the routing policy. */
-  setRoutingPolicy(policy: RoutingPolicy): void;
+  setRoutingPolicy(policy: Partial<RoutingPolicy>): void;
 
   /** Build a query plan for the given query. */
   planQuery(query: FederatedQuery): QueryPlan;

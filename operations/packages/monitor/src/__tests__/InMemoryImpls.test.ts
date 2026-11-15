@@ -12,6 +12,16 @@ import { InMemoryDeadlockDetector } from '../impl/InMemoryDeadlockDetector.js';
 import { InMemoryConnectionMonitor } from '../impl/InMemoryConnectionMonitor.js';
 import { InMemoryAlertRuleManager } from '../impl/InMemoryAlertRuleManager.js';
 import { InMemoryResourceQuotaManager } from '../impl/InMemoryResourceQuotaManager.js';
+import type { AlertRule } from '../interfaces/index.js';
+
+/**
+ * Rule definitions can arrive from configuration, so evaluateSnapshot has a
+ * fallback for a condition outside the union. This helper states that a value
+ * is deliberately out of contract without asserting a lie about its type.
+ */
+function offContract<T>(value: unknown): T {
+  return value as T;
+}
 
 // ── InMemorySlowQueryRecorder ──
 
@@ -26,8 +36,8 @@ describe('InMemorySlowQueryRecorder', () => {
     });
     const entries = recorder.getRecentSlowQueries();
     expect(entries).toHaveLength(1);
-    expect(entries[0].query).toBe('SELECT * FROM big_table');
-    expect(entries[0].durationMs).toBe(200);
+    expect(entries[0]!.query).toBe('SELECT * FROM big_table');
+    expect(entries[0]!.durationMs).toBe(200);
   });
 
   it('ignores query below threshold', async () => {
@@ -54,9 +64,9 @@ describe('InMemorySlowQueryRecorder', () => {
     }
     const entries = recorder.getRecentSlowQueries();
     expect(entries).toHaveLength(3);
-    expect(entries[0].query).toBe('query-2');
-    expect(entries[1].query).toBe('query-3');
-    expect(entries[2].query).toBe('query-4');
+    expect(entries[0]!.query).toBe('query-2');
+    expect(entries[1]!.query).toBe('query-3');
+    expect(entries[2]!.query).toBe('query-4');
   });
 
   it('setThreshold changes which queries are recorded', async () => {
@@ -77,7 +87,7 @@ describe('InMemorySlowQueryRecorder', () => {
       database: 'test',
     });
     expect(recorder.getRecentSlowQueries()).toHaveLength(1);
-    expect(recorder.getRecentSlowQueries()[0].query).toBe('also-fast-but-above-threshold');
+    expect(recorder.getRecentSlowQueries()[0]!.query).toBe('also-fast-but-above-threshold');
   });
 
   it('total count returned by getSlowQueryCount', async () => {
@@ -120,7 +130,7 @@ describe('InMemorySlowQueryRecorder', () => {
     }
     const limited = recorder.getRecentSlowQueries(3);
     expect(limited).toHaveLength(3);
-    expect(limited[0].query).toBe('q-7');
+    expect(limited[0]!.query).toBe('q-7');
   });
 
   it('getSlowQueries filters by threshold', async () => {
@@ -139,7 +149,7 @@ describe('InMemorySlowQueryRecorder', () => {
     });
     const result = await recorder.getSlowQueries(100);
     expect(result).toHaveLength(1);
-    expect(result[0].query).toBe('slow');
+    expect(result[0]!.query).toBe('slow');
   });
 
   it('analyzePatterns groups similar queries', async () => {
@@ -160,9 +170,9 @@ describe('InMemorySlowQueryRecorder', () => {
     const patterns = await recorder.analyzePatterns();
     // Both queries collapse to the same normalized pattern with two durations.
     expect(patterns).toHaveLength(1);
-    expect(patterns[0].count).toBe(2);
+    expect(patterns[0]!.count).toBe(2);
     // average of [100, 200] = 150 (exact, no floating point)
-    expect(patterns[0].averageDurationMs).toBe(150);
+    expect(patterns[0]!.averageDurationMs).toBe(150);
   });
 
   it('analyzePatterns tracks lastSeen as the latest timestamp', async () => {
@@ -183,7 +193,7 @@ describe('InMemorySlowQueryRecorder', () => {
     });
     const patterns = await recorder.analyzePatterns();
     expect(patterns).toHaveLength(1);
-    expect(patterns[0].lastSeen.toISOString()).toBe(late.toISOString());
+    expect(patterns[0]!.lastSeen.toISOString()).toBe(late.toISOString());
   });
 
   it('getThreshold returns current threshold', () => {
@@ -220,8 +230,8 @@ describe('InMemoryDeadlockDetector', () => {
 
     const events = detector.detectDeadlocks();
     expect(events).toHaveLength(1);
-    expect(events[0].transactions).toContain('txA');
-    expect(events[0].transactions).toContain('txB');
+    expect(events[0]!.transactions).toContain('txA');
+    expect(events[0]!.transactions).toContain('txB');
   });
 
   it('detects 3-node deadlock A→B→C→A', () => {
@@ -236,7 +246,7 @@ describe('InMemoryDeadlockDetector', () => {
 
     const events = detector.detectDeadlocks();
     expect(events).toHaveLength(1);
-    expect(events[0].transactions.length).toBeGreaterThanOrEqual(2);
+    expect(events[0]!.transactions.length).toBeGreaterThanOrEqual(2);
   });
 
   it('no false positive on linear chain A→B→C', () => {
@@ -332,14 +342,14 @@ describe('InMemoryConnectionMonitor', () => {
     expect(monitor.getTotalOpened()).toBe(1);
     const status = monitor.getPoolStatus();
     expect(status).toHaveLength(1);
-    expect(status[0].status.active).toBe(1);
+    expect(status[0]!.status.active).toBe(1);
   });
 
   it('tracks waiting connections', () => {
     const monitor = new InMemoryConnectionMonitor();
     monitor.reportConnectionWaiting('pool-1');
     const status = monitor.getPoolStatus();
-    expect(status[0].status.waiting).toBe(1);
+    expect(status[0]!.status.waiting).toBe(1);
   });
 
   it('utilization ratio calculation', () => {
@@ -349,7 +359,7 @@ describe('InMemoryConnectionMonitor', () => {
       monitor.reportConnectionOpened('pool-1');
     }
     const status = monitor.getPoolStatus();
-    expect(status[0].status.utilization).toBe(0.5);
+    expect(status[0]!.status.utilization).toBe(0.5);
   });
 
   it('getPoolUtilization returns aggregate stats', async () => {
@@ -414,7 +424,7 @@ describe('InMemoryConnectionMonitor', () => {
 
     const connections = await monitor.getConnections();
     expect(connections).toHaveLength(1);
-    expect(connections[0].id).toBe('c1');
+    expect(connections[0]!.id).toBe('c1');
   });
 
   it('removeConnection deletes a tracked connection', async () => {
@@ -436,10 +446,10 @@ describe('InMemoryConnectionMonitor', () => {
   it('reportConnectionClosed decrements active to zero', () => {
     const monitor = new InMemoryConnectionMonitor();
     monitor.reportConnectionOpened('pool-1');
-    expect(monitor.getPoolStatus()[0].status.active).toBe(1);
+    expect(monitor.getPoolStatus()[0]!.status.active).toBe(1);
 
     monitor.reportConnectionClosed('pool-1');
-    expect(monitor.getPoolStatus()[0].status.active).toBe(0);
+    expect(monitor.getPoolStatus()[0]!.status.active).toBe(0);
   });
 
   it('reportConnectionClosed does not go negative when no open connections', () => {
@@ -469,7 +479,7 @@ describe('InMemoryConnectionMonitor', () => {
     const monitor = new InMemoryConnectionMonitor();
     monitor.reportConnectionOpened('pool-1');
     monitor.reportConnectionOpened('pool-1');
-    const status = monitor.getPoolStatus()[0].status;
+    const status = monitor.getPoolStatus()[0]!.status;
     expect(status.total).toBe(2); // active(2) + idle(0)
     expect(status.active).toBe(2);
   });
@@ -492,7 +502,7 @@ describe('InMemoryAlertRuleManager', () => {
     });
     const triggered = manager.evaluateSnapshot({ cpu_usage: 95 });
     expect(triggered).toHaveLength(1);
-    expect(triggered[0].ruleId).toBe('r1');
+    expect(triggered[0]!.ruleId).toBe('r1');
   });
 
   it('skips disabled rules', () => {
@@ -522,7 +532,7 @@ describe('InMemoryAlertRuleManager', () => {
       mem_usage: 90,
     });
     expect(triggered).toHaveLength(1);
-    expect(triggered[0].ruleId).toBe('r2');
+    expect(triggered[0]!.ruleId).toBe('r2');
   });
 
   it('addRule + removeRule lifecycle', () => {
@@ -565,10 +575,11 @@ describe('InMemoryAlertRuleManager', () => {
     expect(triggered2).toHaveLength(1);
   });
 
-  it('evaluate with empty rules returns empty', async () => {
+  it('evaluateSnapshot with empty rules returns empty', () => {
     const manager = new InMemoryAlertRuleManager();
-    const triggered = await manager.evaluate();
-    expect(triggered).toHaveLength(0);
+    // `evaluate()` used to be the name of this path and took no snapshot, so it
+    // could only ever return this: an empty array, regardless of the rules.
+    expect(manager.evaluateSnapshot({ cpu_usage: 99 })).toHaveLength(0);
   });
 
   it('evaluate with no matching snapshot key', () => {
@@ -603,7 +614,7 @@ describe('InMemoryAlertRuleManager', () => {
 
     await manager.updateRule('r1', { threshold: 95 });
     const rules = manager.getRules();
-    expect(rules[0].threshold).toBe(95);
+    expect(rules[0]!.threshold).toBe(95);
   });
 
   it('updateRule rejects when rule does not exist', async () => {
@@ -702,21 +713,24 @@ describe('InMemoryAlertRuleManager', () => {
     ['gte', { value: 9, threshold: 10 }, false],
     ['lte', { value: 10, threshold: 10 }, true],
     ['lte', { value: 11, threshold: 10 }, false],
-  ])('evaluateSnapshot honors %s condition (%o)', (condition, { value, threshold }, expected) => {
-    const manager = new InMemoryAlertRuleManager();
-    manager.addRule({
-      id: 'r1',
-      name: 'Test',
-      metric: 'm',
-      condition: condition as any,
-      threshold,
-      durationMs: 1000,
-      severity: 'info',
-      enabled: true,
-    });
-    const triggered = manager.evaluateSnapshot({ m: value });
-    expect(triggered.length > 0).toBe(expected);
-  });
+  ] as [AlertRule['condition'], { value: number; threshold: number }, boolean][])(
+    'evaluateSnapshot honors %s condition (%o)',
+    (condition, { value, threshold }, expected) => {
+      const manager = new InMemoryAlertRuleManager();
+      manager.addRule({
+        id: 'r1',
+        name: 'Test',
+        metric: 'm',
+        condition,
+        threshold,
+        durationMs: 1000,
+        severity: 'info',
+        enabled: true,
+      });
+      const triggered = manager.evaluateSnapshot({ m: value });
+      expect(triggered.length > 0).toBe(expected);
+    },
+  );
 
   it('evaluateSnapshot falls back to gte for unknown condition', () => {
     const manager = new InMemoryAlertRuleManager();
@@ -724,7 +738,7 @@ describe('InMemoryAlertRuleManager', () => {
       id: 'r1',
       name: 'Test',
       metric: 'm',
-      condition: 'unknown' as any,
+      condition: offContract<AlertRule['condition']>('unknown'),
       threshold: 10,
       durationMs: 1000,
       severity: 'info',

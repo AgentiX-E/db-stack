@@ -49,9 +49,9 @@ describe('LOG: Logger overload correctness', () => {
   // ── LOG3: String + extra object (the bug scenario) ──────────
 
   it('LOG3: info(msg, extraObj) treats string as message, object as context', () => {
-    // This is the bug scenario: TS resolves to info(msg: string) overload,
-    // but runtime passes both args. Before fix, _log would swap them.
-    (logger as any).info('user-login', { sessionId: 'abc-123' });
+    // TS resolves this to the info(msg, context) overload; the implementation
+    // must treat the string as the message and the object as the context.
+    logger.info('user-login', { sessionId: 'abc-123' });
     const entries = logger.getEntries();
     expect(entries.length).toBe(1);
     expect(entries[0]!.message).toBe('user-login');
@@ -143,7 +143,7 @@ describe('LOG: Logger overload correctness', () => {
     const child = logger.child({ service: 'auth' });
     child.info('child-message');
 
-    const entries = (child as InMemoryLogger).getEntries();
+    const entries = child.getEntries();
     expect(entries.length).toBe(1);
     expect(entries[0]!.message).toBe('child-message');
     expect(entries[0]!.context).toMatchObject({ service: 'auth' });

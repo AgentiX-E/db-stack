@@ -21,64 +21,73 @@ describe('L-M: InMemoryLogger _log overloads', () => {
     logger = new InMemoryLogger();
   });
 
+  /**
+   * The implementation dispatches on the runtime shape of its arguments, so the
+   * defensive branches covered here are only reachable with values the typed
+   * overloads reject. Reflect.apply states that directly: no cast, no `any`.
+   */
+  const invoke = (method: (...args: never[]) => void, ...args: unknown[]): void => {
+    Reflect.apply(method, logger, args);
+  };
+
   it('L1: log(string) — firstIsString branch, no extra', () => {
     logger.info('hello');
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe('hello');
+    expect(e[0]!.message).toBe('hello');
   });
 
   it('L2: log(string, object) — firstIsString branch, with extra context', () => {
     logger.info('msg', { userId: 'u1' });
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe('msg');
-    expect(e[0].context).toEqual({ userId: 'u1' });
+    expect(e[0]!.message).toBe('msg');
+    expect(e[0]!.context).toEqual({ userId: 'u1' });
   });
 
   it('L3: log(object, string) — firstIsObject branch', () => {
     logger.info({ userId: 'u2' }, 'action');
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe('action');
-    expect(e[0].context).toEqual({ userId: 'u2' });
+    expect(e[0]!.message).toBe('action');
+    expect(e[0]!.context).toEqual({ userId: 'u2' });
   });
 
   it('L4: log(object) — firstIsObject branch, no message', () => {
-    logger.info({ event: 'start' });
+    invoke(logger.info, { event: 'start' });
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe(''); // String(undefined ?? '')  → ''
-    expect(e[0].context).toEqual({ event: 'start' });
+    expect(e[0]!.message).toBe(''); // String(undefined ?? '')  → ''
+    expect(e[0]!.context).toEqual({ event: 'start' });
   });
 
   it('L5: log(non-string-non-object, string) — extra-string fallback', () => {
-    logger.info(42, 'numeric context as message');
+    invoke(logger.info, 42, 'numeric context as message');
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
     // Case 2 variant: log(nonObject, "message") — message is extra
-    expect(e[0].message).toBe('numeric context as message');
+    expect(e[0]!.message).toBe('numeric context as message');
   });
 
   it('L6: log(number) — fallback coercion', () => {
-    logger.info(123);
+    invoke(logger.info, 123);
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe('123');
+    expect(e[0]!.message).toBe('123');
   });
 
   it('L7: log(null) — null is not an object, falls to fallback', () => {
-    logger.warn(null);
+    invoke(logger.warn, null);
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe('');
+    expect(e[0]!.message).toBe('');
   });
 
   it('L8: log(undefined) — undefined falls to fallback', () => {
-    logger.debug(undefined as unknown as string);
+    invoke(logger.debug, undefined);
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe('');
+    expect(e[0]!.message).toBe('');
   });
 
   it('L9: log(string) via all levels hits _log correctly', () => {
@@ -93,26 +102,26 @@ describe('L-M: InMemoryLogger _log overloads', () => {
   });
 
   it('L10: log({}, undefined) — empty object context, undefined message', () => {
-    logger.info({});
+    invoke(logger.info, {});
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].context).toEqual({});
-    expect(e[0].message).toBe(''); // String(undefined ?? '')
+    expect(e[0]!.context).toEqual({});
+    expect(e[0]!.message).toBe(''); // String(undefined ?? '')
   });
 
   it('L11: log with array as context — array is NOT an object', () => {
-    logger.info(['item1'], 'array context');
+    invoke(logger.info, ['item1'], 'array context');
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
     // Array is not treated as context object; falls to fallback
-    expect(typeof e[0].message).toBe('string');
+    expect(typeof e[0]!.message).toBe('string');
   });
 
   it('L12: log(string, extra) where extra is not a valid object', () => {
-    logger.info('msg', 999);
+    invoke(logger.info, 'msg', 999);
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe('msg');
+    expect(e[0]!.message).toBe('msg');
   });
 
   it('L13: clear() then verify empty', () => {
@@ -134,21 +143,21 @@ describe('L-M: InMemoryLogger _log overloads', () => {
   it('L15: log(string, array) — array blocks extraCtx via isArray check', () => {
     // L140 && short-circuit: extra type-check excludes arrays.
     // If && becomes ||, an array extra would leak into context.
-    logger.info('msg', ['arr']);
+    invoke(logger.info, 'msg', ['arr']);
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe('msg');
+    expect(e[0]!.message).toBe('msg');
     // Array should NOT become context (blocked by !Array.isArray)
-    expect(e[0].context).not.toBeInstanceOf(Array);
+    expect(e[0]!.context).not.toBeInstanceOf(Array);
   });
 
   it('L16: log(number, "string message") — hits extra-string fallback via firstIsObject else-if chain', () => {
     // Tests L149 extra-string `&&` chain: extra !== undefined && typeof extra === 'string'
-    logger.info(null, 'fallback message');
+    invoke(logger.info, null, 'fallback message');
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
     // null is neither string nor object → enters else-if extra-string check
-    expect(e[0].message).toBe('fallback message');
+    expect(e[0]!.message).toBe('fallback message');
   });
 
   it('L143: log(msg, string) — non-object extra keeps validCtx false (no string-index leak)', () => {
@@ -157,12 +166,12 @@ describe('L-M: InMemoryLogger _log overloads', () => {
     // Mutant (validCtx=true) would pass the raw string as extraCtx, and the
     // spread `{...this._context, ..."str"}` leaks string indices (0,1,2...) into
     // context. Original keeps context free of those indices.
-    logger.info('hello', 'extraString');
+    invoke(logger.info, 'hello', 'extraString');
     const e = logger.getEntries();
     expect(e).toHaveLength(1);
-    expect(e[0].message).toBe('hello');
+    expect(e[0]!.message).toBe('hello');
     // Original: no numeric string indices leak into context
-    expect(Object.keys(e[0].context)).not.toContain('0');
-    expect(e[0].context).toEqual({});
+    expect(Object.keys(e[0]!.context!)).not.toContain('0');
+    expect(e[0]!.context).toEqual({});
   });
 });

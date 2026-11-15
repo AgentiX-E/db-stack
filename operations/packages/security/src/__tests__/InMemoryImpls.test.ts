@@ -80,14 +80,14 @@ describe('SEC-M: InMemoryTLSManager', () => {
     await tls.loadConfig({
       certPath: '/etc/certs/s.crt',
       keyPath: '/etc/certs/s.key',
-    } as any);
+    });
     const info = await tls.getCertInfo();
     expect(info.daysRemaining).toBeGreaterThan(0);
     expect(info.fingerprint).toBe('sha256$$deadbeef');
   });
 
   it('M8: reloadCerts updates cert fingerprint and days', async () => {
-    await tls.loadConfig({ certPath: '/old.crt', keyPath: '/old.key' } as any);
+    await tls.loadConfig({ certPath: '/old.crt', keyPath: '/old.key' });
     await tls.reloadCerts();
     const info = await tls.getCertInfo();
     expect(info.fingerprint).toBe('sha256$$reloaded');
@@ -121,16 +121,18 @@ describe('SEC-M: InMemorySecurityCompliance', () => {
     c.registerChecks([
       {
         id: 'c1',
-        name: 'c1',
+        description: 'c1',
         category: 'auth',
         severity: 'PASS',
+        message: '',
         timestamp: '',
       },
       {
         id: 'c2',
-        name: 'c2',
+        description: 'c2',
         category: 'auth',
         severity: 'PASS',
+        message: '',
         timestamp: '',
       },
     ]);
@@ -141,16 +143,18 @@ describe('SEC-M: InMemorySecurityCompliance', () => {
     c.registerChecks([
       {
         id: 'c1',
-        name: 'c1',
+        description: 'c1',
         category: 'auth',
         severity: 'FAIL',
+        message: '',
         timestamp: '',
       },
       {
         id: 'c2',
-        name: 'c2',
+        description: 'c2',
         category: 'auth',
         severity: 'FAIL',
+        message: '',
         timestamp: '',
       },
     ]);
@@ -161,30 +165,34 @@ describe('SEC-M: InMemorySecurityCompliance', () => {
     c.registerChecks([
       {
         id: 'c1',
-        name: 'c1',
+        description: 'c1',
         category: 'auth',
         severity: 'PASS',
+        message: '',
         timestamp: '',
       },
       {
         id: 'c2',
-        name: 'c2',
+        description: 'c2',
         category: 'auth',
         severity: 'WARN',
+        message: '',
         timestamp: '',
       },
       {
         id: 'c3',
-        name: 'c3',
+        description: 'c3',
         category: 'auth',
         severity: 'FAIL',
+        message: '',
         timestamp: '',
       },
       {
         id: 'c4',
-        name: 'c4',
+        description: 'c4',
         category: 'auth',
         severity: 'PASS',
+        message: '',
         timestamp: '',
       },
     ]);
@@ -196,16 +204,18 @@ describe('SEC-M: InMemorySecurityCompliance', () => {
     c.registerChecks([
       {
         id: 'c1',
-        name: 'c1',
+        description: 'c1',
         category: 'auth',
         severity: 'PASS',
+        message: '',
         timestamp: '',
       },
       {
         id: 'c2',
-        name: 'c2',
+        description: 'c2',
         category: 'net',
         severity: 'PASS',
+        message: '',
         timestamp: '',
       },
     ]);
@@ -218,9 +228,10 @@ describe('SEC-M: InMemorySecurityCompliance', () => {
     c.registerChecks([
       {
         id: 'c1',
-        name: 'c1',
+        description: 'c1',
         category: 'auth',
         severity: 'PASS',
+        message: '',
         timestamp: '',
       },
     ]);
@@ -323,7 +334,7 @@ describe('SEC-M: InMemoryRBACProvider', () => {
   it('M26: registerRole stores role permissions', () => {
     rbac.registerRole({
       name: 'admin',
-      permissions: [{ resource: '*', action: '*' }],
+      permissions: [{ resource: '*', action: 'admin' }],
     });
     expect(rbac.getRoles()).toHaveLength(1);
   });
@@ -333,7 +344,7 @@ describe('SEC-M: InMemoryRBACProvider', () => {
       name: 'reader',
       permissions: [{ resource: 'docs', action: 'read' }],
     });
-    expect(rbac.hasPermission({ roles: ['reader'] }, { resource: 'docs', action: 'read' })).toBe(true);
+    expect(rbac.hasPermission({ id: 'u-reader', roles: ['reader'] }, { resource: 'docs', action: 'read' })).toBe(true);
   });
 
   it('M28: hasPermission denies wrong action', () => {
@@ -341,11 +352,13 @@ describe('SEC-M: InMemoryRBACProvider', () => {
       name: 'reader',
       permissions: [{ resource: 'docs', action: 'read' }],
     });
-    expect(rbac.hasPermission({ roles: ['reader'] }, { resource: 'docs', action: 'write' })).toBe(false);
+    expect(rbac.hasPermission({ id: 'u-reader', roles: ['reader'] }, { resource: 'docs', action: 'delete' })).toBe(
+      false,
+    );
   });
 
   it('M29: hasPermission denies unknown role', () => {
-    expect(rbac.hasPermission({ roles: ['ghost'] }, { resource: 'x', action: 'y' })).toBe(false);
+    expect(rbac.hasPermission({ id: 'u-ghost', roles: ['ghost'] }, { resource: 'x', action: 'delete' })).toBe(false);
   });
 
   it('M30: getPermissions aggregates across roles', () => {
@@ -355,28 +368,28 @@ describe('SEC-M: InMemoryRBACProvider', () => {
     });
     rbac.registerRole({
       name: 'b',
-      permissions: [{ resource: 'r2', action: 'write' }],
+      permissions: [{ resource: 'r2', action: 'delete' }],
     });
-    const perms = rbac.getPermissions({ roles: ['a', 'b'] });
+    const perms = rbac.getPermissions({ id: 'u-ab', roles: ['a', 'b'] });
     expect(perms).toHaveLength(2);
   });
 
   it('M31: getPermissions deduplicates identical permissions', () => {
     rbac.registerRole({
       name: 'a',
-      permissions: [{ resource: 'r', action: 'rw' }],
+      permissions: [{ resource: 'r', action: 'read' }],
     });
     rbac.registerRole({
       name: 'b',
-      permissions: [{ resource: 'r', action: 'rw' }],
+      permissions: [{ resource: 'r', action: 'read' }],
     });
-    expect(rbac.getPermissions({ roles: ['a', 'b'] })).toHaveLength(1);
+    expect(rbac.getPermissions({ id: 'u-ab', roles: ['a', 'b'] })).toHaveLength(1);
   });
 
   it('M32: getRoles returns all registered roles', () => {
     rbac.registerRole({
       name: 'r1',
-      permissions: [{ resource: 'x', action: 'y' }],
+      permissions: [{ resource: 'x', action: 'read' }],
     });
     rbac.registerRole({ name: 'r2', permissions: [] });
     expect(rbac.getRoles()).toHaveLength(2);
@@ -398,39 +411,27 @@ describe('SEC-M: InMemoryEncryptionManager', () => {
   });
 
   it('M34: initialize + encrypt roundtrip', async () => {
-    await em.initialize({
-      type: 'xor',
-      keyBytes: crypto.getRandomValues(new Uint8Array(32)),
-    } as any);
+    await em.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     const c = await em.encrypt(Buffer.from('secret'));
     expect(c).not.toEqual(Buffer.from('secret'));
     expect(c.length).toBe(6);
   });
 
   it('M35: encrypt + decrypt roundtrip', async () => {
-    await em.initialize({
-      type: 'xor',
-      keyBytes: crypto.getRandomValues(new Uint8Array(32)),
-    } as any);
+    await em.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     const p = Buffer.from('hello world');
     expect(await em.decrypt(await em.encrypt(p))).toEqual(p);
   });
 
   it('M36: rotateKey increments version', async () => {
-    await em.initialize({
-      type: 'xor',
-      keyBytes: crypto.getRandomValues(new Uint8Array(32)),
-    } as any);
-    const v1 = (em as any)._keyVersion;
+    await em.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
+    const v1 = em.getKeyVersion();
     await em.rotateKey();
-    expect((em as any)._keyVersion).toBe(v1 + 1);
+    expect(em.getKeyVersion()).toBe(v1 + 1);
   });
 
   it('M37: encrypt empty buffer', async () => {
-    await em.initialize({
-      type: 'xor',
-      keyBytes: crypto.getRandomValues(new Uint8Array(32)),
-    } as any);
+    await em.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     const c = await em.encrypt(Buffer.alloc(0));
     expect(c.length).toBe(0);
     expect(await em.decrypt(c).then((b) => b.length)).toBe(0);
@@ -445,7 +446,7 @@ describe('SEC-M: AES256GCMEncryptionProvider', () => {
   let gcm: AES256GCMEncryptionProvider;
   beforeEach(async () => {
     gcm = new AES256GCMEncryptionProvider();
-    await gcm.initialize({ type: 'aes-256-gcm' } as any);
+    await gcm.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
   });
 
   it('M38: encrypt produces ciphertext > plaintext (IV + tag)', async () => {
@@ -472,14 +473,14 @@ describe('SEC-M: AES256GCMEncryptionProvider', () => {
   });
 
   it('M42: rotateKey increments version', async () => {
-    const v = (gcm as any).keyVersion;
+    const v = gcm.getCurrentKeyVersion();
     await gcm.rotateKey();
-    expect((gcm as any).keyVersion).toBeGreaterThan(v);
+    expect(gcm.getCurrentKeyVersion()).toBeGreaterThan(v);
   });
 
   it('M43: cross-instance decryption fails', async () => {
     const g2 = new AES256GCMEncryptionProvider();
-    await g2.initialize({ type: 'aes-256-gcm' } as any);
+    await g2.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     const c = await gcm.encrypt(Buffer.from('d'), 'ctx');
     await expect(g2.decrypt(c, 'ctx')).rejects.toThrow();
   });
@@ -494,9 +495,9 @@ describe('SEC-M: EnvelopeEncryptionProvider', () => {
   beforeEach(async () => {
     eep = new EnvelopeEncryptionProvider({
       keyManager: { masterSecret: 'test-master-pw', iterations: 1000 },
-      encryption: { type: 'aes-256-gcm' } as any,
+      encryption: { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' },
     });
-    await eep.initialize({ type: 'envelope' } as any);
+    await eep.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
   });
 
   it('M44: encrypt produces wrapped-DEK ciphertext', async () => {
@@ -530,7 +531,7 @@ describe('SEC-M: EnvelopeEncryptionProvider', () => {
 describe('SEC-M: KeyRotationManager', () => {
   let km: KeyRotationManager;
   beforeEach(() => {
-    km = new KeyRotationManager({ type: 'aes-256-gcm' } as any);
+    km = new KeyRotationManager(new InMemoryEncryptionManager());
   });
 
   it('M48: checkPolicies returns empty array initially', async () => {

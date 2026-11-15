@@ -63,11 +63,11 @@ describe('IDD-branch: optional chaining and callback isolation', () => {
 
     const raw = detector.getRawDeadlockEvents();
     expect(raw).toHaveLength(1);
-    expect(raw[0].resolvedBy).toBe('timeout:txA');
-    expect(raw[0].transactions).toEqual(['txA']);
+    expect(raw[0]!.resolvedBy).toBe('timeout:txA');
+    expect(raw[0]!.transactions).toEqual(['txA']);
 
     // The returned array is a defensive copy — mutating it must not affect history.
-    raw.push({} as any);
+    raw.push(raw[0]!);
     expect(detector.getDeadlockCount()).toBe(1);
     expect(detector.getRawDeadlockEvents()).toHaveLength(1);
   });

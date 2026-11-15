@@ -30,7 +30,7 @@ describe("ISQR-branch: database '?? default' fallback", () => {
 
     const result = await recorder.getSlowQueries(100);
     expect(result).toHaveLength(1);
-    expect(result[0].database).toBe('default');
+    expect(result[0]!.database).toBe('default');
   });
 
   it("getRecentSlowQueries defaults a missing database to 'default'", async () => {
@@ -43,7 +43,7 @@ describe("ISQR-branch: database '?? default' fallback", () => {
 
     const result = recorder.getRecentSlowQueries();
     expect(result).toHaveLength(1);
-    expect(result[0].database).toBe('default');
+    expect(result[0]!.database).toBe('default');
   });
 
   it('preserves an explicit database when provided', async () => {
@@ -56,6 +56,6 @@ describe("ISQR-branch: database '?? default' fallback", () => {
     });
 
     const recent = recorder.getRecentSlowQueries();
-    expect(recent[0].database).toBe('prod');
+    expect(recent[0]!.database).toBe('prod');
   });
 });

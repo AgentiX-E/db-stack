@@ -13,8 +13,32 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SchemaFederator } from '../impl/SchemaFederator.js';
+import type { SchemaSnapshot, ReferenceStrategy } from '../interfaces/schema-federation.js';
 
-function snapshot(shardId: string, version: number) {
+/** Private SchemaFederator members these branch-completion tests pin directly. */
+interface FederatorInternals {
+  monitorTimer: ReturnType<typeof setInterval> | null;
+  _getReference(): SchemaSnapshot | undefined;
+}
+
+/**
+ * The federator's reference resolution and monitor timer are private, but these
+ * tests pin their fallbacks. Reflect.get is the one reflection edge in the file:
+ * a renamed member fails to compile here instead of leaving the assertion
+ * comparing undefined.
+ */
+function internal<K extends keyof FederatorInternals>(fed: SchemaFederator, member: K): FederatorInternals[K] {
+  const value = Reflect.get(fed, member);
+  // Private methods must keep their receiver; fields are returned as-is.
+  return (typeof value === 'function' ? value.bind(fed) : value) as FederatorInternals[K];
+}
+
+/** The default branch of reference resolution only runs for a value outside the union. */
+function offContract<T>(value: unknown): T {
+  return value as T;
+}
+
+function snapshot(shardId: string, version: number): SchemaSnapshot {
   return {
     shardId,
     version,
@@ -90,7 +114,10 @@ describe('SCF-branch: coordination unknown ids', () => {
   });
 
   it('resumeCoordination throws when not paused', () => {
-    const coord = fed.startCoordinatedMigration({ currentVersion: 0, targetVersion: 1, pending: [] }, 'all');
+    const coord = fed.startCoordinatedMigration(
+      { currentVersion: 0, targetVersion: 1, pending: [], namespace: 'test-namespace' },
+      'all',
+    );
     // A freshly started coordination is in "preparing", not "paused".
     expect(() => fed.resumeCoordination(coord.id)).toThrow('Cannot resume');
   });
@@ -100,9 +127,9 @@ describe('SCF-branch: monitor re-arm', () => {
   it('stopMonitor is called before re-arming an existing timer', () => {
     const fed = new SchemaFederator();
     fed.startMonitor({ scanIntervalMs: 3600_000 });
-    const first = (fed as any).monitorTimer;
+    const first = internal(fed, 'monitorTimer');
     fed.startMonitor({ scanIntervalMs: 3600_000 });
-    const second = (fed as any).monitorTimer;
+    const second = internal(fed, 'monitorTimer');
     // Re-arming replaced the timer (old one was cleared).
     expect(second).not.toBe(first);
     fed.stopMonitor();
@@ -114,13 +141,13 @@ describe('SCF-branch: reference strategy fallbacks', () => {
     const fed = new SchemaFederator();
     fed.registerShard(snapshot('s1', 1));
     fed._setReferenceStrategy('canonical');
-    expect((fed as any)._getReference()).toBeUndefined();
+    expect(internal(fed, '_getReference')()).toBeUndefined();
   });
 
   it('an unrecognized strategy yields undefined (default case)', () => {
     const fed = new SchemaFederator();
     fed.registerShard(snapshot('s1', 1));
-    fed._setReferenceStrategy('does-not-exist' as any);
-    expect((fed as any)._getReference()).toBeUndefined();
+    fed._setReferenceStrategy(offContract<ReferenceStrategy>('does-not-exist'));
+    expect(internal(fed, '_getReference')()).toBeUndefined();
   });
 });

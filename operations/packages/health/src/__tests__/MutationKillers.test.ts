@@ -107,9 +107,9 @@ describe('H-M: HealthOrchestrator edge cases', () => {
     await new Promise((r) => setTimeout(r, 50));
     const results = orch.getComponentHealth();
     expect(results).toHaveLength(1);
-    expect(results[0].componentId).toBe('a');
-    expect(results[0].uptimeSeconds).toBeGreaterThanOrEqual(0);
-    expect(results[0].uptimeSeconds).toBeLessThan(5); // far less than 5000
+    expect(results[0]!.componentId).toBe('a');
+    expect(results[0]!.uptimeSeconds).toBeGreaterThanOrEqual(0);
+    expect(results[0]!.uptimeSeconds).toBeLessThan(5); // far less than 5000
   });
 
   it('H6: getAggregateStatus with empty registry returns healthy', () => {
@@ -211,7 +211,7 @@ describe('H-M: HealthOrchestrator edge cases', () => {
     const results = orch.getComponentHealth();
     expect(results).toHaveLength(1);
     // The error is swallowed and we get ok:false
-    expect(results[0].liveness.ok).toBe(false);
+    expect(results[0]!.liveness.ok).toBe(false);
   });
 
   it('H16: isStartupComplete returns boolean after register', () => {
@@ -281,6 +281,7 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       componentName: 'Half',
       liveness: () => ({ ok: true, type: 'liveness' }),
       readiness: () => ({ ok: false, type: 'readiness', message: 'not ready' }),
+      startup: () => ({ ok: true, type: 'startup' }),
     });
     const status = orc2.getAggregateStatus();
     expect(status.status).toBe('degraded');
@@ -293,6 +294,7 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       componentName: 'Half',
       liveness: () => ({ ok: true, type: 'liveness' }),
       readiness: () => ({ ok: false, type: 'readiness', message: 'not ready' }),
+      startup: () => ({ ok: true, type: 'startup' }),
     });
     const s = orc2.getHealthStatus();
     expect(s.status).toBe('degraded');
@@ -305,6 +307,7 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       componentName: 'Half2',
       liveness: () => ({ ok: false, type: 'liveness', message: 'dead' }),
       readiness: () => ({ ok: true, type: 'readiness' }),
+      startup: () => ({ ok: true, type: 'startup' }),
     });
     const status = orc2.getAggregateStatus();
     expect(status.status).toBe('degraded');
@@ -318,6 +321,7 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       componentName: 'Dead',
       liveness: () => ({ ok: false, type: 'liveness', message: 'dead' }),
       readiness: () => ({ ok: false, type: 'readiness', message: 'dead' }),
+      startup: () => ({ ok: true, type: 'startup' }),
     });
     // Component 2: fully healthy
     orc2.registerComponent({
@@ -325,6 +329,7 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       componentName: 'Alive',
       liveness: () => ({ ok: true, type: 'liveness' }),
       readiness: () => ({ ok: true, type: 'readiness' }),
+      startup: () => ({ ok: true, type: 'startup' }),
     });
     const status = orc2.getAggregateStatus();
     expect(status.status).toBe('degraded');
@@ -338,6 +343,7 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       componentName: 'DefaultCritical',
       liveness: () => ({ ok: false, type: 'liveness', message: 'failing' }),
       readiness: () => ({ ok: false, type: 'readiness', message: 'failing' }),
+      startup: () => ({ ok: true, type: 'startup' }),
     });
     // If critical defaults to false (mutated), the failing component
     // would NOT make the overall status "unhealthy"

@@ -34,7 +34,7 @@ export interface EnvelopeEncryptionConfig {
   /** Encryption provider configuration */
   encryption: EncryptionConfig;
   /** Whether to auto-generate a DEK on init. Default: true */
-  autoGenerateKey: boolean;
+  autoGenerateKey?: boolean;
 }
 
 // ── Header format ───────────────────────────────────────────
@@ -137,10 +137,10 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
       // JSON.parse converts Buffers to plain objects — revive them
       wrappedKey = {
         ...wrappedKey,
-        iv: Buffer.from(wrappedKey.iv as unknown as Uint8Array),
-        encryptedKey: Buffer.from(wrappedKey.encryptedKey as unknown as Uint8Array),
-        authTag: Buffer.from(wrappedKey.authTag as unknown as Uint8Array),
-        salt: Buffer.from(wrappedKey.salt as unknown as Uint8Array),
+        iv: Buffer.from(wrappedKey.iv),
+        encryptedKey: Buffer.from(wrappedKey.encryptedKey),
+        authTag: Buffer.from(wrappedKey.authTag),
+        salt: Buffer.from(wrappedKey.salt),
       };
     } catch {
       throw new Error('EnvelopeEncryption: invalid wrapped key JSON in header');

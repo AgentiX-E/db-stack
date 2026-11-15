@@ -9,7 +9,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { HealthOrchestrator } from '../impl/HealthOrchestrator.js';
-import type { IHealthProbe, ProbeResult } from '../interfaces/IHealthProbe.js';
+import type { IHealthProbe } from '../interfaces/IHealthProbe.js';
+import type { ProbeResult } from '@agentix-e/db-operations-core/types';
 
 function probe(
   id: string,

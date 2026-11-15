@@ -34,6 +34,16 @@ function tmpLogPath(): string {
   return path.join(os.tmpdir(), `audit-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jsonl`);
 }
 
+/**
+ * AuditLogManager keeps its event log private, and tamper detection can only be
+ * tested by corrupting that log. This is the single reflection edge in the file:
+ * if the field were renamed, the assertion below would fail loudly rather than
+ * silently verify nothing.
+ */
+function internalEventsOf(mgr: AuditLogManager): AuditEvent[] {
+  return Reflect.get(mgr, 'events') as AuditEvent[];
+}
+
 // ── AUD1: Core Logging ──────────────────────────────────────
 
 describe('AUD1: Core event logging', () => {
@@ -416,7 +426,7 @@ describe('AUD5: Hash chain integrity', () => {
 
     // Tamper with event B by directly modifying internal state
     // We need to reach into the internal events array
-    const internalEvents = (logger as any).events as AuditEvent[];
+    const internalEvents = internalEventsOf(logger);
     // Flip the first nibble rather than hard-coding "0": a hash that already
     // starts with 0 left the value — and the chain — untouched, so the
     // assertion failed roughly once in sixteen runs.
@@ -437,7 +447,7 @@ describe('AUD5: Hash chain integrity', () => {
 
     await logger.logBatch([makePartial({ action: 'EVENT_A' }), makePartial({ action: 'EVENT_B' })]);
 
-    const internalEvents = (logger as any).events as AuditEvent[];
+    const internalEvents = internalEventsOf(logger);
     // Break the chain: set B's prevHash to something wrong
     internalEvents[1]!.prevHash = '0000000000000000000000000000000000000000000000000000000000000000';
 
@@ -469,7 +479,7 @@ describe('AUD6: Tamper detection — comprehensive', () => {
     await logger.log(makePartial({ action: 'C' }));
 
     // Simulate insertion by manipulating seq
-    const internalEvents = (logger as any).events as AuditEvent[];
+    const internalEvents = internalEventsOf(logger);
     internalEvents[1]!.seq = 99;
 
     const result = await logger.verifyIntegrity();
@@ -485,7 +495,7 @@ describe('AUD6: Tamper detection — comprehensive', () => {
 
     await logger.log(makePartial({ message: 'Original message' }));
 
-    const internalEvents = (logger as any).events as AuditEvent[];
+    const internalEvents = internalEventsOf(logger);
     internalEvents[0]!.message = 'Tampered message';
 
     const result = await logger.verifyIntegrity();
@@ -501,7 +511,7 @@ describe('AUD6: Tamper detection — comprehensive', () => {
 
     await logger.log(makePartial({ actor: { id: 'original-user' } }));
 
-    const internalEvents = (logger as any).events as AuditEvent[];
+    const internalEvents = internalEventsOf(logger);
     internalEvents[0]!.actor.id = 'hacked-user';
 
     const result = await logger.verifyIntegrity();
@@ -527,7 +537,7 @@ describe('AUD7: Retention and pruning', () => {
     ]);
 
     // Manually set timestamps to simulate old events
-    const internalEvents = (logger as any).events as AuditEvent[];
+    const internalEvents = internalEventsOf(logger);
     const now = Date.now();
     internalEvents[0]!.timestamp = now - 200_000; // 200s ago
     internalEvents[1]!.timestamp = now - 100_000; // 100s ago
@@ -550,7 +560,7 @@ describe('AUD7: Retention and pruning', () => {
 
     await logger.logBatch([makePartial({ action: 'A' }), makePartial({ action: 'B' }), makePartial({ action: 'C' })]);
 
-    const internalEvents = (logger as any).events as AuditEvent[];
+    const internalEvents = internalEventsOf(logger);
     const now = Date.now();
     // All events are very old
     internalEvents[0]!.timestamp = now - 500_000;

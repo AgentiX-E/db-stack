@@ -44,6 +44,7 @@ function makePlan(overrides: Partial<MigrationPlan> = {}): MigrationPlan {
     currentVersion: overrides.currentVersion ?? 0,
     targetVersion: overrides.targetVersion ?? 1,
     pending: overrides.pending ?? [],
+    namespace: overrides.namespace ?? 'test-namespace',
   };
 }
 

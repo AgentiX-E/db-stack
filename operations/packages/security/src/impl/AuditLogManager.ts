@@ -278,17 +278,15 @@ export class AuditLogManager implements IAuditLogger {
     this.seqCounter++;
     const prevHash: string = this.events.length > 0 ? (this.events[this.events.length - 1]!.hash ?? '') : GENESIS_HASH;
 
-    const event: AuditEvent = {
+    const event: Omit<AuditEvent, 'hash'> = {
       ...partial,
       id: crypto.randomUUID(),
       seq: this.seqCounter,
       timestamp: Date.now(),
       prevHash,
-      hash: undefined as unknown as string,
     };
 
-    event.hash = this._computeHash(event);
-    return event;
+    return { ...event, hash: this._computeHash(event) };
   }
 
   private _append(event: AuditEvent): void {

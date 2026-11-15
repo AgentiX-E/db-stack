@@ -14,7 +14,34 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { FederatedQueryRouter } from '../impl/FederatedQueryRouter.js';
-import type { FederatedNode, FederatedQuery, NodeResult } from '../interfaces/index.js';
+import type {
+  FederatedNode,
+  FederatedQuery,
+  NodeResult,
+  NodeAssignment,
+  QueryPlan,
+  FailoverEvent,
+  RoutingPolicy,
+} from '../interfaces/index.js';
+
+/** Private router members the mutation-killers below pin directly. */
+interface RouterInternals {
+  nodes: Map<string, FederatedNode>;
+  policy: RoutingPolicy;
+  _failover(nodeId: string, plan: QueryPlan, attempt: number): FailoverEvent;
+}
+
+/**
+ * The router's planning internals are private, but these tests pin their
+ * arithmetic and branch boundaries. Reflect.get is the one reflection edge in
+ * the file: a renamed member fails to compile here rather than letting the
+ * assertion compare undefined with a threshold.
+ */
+function internal<K extends keyof RouterInternals>(router: FederatedQueryRouter, member: K): RouterInternals[K] {
+  const value = Reflect.get(router, member);
+  // Private methods must keep their receiver; fields are returned as-is.
+  return (typeof value === 'function' ? value.bind(router) : value) as RouterInternals[K];
+}
 
 function makeNode(overrides: Partial<FederatedNode> = {}): FederatedNode {
   return {
@@ -343,7 +370,7 @@ describe('getStats averages', () => {
         success: true,
       };
     };
-    const result = await router.executePlan(plan, exec as any);
+    const result = await router.executePlan(plan, exec);
     // start = 1000, final = 1150 → totalDurationMs = 1150 - 1000 = 150.
     // A `+` mutant would yield 1150 + 1000 = 2150.
     expect(result.totalDurationMs).toBe(150);
@@ -547,12 +574,12 @@ describe('failover retry boundary', () => {
       retryBackoffMs: 1,
       skipUnhealthy: false,
       geoAffinity: false,
-    } as any);
+    });
     router.registerNode(makeNode({ id: 'n1', weight: 3 }));
     router.registerNode(makeNode({ id: 'n2', weight: 1 }));
     let first = true;
-    const exec = async (node: unknown) => {
-      const id = (node as FederatedNode).id;
+    const exec = async (node: FederatedNode) => {
+      const id = node.id;
       if (first) {
         first = false;
         return {
@@ -583,7 +610,7 @@ describe('failover retry boundary', () => {
         targetShards: [],
         timeoutMs: 100,
       } as FederatedQuery,
-      exec as any,
+      exec,
     );
     expect(r.success).toBe(true);
   });
@@ -643,8 +670,8 @@ describe('failover retry boundary', () => {
     );
 
     const attempts: string[] = [];
-    const exec = async (node: unknown) => {
-      const id = (node as FederatedNode).id;
+    const exec = async (node: FederatedNode) => {
+      const id = node.id;
       attempts.push(id);
       if (id === 'n1') {
         return {
@@ -675,7 +702,7 @@ describe('failover retry boundary', () => {
         targetShards: [],
         timeoutMs: 100,
       } as FederatedQuery,
-      exec as any,
+      exec,
     );
     expect(r.success).toBe(true);
     // First attempt = n1 (round_robin). Retry with least_connections = n2
@@ -735,8 +762,8 @@ describe('failover retry boundary', () => {
     router.registerNode(makeNode({ id: 'n1' }));
     router.registerNode(makeNode({ id: 'n2' }));
     const seen: string[] = [];
-    const exec = async (node: unknown) => {
-      const id = (node as FederatedNode).id;
+    const exec = async (node: FederatedNode) => {
+      const id = node.id;
       seen.push(id);
       // n1 always fails; n2 succeeds. On retry, n1 must be excluded so n2 runs.
       return {
@@ -758,7 +785,7 @@ describe('failover retry boundary', () => {
         targetShards: [],
         timeoutMs: 100,
       } as FederatedQuery,
-      exec as any,
+      exec,
     );
     expect(r.success).toBe(true);
     // The failed node n1 was excluded on re-plan, so the second attempt ran n2.
@@ -797,7 +824,7 @@ describe('failover retry boundary', () => {
         targetShards: [],
         timeoutMs: 100,
       } as FederatedQuery,
-      exec as any,
+      exec,
     );
 
     const delays = sleepSpy.mock.calls.map((c) => c[1] as number);
@@ -1085,7 +1112,7 @@ describe('failover internals', () => {
     });
     router.registerNode(makeNode({ id: 'fail', health: 'healthy', shardIds: ['s1'] }));
     router.registerNode(makeNode({ id: 'spare', health: 'healthy', shardIds: ['s1'] }));
-    const exec = async (node: any) => ({
+    const exec = async (node: FederatedNode) => ({
       nodeId: node.id,
       shardIds: ['s1'],
       rows: [],
@@ -1103,7 +1130,7 @@ describe('failover internals', () => {
         targetShards: ['s1'],
         timeoutMs: 100,
       } as FederatedQuery,
-      exec as any,
+      exec,
     );
     const evt = router.getFailoverHistory()[0]!;
     expect(evt.success).toBe(true); // fbNode !== undefined
@@ -1124,7 +1151,7 @@ describe('failover internals', () => {
     });
     // Only one node (the failing one); no spare with overlapping shards.
     router.registerNode(makeNode({ id: 'only', health: 'healthy', shardIds: ['s1'] }));
-    const exec = async (node: any) => ({
+    const exec = async (node: FederatedNode) => ({
       nodeId: node.id,
       shardIds: ['s1'],
       rows: [],
@@ -1142,7 +1169,7 @@ describe('failover internals', () => {
         targetShards: ['s1'],
         timeoutMs: 100,
       } as FederatedQuery,
-      exec as any,
+      exec,
     );
     const evt = router.getFailoverHistory()[0]!;
     expect(evt.success).toBe(false); // fbNode === undefined → the `!==` gate
@@ -1173,7 +1200,7 @@ describe('executePlan internals', () => {
     } as FederatedQuery);
 
     // All fail → error is the joined messages.
-    const allFail = await router.executePlan(plan, (async (n: any) => ({
+    const allFail = await router.executePlan(plan, async (n: FederatedNode) => ({
       nodeId: n.id,
       shardIds: [],
       rows: [],
@@ -1181,12 +1208,12 @@ describe('executePlan internals', () => {
       durationMs: 1,
       success: false,
       error: `fail-${n.id}`,
-    })) as any);
+    }));
     expect(allFail.success).toBe(false);
     expect(allFail.error).toBe('fail-a; fail-b');
 
     // Some succeed → error is undefined.
-    const mixed = await router.executePlan(plan, (async (n: any) => ({
+    const mixed = await router.executePlan(plan, async (n: FederatedNode) => ({
       nodeId: n.id,
       shardIds: [],
       rows: n.id === 'a' ? [{ id: 1 }] : [],
@@ -1194,7 +1221,7 @@ describe('executePlan internals', () => {
       durationMs: 1,
       success: n.id === 'a',
       error: n.id === 'a' ? undefined : 'fail-b',
-    })) as any);
+    }));
     expect(mixed.success).toBe(true);
     expect(mixed.error).toBeUndefined();
   });
@@ -1218,16 +1245,16 @@ describe('executePlan internals', () => {
       timeoutMs: 100,
     } as FederatedQuery);
     // Remove the node AFTER planning so the assignment references a missing node.
-    (router as any).nodes.delete('ghost');
+    internal(router, 'nodes').delete('ghost');
 
-    const result = await router.executePlan(plan, (async () => ({
+    const result = await router.executePlan(plan, async () => ({
       nodeId: 'ghost',
       shardIds: [],
       rows: [],
       rowCount: 0,
       durationMs: 0,
       success: true,
-    })) as any);
+    }));
     // The internal node-lookup path returns success:false (node not found),
     // so the caller-supplied executor is never invoked for the missing node.
     expect(result.success).toBe(false);
@@ -1261,7 +1288,7 @@ describe('failover plan mutation', () => {
     // Plan initially targets "fail" (round_robin counter 0).
     expect(plan.assignments.some((a) => a.nodeId === 'fail')).toBe(true);
 
-    const evt = (router as any)._failover('fail', plan, 0);
+    const evt = internal(router, '_failover')('fail', plan, 0);
     // After failover, "fail" is removed and "spare" is pushed as fallback.
     expect(plan.assignments.some((a) => a.nodeId === 'fail')).toBe(false);
     expect(plan.assignments.some((a) => a.nodeId === 'spare')).toBe(true);
@@ -1291,7 +1318,7 @@ describe('failover plan mutation', () => {
       targetShards: ['s1'],
       timeoutMs: 100,
     } as FederatedQuery);
-    const evt = (router as any)._failover('fail', plan, 0);
+    const evt = internal(router, '_failover')('fail', plan, 0);
     // The unhealthy node must NOT be chosen as replacement → success=false.
     expect(evt.success).toBe(false);
     expect(evt.failoverNodeId).toBeUndefined();
@@ -1319,7 +1346,7 @@ describe('failover health filter (skipUnhealthy=false)', () => {
       targetShards: ['s1'],
       timeoutMs: 100,
     } as FederatedQuery);
-    const evt = (router as any)._failover('fail', plan, 0);
+    const evt = internal(router, '_failover')('fail', plan, 0);
     // With skipUnhealthy=false there is no second filter; the `health ===
     // "healthy"` candidates filter is the ONLY gate, so the unhealthy spare
     // must NOT become a replacement.
@@ -1349,7 +1376,7 @@ describe('failover double health filter (skipUnhealthy=true)', () => {
       targetShards: ['s1'],
       timeoutMs: 100,
     } as FederatedQuery);
-    const evt = (router as any)._failover('fail', plan, 0);
+    const evt = internal(router, '_failover')('fail', plan, 0);
     // With skipUnhealthy=true, the L600 replacement filter runs on an already-
     // healthy candidates set; the healthy spare must still be chosen.
     expect(evt.success).toBe(true);
@@ -1360,7 +1387,7 @@ describe('failover double health filter (skipUnhealthy=true)', () => {
 // ── _executePlanInternal shard grouping + fallback ──
 
 describe('shard assignment grouping', () => {
-  function makePlan(router: any, assignments: any[], queryId = 'q'): any {
+  function makePlan(assignments: NodeAssignment[], queryId = 'q'): QueryPlan {
     return {
       query: {
         id: queryId,
@@ -1383,11 +1410,11 @@ describe('shard assignment grouping', () => {
     router.registerNode(makeNode({ id: 'n2', shardIds: ['s2'] }));
 
     const received: Record<string, string[]> = {};
-    const plan = makePlan(router, [
+    const plan = makePlan([
       { nodeId: 'n1', shardIds: ['s1'], priority: 1, reason: 'r' },
       { nodeId: 'n2', shardIds: ['s2'], priority: 1, reason: 'r' },
     ]);
-    await router.executePlan(plan, (async (node: any, _q: any, shardIds: string[]) => {
+    await router.executePlan(plan, async (node: FederatedNode, _q: FederatedQuery, shardIds: string[]) => {
       received[node.id] = shardIds;
       return {
         nodeId: node.id,
@@ -1397,7 +1424,7 @@ describe('shard assignment grouping', () => {
         durationMs: 1,
         success: true,
       };
-    }) as any);
+    });
 
     // Each node received ONLY its own shardIds (not the union of all).
     expect(received['n1']).toEqual(['s1']);
@@ -1409,8 +1436,8 @@ describe('shard assignment grouping', () => {
     router.registerNode(makeNode({ id: 'n1', shardIds: ['s0', 's1'] }));
 
     const received: string[] = [];
-    const plan = makePlan(router, [{ nodeId: 'n1', shardIds: [], priority: 1, reason: 'r' }]);
-    await router.executePlan(plan, (async (node: any, _q: any, shardIds: string[]) => {
+    const plan = makePlan([{ nodeId: 'n1', shardIds: [], priority: 1, reason: 'r' }]);
+    await router.executePlan(plan, async (node: FederatedNode, _q: FederatedQuery, shardIds: string[]) => {
       received.push(...shardIds);
       return {
         nodeId: node.id,
@@ -1420,7 +1447,7 @@ describe('shard assignment grouping', () => {
         durationMs: 1,
         success: true,
       };
-    }) as any);
+    });
 
     // Empty assignment shardIds → fall back to ALL node shards.
     expect(received).toEqual(['s0', 's1']);

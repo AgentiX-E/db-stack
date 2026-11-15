@@ -8,13 +8,13 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AuditLogManager } from '../impl/AuditLogManager.js';
-import type { AuditEvent, AuditCategory, AuditSeverity } from '../interfaces/IAuditLogger.js';
+import type { AuditEvent, AuditCategory, AuditSeverity, AuditRetentionPolicy } from '../interfaces/IAuditLogger.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-type Partial = Omit<AuditEvent, 'id' | 'seq' | 'timestamp' | 'hash' | 'prevHash'>;
-function makePartial(overrides: Partial<Partial> = {}): Partial {
+type AuditEventDraft = Omit<AuditEvent, 'id' | 'seq' | 'timestamp' | 'hash' | 'prevHash'>;
+function makePartial(overrides: Partial<AuditEventDraft> = {}): AuditEventDraft {
   return {
     category: 'data_access' as AuditCategory,
     severity: 'info' as AuditSeverity,
@@ -30,12 +30,24 @@ function tmpLogPath(): string {
   return path.join(os.tmpdir(), `audit-mk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jsonl`);
 }
 
+/**
+ * AuditLogManager keeps its retention policy and flush timer private. The
+ * mutation-killers below pin those internals, so this is the one reflection
+ * edge in the file: a renamed field surfaces as a failing assertion, not as a
+ * silently skipped test.
+ */
+function internal<T>(mgr: AuditLogManager, field: 'retention' | 'flushTimer'): T {
+  return Reflect.get(mgr, field) as T;
+}
+
 describe('AUD-MK: retention / autoStart / query / flush', () => {
   let logger: AuditLogManager;
+  let logPath: string;
 
   beforeEach(() => {
+    logPath = tmpLogPath();
     logger = new AuditLogManager({
-      logFilePath: tmpLogPath(),
+      logFilePath: logPath,
       autoStart: false,
     });
   });
@@ -45,7 +57,7 @@ describe('AUD-MK: retention / autoStart / query / flush', () => {
 
   it('L30: default retention maxAgeMs is 90 days', () => {
     // 90 * 24 * 3600 * 1000. A `*`→`/` mutant collapses this to ~0.0004ms.
-    const retention = (logger as any).retention;
+    const retention = internal<AuditRetentionPolicy>(logger, 'retention');
     expect(retention.maxAgeMs).toBe(90 * 24 * 3600 * 1000);
   });
 
@@ -54,7 +66,7 @@ describe('AUD-MK: retention / autoStart / query / flush', () => {
     // omitted, the manager must NOT auto-start (flushTimer stays null). A
     // `!==`→`===` mutant would start auto-flush despite the omission.
     const mgr = new AuditLogManager({ logFilePath: tmpLogPath() });
-    expect((mgr as any).flushTimer).toBeNull();
+    expect(internal<ReturnType<typeof setInterval> | null>(mgr, 'flushTimer')).toBeNull();
     mgr.destroy();
   });
 
@@ -65,7 +77,7 @@ describe('AUD-MK: retention / autoStart / query / flush', () => {
     }
     // After 100 buffered events, flush fired → buffer emptied, file has 100 lines.
     await logger.flush();
-    const content = fs.readFileSync(logger.logFilePath, 'utf-8').trim();
+    const content = fs.readFileSync(logPath, 'utf-8').trim();
     expect(content.split('\n').length).toBe(100);
   });
 

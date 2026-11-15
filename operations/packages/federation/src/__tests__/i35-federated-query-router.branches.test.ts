@@ -14,7 +14,53 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { FederatedQueryRouter } from '../impl/FederatedQueryRouter.js';
-import type { FederatedNode, FederatedQuery, NodeResult } from '../interfaces/index.js';
+import type {
+  FederatedNode,
+  FederatedQuery,
+  NodeResult,
+  NodeExecutor,
+  NodeLoad,
+  QueryPlan,
+  FailoverEvent,
+  FederatedResult,
+  NodeAssignment,
+  RoutingPolicy,
+  RoutingStrategy,
+} from '../interfaces/index.js';
+
+/** Private router members the branch-completion tests below pin directly. */
+interface RouterInternals {
+  policy: RoutingPolicy;
+  failedQueries: number;
+  totalFailovers: number;
+  _clock: { nowNs: () => number; nowMs: () => number };
+  _failover(failedNodeId: string, plan: QueryPlan, retryAttempt: number): FailoverEvent;
+  _selectLeastConnections(candidates: FederatedNode[], targetShards: Set<string> | null): NodeAssignment[];
+  _selectGeoAffinity(candidates: FederatedNode[], targetShards: Set<string> | null): NodeAssignment[];
+  _selectCostBased(candidates: FederatedNode[], targetShards: Set<string> | null): NodeAssignment[];
+  _executePlanInternal(plan: QueryPlan, executor: NodeExecutor): Promise<FederatedResult>;
+}
+
+/**
+ * The router's routing internals are private, but these tests pin their
+ * fallbacks. Reflect.get is the one reflection edge in the file: a renamed
+ * member fails to compile here instead of leaving an assertion comparing
+ * undefined.
+ */
+function internal<K extends keyof RouterInternals>(router: FederatedQueryRouter, member: K): RouterInternals[K] {
+  const value = Reflect.get(router, member);
+  // Private methods must keep their receiver; fields are returned as-is.
+  return (typeof value === 'function' ? value.bind(router) : value) as RouterInternals[K];
+}
+
+/**
+ * Some branches only run for input the type system rejects (an unknown routing
+ * strategy, a node load missing a required counter). This helper states that a
+ * value is deliberately out of contract.
+ */
+function offContract<T>(value: unknown): T {
+  return value as T;
+}
 
 function makeNode(overrides: Partial<FederatedNode> = {}): FederatedNode {
   return {
@@ -60,8 +106,8 @@ describe('FQR-branch: failover edge cases', () => {
     const n = makeNode({ id: 'healthy-1', shardIds: ['s1'] });
     router.registerNode(n);
 
-    const plan = (router as any).planQuery(makeQuery());
-    const event = (router as any)._failover('ghost-node', plan, 0);
+    const plan = router.planQuery(makeQuery());
+    const event = internal(router, '_failover')('ghost-node', plan, 0);
 
     expect(event.failedNodeId).toBe('ghost-node');
     expect(event.success).toBe(false);
@@ -81,10 +127,10 @@ describe('FQR-branch: failover edge cases', () => {
       strategy: 'round_robin',
       maxRetries: 0,
       skipUnhealthy: true,
-    } as any);
+    });
 
-    const plan = (router as any).planQuery(makeQuery());
-    const event = (router as any)._failover('deg', plan, 0);
+    const plan = router.planQuery(makeQuery());
+    const event = internal(router, '_failover')('deg', plan, 0);
 
     expect(event.failoverNodeId).toBe('ok');
   });
@@ -111,8 +157,8 @@ describe('FQR-branch: least-connections nullish fallbacks', () => {
     router.registerNode(noLoad);
     router.registerNode(loaded);
 
-    const picks = (router as any)._selectLeastConnections([noLoad, loaded], new Set(['shard-0']));
-    expect(picks[0].nodeId).toBe('loaded');
+    const picks = internal(router, '_selectLeastConnections')([noLoad, loaded], new Set(['shard-0']));
+    expect(picks[0]!.nodeId).toBe('loaded');
   });
 });
 
@@ -127,12 +173,12 @@ describe('FQR-branch: geo-affinity remote + fallback', () => {
     const remote = makeNode({ id: 'remote', region: 'eu-west-2' });
     router.registerNode(local);
     router.registerNode(remote);
-    (router as any).policy.preferredRegion = 'us-east-1';
+    internal(router, 'policy').preferredRegion = 'us-east-1';
 
-    const picks = (router as any)._selectGeoAffinity([local, remote], null);
-    expect(picks[0].nodeId).toBe('local');
-    expect(picks[1].nodeId).toBe('remote');
-    expect(picks[1].priority).toBe(10);
+    const picks = internal(router, '_selectGeoAffinity')([local, remote], null);
+    expect(picks[0]!.nodeId).toBe('local');
+    expect(picks[1]!.nodeId).toBe('remote');
+    expect(picks[1]!.priority).toBe(10);
   });
 
   it('treats an unset preferred region as matching every candidate (local branch)', () => {
@@ -140,12 +186,12 @@ describe('FQR-branch: geo-affinity remote + fallback', () => {
     const b = makeNode({ id: 'b', region: 'ap-south-1' });
     router.registerNode(a);
     router.registerNode(b);
-    (router as any).policy.preferredRegion = undefined;
+    internal(router, 'policy').preferredRegion = undefined;
 
     // `!preferred` short-circuits: every candidate is local, remote is empty.
-    const picks = (router as any)._selectGeoAffinity([a, b], null);
-    expect(picks.map((p: any) => p.nodeId)).toEqual(['a', 'b']);
-    expect(picks.every((p: any) => p.priority === 1)).toBe(true);
+    const picks = internal(router, '_selectGeoAffinity')([a, b], null);
+    expect(picks.map((p) => p.nodeId)).toEqual(['a', 'b']);
+    expect(picks.every((p) => p.priority === 1)).toBe(true);
   });
 });
 
@@ -176,16 +222,16 @@ describe('FQR-branch: cost-based all-exceeded fallback', () => {
         avgLatencyMs: 400,
       },
     });
-    (router as any).policy.costThreshold = {
+    internal(router, 'policy').costThreshold = {
       maxCpuPercent: 50,
       maxMemoryPercent: 50,
       maxPendingQueries: 5,
       maxAvgLatencyMs: 10,
     };
 
-    const picks = (router as any)._selectCostBased([bad1, bad2], new Set(['shard-0']));
+    const picks = internal(router, '_selectCostBased')([bad1, bad2], new Set(['shard-0']));
     expect(picks).toHaveLength(1);
-    expect(picks[0].reason).toContain('all exceeded thresholds');
+    expect(picks[0]!.reason).toContain('all exceeded thresholds');
   });
 });
 
@@ -196,8 +242,8 @@ describe('FQR-branch: computeNodeScore fallbacks and penalties', () => {
   });
 
   it('returns the medium score (50) when load or threshold is absent', () => {
-    expect((router as any).computeNodeScore(makeNode({ load: undefined }))).toBe(50);
-    expect((router as any).computeNodeScore(makeNode(), undefined)).toBe(50);
+    expect(router.computeNodeScore(makeNode({ load: undefined }))).toBe(50);
+    expect(router.computeNodeScore(makeNode(), undefined)).toBe(50);
   });
 
   it('adds health penalties for degraded and unhealthy nodes', () => {
@@ -207,11 +253,11 @@ describe('FQR-branch: computeNodeScore fallbacks and penalties', () => {
       maxPendingQueries: 100,
       maxAvgLatencyMs: 100,
     };
-    const degraded = (router as any).computeNodeScore(makeNode({ health: 'degraded' }), thr);
-    const healthy = (router as any).computeNodeScore(makeNode({ health: 'healthy' }), thr);
+    const degraded = router.computeNodeScore(makeNode({ health: 'degraded' }), thr);
+    const healthy = router.computeNodeScore(makeNode({ health: 'healthy' }), thr);
     expect(degraded).toBeGreaterThan(healthy);
 
-    const unhealthy = (router as any).computeNodeScore(makeNode({ health: 'unhealthy' }), thr);
+    const unhealthy = router.computeNodeScore(makeNode({ health: 'unhealthy' }), thr);
     expect(unhealthy).toBeGreaterThanOrEqual(100);
   });
 });
@@ -226,27 +272,27 @@ describe('FQR-branch: execution rejection handling', () => {
     const n = makeNode({ id: 'n1' });
     router.registerNode(n);
 
-    const plan = (router as any).planQuery(makeQuery());
+    const plan = router.planQuery(makeQuery());
     const executor = () => Promise.reject(new Error('executor exploded'));
-    const result = await (router as any)._executePlanInternal(plan, executor);
+    const result = await internal(router, '_executePlanInternal')(plan, executor);
 
     expect(result.success).toBe(false);
-    expect(result.nodeResults[0].error).toBe('executor exploded');
+    expect(result.nodeResults[0]!.error).toBe('executor exploded');
   });
 
   it('uses a generic message when the rejection reason has no .message', async () => {
     const n = makeNode({ id: 'n1' });
     router.registerNode(n);
-    const plan = (router as any).planQuery(makeQuery());
+    const plan = router.planQuery(makeQuery());
     const executor = () => Promise.reject('non-error reason');
-    const result = await (router as any)._executePlanInternal(plan, executor);
+    const result = await internal(router, '_executePlanInternal')(plan, executor);
 
-    expect(result.nodeResults[0].error).toBe('Promise rejected');
+    expect(result.nodeResults[0]!.error).toBe('Promise rejected');
   });
 
   it('records a node-not-found result when the plan references an unregistered node', async () => {
     // Build a plan whose assignment references a node id never registered.
-    const plan = (router as any).planQuery(makeQuery());
+    const plan = router.planQuery(makeQuery());
     plan.assignments = [
       {
         nodeId: 'missing-node',
@@ -256,7 +302,7 @@ describe('FQR-branch: execution rejection handling', () => {
       },
     ];
 
-    const result = await (router as any)._executePlanInternal(plan, async () => ({
+    const result = await internal(router, '_executePlanInternal')(plan, async () => ({
       nodeId: 'x',
       shardIds: [],
       rows: [],
@@ -265,8 +311,8 @@ describe('FQR-branch: execution rejection handling', () => {
       success: true,
     }));
 
-    expect(result.nodeResults[0].success).toBe(false);
-    expect(result.nodeResults[0].error).toContain('not found');
+    expect(result.nodeResults[0]!.success).toBe(false);
+    expect(result.nodeResults[0]!.error).toContain('not found');
   });
 });
 
@@ -278,7 +324,7 @@ describe('FQR-branch: retry loop with empty nodeResults', () => {
       maxRetries: 0,
       retryBackoffMs: 1,
       skipUnhealthy: false,
-    } as any);
+    });
 
     // No nodes registered → empty assignments → empty nodeResults.
     const result = await router.executeQuery(makeQuery(), async () => ({
@@ -301,7 +347,7 @@ describe('FQR-branch: retry loop with empty nodeResults', () => {
       maxRetries: 0,
       retryBackoffMs: 1,
       skipUnhealthy: false,
-    } as any);
+    });
     router.registerNode(makeNode({ id: 'n1', shardIds: ['s1'] }));
     router.registerNode(makeNode({ id: 'n2', shardIds: ['s1'] }));
     router.setRoutingPolicy({
@@ -309,7 +355,7 @@ describe('FQR-branch: retry loop with empty nodeResults', () => {
       maxRetries: 0,
       retryBackoffMs: 1,
       skipUnhealthy: false,
-    } as any);
+    });
 
     const result = await router.executeQuery(makeQuery(), async (node) => ({
       nodeId: node.id,
@@ -332,9 +378,9 @@ describe('FQR-branch: executePlan failure accounting', () => {
   it('increments failedQueries when the plan executes unsuccessfully', async () => {
     const router = new FederatedQueryRouter();
     router.registerNode(makeNode({ id: 'n1' }));
-    const plan = (router as any).planQuery(makeQuery());
+    const plan = router.planQuery(makeQuery());
 
-    const before = (router as any).failedQueries;
+    const before = internal(router, 'failedQueries');
     await router.executePlan(plan, async () => ({
       nodeId: 'n1',
       shardIds: [],
@@ -345,21 +391,21 @@ describe('FQR-branch: executePlan failure accounting', () => {
       error: 'boom',
     }));
 
-    expect((router as any).failedQueries).toBe(before + 1);
+    expect(internal(router, 'failedQueries')).toBe(before + 1);
   });
 });
 
 describe('FQR-branch: constructor clock injection', () => {
   it('falls back to defaults when clock fields are absent', () => {
-    const r = new FederatedQueryRouter({ nowMs: () => 12345 } as any);
-    expect((r as any)._clock.nowMs()).toBe(12345);
+    const r = new FederatedQueryRouter({ nowMs: () => 12345 });
+    expect(internal(r, '_clock').nowMs()).toBe(12345);
     // nowNs absent → default _nowNs still callable
-    expect(typeof (r as any)._clock.nowNs).toBe('function');
+    expect(typeof internal(r, '_clock').nowNs).toBe('function');
   });
 
   it('falls back to Date.now when nowMs is absent', () => {
-    const r = new FederatedQueryRouter({} as any);
-    expect((r as any)._clock.nowMs).toBe(Date.now);
+    const r = new FederatedQueryRouter({});
+    expect(internal(r, '_clock').nowMs).toBe(Date.now);
   });
 });
 
@@ -375,7 +421,7 @@ describe('FQR-branch: least-connections missing activeConnections', () => {
       load: {
         cpuPercent: 1,
         memoryPercent: 1,
-        activeConnections: undefined as any,
+        activeConnections: offContract<NodeLoad['activeConnections']>(undefined),
         pendingQueries: 0,
         avgLatencyMs: 1,
       },
@@ -393,8 +439,8 @@ describe('FQR-branch: least-connections missing activeConnections', () => {
     router.registerNode(partial);
     router.registerNode(full);
 
-    const picks = (router as any)._selectLeastConnections([partial, full], new Set(['shard-0']));
-    expect(picks[0].nodeId).toBe('full');
+    const picks = internal(router, '_selectLeastConnections')([partial, full], new Set(['shard-0']));
+    expect(picks[0]!.nodeId).toBe('full');
   });
 
   it('reports an unknown connection count when activeConnections is missing', () => {
@@ -403,15 +449,15 @@ describe('FQR-branch: least-connections missing activeConnections', () => {
       load: {
         cpuPercent: 1,
         memoryPercent: 1,
-        activeConnections: undefined as any,
+        activeConnections: offContract<NodeLoad['activeConnections']>(undefined),
         pendingQueries: 0,
         avgLatencyMs: 1,
       },
     });
     router.registerNode(partial);
 
-    const picks = (router as any)._selectLeastConnections([partial], new Set(['shard-0']));
-    expect(picks[0].reason).toContain('unknown');
+    const picks = internal(router, '_selectLeastConnections')([partial], new Set(['shard-0']));
+    expect(picks[0]!.reason).toContain('unknown');
   });
 });
 
@@ -434,13 +480,13 @@ describe('FQR-branch: geo-affinity with target shards', () => {
     });
     router.registerNode(local);
     router.registerNode(remote);
-    (router as any).policy.preferredRegion = 'us-east-1';
+    internal(router, 'policy').preferredRegion = 'us-east-1';
 
-    const picks = (router as any)._selectGeoAffinity([local, remote], new Set(['s1']));
-    expect(picks[0].nodeId).toBe('local');
-    expect(picks[0].shardIds).toEqual(['s1']);
-    expect(picks[1].nodeId).toBe('remote');
-    expect(picks[1].shardIds).toEqual(['s1']);
+    const picks = internal(router, '_selectGeoAffinity')([local, remote], new Set(['s1']));
+    expect(picks[0]!.nodeId).toBe('local');
+    expect(picks[0]!.shardIds).toEqual(['s1']);
+    expect(picks[1]!.nodeId).toBe('remote');
+    expect(picks[1]!.shardIds).toEqual(['s1']);
   });
 });
 
@@ -450,11 +496,11 @@ describe('FQR-branch: retry with fallbackStrategy unset', () => {
     // Explicitly clear fallbackStrategy so the `|| strategy` fallback is exercised.
     router.setRoutingPolicy({
       strategy: 'round_robin',
-      fallbackStrategy: '' as any,
+      fallbackStrategy: offContract<RoutingStrategy>(''),
       maxRetries: 1,
       retryBackoffMs: 1,
       skipUnhealthy: false,
-    } as any);
+    });
     router.registerNode(makeNode({ id: 'n1', shardIds: ['s1'] }));
 
     // First attempt fails, triggering a re-plan that resolves fallback to the primary strategy.
@@ -469,8 +515,8 @@ describe('FQR-branch: retry with fallbackStrategy unset', () => {
     }));
 
     // The query consumed its retry budget (initial + one retry).
-    expect((router as any).totalFailovers).toBe(1);
-    expect((router as any).failedQueries).toBeGreaterThanOrEqual(1);
+    expect(internal(router, 'totalFailovers')).toBe(1);
+    expect(internal(router, 'failedQueries')).toBeGreaterThanOrEqual(1);
   });
 
   it('returns a default max-retries error when no error string is recorded', async () => {
@@ -480,7 +526,7 @@ describe('FQR-branch: retry with fallbackStrategy unset', () => {
       maxRetries: 0,
       retryBackoffMs: 1,
       skipUnhealthy: false,
-    } as any);
+    });
 
     const result = await router.executeQuery(makeQuery(), async () => ({
       nodeId: 'x',

@@ -13,6 +13,7 @@
 
 import type { IHealthOrchestrator } from '../interfaces/IHealthOrchestrator.js';
 import type { IHealthProbe } from '../interfaces/IHealthProbe.js';
+import type { FunctionalChecks } from '../interfaces/IComponentRegistrar.js';
 import type { ComponentHealth, ComponentRegistrationOptions, HealthStatus } from '@agentix-e/db-operations-core/types';
 import { componentProbe } from './ComponentProbe.js';
 
@@ -45,23 +46,7 @@ export class HealthOrchestrator implements IHealthOrchestrator {
   registerFunctional(
     probeId: string,
     componentName: string,
-    checks: {
-      liveness: () => {
-        ok: boolean;
-        message?: string;
-        details?: Record<string, unknown>;
-      };
-      readiness?: () => {
-        ok: boolean;
-        message?: string;
-        details?: Record<string, unknown>;
-      };
-      startup?: () => {
-        ok: boolean;
-        message?: string;
-        details?: Record<string, unknown>;
-      };
-    },
+    checks: FunctionalChecks,
     options?: ComponentRegistrationOptions,
   ): void {
     this.registerComponent(

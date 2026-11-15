@@ -314,9 +314,11 @@ export class SchemaFederator implements ISchemaFederator {
       this.stats.activeDrifts = Array.from(this.drifts.values()).filter((d) => !d.resolved).length;
 
       return repair;
-    } catch (err: any) {
+    } catch (err) {
       repair.success = false;
-      repair.error = err.message ?? String(err);
+      // Executors may throw non-Error values; keep the message when there is one.
+      const message = typeof err === 'object' && err !== null && 'message' in err ? err.message : undefined;
+      repair.error = typeof message === 'string' ? message : String(err);
       repair.executedAt = Date.now();
       return repair;
     }

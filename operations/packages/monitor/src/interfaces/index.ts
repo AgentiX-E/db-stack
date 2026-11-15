@@ -46,8 +46,17 @@ export interface IAlertRuleManager {
   updateRule(id: string, rule: Partial<AlertRule>): Promise<void>;
   /** Delete an alert rule */
   deleteRule(id: string): Promise<void>;
-  /** Evaluate all rules and return triggered alerts */
-  evaluate(): Promise<TriggeredAlert[]>;
+  /**
+   * Evaluate every enabled rule against a snapshot of current metric values and
+   * return the alerts that fired.
+   *
+   * A snapshot is required: a rule compares a metric to a threshold, and this
+   * interface had no way to obtain the metric. The method it used to declare —
+   * `evaluate()` with no arguments — was implemented as `return []`, so a
+   * consumer holding an `IAlertRuleManager` could evaluate rules forever and
+   * never see an alert.
+   */
+  evaluateSnapshot(snapshot: Record<string, number>): TriggeredAlert[];
   /** Silence a rule for a specified duration */
   silenceRule(id: string, durationMs: number): Promise<void>;
 }

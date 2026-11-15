@@ -2,12 +2,14 @@
  * InMemoryAlertRuleManager — IAlertRuleManager implementation.
  *
  * Manages alert rules in memory. Supports add/remove/toggle/enable.
- * evaluate() checks enabled rules against a provided snapshot.
+ * {@link evaluateSnapshot} checks enabled rules against a provided snapshot;
+ * the interface now says so, and the class declares that it implements it, so
+ * the compiler checks the claim instead of trusting the comment.
  *
  * @module @agentix-e/db-operations-monitor/impl
  */
 
-import type { AlertRule, TriggeredAlert } from '../interfaces/index.js';
+import type { AlertRule, IAlertRuleManager, TriggeredAlert } from '../interfaces/index.js';
 
 interface RuleEntry {
   rule: AlertRule;
@@ -17,7 +19,7 @@ interface RuleEntry {
 /**
  * In-memory alert rule manager.
  */
-export class InMemoryAlertRuleManager {
+export class InMemoryAlertRuleManager implements IAlertRuleManager {
   private readonly _rules = new Map<string, RuleEntry>();
   private readonly _silencedUntil = new Map<string, number>();
 
@@ -52,17 +54,6 @@ export class InMemoryAlertRuleManager {
     this._rules.delete(id);
     this._silencedUntil.delete(id);
     return Promise.resolve();
-  }
-
-  /**
-   * Evaluate all rules and return triggered alerts.
-   *
-   * This no-argument overload cannot resolve metric values without a snapshot;
-   * rules are therefore only evaluated via {@link evaluateSnapshot}. Returns an
-   * empty list to honour the interface contract.
-   */
-  evaluate(): Promise<TriggeredAlert[]> {
-    return Promise.resolve([]);
   }
 
   /**

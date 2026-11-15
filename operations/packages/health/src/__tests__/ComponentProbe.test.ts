@@ -81,13 +81,13 @@ describe('CP: ComponentProbe factory', () => {
       liveness: () => ({
         ok: true,
         message: 'all good',
-        metadata: { uptime: 1234 },
+        details: { uptime: 1234 },
       }),
     });
-    const result = probe.liveness() as any;
+    const result = probe.liveness();
     expect(result.ok).toBe(true);
     expect(result.message).toBe('all good');
-    expect(result.metadata.uptime).toBe(1234);
+    expect(result.details).toHaveProperty('uptime', 1234);
   });
 
   // ── CP7: Only readiness provided still falls back liveness to readiness ──

@@ -82,7 +82,7 @@ describe('ISlowQueryRecorder', () => {
 
   it('should retrieve slow queries', async () => {
     const queries = await mockRecorder.getSlowQueries(1000);
-    expect(queries[0].durationMs).toBeGreaterThanOrEqual(1000);
+    expect(queries[0]!.durationMs).toBeGreaterThanOrEqual(1000);
   });
 
   it('should analyze query patterns', async () => {
@@ -101,11 +101,15 @@ describe('ISlowQueryRecorder', () => {
 });
 
 describe('IAlertRuleManager', () => {
+  // The value of this block is the compile-time check: the literal below has to
+  // satisfy the interface, which is how the missing `evaluateSnapshot` and the
+  // impossible `evaluate()` were caught. Behaviour is covered in
+  // InMemoryImpls.test.ts against the real manager.
   const mockRuleManager: IAlertRuleManager = {
     createRule: vi.fn().mockResolvedValue('rule-1'),
     updateRule: vi.fn().mockResolvedValue(undefined),
     deleteRule: vi.fn().mockResolvedValue(undefined),
-    evaluate: vi.fn().mockResolvedValue([
+    evaluateSnapshot: vi.fn().mockReturnValue([
       {
         ruleId: 'rule-1',
         ruleName: 'High CPU',
@@ -141,10 +145,10 @@ describe('IAlertRuleManager', () => {
     await expect(mockRuleManager.deleteRule('rule-1')).resolves.toBeUndefined();
   });
 
-  it('should evaluate rules', async () => {
-    const alerts = await mockRuleManager.evaluate();
-    expect(alerts[0].severity).toBe('critical');
-    expect(alerts[0].value).toBeGreaterThan(alerts[0].threshold);
+  it('shapes an evaluation result', () => {
+    const alerts = mockRuleManager.evaluateSnapshot({ cpu_usage: 95 });
+    expect(alerts[0]!.severity).toBe('critical');
+    expect(alerts[0]!.value).toBeGreaterThan(alerts[0]!.threshold);
   });
 
   it('should silence a rule', async () => {
@@ -174,7 +178,7 @@ describe('IHealthCheck', () => {
   it('should perform a health check', async () => {
     const result = await mockHealthCheck.check();
     expect(result.overall).toBe(true);
-    expect(result.components[0].healthy).toBe(true);
+    expect(result.components[0]!.healthy).toBe(true);
   });
 
   it('should get health check history', async () => {

@@ -104,7 +104,7 @@ describe('InMemoryCertMonitor', () => {
   it('getExpiryStatus returns entries', () => {
     monitor.addExpiryStatus(certInfo, 'ok');
     expect(monitor.getExpiryStatus()).toHaveLength(1);
-    expect(monitor.getExpiryStatus()[0].level).toBe('ok');
+    expect(monitor.getExpiryStatus()[0]!.level).toBe('ok');
   });
 
   it('onWarning returns unsubscribe function', () => {
@@ -230,8 +230,8 @@ describe('InMemoryRBACProvider', () => {
 
     const roles = rbac.getRoles();
     expect(roles).toHaveLength(1);
-    expect(roles[0].name).toBe('admin');
-    expect(roles[0].permissions).toHaveLength(2);
+    expect(roles[0]!.name).toBe('admin');
+    expect(roles[0]!.permissions).toHaveLength(2);
   });
 
   it('identity with multiple roles gets union permissions (S19)', () => {
@@ -265,7 +265,7 @@ describe('InMemoryRBACProvider', () => {
     });
     const roles = rbac.getRoles();
     expect(roles).toHaveLength(1);
-    expect(roles[0].permissions[0].resource).toBe('b');
+    expect(roles[0]!.permissions[0]!.resource).toBe('b');
   });
 
   it('hasPermission returns false for unknown identity roles', () => {
@@ -457,7 +457,7 @@ describe('InMemorySecurityCompliance', () => {
     comp.registerChecks(checks);
     const results = await comp.runChecks();
     expect(results).toHaveLength(4);
-    expect(results[0].id).toBe('TLS-001');
+    expect(results[0]!.id).toBe('TLS-001');
   });
 
   it('runCategory filters correctly (S15)', async () => {
@@ -469,7 +469,7 @@ describe('InMemorySecurityCompliance', () => {
 
     const authResults = await comp.runCategory('auth');
     expect(authResults).toHaveLength(1);
-    expect(authResults[0].id).toBe('AUTH-001');
+    expect(authResults[0]!.id).toBe('AUTH-001');
   });
 
   it('getScore returns 0-100 (S16)', () => {
@@ -545,8 +545,8 @@ describe('InMemorySecurityCompliance', () => {
       },
     ]);
     const results = await comp.runChecks();
-    expect(results[0].timestamp).toBeTruthy();
-    expect(new Date(results[0].timestamp).getTime()).not.toBeNaN();
+    expect(results[0]!.timestamp).toBeTruthy();
+    expect(new Date(results[0]!.timestamp).getTime()).not.toBeNaN();
   });
 
   it('runCategory returns empty array for unknown category', async () => {

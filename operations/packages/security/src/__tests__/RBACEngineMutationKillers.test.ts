@@ -45,7 +45,7 @@ describe('RBAC-MK: role management', () => {
     };
     e.addConstraint(c);
     // Wrong type must NOT remove (predicate `c.type === type`).
-    expect(e.removeConstraint('table', 'read', 'ip_range' as any)).toBe(false);
+    expect(e.removeConstraint('table', 'read', 'ip_range')).toBe(false);
     // Correct type removes.
     expect(e.removeConstraint('table', 'read', 'time')).toBe(true);
   });
@@ -126,11 +126,11 @@ describe('RBAC-MK: cycle detection', () => {
     const e = new RBACEngine();
     e.registerRole(role('a', { parents: ['b'] }));
     e.registerRole(role('b', { parents: ['a'] }));
-    // Self-cycle: registering a role that participates in a cycle is handled by
-    // hasPermission/register-time validation. The visited guard keeps DFS finite.
-    // We assert no infinite loop (call returns a boolean).
-    const result = (e as any)._hasCycle('a');
-    expect(typeof result).toBe('boolean');
+    // hasPermission/register-time validation handle self-cycles; the visited
+    // guard keeps the DFS finite. validateHierarchy is the public route to it.
+    const hierarchy = e.validateHierarchy();
+    expect(hierarchy.valid).toBe(false);
+    expect(hierarchy.circularRoles).toContain('a');
   });
 });
 
