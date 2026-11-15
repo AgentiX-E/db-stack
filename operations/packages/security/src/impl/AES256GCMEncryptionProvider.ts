@@ -99,9 +99,14 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
     const tag = ciphertext.subarray(ciphertext.length - TAG_LENGTH);
     const encrypted = ciphertext.subarray(offset, ciphertext.length - TAG_LENGTH);
 
-    // Resolve key for the version
-    const key = this.keyHistory.get(version) ?? this.masterKey;
-    if (!key || key.length === 0) {
+    // Resolve the key for the version named in the header. There is deliberately
+    // no fallback to the current key: the version prefix is not covered by the
+    // AEAD tag, so accepting an unknown version would let anyone relabel a blob
+    // with an arbitrary version number and still have it decrypt successfully.
+    // That would also make a re-encryption audit unreliable, because the header
+    // is the only record of which key a blob was written with.
+    const key = this.keyHistory.get(version);
+    if (!key) {
       throw new Error(`AES256GCM: unknown key version ${version}`);
     }
 
