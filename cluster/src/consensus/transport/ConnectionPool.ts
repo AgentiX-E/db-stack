@@ -637,16 +637,29 @@ export class ConnectionPool {
       return null;
     }
 
-    // Accept the incoming connection regardless of existing state.
-    // Previous behavior destroyed incoming when a verified outgoing existed,
-    // which silently killed the peer's outgoing connection (used for sending
-    // message-responses like VoteResp back). Instead, we replace the existing
-    // connection with the incoming one. The old connection is marked as
-    // superseded so _onDisconnect doesn't delete the replacement.
+    // A pair of nodes must converge on ONE socket, and both sides must agree which.
+    //
+    // A node with a configured peer dials it, and every node dials every peer, so
+    // both ends of a pair open a socket at the same time. Adopting the incoming
+    // unconditionally and closing the outgoing meant the two ends could disagree —
+    // each holding the socket the other had just closed — and a write on that
+    // socket was accepted by the kernel and never delivered. A message lost that
+    // way is invisible to Raft, which waits for a reply that cannot come.
+    //
+    // The tie-break is the node id: the higher id yields. The lower id keeps the
+    // connection it opened and rejects the peer's attempt; the higher id adopts
+    // the incoming one and closes its own. Both ends then hold the same socket,
+    // which is bidirectional, so a reply (VoteResp and friends) travels back over
+    // it — the case the old code was trying to protect by replacing.
     let existing: PeerConnection | undefined;
     await this._connMutex.runExclusive(async () => {
       existing = this._connections.get(peerId);
     });
+
+    if (existing && existing.connected && this.config.nodeId < peerId) {
+      socket.destroy();
+      return null;
+    }
     const newEpoch = (this._connectionEpoch.get(peerId) || 0) + 1;
     this._connectionEpoch.set(peerId, newEpoch);
 
@@ -854,11 +867,26 @@ export class ConnectionPool {
 
       // Create connection with epoch
       const newEpoch = (this._connectionEpoch.get(peerId) || 0) + 1;
-      this._connectionEpoch.set(peerId, newEpoch);
       const conn = new PeerConnection(peerId, socket, newEpoch);
-      await this._connMutex.runExclusive(async () => {
+
+      // A dial can finish after the peer's own dial was accepted, so check under
+      // the mutex instead of overwriting: adopting the entry that is already
+      // there keeps both ends on one socket, and the losing socket is destroyed
+      // rather than left open with its handlers attached to nothing.
+      const superseded = await this._connMutex.runExclusive(async () => {
+        const active = this._connections.get(peerId);
+        if (active && active.connected) return active;
+        this._connectionEpoch.set(peerId, newEpoch);
         this._connections.set(peerId, conn);
+        return undefined;
       });
+
+      if (superseded) {
+        socket.destroy();
+        this._connecting.delete(peerId);
+        logger.debug(`[ConnectionPool] Discarded a duplicate dial to peer ${peerId}`);
+        return superseded;
+      }
 
       // Notify RaftTcpTransport to set up data listener (bidirectional)
       this.onConnectionCreated?.(peerId, conn);

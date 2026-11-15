@@ -734,15 +734,49 @@ describe('ConnectionPool onIncoming', () => {
     expect(conn!.connected).toBe(true);
   });
 
-  it('supersedes an existing connected connection', async () => {
-    const pool = new ConnectionPool(makeConfig());
+  it('keeps the connection it opened when it has the lower node id', async () => {
+    // Both ends of a pair dial at once, so both hold a socket. The tie-break is
+    // the node id: the higher id yields, the lower id keeps what it opened. Without
+    // one, each end could keep a socket the other had closed, and a write on that
+    // socket is accepted and never delivered.
+    const pool = new ConnectionPool(makeConfig()); // nodeId 1 < peer 2
+    const oldConn = new PeerConnection(2, createMockSocket());
+    (pool as any)._connections.set(2, oldConn);
+    const closeSpy = vi.spyOn(oldConn, 'close');
+    const incoming = createMockSocket();
+
+    const conn = await pool.onIncoming(2, incoming);
+
+    expect(conn).toBeNull();
+    expect(incoming.destroy).toHaveBeenCalled();
+    expect(closeSpy).not.toHaveBeenCalled();
+    expect((pool as any)._connections.get(2)).toBe(oldConn);
+  });
+
+  it('adopts the incoming connection when it has the higher node id', async () => {
+    const pool = new ConnectionPool(makeConfig({ nodeId: 3 })); // nodeId 3 > peer 2
     const oldConn = new PeerConnection(2, createMockSocket());
     (pool as any)._connections.set(2, oldConn);
     const closeSpy = vi.spyOn(oldConn, 'close');
 
     const conn = await pool.onIncoming(2, createMockSocket());
+
     expect(closeSpy).toHaveBeenCalled();
     expect((pool as any)._connections.get(2)).toBe(conn);
+  });
+
+  it('discards a dial that finishes after the peer connection was adopted', async () => {
+    // A dial can complete after the peer's own dial was accepted. Overwriting the
+    // entry would leave two live sockets for one pair with only one of them
+    // tracked, so the late dial is destroyed and the established connection wins.
+    const pool = new ConnectionPool(makeConfig());
+    const adopted = new PeerConnection(2, createMockSocket());
+    (pool as any)._connections.set(2, adopted);
+
+    const conn = await (pool as any)._connect(2);
+
+    expect(conn).toBe(adopted);
+    expect((pool as any)._connections.get(2)).toBe(adopted);
   });
 
   it('close event triggers _onDisconnect when the connection is still active', async () => {

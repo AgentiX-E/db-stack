@@ -37,6 +37,12 @@ export interface TestClusterOptions {
   preVote?: boolean; // default: true
   checkQuorum?: boolean; // default: true
   enableInstallSnapshot?: boolean; // default: false
+  /**
+   * How the cluster picks its ports. Defaults to `getFreePorts`, which asks the OS
+   * and cannot reserve what it is given — a test can inject an allocator that
+   * returns a port another socket already holds to exercise the retry below.
+   */
+  portAllocator?: (count: number) => Promise<number[]>;
 }
 
 // ── Public types ──────────────────────────────────────────────────
@@ -50,7 +56,8 @@ export interface TestNode {
 
 // ── Defaults ──────────────────────────────────────────────────────
 
-type ResolvedOptions = Required<Omit<TestClusterOptions, 'snapshotInterval'>> & { snapshotInterval?: number };
+type ResolvedOptions = Required<Omit<TestClusterOptions, 'snapshotInterval' | 'portAllocator'>> &
+  Pick<TestClusterOptions, 'snapshotInterval' | 'portAllocator'>;
 
 const DEFAULTS: ResolvedOptions = {
   nodeCount: 3,
@@ -63,6 +70,31 @@ const DEFAULTS: ResolvedOptions = {
   checkQuorum: true,
   enableInstallSnapshot: false,
 };
+
+/**
+ * Attempts allowed when the OS hands back a port that is taken between the probe
+ * and the bind. `getFreePorts` closes its probe socket before returning, so the
+ * window is real: on a busy runner two workers can be handed the same number.
+ * Retrying with a fresh allocation turns that into a slow start rather than a
+ * five-minute timeout in whichever suite lost the race.
+ */
+const MAX_START_ATTEMPTS = 3;
+
+/**
+ * Whether a start failure is a lost port race rather than a real defect.
+ *
+ * Walks the cause chain: `RaftAdapter.init` reports every failure as a
+ * `SqlVecError`, and the code that says EADDRINUSE lives on the error it wraps.
+ */
+function isAddressInUse(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; current !== null && current !== undefined && depth < 5; depth++) {
+    if ((current as { code?: unknown }).code === 'EADDRINUSE') return true;
+    if (/EADDRINUSE/.test(String((current as { message?: unknown }).message ?? ''))) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
 
 // ── Cluster class ─────────────────────────────────────────────────
 
@@ -93,12 +125,39 @@ export class TestCluster {
   /**
    * Start the cluster: allocate ports, generate certs, create + init
    * all RaftAdapters. Resolves once all nodes are initialized.
+   *
+   * `getFreePorts` cannot hold the ports it hands out, so a busy machine can give
+   * the same number to two suites. That used to surface as `EADDRINUSE` thrown
+   * from a TLS server nobody awaited — an uncaught exception that failed the whole
+   * run — or, worse, as a cluster that came up one node short and then timed out
+   * waiting for a leader. A lost race is retried with a fresh allocation.
    */
   async start(): Promise<void> {
     await this.ensureClean();
-
     this.certs = generateClusterCerts(this.opts.nodeCount);
-    this.ports = await getFreePorts(this.opts.nodeCount);
+
+    const allocate = this.opts.portAllocator ?? getFreePorts;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= MAX_START_ATTEMPTS; attempt++) {
+      try {
+        await this.startAttempt(allocate);
+        return;
+      } catch (err) {
+        lastError = err;
+        // A node that did bind is still listening; its port is not the one that
+        // collided, so the whole attempt is torn down before the next one.
+        await this.stop();
+        if (!isAddressInUse(err)) break;
+      }
+    }
+
+    throw lastError;
+  }
+
+  /** One start attempt: allocate, create, init. Assigns `nodes` before init so a failure can be cleaned up. */
+  private async startAttempt(allocate: (count: number) => Promise<number[]>): Promise<void> {
+    this.ports = await allocate(this.opts.nodeCount);
     this.baseDir = createTempDir('test-cluster');
     this.dataDirs = Array.from({ length: this.opts.nodeCount }, (_, i) => {
       const d = join(this.baseDir, `node-${i + 1}`);
@@ -131,6 +190,8 @@ export class TestCluster {
       instances.push({ adapter, port: this.portAt(i), id, dir: this.dataDirAt(i) });
     }
 
+    this.nodes = instances;
+
     for (const inst of instances) {
       const nodePeers = this.peerConfigs.filter((p) => p.id !== inst.id);
       await inst.adapter.init(() => {}, {
@@ -147,7 +208,6 @@ export class TestCluster {
       });
     }
 
-    this.nodes = instances;
     this._started = true;
   }
 

@@ -88,11 +88,18 @@ export interface SharedTransport {
 }
 
 export class SqlVecError extends Error {
+  /**
+   * @param cause The error this one wraps. `code` on the original is the only
+   *   reliable way to tell a recoverable failure (a port already in use, an
+   *   ENOENT) from a fatal one, and dropping it in the wrapper left callers
+   *   matching on message text.
+   */
   constructor(
     message: string,
     public code: SqlVecErrorCode = SqlVecErrorCode.INTERNAL,
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
     this.name = 'SqlVecError';
   }
 }

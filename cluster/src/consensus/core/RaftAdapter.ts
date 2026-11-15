@@ -400,6 +400,7 @@ export class RaftAdapter {
       throw new SqlVecError(
         `Failed to initialize @maboke123/raft-core: ${getErrorMessage(err)}`,
         SqlVecErrorCode.INTERNAL_ERROR,
+        { cause: err },
       );
     }
   }

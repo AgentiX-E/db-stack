@@ -175,7 +175,11 @@ export class RaftTcpTransport extends EventEmitter {
     });
 
     this.server.on('error', (err) => {
-      this.emit('error', err);
+      // Re-emit for observers, but only when somebody is listening: EventEmitter
+      // throws on an 'error' with no handler, so an unobserved listen failure
+      // (EADDRINUSE on a busy machine) used to escape as an uncaught exception
+      // while `start()` was already rejecting with the same error.
+      if (this.listenerCount('error') > 0) this.emit('error', err);
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -245,9 +249,14 @@ export class RaftTcpTransport extends EventEmitter {
     // 5. Initiate connections to all peers eagerly but non-blocking.
     //    TLS connections on localhost take ~50-200ms. By starting them here
     //    asynchronously, they should be ready by the first heartbeat tick.
-    //    Simultaneous connect is handled by onIncoming: whichever side's
-    //    connection completes first is used; the incoming from the other side
-    //    is rejected without tearing down the established connection.
+    //    Simultaneous connect is handled by `ConnectionPool.onIncoming`, which
+    //    *replaces* the pool's entry for the peer with the incoming connection and
+    //    closes the superseded outgoing one — it does not reject the incoming.
+    //    A TLS socket is bidirectional, so the surviving connection carries both
+    //    directions and nothing is lost by the swap; a probe of eight consecutive
+    //    both-ways dials delivered every message in both directions (p50 ~0-1 ms,
+    //    worst 23 ms). This comment used to claim the opposite behaviour, which is
+    //    not what the pool does.
     for (const peer of peerList) {
       this._initiateConnection(peer.id).catch((err) => {
         this.emit('connect-error', { peerId: peer.id, error: err });

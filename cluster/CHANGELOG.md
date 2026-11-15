@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exported a _different_ `IOutboxWriter` (`write`, `getLastWrittenIndex`) that no component
   in the package calls. A third-party adapter could implement the documented interface and
   still be unable to satisfy `RaftGroup`.
+- **`TestClusterOptions.portAllocator`** — how the harness picks its ports is now injectable.
+  The default asks the OS, which cannot reserve what it hands out, so a test could not
+  reproduce a lost port race deterministically; it now can.
+- **`ensureTestTmpRoot()`** in `scripts/test-tmpdir.mjs` — `TMPDIR` is process-wide, so one
+  test that removes a path at or above the shared scratch root broke `mkdtempSync` for every
+  later test on the same worker, reported as an ENOENT in an unrelated file. The setups
+  re-assert the root before each test; a healthy root costs one `existsSync`.
 
 ### Changed
 
@@ -29,6 +36,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A lost port race crashed the run instead of failing one cluster.**
+  `RaftTcpTransport.start()` re-emitted the listening server's `error` event
+  unconditionally, and `emit('error')` on an `EventEmitter` with no listener _throws_ — so a
+  second socket taking a port between `getFreePorts`' probe and the bind surfaced as an
+  uncaught `EADDRINUSE` that failed every file sharing the worker, not the cluster that lost
+  the race. The transport now re-emits only when something listens, and `TestCluster.start`
+  retries a lost race with a fresh allocation (3 attempts) after tearing down the partial
+  attempt, so the race costs a slow start rather than a red build.
+- **`SqlVecError` dropped the error it wrapped.** `RaftAdapter.init` reported every failure
+  as `INTERNAL_ERROR`, which discarded the code of the cause — an `EADDRINUSE` was
+  indistinguishable from a certificate error by the time a caller saw it. `SqlVecError` now
+  accepts `{ cause }` and forwards it to `Error`, and the retry decision above walks that
+  chain instead of pattern-matching on a message.
+- **Two peers dialling each other at once could each keep a socket the other had closed.**
+  `ConnectionPool.onIncoming` replaced whatever the pool held and `_connect` overwrote the
+  entry unconditionally, so a simultaneous dial left both sides writing into a half-closed
+  pair: the pool that lost the race held a socket the peer had already dropped, and only the
+  reconnect timer recovered it — up to `maxRetryMs` of silence for a peer that was up the
+  whole time. Both paths now converge on one socket by comparing node ids (the smaller id
+  keeps its outbound socket, the larger one yields to the inbound), and a dial that loses
+  the race to an already-live connection is discarded. Measured over 8 consecutive runs of
+  the two-node socket suite: worst case 23 ms to a single live connection on each side.
 - **`OperationRecorder` recorded the wrong client id on a return, and never read the map it
   kept.** `recordReturn` re-derived the caller from `callId.split(':')[0]`, while
   `pendingCalls` — written on every call — was read by nothing. A call id that does not encode

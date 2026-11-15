@@ -44,7 +44,7 @@ function nextMessage(transport: RaftTcpTransport): Promise<RaftMessage> {
 }
 
 beforeAll(async () => {
-  certs = generateClusterCerts(4);
+  certs = generateClusterCerts(6);
   // Port 0: the OS picks a free port, so this cannot collide with another suite
   // or another agent's test run. The resolved port is read back below.
   first = transportFor(1, 0);
@@ -52,11 +52,16 @@ beforeAll(async () => {
   await first.start();
   await second.start();
 
-  // Only node 1 dials. A TLS socket is bidirectional, so node 2 answers over the
-  // accepted connection; letting both nodes dial at once would make the test
-  // depend on which side wins the race to replace its outgoing socket.
+  // Both sides dial, which is what start() does for every configured peer in a
+  // real cluster: a pair that only ever connects one way is not the shape the
+  // product runs in. The pool keeps whichever connection arrives last and closes
+  // the superseded one; a TLS socket is bidirectional, so the surviving
+  // connection carries both directions. Eight consecutive both-ways dials
+  // delivered every message both ways (worst 23 ms), which is why this is
+  // asserted rather than avoided.
   first.register({ id: 2, host: '127.0.0.1', port: second.getBoundPort() });
-  await first.waitForConnections();
+  second.register({ id: 1, host: '127.0.0.1', port: first.getBoundPort() });
+  await vi.waitFor(() => expect(first.getConnectedPeers()).toEqual([2]), 20_000);
   await vi.waitFor(() => expect(second.getConnectedPeers()).toEqual([1]), 20_000);
 }, 120_000);
 
@@ -75,6 +80,27 @@ describe('RaftTcpTransport — bound port', () => {
 
   it('reports the configured port before the server has been started', () => {
     expect(transportFor(3, 41000).getBoundPort()).toBe(41000);
+  });
+});
+
+describe('RaftTcpTransport — a port that is taken', () => {
+  it('rejects start() with EADDRINUSE instead of throwing out of band', async () => {
+    // A busy machine hands the same port to two suites. The listen error arrives
+    // asynchronously, and the transport used to re-emit it on itself: with no
+    // 'error' listener that is an uncaught exception, which fails an entire run
+    // even though start() was already rejecting with the same error.
+    const taken = new RaftTcpTransport({
+      node: { id: 6, host: '127.0.0.1', port: first.getBoundPort() },
+      peers: [],
+      tls: {
+        cert: certs.nodes[5]!.cert,
+        key: certs.nodes[5]!.key,
+        ca: certs.caPem,
+      },
+    });
+
+    await expect(taken.start()).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    await taken.stop();
   });
 });
 
@@ -111,6 +137,28 @@ describe('RaftTcpTransport — message delivery', () => {
     expect(msg.msgType).toBe(1);
     expect(msg.term).toBe('7');
     expect(msg.entries?.[0]?.data).toBe('a-command');
+  });
+
+  it('delivers in the reverse direction over the same pair', async () => {
+    // The direction that a one-way setup never exercises: node 2 speaks first.
+    const received = nextMessage(first);
+
+    await second.send(2, [
+      {
+        msgType: 1,
+        from: '2',
+        to: '1',
+        term: '9',
+        index: '5',
+        commit: '4',
+        entries: [{ index: '5', term: '9', entryType: 0, data: 'a-reply' }],
+      },
+    ]);
+
+    const msg = await received;
+    expect(msg.from).toBe('2');
+    expect(msg.to).toBe('1');
+    expect(msg.entries?.[0]?.data).toBe('a-reply');
   });
 
   it('delivers a payload above the compression threshold after decompressing it', async () => {
