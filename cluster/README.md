@@ -199,7 +199,7 @@ interface RaftConfig {
   peers?: number[];            // Peer node IDs
   
   // Advanced
-  snapshotInterval?: number;   // Entries per snapshot (default: 100)
+  snapshotInterval?: number;   // Entries between snapshots (default: 200)
   // @deprecated no-op: chunked snapshot install is unconditional.
   enableInstallSnapshot?: boolean;
   environment?: 'development' | 'production';

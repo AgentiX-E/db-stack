@@ -86,7 +86,7 @@ const adapter = new RaftAdapter({
   heartbeatTick: 3,
   tickIntervalMs: 50,
   storagePath: `./data/node-${id}/raft.db`,
-  snapshotInterval: 1000,
+  snapshotInterval: 1000, // default 200; raise it only if snapshot cost outweighs restart time
   preVote: true,
   checkQuorum: true,
 });

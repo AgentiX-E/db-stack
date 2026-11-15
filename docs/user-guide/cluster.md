@@ -38,8 +38,8 @@ import {
 | `heartbeatTick` | Heartbeat period in ticks | Keep `heartbeatTick ≤ electionTick / 3` |
 | `tickIntervalMs` | Wall-clock length of a tick | `electionTick × tickIntervalMs` should exceed your p99 pause time |
 | `storagePath` | SQLite file for the log | Put it on a local SSD; never on NFS |
-| `snapshotInterval` | Entries between snapshots | 0 disables snapshots (unbounded log growth) |
-| `maxLogEntries` | Forced compaction threshold | Set it; otherwise a slow follower pins the log forever |
+| `snapshotInterval` | Entries between snapshots | Default **200**. `0` disables snapshots (unbounded log growth) |
+| `maxLogEntries` | Forced compaction threshold | Default **0** (no forced snapshot; `snapshotInterval` alone decides). Set it or a slow follower pins the log forever |
 | `preVote` | Election disruption avoidance | Keep on in production |
 | `checkQuorum` | Leader steps down when isolated | Keep on in production |
 | `useInMemoryStorage` / `useInMemoryTransport` | Test-only shortcuts | Never in production — they silently remove durability |

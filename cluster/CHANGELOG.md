@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`openSqliteHandleCount()`** — live better-sqlite3 handles owned by the package.
+  A leaked handle is invisible to assertions: the suite stays green and the process
+  aborts at teardown with `terminate called after throwing an instance of 'Napi::Error'`
+  and exit 134, no stack and no test name. Counting it turns "this middleware does not
+  leak storage" into something a test can assert, which is the only form in which it
+  stays true.
+- **`SqliteStorage.isOpen`** — whether a live handle is held. Cheap and synchronous, so
+  health checks and shutdown paths can ask instead of calling a method that throws.
+- **`src/testing/latency.ts`** — the measuring instrument the perf suite was missing:
+  `summarise` (nearest-rank percentiles, no interpolation), `measureLatency` (explicit
+  warmup that is discarded, not counted), `ms`, `describeLatency`. Percentiles are only
+  comparable if every suite computes them the same way, and before this each benchmark
+  had its own idea.
+- **`vitest.performance.config.ts` / `vitest.soak.config.ts`** — the two suites have
+  their own config. The base config excludes `src/__tests__/performance/**` and
+  `src/__tests__/longrun/**`, and a positional filter does not override `exclude`, so
+  `test:perf` and `test:soak` printed `No test files found` and ran nothing. A
+  `mergeConfig` override does not work either: merging *concatenates* the arrays.
+- **`bench/snapshot-threshold-sweep.ts`** — snapshot threshold against retained log,
+  proposal latency and restart time, measured on a real cluster.
+- **`bench/proposal-concurrency-curve.ts`** — throughput against in-flight proposals,
+  1 to 50.
+- **A `benchmark` job in `ci.yml`** — `test:perf` now runs on every pull request and
+  reports into `ci-summary`. It was a script nobody called, which is how it stayed
+  broken.
+
 - **`pnpm typecheck:tests`** — the test tree and the benchmarks are now compiled with the
   production compiler options (`strict`, `noUncheckedIndexedAccess` included). The package
   had carried a `tsconfig.test.json` that no script, turbo task or workflow referenced; 297
@@ -47,6 +73,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`DEFAULT_SNAPSHOT_INTERVAL` is 200, and it is the threshold that reaches
+  raft-core.** The adapter forwarded `this.config.snapshotInterval` and dropped the
+  default on the floor, so an unset interval meant "raft-core's own number" — 200 —
+  while three places in this repository documented 1000 or 300. A caller who relied on
+  the documented value got a snapshot every 200 entries instead of every 1000, and the
+  cost showed up as restart time, not as an error. Measured on a real three-node
+  cluster: threshold 200 retains 51 entries and snapshots at 600 with a 144 ms restart;
+  threshold 1000 retains 651 entries, never snapshots in the same window, and restarts
+  in 186 ms.
+- **`getRetainedLogLength()` counts the log's own boundaries.** It returned
+  `lastLogIndex - appliedIndex`, and the apply loop leaves `applied` one behind, so a
+  freshly snapshotted node reporting 21 retained entries answered 20 — and a node whose
+  log had been truncated to a single entry could answer 1 or 0 depending on where the
+  loop happened to be. It now reads `getFirstIndex`/`getLastIndex` from the log manager,
+  which is what "retained" means.
+- **The performance suite measures a real cluster.** Three of its files were rewritten:
+  the election benchmark timed five simulated elections and called the number an
+  election, the operations benchmark took a single cold sample and reported it as P50,
+  and the throughput benchmark proposed through a stub instead of `RaftAdapter`. Every
+  number in this file now comes from three nodes over mTLS with an explicit warmup
+  window that is discarded.
+- **`RaftAdapter.stop()` does not close storage it did not open.** A storage passed in
+  through `config.storage` belongs to the caller and may be shared with another group;
+  closing it there pulled the database out from under its owner. Storage opened from
+  `storagePath` is still closed — nothing else holds a reference to it.
 - **`RaftAdapter.proposeAndWait` returns `{ index, term }`** instead of `void`. It was the
   only caller that needed the position — `RaftGroup.proposeAndWait` — which appended the
   outbox record with `raftIndex: 0` and then had no way to correct it.
@@ -60,6 +111,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`SqliteStorage.open()` was not idempotent, and the handle it dropped aborted the
+  process.** A second `open()` built a second better-sqlite3 database and assigned it
+  over the first, so the original was reachable from nowhere and could never be closed.
+  The node then ran on one handle while the log file it believed it owned was still held
+  by the orphan. Nothing observable failed until teardown, where the leaked wrapper was
+  finalised on an environment that no longer existed and better-sqlite3 called
+  `terminate` — `Napi::Error`, exit 134, no stack, no test name, and only when the
+  performance suite ran its files together. `open()` now returns early when a handle is
+  live, and `open()` after `close()` reopens the same file.
+- **`close()` left the storage half-initialised.** `_initialized` stayed true while the
+  handle was gone, so a closed storage answered inconsistently and the next call
+  dereferenced `null` instead of raising the documented "Database not open".
+- **`RaftAdapter.init()` could be entered twice and orphan a storage.** A second init
+  built a fresh `SqliteStorage`, assigned it over `sqliteStorage`, and left the previous
+  handle open — while a node that had already started kept serving on storage the
+  adapter no longer tracked. It now refuses, before installing the apply handler, so a
+  refused call changes nothing; `stop()` then `init()` is the supported restart.
+- **A failed `init()` leaked everything it had opened.** The catch block wrapped the
+  error and rethrew, leaving the SQLite handle, the TLS listener and the timers running
+  with no reference held by any caller — and nothing in the public API suggested a
+  cleanup was owed, so correct usage leaked. The failure path now releases in reverse
+  order of construction, which also makes a failed init retryable instead of terminal.
+- **`test:perf` and `test:soak` never ran a single test.** Both passed a directory as a
+  positional filter while the base config excluded it; vitest printed
+  `No test files found, exiting with code 1`. Both now use a dedicated config whose
+  `exclude` is empty, one file at a time on a forks pool — a benchmark that shares cores
+  with another benchmark is not measuring the middleware, and the native storage handles
+  are not finalised on a worker isolate that is already shutting down.
+- **The nightly benchmark workflow failed before reaching its first benchmark.**
+  `TMPDIR` was set at workflow level, so `pnpm/action-setup` — which runs before any step
+  could create the directory — aborted with
+  `ENOENT: lstat '/home/runner/work/db-stack/db-stack/.tmp'`. Moved into the steps that
+  need it, each of which creates the directory first.
 - **A snapshot larger than one chunk could never install.** raft-core starts `sendSnapshot`
   from its heartbeat loop, which does not await peers (`for (const peer of allPeers)
   this.sendAppendEntries(peer)`) and holds no per-peer guard, so several transfers to one peer

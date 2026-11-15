@@ -26,17 +26,17 @@ Legend for the coverage column — test types actually executed against the feat
 
 | Capability                                    | Verification  | Notes                                                                                                                         |
 | --------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Leader election, pre-vote, check-quorum       | U · I · E     | Real elections in 3- and 5-node TLS clusters                                                                                  |
-| Log replication, commit index, apply ordering | U · I · L · E | Every entry applied in index order on every node                                                                              |
+| Leader election, pre-vote, check-quorum       | U · I · E · P | Real elections in 3- and 5-node TLS clusters; median and p95 over five trials on a real cluster (`AC 29.1`)                    |
+| Log replication, commit index, apply ordering | U · I · L · E · P | Every entry applied in index order on every node; latency and throughput measured through `RaftAdapter` (`AC 29.6`, `AC 41.1`) |
 | Entry position forwarded to the application   | U · I · C · E | `index`/`term` reach the engine; asserted end-to-end                                                                          |
 | Joint consensus membership change             | U · I · E     | C_old,new → C_new, rollback on failure                                                                                        |
 | Learner (non-voting) catch-up                 | U · I · E     | Promoted only after catching up                                                                                               |
 | Leader transfer                               | U · I · E     | Target confirmed as leader before success is reported                                                                         |
-| ReadIndex and lease reads                     | U · I         | Leader-lease expiry and stepping down                                                                                         |
+| ReadIndex and lease reads                     | U · I · P     | Leader-lease expiry and stepping down; p50 0.001 ms over 1 000 reads (`AC 41.3`, `AC 41.4`)                                   |
 | Snapshots: take, frame, install, compact      | U · I · R · E | 30-byte envelope, CRC32, position, cross-shard rejection                                                                      |
 | Restart from a snapshot, single node          | R · E         | The engine, not the log, is the recovery source                                                                               |
 | Restart from a snapshot, **whole cluster**    | R · E         | Three processes, snapshots every 15 entries, all killed and restarted: every key returns and the cluster accepts writes again |
-| Log compaction and retention limits           | U · I · B     | Enforced bounds, no unbounded growth                                                                                          |
+| Log compaction and retention limits           | U · I · B · P | Enforced bounds, no unbounded growth; retained log 21 → 21 across 300 proposals and 1.0–1.4 KB retained per proposal (`AC 41.5`, `AC 41.6`) |
 | Point-in-time recovery                        | U · I         | Records are positioned by Raft index                                                                                          |
 | Session and watch APIs                        | U · I · E     | Reads-your-writes, change notification                                                                                        |
 | Event bus                                     | U · I · B     | Ordered delivery, backpressure                                                                                                |
@@ -198,9 +198,28 @@ pnpm lint && pnpm format:check
 (cd operations && pnpm coverage)
 pnpm coverage:e2e                                    # e2e harness, same 95 % thresholds
 pnpm coverage:gate                                   # all four packages, every dimension
-pnpm e2e                                             # 30 real-process TLS acceptance tests
+pnpm e2e                                             # 35 real-process TLS acceptance tests
+(cd cluster && pnpm test:perf)                       # 22 benchmarks on a real 3-node TLS cluster
 pnpm verify                                          # all of the above, in order
 ```
 
 The benchmark suite runs on GitHub runners from `.github/workflows/benchmark.yml`; results
-are attached to each run so a regression is visible next to the change that caused it.
+are attached to each run so a regression is visible next to the change that caused it. The
+same suite runs on every pull request as the `benchmark` job in `ci.yml`, because a benchmark
+nobody calls is a benchmark that stays broken.
+
+**How the performance numbers are produced.** Every latency case goes through
+`src/testing/latency.ts`: an explicit warmup window that is discarded, then nearest-rank
+percentiles over the recorded samples — no interpolation, and an empty sample set is an error
+rather than a zero. The cluster benchmarks start three real nodes over mTLS and propose through
+`RaftAdapter`, one file at a time, because a benchmark that shares cores with another benchmark
+is not measuring the middleware. Representative numbers from this machine:
+
+| Metric | Value |
+|---|---|
+| `proposeAndWait` p50 / p99 (n = 200) | 1.09–1.39 ms / 3.5–4.6 ms |
+| Sequential throughput | 712–874 ops/s |
+| `readIndex` / `leaseRead` p50 (n = 1 000) | 0.001 ms |
+| Retained log after 300 proposals (default threshold) | 21 entries |
+| Retained heap per proposal | 1.0–1.4 KB |
+| Concurrent (8 in flight) versus sequential | 0.42–0.43× — see P1-5 in the roadmap |
