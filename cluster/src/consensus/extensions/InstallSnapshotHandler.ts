@@ -117,11 +117,31 @@ export class InstallSnapshotHandler {
 
     const key = `${req.leaderId}-${req.lastIncludedIndex}`;
 
-    // Initialize or get assembly state
+    // Initialize or get assembly state.
+    //
+    // `offset` is the 0-based chunk *sequence number*, and it is the only thing
+    // that says which bytes belong where. Treating a break in that sequence as a
+    // warning — which this did — means a retried chunk is appended next to the
+    // one it duplicates and `Buffer.concat` produces a buffer that is not the
+    // snapshot: the engine's restore rejects it, the leader retries, the retry
+    // duplicates again, and the follower never installs. Observed as a leader
+    // logging `error sending snapshot to 1: RPC to 1 timed out after 1000 ms`
+    // once a second while the follower stayed on an old snapshot.
     let state = this.incomingState.get(key);
     if (!state) {
       // Check for stale assembly state (timeout)
       this.cleanStaleStates();
+
+      if (req.offset !== 0) {
+        // A fragment cannot start in the middle: without the bytes before it
+        // there is nothing to install, and keeping it would make the next
+        // `done` chunk look like a complete snapshot.
+        logger.warn(
+          `[InstallSnapshot] Rejecting a mid-stream first chunk for ${key} at offset ${req.offset}; ` +
+            'the leader must restart the transfer at offset 0',
+        );
+        return { term: Number(term), success: false, bytesStored: 0 };
+      }
 
       state = {
         chunks: [],
@@ -132,14 +152,25 @@ export class InstallSnapshotHandler {
         lastOffset: -1,
       };
       this.incomingState.set(key, state);
-    }
-
-    // Verify offset ordering (detect missing chunks)
-    if (req.offset !== state.lastOffset + 1 && state.lastOffset !== -1) {
+    } else if (req.offset === 0) {
+      // A retry always starts at the beginning, so it replaces the partial
+      // assembly instead of appending to it.
+      state.chunks = [];
+      state.checksums = [];
+      state.meta = req;
+      state.startedAt = Date.now();
+      state.totalBytesReceived = 0;
+      state.lastOffset = -1;
+    } else if (req.offset !== state.lastOffset + 1) {
+      // Duplicate or gap. Either way the bytes already held are not the prefix of
+      // this chunk, so the assembly is discarded and the leader starts again —
+      // `success: false` is what tells it to.
       logger.warn(
-        `[InstallSnapshot] Gap detected in chunks for ${key}: ` +
-          `expected offset ${state.lastOffset + 1}, got ${req.offset}`,
+        `[InstallSnapshot] Discarding assembly for ${key}: expected offset ${state.lastOffset + 1}, ` +
+          `got ${req.offset} (${state.totalBytesReceived} bytes held)`,
       );
+      this.incomingState.delete(key);
+      return { term: Number(term), success: false, bytesStored: 0 };
     }
 
     // Compute SHA-256 checksum if enabled

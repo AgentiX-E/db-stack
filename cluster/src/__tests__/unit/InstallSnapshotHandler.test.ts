@@ -241,19 +241,83 @@ describe('InstallSnapshotHandler - Unit', () => {
   });
 
   //
-  // AC 20.8: handleChunk detects gaps in offset
+  // AC 20.8: an offset break invalidates the assembly.
   //
-  it('AC 20.8: handleChunk detects gaps in offset ordering', async () => {
+  // The case used to assert the opposite ("gap detection is best-effort",
+  // `success: true`), which pinned the defect: appending chunk 2 after chunk 0
+  // makes `Buffer.concat` return something that is not the snapshot, so the
+  // engine's restore rejects it, the leader retries, the retry duplicates a
+  // chunk and corrupts the next assembly too. The follower then never installs
+  // while the leader logs a snapshot RPC timeout once a second.
+  it('AC 20.8: a gap discards the assembly and tells the leader to restart', async () => {
     const raft = createMockRaft(1);
     const installCallback = vi.fn().mockResolvedValue(undefined);
 
-    // Chunk at offset 0 is first — sets lastOffset = 0
     await handler.handleChunk(makeChunk({ data: 'first', offset: 0, done: false }), raft as any, installCallback);
+    expect(handler.getAssemblyProgress().length).toBe(1);
 
-    // Chunk at offset 2 (skip 1) — gap detected (not a failure, just warning)
+    // Chunk at offset 2 (offset 1 never arrived).
     const res = await handler.handleChunk(makeChunk({ data: 'third', offset: 2 }), raft as any, installCallback);
-    // Should still accept — gap detection is best-effort
+
+    expect(res.success).toBe(false);
+    expect(res.bytesStored).toBe(0);
+    expect(handler.getAssemblyProgress()).toHaveLength(0);
+    expect(installCallback).not.toHaveBeenCalled();
+  });
+
+  it('AC 20.8a: a duplicate chunk discards the assembly instead of doubling its bytes', async () => {
+    const raft = createMockRaft(1);
+    const installCallback = vi.fn().mockResolvedValue(undefined);
+
+    await handler.handleChunk(makeChunk({ data: 'first', offset: 0, done: false }), raft as any, installCallback);
+    // A retransmission of the chunk just stored (the leader timed out waiting).
+    const res = await handler.handleChunk(
+      makeChunk({ data: 'first', offset: 0, done: false }),
+      raft as any,
+      installCallback,
+    );
+
+    // offset 0 is also how a retry restarts, so this one is accepted as a fresh
+    // assembly — with exactly one chunk in it, not two.
     expect(res.success).toBe(true);
+    expect(handler.getAssemblyProgress()[0]!.bytesReceived).toBe('first'.length);
+    expect(installCallback).not.toHaveBeenCalled();
+  });
+
+  it('AC 20.8b: a transfer that restarts at offset 0 replaces the partial assembly', async () => {
+    const raft = createMockRaft(1);
+    const installCallback = vi.fn().mockResolvedValue(undefined);
+
+    await handler.handleChunk(makeChunk({ data: 'junk', offset: 0, done: false }), raft as any, installCallback);
+    await handler.handleChunk(makeChunk({ data: 'junk', offset: 1, done: false }), raft as any, installCallback);
+    // The leader gives up on that attempt and starts again.
+    await handler.handleChunk(makeChunk({ data: 'AA', offset: 0, done: false }), raft as any, installCallback);
+    const res = await handler.handleChunk(
+      makeChunk({ data: 'BB', offset: 1, done: true }),
+      raft as any,
+      installCallback,
+    );
+
+    expect(res.success).toBe(true);
+    expect(installCallback).toHaveBeenCalledTimes(1);
+    // The installed buffer is the second attempt's bytes, not both attempts'.
+    expect(installCallback.mock.calls[0]![0].toString()).toBe('AABB');
+  });
+
+  it('AC 20.8c: a first chunk that does not start at offset 0 is rejected', async () => {
+    const raft = createMockRaft(1);
+    const installCallback = vi.fn().mockResolvedValue(undefined);
+
+    const res = await handler.handleChunk(
+      makeChunk({ data: 'mid', offset: 3, done: true }),
+      raft as any,
+      installCallback,
+    );
+
+    expect(res.success).toBe(false);
+    expect(res.bytesStored).toBe(0);
+    expect(installCallback).not.toHaveBeenCalled();
+    expect(handler.getAssemblyProgress()).toHaveLength(0);
   });
 
   //
@@ -465,7 +529,7 @@ describe('InstallSnapshotHandler - Unit', () => {
     // Advance past the timeout, then trigger cleanStaleStates via a new chunk.
     await new Promise((r) => setTimeout(r, 5));
     await shortHandler.handleChunk(
-      makeChunk({ data: 'new', offset: 10, done: false, leaderId: 2, lastIncludedIndex: 200 }),
+      makeChunk({ data: 'new', offset: 0, done: false, leaderId: 2, lastIncludedIndex: 200 }),
       raft as any,
       vi.fn(),
     );
