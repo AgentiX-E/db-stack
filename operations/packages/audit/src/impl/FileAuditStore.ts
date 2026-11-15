@@ -367,14 +367,18 @@ export class FileAuditStore implements IAuditStore {
   }
 
   /**
-   * The files worth reading, sorted, with an archived segment winning over a
-   * namesake that is being removed.
+   * The files worth reading, newest first, with an archived segment winning over
+   * a namesake that is being removed.
    *
    * Rotation writes `X.ndjson.gz` and only then unlinks `X.ndjson`. Between the
    * two, both exist with the same entries in them, so a scan that reads both
    * reports every one of them twice — and a duplicate in an audit report is a
    * wrong number in a compliance statement. The archive is authoritative because
    * it is written last and completely.
+   *
+   * Newest first, because `maxScanLines` is a budget and a budget spent on old
+   * segments hides the entries a caller is most likely asking about: once a store
+   * held more than the budget, `query()` could not see anything written after it.
    *
    * Returns `null` when the directory cannot be listed.
    */
@@ -390,19 +394,25 @@ export class FileAuditStore implements IAuditStore {
     }
 
     const archived = new Set(files.filter((f) => f.endsWith('.ndjson.gz')).map((f) => f.slice(0, -3)));
-    return files.filter((f) => !(f.endsWith('.ndjson') && archived.has(f)));
+    return files.filter((f) => !(f.endsWith('.ndjson') && archived.has(f))).reverse();
   }
 
   /** Scan all `.ndjson`, `.ndjson.gz` and `.json` files, returning parsed entries. */
   private scanEntries(): AuditEntry[] {
-    const results: AuditEntry[] = [];
+    // One block per file, in the order the lines appear inside it. Files are
+    // visited newest-first so the budget protects recent history; the blocks are
+    // put back in chronological order at the end. Reversing the flat list instead
+    // would also reverse the entries *within* a segment, which is backwards.
+    const blocks: AuditEntry[][] = [];
     let scanned = 0;
 
     const files = this.listReadableFiles();
-    if (files === null) return results;
+    if (files === null) return [];
 
     for (const f of files) {
       if (scanned >= this.maxScanLines) break;
+      const block: AuditEntry[] = [];
+      blocks.push(block);
 
       if (f.endsWith('.json')) {
         // Single JSON array format
@@ -411,7 +421,7 @@ export class FileAuditStore implements IAuditStore {
           const entries = JSON.parse(content) as AuditEntry[];
           for (const e of entries) {
             if (scanned >= this.maxScanLines) break;
-            results.push(e);
+            block.push(e);
             scanned++;
           }
         } catch {
@@ -429,8 +439,7 @@ export class FileAuditStore implements IAuditStore {
           if (scanned >= this.maxScanLines) break;
           if (line.trim().length === 0) continue;
           try {
-            const entry = JSON.parse(line) as AuditEntry;
-            results.push(entry);
+            block.push(JSON.parse(line) as AuditEntry);
             scanned++;
           } catch {
             /* skip malformed lines, including a torn final line */
@@ -439,7 +448,7 @@ export class FileAuditStore implements IAuditStore {
       }
     }
 
-    return results;
+    return blocks.reverse().flat();
   }
 
   /** Count total lines across all NDJSON segments, compressed or not. */

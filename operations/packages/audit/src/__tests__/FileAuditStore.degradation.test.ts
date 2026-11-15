@@ -98,6 +98,24 @@ describe('FileAuditStore — degraded directory', () => {
     expect(entries.map((e) => e.id)).toEqual(['legacy-1', 'legacy-2']);
   });
 
+  it('spends the scan budget on the newest segments, not the oldest', async () => {
+    // `maxScanLines` is a budget. Spent from the oldest segment, a store that grew
+    // past it could not return anything written since - the caller asking "what
+    // happened today" got last quarter. Each write rotates, so this is three
+    // segments of one entry each with a budget of two.
+    store = new FileAuditStore(makeConfig({ maxAgeMs: 0, maxScanLines: 2 }));
+    await store.write({ ...ENTRY, actor: 'first' });
+    const second = await store.write({ ...ENTRY, actor: 'second' });
+    const third = await store.write({ ...ENTRY, actor: 'third' });
+    await store.close();
+    store = new FileAuditStore(makeConfig({ maxAgeMs: 0, maxScanLines: 2 }));
+
+    const entries = await store.query({});
+
+    // The newest two, still presented in the order they happened.
+    expect(entries.map((e) => e.id)).toEqual([second, third]);
+  });
+
   it('stops scanning at maxScanLines even when the bound falls between files', async () => {
     // Two files, a bound of two: the first fills the budget exactly, so the cut
     // has to happen at the top of the file loop, not only inside it.
