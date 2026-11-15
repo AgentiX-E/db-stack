@@ -396,4 +396,79 @@ describe('TcpSecureTransport — reconnection after an outage', () => {
     expect((transport as unknown as { _retryTimers: Map<string, unknown> })._retryTimers.has('node-2')).toBe(true);
     await transport.stop();
   });
+
+  it('records a non-Error rejection from the underlying transport as text', async () => {
+    // `send()` can be rejected with anything; a datacenter gate that throws a
+    // string, a library that rejects with a plain object. The reason is kept for
+    // diagnostics and must not become "[object Object]".
+    const mockRaft = mockWithStatus([2]);
+    mockRaft.send.mockRejectedValue('socket went away');
+    const transport = makeTransport(mockRaft);
+    await transport.start();
+
+    const delivered = await transport.send(message());
+
+    expect(delivered).toBe(false);
+    expect(transport.getLastSendError()).toBe('socket went away');
+    await transport.stop();
+  });
+
+  it('falls back to loopback and the default port for a malformed peer address', async () => {
+    // `peerAddresses` is the shorthand for "host:port" and is fed straight from
+    // configuration. A malformed entry used to resolve to `port: NaN`, which the
+    // transport accepts and then never connects to.
+    const mockRaft = mockWithStatus([]);
+    const transport = new TcpSecureTransport({
+      nodeId: 'node-1',
+      peerAddresses: ['', 'no-port-at-all', '127.0.0.1:not-a-port'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
+      initialRetryMs: 1,
+      maxRetryMs: 5,
+      _transportOverride: mockRaft,
+    });
+    await transport.start();
+
+    transport.reconnect('node-1');
+
+    expect(mockRaft.register).toHaveBeenCalledWith({ id: 1, host: '127.0.0.1', port: 7000 });
+    await transport.stop();
+  });
+
+  it('derives wire ids from a peer list that gives none', async () => {
+    // The `peers` shape does not require `transportNodeId`; without a derivation
+    // every peer would register as id `undefined`.
+    const mockRaft = mockWithStatus([]);
+    const transport = new TcpSecureTransport({
+      nodeId: 'dc-east',
+      peers: [{ nodeId: 'alpha', host: '10.0.0.1', port: 7001 }],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
+      initialRetryMs: 1,
+      maxRetryMs: 5,
+      _transportOverride: mockRaft,
+    });
+    await transport.start();
+
+    transport.reconnect('alpha');
+
+    expect(mockRaft.register).toHaveBeenCalledWith({ id: 1, host: '10.0.0.1', port: 7001 });
+    await transport.stop();
+  });
+
+  it('has no peers to resolve when neither peer shape is configured', async () => {
+    // A gateway that has not been given peers yet is a legal configuration: it
+    // accepts inbound replication and dials nothing. `peerAddresses` is absent,
+    // not empty, so the shorthand path has to tolerate undefined.
+    const mockRaft = mockWithStatus([]);
+    const transport = new TcpSecureTransport({
+      nodeId: 'node-1',
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
+      _transportOverride: mockRaft,
+    });
+    await transport.start();
+
+    transport.reconnect('node-9');
+
+    expect(mockRaft.register).not.toHaveBeenCalled();
+    await transport.stop();
+  });
 });
