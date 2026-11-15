@@ -105,9 +105,9 @@ describe('AntiEntropy — lifecycle edges', () => {
     const ae = new AntiEntropy({ nodeId: 'n1', intervalMs: 30000, merkleDepth: 3 }, p);
 
     await ae.start({ nodeId: 'n1', intervalMs: 50, merkleDepth: 3 });
-    const timer1 = (ae as any).timer;
+    const timer1 = ae['timer'];
     await ae.start(); // second start → `if (this.running) return`
-    expect((ae as any).timer).toBe(timer1);
+    expect(ae['timer']).toBe(timer1);
 
     await ae.stop();
   });

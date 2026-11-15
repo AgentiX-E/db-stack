@@ -11,10 +11,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { GraphVecFederationConsumer, type IGraphVecConsensusProvider } from './GraphVecFederationConsumer';
 import { HLC } from '../hlc/HLC';
 
-function mockProvider(): IGraphVecConsensusProvider {
+function mockProvider() {
   return {
-    propose: vi.fn().mockResolvedValue(42),
-    isLeader: vi.fn().mockReturnValue(true),
+    propose: vi.fn<(shardId: string, value: string) => Promise<number>>().mockResolvedValue(42),
+    isLeader: vi.fn<(shardId: string) => boolean>().mockReturnValue(true),
   };
 }
 
@@ -31,6 +31,7 @@ describe('GraphVecFederationConsumer — AC 46.6', () => {
     });
 
     await consumer.proposeReplicated({
+      key: 'edge:1',
       data: 'graph-data',
       type: 'edge-insert',
       sourceDc: 'dc-east',
@@ -53,15 +54,17 @@ describe('GraphVecFederationConsumer — AC 46.6', () => {
       nodeId: 'g1',
     });
 
+    const remoteStamp = new HLC('g2', 200n, 1);
     await consumer.proposeReplicated({
+      key: 'vertex:1',
       data: 'vertex-data',
       type: 'vertex-insert',
       sourceDc: 'dc-east',
       sourceNodeId: 'g2',
-      hlcTimestamp: { wallTime: 200, logical: 1, nodeId: 'g2' },
+      hlcTimestamp: remoteStamp,
     });
 
-    const payload = JSON.parse(provider.propose.mock.calls[0][1]);
+    const payload = JSON.parse(provider.propose.mock.calls[0]![1]);
     expect(payload.__federation).toBe(true);
     expect(payload.sourceDc).toBe('dc-east');
     expect(payload.sourceNodeId).toBe('g2');
@@ -79,9 +82,10 @@ describe('GraphVecFederationConsumer — AC 46.6', () => {
       nodeId: 'graph-local',
     });
 
-    const remoteHlc = { wallTime: 9999, logical: 5, nodeId: 'graph-remote' };
+    const remoteHlc = new HLC('graph-remote', 9999n, 5);
 
     await consumer.proposeReplicated({
+      key: 'vertex:2',
       data: 'causal-test',
       type: 'test',
       sourceDc: 'dc-east',
@@ -108,13 +112,13 @@ describe('GraphVecFederationConsumer — AC 46.6', () => {
       key: 'edge:123',
       localValue: 'weight:5',
       remoteValue: 'weight:10',
-      localHlc: { wallTime: 100, logical: 1, nodeId: 'graph' },
-      remoteHlc: { wallTime: 200, logical: 1, nodeId: 'remote' },
+      localHlc: new HLC('graph', 100n, 1),
+      remoteHlc: new HLC('remote', 200n, 1),
       sourceDc: 'dc-east',
     });
 
     expect(provider.propose).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(provider.propose.mock.calls[0][1]);
+    const payload = JSON.parse(provider.propose.mock.calls[0]![1]);
     expect(payload.__federation).toBe(true);
     expect(payload.__conflict).toBe(true);
     expect(payload.key).toBe('edge:123');

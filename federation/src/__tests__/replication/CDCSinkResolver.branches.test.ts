@@ -133,7 +133,7 @@ describe('CDCSinkResolver — health checks & listener guards', () => {
       healthCheckIntervalMs: 100,
     });
     await r.connect();
-    expect((r as any).healthTimer).not.toBeNull();
+    expect(r['healthTimer']).not.toBeNull();
 
     await vi.advanceTimersByTimeAsync(250);
     await r.disconnect();
@@ -149,7 +149,7 @@ describe('CDCSinkResolver — health checks & listener guards', () => {
     await r.connect();
 
     sink.emitBehavior = 'fail';
-    await (r as any)._runHealthCheck();
+    await r['_runHealthCheck']();
 
     expect(r.getHealth().consecutiveFailures).toBeGreaterThan(0);
     await r.disconnect();

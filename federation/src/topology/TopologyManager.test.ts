@@ -77,7 +77,7 @@ describe('TopologyManager — DC Grouping', () => {
     const tm = new TopologyManager(defaultConfig());
     const intra = tm.getIntraDcPeers();
     expect(intra).toHaveLength(1); // only node-b is in dc-east besides self
-    expect(intra[0].nodeId).toBe('node-b');
+    expect(intra[0]!.nodeId).toBe('node-b');
   });
 
   it('should return cross-DC peers', () => {
@@ -91,7 +91,7 @@ describe('TopologyManager — DC Grouping', () => {
     const tm = new TopologyManager(defaultConfig());
     const edge = tm.getEdgePeers();
     expect(edge).toHaveLength(1);
-    expect(edge[0].nodeId).toBe('node-e');
+    expect(edge[0]!.nodeId).toBe('node-e');
   });
 
   it('should get peers in a specific DC', () => {

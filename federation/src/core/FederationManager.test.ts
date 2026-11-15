@@ -24,6 +24,7 @@ import type {
 } from '../interfaces/replication/IMultiLeaderReplication';
 import type { ITransport } from '../interfaces/transport/ITransport';
 import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
+import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
 import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
 import { HLC } from '../hlc/HLC';
 
@@ -71,11 +72,28 @@ function mockTransport(): ITransport {
   };
 }
 
+/** A complete stored entry, as `add()` returns it. */
+function storedEntry(): OutboxEntry {
+  return {
+    id: 'entry:1',
+    targetPeerIds: [],
+    payload: new Uint8Array(),
+    timestamp: new HLC('test-node').now(),
+    type: 'test',
+    status: 'pending',
+    createdAt: Date.now(),
+    lastAttemptAt: null,
+    attemptCount: 0,
+    lastError: null,
+  };
+}
+
 function mockOutbox(): IOutboxStore {
   return {
-    add: vi.fn().mockResolvedValue({ id: 'entry:1' } as any),
+    add: vi.fn().mockResolvedValue(storedEntry()),
     fetchOldestPending: vi.fn().mockResolvedValue([]),
     markDelivered: vi.fn().mockResolvedValue(undefined),
+    markFailed: vi.fn().mockReturnValue(false),
     getPendingCount: vi.fn().mockResolvedValue(0),
     getStats: vi.fn().mockResolvedValue({
       totalEntries: 0,

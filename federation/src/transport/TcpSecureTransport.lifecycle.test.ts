@@ -31,13 +31,32 @@ interface MockOptions {
   sendThrows?: Error;
 }
 
-function mockTransport(options: MockOptions = {}) {
-  const handlers: Array<(msg: any) => void> = [];
-  const mock: Record<string, unknown> = {
+/**
+ * The surface of the mocked raft transport these tests drive.
+ *
+ * Members are optional exactly when a test omits them on purpose, so the
+ * production fallbacks (status-derived peers, unregistered peers) are reached.
+ */
+interface MockTransport {
+  send: ReturnType<typeof vi.fn>;
+  start: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
+  onMessage: ReturnType<typeof vi.fn>;
+  /** Deliver a raw inbound frame to every registered handler. */
+  _emit(msg: unknown): void;
+  getConnectedPeers?: ReturnType<typeof vi.fn>;
+  getStatus?: ReturnType<typeof vi.fn>;
+  register?: ReturnType<typeof vi.fn>;
+  getBoundPort?: ReturnType<typeof vi.fn>;
+}
+
+function mockTransport(options: MockOptions = {}): MockTransport {
+  const handlers: Array<(msg: unknown) => void> = [];
+  const mock: MockTransport = {
     send: options.sendThrows ? vi.fn().mockRejectedValue(options.sendThrows) : vi.fn().mockResolvedValue(undefined),
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
-    onMessage: vi.fn().mockImplementation((handler: (msg: any) => void) => {
+    onMessage: vi.fn().mockImplementation((handler: (msg: unknown) => void) => {
       handlers.push(handler);
     }),
     _emit(msg: unknown) {
@@ -68,7 +87,7 @@ function mockTransport(options: MockOptions = {}) {
   return mock;
 }
 
-function transport(override: Record<string, unknown>, extra: Partial<TcpSecureTransportConfig> = {}) {
+function transport(override: MockTransport, extra: Partial<TcpSecureTransportConfig> = {}) {
   return new TcpSecureTransport({
     nodeId: 'dc-east-1',
     transportNodeId: 4,
@@ -350,7 +369,7 @@ describe('TcpSecureTransport — subscriptions and teardown', () => {
     const seen: string[] = [];
 
     const off = t.onMessage((msg) => seen.push(msg.messageId));
-    (override as unknown as { _emit: (m: unknown) => void })._emit({
+    override._emit({
       type: 'federation_send',
       term: 1,
       from: '5',
@@ -369,7 +388,7 @@ describe('TcpSecureTransport — subscriptions and teardown', () => {
     });
     off();
 
-    (override as unknown as { _emit: (m: unknown) => void })._emit({
+    override._emit({
       type: 'federation_send',
       term: 1,
       from: '5',
@@ -402,7 +421,7 @@ describe('TcpSecureTransport — subscriptions and teardown', () => {
         wallTime: msg.timestamp.wallTime,
       }),
     );
-    (override as unknown as { _emit: (m: unknown) => void })._emit({
+    override._emit({
       type: 'federation_send',
       term: 1,
       from: '5',

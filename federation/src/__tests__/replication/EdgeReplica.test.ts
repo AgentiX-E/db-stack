@@ -155,7 +155,7 @@ describe('EdgeReplica', () => {
     edge.onError(handler);
 
     // 模拟接收错误
-    (edge as any)._emitError(new Error('Connection refused'));
+    edge['_emitError'](new Error('Connection refused'));
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -189,7 +189,7 @@ describe('EdgeReplica additional coverage', () => {
   it('destroyed replica rejects connect', async () => {
     const edge = new EdgeReplica();
     // Directly access internal flag for test coverage of destroyed guard
-    (edge as any)._destroyed = true;
+    edge['_destroyed'] = true;
     await expect(edge.connect({ url: 'ws://localhost:1', protocol: 'websocket' })).rejects.toThrow(
       'EdgeReplica has been destroyed',
     );
@@ -198,10 +198,10 @@ describe('EdgeReplica additional coverage', () => {
   it('disconnect clears reconnect timer', async () => {
     const edge = new EdgeReplica();
     await edge.connect({ url: 'ws://localhost:1', protocol: 'websocket' });
-    (edge as any)._reconnectTimer = setTimeout(() => {}, 99999);
+    edge['_reconnectTimer'] = setTimeout(() => {}, 99999);
     await edge.disconnect();
     // Timer should be cleared
-    expect((edge as any)._reconnectTimer).toBeNull();
+    expect(edge['_reconnectTimer']).toBeNull();
   });
 
   it('receive does nothing when disconnected', async () => {
@@ -245,7 +245,7 @@ describe('EdgeReplica additional coverage', () => {
     edge.onError(() => {
       called = true;
     });
-    (edge as any)._emitError(new Error('test'));
+    edge['_emitError'](new Error('test'));
     expect(called).toBe(true);
   });
 

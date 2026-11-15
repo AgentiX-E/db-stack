@@ -45,7 +45,8 @@ describe('InProcessTransport — constructor clamping & defaults', () => {
   });
 
   it('clamps negative dropRate to 0 and defaults registryKey', () => {
-    const t = new InProcessTransport({ nodeId: 'n', dropRate: -1 } as any); // no registryKey → "default"
+    const t = new InProcessTransport({ nodeId: 'n', dropRate: -1 }); // no registryKey → "default"
+    expect(t['dropRate']).toBe(0); // clamped, not -1
     // Explicitly exercise registryKey default via getConnectedPeers (empty solo)
     expect(t.getConnectedPeers()).toEqual([]);
     t.destroy();

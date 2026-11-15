@@ -29,7 +29,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { HLC } from '../../hlc/HLC';
 import { OutboxStore } from '../../storage/OutboxStore';
-import type { OutboxEntry } from '../../interfaces/outbox/OutboxEntry';
+import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry';
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -54,18 +54,19 @@ function cleanupAll(): void {
 
 afterAll(() => cleanupAll());
 
-function makeEntry(hlc: HLC, payload?: any): Omit<OutboxEntry, 'id'> {
+function makeEntry(hlc: HLC, payload?: unknown): OutboxEntryInput & { msgId: string } {
   return {
     msgId: `d3:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-    payload: payload ?? { data: 'd3-test' },
+    targetPeerIds: ['peer-b'],
+    payload: new TextEncoder().encode(JSON.stringify(payload ?? { data: 'd3-test' })),
     timestamp: hlc.now(),
-    retryCount: 0,
+    type: 'test',
   };
 }
 
 describe('D3.1: OutboxStore Batch Operations', () => {
   // ── BM1: Sequential ID assignment in addBatch ──────────────
-  it('BM1: should assign sequential IDs with no gaps in addBatch', () => {
+  it('BM1: should assign sequential IDs with no gaps in addBatch', async () => {
     const dir = tmpDir('bm1');
     const store = new OutboxStore({
       dataDir: dir,
@@ -74,7 +75,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       deadLetterTtlMs: 60_000,
       mapSize: 16 * 1024 * 1024,
     });
-    const hlc = new HLC();
+    const hlc = new HLC('d3-test-node');
 
     try {
       const entries = Array.from({ length: 5 }, (_, i) => makeEntry(hlc, { seq: i, data: `bm1-${i}` }));
@@ -83,13 +84,13 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       expect(created.length).toBe(5);
 
       // BM1: IDs are sequential — extract seq numbers from "entry:N"
-      const seqs = created.map((e) => parseInt(e.id.split(':')[1], 10));
+      const seqs = created.map((e) => parseInt(e.id.split(':')[1]!, 10));
       for (let i = 1; i < seqs.length; i++) {
-        expect(seqs[i]).toBe(seqs[i - 1] + 1);
+        expect(seqs[i]).toBe(seqs[i - 1]! + 1);
       }
 
       // Verify all entries exist in store
-      const pending = store.fetchOldestPendingSync(10);
+      const pending = await store.fetchOldestPending(10);
       expect(pending.length).toBe(5);
       expect(pending.map((e) => e.id).sort()).toEqual(created.map((e) => e.id).sort());
     } finally {
@@ -98,7 +99,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   });
 
   // ── BM2: addBatch entries are individually fetchable ──────
-  it('BM2: should allow fetching individual entries from addBatch', () => {
+  it('BM2: should allow fetching individual entries from addBatch', async () => {
     const dir = tmpDir('bm2');
     const store = new OutboxStore({
       dataDir: dir,
@@ -107,7 +108,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       deadLetterTtlMs: 60_000,
       mapSize: 16 * 1024 * 1024,
     });
-    const hlc = new HLC();
+    const hlc = new HLC('d3-test-node');
 
     try {
       // Add 3 entries via addBatch
@@ -117,12 +118,12 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       store.add(makeEntry(hlc, { seq: 99 })).then(() => {});
 
       // Fetch individually — addBatch entries must appear in pending
-      const pending1 = store.fetchOldestPendingSync(1);
+      const pending1 = await store.fetchOldestPending(1);
       expect(pending1.length).toBe(1);
-      expect(created.find((c) => c.id === pending1[0].id)).toBeDefined();
+      expect(created.find((c) => c.id === pending1[0]!.id)).toBeDefined();
 
       // Fetch all
-      const all = store.fetchOldestPendingSync(10);
+      const all = await store.fetchOldestPending(10);
       expect(all.length).toBe(4);
     } finally {
       store.close();
@@ -130,7 +131,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   });
 
   // ── BM3: fetchAndFlush atomicity ──────────────────────────
-  it('BM3: fetchAndFlush should atomically fetch and deliver all entries', () => {
+  it('BM3: fetchAndFlush should atomically fetch and deliver all entries', async () => {
     const dir = tmpDir('bm3');
     const store = new OutboxStore({
       dataDir: dir,
@@ -139,7 +140,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       deadLetterTtlMs: 60_000,
       mapSize: 16 * 1024 * 1024,
     });
-    const hlc = new HLC();
+    const hlc = new HLC('d3-test-node');
 
     try {
       // Add 10 entries via batch
@@ -157,7 +158,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       }
 
       // No more pending entries
-      const pending = store.fetchOldestPendingSync(5);
+      const pending = await store.fetchOldestPending(5);
       expect(pending.length).toBe(0);
     } finally {
       store.close();
@@ -174,7 +175,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       deadLetterTtlMs: 60_000,
       mapSize: 16 * 1024 * 1024,
     });
-    const hlc = new HLC();
+    const hlc = new HLC('d3-test-node');
 
     try {
       // Add entries
@@ -196,7 +197,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       expect(flush3.length).toBe(3);
       for (const entry of flush3) {
         // None of the flushed new entries should have IDs from the first batch
-        const seq = parseInt(entry.id.split(':')[1], 10);
+        const seq = parseInt(entry.id.split(':')[1]!, 10);
         expect(store.isDelivered(entry.id)).toBe(true);
       }
     } finally {
@@ -205,7 +206,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   });
 
   // ── BM5: Interleaving addBatch + add ───────────────────────
-  it('BM5: should safely interleave addBatch with serial add', () => {
+  it('BM5: should safely interleave addBatch with serial add', async () => {
     const dir = tmpDir('bm5');
     const store = new OutboxStore({
       dataDir: dir,
@@ -214,7 +215,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       deadLetterTtlMs: 60_000,
       mapSize: 16 * 1024 * 1024,
     });
-    const hlc = new HLC();
+    const hlc = new HLC('d3-test-node');
 
     try {
       // Interleaving pattern: batch(2) → serial(1) → batch(2) → serial(2)
@@ -230,13 +231,13 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       store.add(makeEntry(hlc, { seq: 31, source: 'serial3' }));
 
       // Total: 2 + 1 + 2 + 2 = 7 entries
-      const all = store.fetchOldestPendingSync(10);
+      const all = await store.fetchOldestPending(10);
       expect(all.length).toBe(7);
 
       // BM5: Sequential IDs — no gaps
-      const seqs = all.map((e) => parseInt(e.id.split(':')[1], 10)).sort((a, b) => a - b);
+      const seqs = all.map((e) => parseInt(e.id.split(':')[1]!, 10)).sort((a, b) => a - b);
       for (let i = 1; i < seqs.length; i++) {
-        expect(seqs[i]).toBe(seqs[i - 1] + 1);
+        expect(seqs[i]).toBe(seqs[i - 1]! + 1);
       }
 
       // All 7 entries are valid and have payloads
@@ -268,7 +269,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       deadLetterTtlMs: 60_000,
       mapSize: 16 * 1024 * 1024,
     });
-    const hlc = new HLC();
+    const hlc = new HLC('d3-test-node');
     const N = 100;
 
     try {
@@ -308,7 +309,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       deadLetterTtlMs: 60_000,
       mapSize: 16 * 1024 * 1024,
     });
-    const hlc = new HLC();
+    const hlc = new HLC('d3-test-node');
     const N = 500;
 
     try {
@@ -367,7 +368,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
   });
 
   // ── BM8: fetchAndFlush with partial flush (fetch less than available) ──
-  it('BM8: fetchAndFlush should only flush requested count', () => {
+  it('BM8: fetchAndFlush should only flush requested count', async () => {
     const dir = tmpDir('bm8');
     const store = new OutboxStore({
       dataDir: dir,
@@ -376,7 +377,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       deadLetterTtlMs: 60_000,
       mapSize: 16 * 1024 * 1024,
     });
-    const hlc = new HLC();
+    const hlc = new HLC('d3-test-node');
 
     try {
       store.addBatch(Array.from({ length: 10 }, (_, i) => makeEntry(hlc, { seq: i })));
@@ -386,7 +387,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       expect(flushed.length).toBe(3);
 
       // 7 should remain pending
-      const remaining = store.fetchOldestPendingSync(10);
+      const remaining = await store.fetchOldestPending(10);
       expect(remaining.length).toBe(7);
 
       // Flush remaining
@@ -394,7 +395,7 @@ describe('D3.1: OutboxStore Batch Operations', () => {
       expect(flushed2.length).toBe(7);
 
       // Empty now
-      expect(store.fetchOldestPendingSync(1).length).toBe(0);
+      expect((await store.fetchOldestPending(1)).length).toBe(0);
     } finally {
       store.close();
     }

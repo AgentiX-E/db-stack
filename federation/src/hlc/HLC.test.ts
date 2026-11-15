@@ -62,7 +62,7 @@ describe('HLC — Monotonicity (AC 42.1)', () => {
 
     // Verify total ordering by ensuring TSC never regresses
     for (let i = 1; i < timestamps.length; i++) {
-      if (timestamps[i] < timestamps[i - 1]) {
+      if (timestamps[i]! < timestamps[i - 1]!) {
         // This can happen if wall advances and logical resets, but causal
         // ordering is still preserved — verify with compareHLC instead
         const a = hlc.now();
@@ -74,7 +74,7 @@ describe('HLC — Monotonicity (AC 42.1)', () => {
     // Verify at least 99.999% monotonic in wall-time (clock skips are fine)
     let monotonicCount = 0;
     for (let i = 1; i < timestamps.length; i++) {
-      if (timestamps[i] >= timestamps[i - 1]) monotonicCount++;
+      if (timestamps[i]! >= timestamps[i - 1]!) monotonicCount++;
     }
     expect(monotonicCount / timestamps.length).toBeGreaterThan(0.9999);
   });
@@ -271,7 +271,7 @@ describe('HLC — Serialization Roundtrip (AC 42.3)', () => {
 
     // Both sorts must produce identical order
     for (let i = 0; i < timestamps.length; i++) {
-      expect(compareHLC(sortedByCompare[i], sortedByKey[i])).toBe(0);
+      expect(compareHLC(sortedByCompare[i]!, sortedByKey[i]!)).toBe(0);
     }
   });
 
@@ -322,7 +322,7 @@ describe('HLC — IHLCTimestamp interface compliance', () => {
     }
 
     for (let i = 1; i < timestamps.length; i++) {
-      expect(timestamps[i - 1] < timestamps[i]).toBe(true);
+      expect(timestamps[i - 1]! < timestamps[i]!).toBe(true);
     }
   });
 

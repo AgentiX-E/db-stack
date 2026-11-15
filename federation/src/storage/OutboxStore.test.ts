@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { OutboxStore, type OutboxStoreConfig } from './OutboxStore';
-import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
+import type { OutboxEntryInput } from '../interfaces/outbox/OutboxEntry';
 import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
 import { HLC, makeHLC } from '../hlc/HLC';
 import * as fs from 'fs';
@@ -36,17 +36,13 @@ function makeTimestamp(nodeId = 'test-node'): IHLCTimestamp {
 }
 
 /** Minimal entry for testing */
-function makeEntry(payload: string, targetPeerIds?: string[], type?: string, msgId?: string): Omit<OutboxEntry, 'id'> {
+function makeEntry(payload: string, targetPeerIds?: string[], type?: string, msgId?: string): OutboxEntryInput {
   return {
+    msgId,
     targetPeerIds: targetPeerIds ?? ['peer-b'],
     payload: new TextEncoder().encode(payload),
     timestamp: makeTimestamp(),
     type: type ?? 'test',
-    status: 'pending',
-    createdAt: Date.now(),
-    lastAttemptAt: null,
-    attemptCount: 0,
-    lastError: null,
   };
 }
 
@@ -102,7 +98,7 @@ describe('OutboxStore — AC 40.1: Entry Persistence (Crash-safe Durable Write)'
     // Verify it's already in the pending index
     const pending = await store.fetchOldestPending(1);
     expect(pending).toHaveLength(1);
-    expect(pending[0].id).toBe(entry.id);
+    expect(pending[0]!.id).toBe(entry.id);
   });
 
   it('should handle concurrent fast adds without data loss', { timeout: 30000 }, async () => {
@@ -130,12 +126,16 @@ describe('OutboxStore — AC 40.2: Raft Commit Index Gate', () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it('should store raftIndex as part of entry metadata', async () => {
-    const entry = await store.add({
-      ...makeEntry('raft-gated'),
-      raftIndex: 42,
-    } as any);
-    expect(entry).toBeDefined();
+  it('should preserve a caller-supplied raftIndex on the stored entry', async () => {
+    // `raftIndex` is not part of `OutboxEntry`: the store copies whatever the
+    // caller hands it into the record, so a raft-gated writer can attach the
+    // index it was waiting for. Read it back through a widened view — that is
+    // the only way to observe passthrough the public type does not name.
+    const gate = { raftIndex: 42 };
+    const entry = await store.add({ ...makeEntry('raft-gated'), ...gate });
+    const stored = store['mainDb'].get(entry.id) as (OutboxEntryInput & typeof gate) | undefined;
+    expect(stored).toBeDefined();
+    expect(stored?.raftIndex).toBe(42);
   });
 });
 
@@ -242,9 +242,9 @@ describe('OutboxStore — AC 40.4: Dead Letter Queue', () => {
     // Should be in dead letter
     const dlEntries = store.getDeadLetterEntries();
     expect(dlEntries).toHaveLength(1);
-    expect(dlEntries[0].id).toBe(entry.id);
-    expect(dlEntries[0].attemptCount).toBe(3);
-    expect(dlEntries[0].lastError).toBe('timeout');
+    expect(dlEntries[0]!.id).toBe(entry.id);
+    expect(dlEntries[0]!.attemptCount).toBe(3);
+    expect(dlEntries[0]!.lastError).toBe('timeout');
   });
 
   it('should not move to dead letter before maxRetries', async () => {
@@ -308,8 +308,8 @@ describe('OutboxStore — AC 40.5: Dead Letter Retry', () => {
 
     // Verify the re-queued entry has reset counters
     const pending = await store.fetchOldestPending(1);
-    expect(pending[0].attemptCount).toBe(0);
-    expect(pending[0].lastError).toBeNull();
+    expect(pending[0]!.attemptCount).toBe(0);
+    expect(pending[0]!.lastError).toBeNull();
   });
 
   it('should return false when retrying a non-existent dead letter', () => {
@@ -351,7 +351,7 @@ describe('OutboxStore — Statistics', () => {
     expect(stats.pendingCount).toBe(3);
 
     const pending = await store.fetchOldestPending(10);
-    await store.markDelivered(pending[0].id);
+    await store.markDelivered(pending[0]!.id);
 
     stats = await store.getStats();
     expect(stats.pendingCount).toBe(2);
@@ -371,17 +371,18 @@ describe('OutboxStore — Statistics', () => {
 
 describe('OutboxStore — AC 41.4: Backpressure', () => {
   let store: OutboxStore;
+  let dataDir: string;
 
   afterEach(() => {
     if (store) {
       store.close();
-      const dataDir = store['mainDb'].path; // path access
+      fs.rmSync(dataDir, { recursive: true, force: true });
     }
   });
 
   it('should not report capacity exceeded for empty store', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbox-bp-'));
-    store = createTestStore({ dataDir: tmpDir, mapSize: 16 * 1024 * 1024 });
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbox-bp-'));
+    store = createTestStore({ dataDir, mapSize: 16 * 1024 * 1024 });
     expect(store.isCapacityExceeded()).toBe(false);
   });
 });
@@ -445,9 +446,9 @@ describe('OutboxStore — FIFO Ordering', () => {
     const pending = await store.fetchOldestPending(3);
     expect(pending).toHaveLength(3);
     // Should be in FIFO order
-    expect(new TextDecoder().decode(pending[0].payload)).toBe('first');
-    expect(new TextDecoder().decode(pending[1].payload)).toBe('second');
-    expect(new TextDecoder().decode(pending[2].payload)).toBe('third');
+    expect(new TextDecoder().decode(pending[0]!.payload)).toBe('first');
+    expect(new TextDecoder().decode(pending[1]!.payload)).toBe('second');
+    expect(new TextDecoder().decode(pending[2]!.payload)).toBe('third');
   });
 
   it('should return correct limited set', async () => {
@@ -457,8 +458,8 @@ describe('OutboxStore — FIFO Ordering', () => {
 
     const firstTwo = await store.fetchOldestPending(2);
     expect(firstTwo).toHaveLength(2);
-    expect(new TextDecoder().decode(firstTwo[0].payload)).toBe('a');
-    expect(new TextDecoder().decode(firstTwo[1].payload)).toBe('b');
+    expect(new TextDecoder().decode(firstTwo[0]!.payload)).toBe('a');
+    expect(new TextDecoder().decode(firstTwo[1]!.payload)).toBe('b');
   });
 });
 

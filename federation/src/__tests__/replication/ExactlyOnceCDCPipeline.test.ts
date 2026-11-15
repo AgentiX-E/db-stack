@@ -20,6 +20,7 @@ import { existsSync, readFileSync, mkdirSync, rmSync } from 'fs';
 import * as path from 'path';
 import type { ITransport } from '../../interfaces/transport/ITransport';
 import type { TransportMessage } from '../../interfaces/transport/TransportMessage';
+import { HLC } from '../../hlc/HLC';
 
 // ── Test data dir ──────────────────────────────────────────
 
@@ -56,12 +57,16 @@ function createMockTransport(): {
         peerId: 'remote-1',
         address: '127.0.0.1:7001',
         connectedAt: Date.now(),
+        latencyMs: 0,
       },
     ]),
     getStats: vi.fn(() => ({
-      sentCount: 0,
-      receivedCount: 0,
-      reconnectCount: 0,
+      peersConnected: 1,
+      messagesSent: 0,
+      messagesReceived: 0,
+      bytesSent: 0,
+      bytesReceived: 0,
+      uptimeMs: 0,
     })),
   };
 
@@ -183,7 +188,7 @@ describe('ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline', () => 
 
     // Event should have been sent via transport
     expect(sentMessages.length).toBeGreaterThanOrEqual(1);
-    const msg = sentMessages[0];
+    const msg = sentMessages[0]!;
     expect(msg.sourcePeerId).toBe('n1');
     expect(msg.targetPeerId).toBe('remote-1');
     expect(msg.type).toContain('cdc_event');
@@ -194,10 +199,12 @@ describe('ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline', () => 
     pipeline = new ExactlyOnceCDCPipeline(makePipelineConfig());
     await pipeline.start();
 
-    // Create a fake transport message (as if received from remote)
+    // Create a fake transport message (as if received from remote). The
+    // payload is the JSON form of a CDCChangeEvent: wallTime travels as a
+    // number on the wire (the producer stringifies bigint).
     const changeEvent = {
       lsn: '0/12345678',
-      timestamp: { wallClock: Date.now(), logicalTicks: 0, nodeId: 'n1' },
+      timestamp: { wallTime: Date.now(), logical: 0, nodeId: 'n1' },
       tableName: 'users',
       operation: 'insert',
       oldValues: null,
@@ -211,7 +218,7 @@ describe('ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline', () => 
       sourcePeerId: 'n2',
       targetPeerId: 'n1',
       payload: encoder.encode(JSON.stringify(changeEvent)),
-      timestamp: { wallClock: Date.now(), logicalTicks: 0, nodeId: 'n2' },
+      timestamp: new HLC('n2').now(),
       createdAt: Date.now(),
       type: 'cdc_event:users',
     };

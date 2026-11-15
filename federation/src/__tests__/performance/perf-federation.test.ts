@@ -21,13 +21,51 @@ import { CatastrophicFailoverManager } from '../../core/CatastrophicFailoverMana
 import { ConflictResolver } from '../../replication/ConflictResolver.js';
 import { TopologyManager } from '../../topology/TopologyManager.js';
 import { HLC, compareHLC } from '../../hlc/HLC.js';
+import type {
+  IMultiLeaderReplication,
+  ReplicationConfig,
+  ReplicationStatus,
+  ReplicationTarget,
+} from '../../interfaces/replication/IMultiLeaderReplication.js';
 
 // ── Inline helpers for benchmarks that need minimal mocks ──
 
-/** Minimal mock replication for SchemaEvolutionCoordinator */
-class MockReplication {
-  async replicate(_shardId: number, _payload: string, _key: string): Promise<void> {
+/** No-op replication double for SchemaEvolutionCoordinator. */
+class MockReplication implements IMultiLeaderReplication {
+  async start(_config: ReplicationConfig): Promise<void> {
     // No-op
+  }
+
+  async stop(): Promise<void> {
+    // No-op
+  }
+
+  async replicate(_shardId: number, _payload: string, _type?: string): Promise<{ msgId: string }> {
+    return { msgId: 'mock:0:0' };
+  }
+
+  async getStatus(): Promise<ReplicationStatus> {
+    return { nodeId: 'node-0', dc: 'dc-1', targets: [] };
+  }
+
+  async retryFailed(_targetNodeId: string): Promise<number> {
+    return 0;
+  }
+
+  async getPendingCounts(): Promise<Record<string, number>> {
+    return {};
+  }
+
+  onTargetConnected(_callback: (targetNodeId: string) => void): () => void {
+    return () => {};
+  }
+
+  onTargetDisconnected(_callback: (targetNodeId: string) => void): () => void {
+    return () => {};
+  }
+
+  onHighLag(_callback: (targetNodeId: string, lagMs: number) => void): () => void {
+    return () => {};
   }
 }
 
@@ -65,18 +103,15 @@ class MockTopology {
 
 /** Real TopologyManager from the federation package for benchmark routing */
 function createRouterWithPeers(count: number): FederationQueryRouter {
-  const peers: Array<{
-    nodeId: string;
-    host: string;
-    port: number;
-    dc: string;
-  }> = [];
+  const peers: ReplicationTarget[] = [];
   for (let i = 0; i < count; i++) {
+    const dc = `dc-${(i % 3) + 1}`;
     peers.push({
       nodeId: `node-${i}`,
-      host: '127.0.0.1',
-      port: 7000 + i,
-      dc: `dc-${(i % 3) + 1}`,
+      dc,
+      address: `127.0.0.1:${7000 + i}`,
+      topology: dc === 'dc-1' ? 'intra-dc' : 'cross-dc',
+      maxBackoffSeconds: dc === 'dc-1' ? 3 : 60,
     });
   }
   const tm = new TopologyManager({
@@ -138,7 +173,7 @@ describe('Federation — Latency', () => {
   bench(
     'schema evolution propose latency (P50 < 5ms)',
     () => {
-      const coordinator = new SchemaEvolutionCoordinator(new MockReplication() as any);
+      const coordinator = new SchemaEvolutionCoordinator(new MockReplication());
       const change = {
         id: 'change-1',
         sql: 'ALTER TABLE users ADD COLUMN email TEXT',
@@ -161,8 +196,8 @@ describe('Federation — Latency', () => {
         nodeId: 'node-0',
         dc: 'dc-1',
         peers: [
-          { nodeId: 'node-1', host: '127.0.0.1', port: 7001, dc: 'dc-2' },
-          { nodeId: 'node-2', host: '127.0.0.2', port: 7002, dc: 'dc-3' },
+          { nodeId: 'node-1', dc: 'dc-2', address: '127.0.0.1:7001', topology: 'cross-dc', maxBackoffSeconds: 60 },
+          { nodeId: 'node-2', dc: 'dc-3', address: '127.0.0.2:7002', topology: 'cross-dc', maxBackoffSeconds: 60 },
         ],
       });
       const mgr = new CatastrophicFailoverManager(tm, 30000);
@@ -184,10 +219,10 @@ describe('Federation — Throughput', () => {
       });
       engine.watchTable('users');
       engine.appendChange({
-        table: 'users',
+        tableName: 'users',
         operation: 'insert',
-        before: null,
-        after: { id: 1, name: 'test' },
+        oldValues: null,
+        newValues: { id: 1, name: 'test' },
       });
     },
     100,
@@ -202,13 +237,13 @@ describe('Federation — Throughput', () => {
       const local = {
         key: 'user:1',
         value: '{ "name": "Alice", "version": 2 }',
-        hlc: { wallClock: BigInt(100), nodeId: 'node-1' },
+        hlc: new HLC('node-1', 100n, 0),
         nodeId: 'node-1',
       };
       const remote = {
         key: 'user:1',
         value: '{ "name": "Bob", "version": 1 }',
-        hlc: { wallClock: BigInt(200), nodeId: 'node-2' },
+        hlc: new HLC('node-2', 200n, 0),
         nodeId: 'node-2',
       };
       // resolve() is async in the real class, so we use a synchronous inline LWW resolve

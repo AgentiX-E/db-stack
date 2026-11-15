@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { HLC } from '../../hlc/HLC.js';
 import { OutboxStore } from '../../storage/OutboxStore.js';
 import { DedupRing } from '../../replication/DedupRing.js';
-import type { OutboxEntry } from '../../interfaces/outbox/OutboxEntry.js';
+import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry.js';
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -43,12 +43,13 @@ function createOutboxStore(dataDir: string): OutboxStore {
   });
 }
 
-function makeCdcEntry(lsn: number, txId: number, data: string): Omit<OutboxEntry, 'id'> {
+function makeCdcEntry(lsn: number, txId: number, data: string): OutboxEntryInput & { msgId: string } {
   return {
     msgId: `cdc:${lsn}:${txId}`,
-    payload: { lsn, txId, data },
-    timestamp: new HLC().now(),
-    retryCount: 0,
+    targetPeerIds: ['peer-b'],
+    payload: new TextEncoder().encode(JSON.stringify({ lsn, txId, data })),
+    timestamp: new HLC('cdc-chaos-sender').now(),
+    type: 'cdc_event',
   };
 }
 
@@ -74,7 +75,7 @@ describe('CDC Exactly-Once Chaos (D2)', () => {
   it('C.1: should not duplicate entries when sender crashes mid-pipeline', async () => {
     const senderDir = createTempDir('sender');
     const store = createOutboxStore(senderDir);
-    const dedup = new DedupRing({ maxSize: 1000, ttlMs: 60_000 });
+    const dedup = new DedupRing({ maxCapacity: 1000, ttlMs: 60_000 });
     const delivered: string[] = [];
     let checkpoint = 0;
 
@@ -107,11 +108,15 @@ describe('CDC Exactly-Once Chaos (D2)', () => {
 
     // Process all pending through dedup — verify each delivered exactly once
     for (const entry of pending) {
-      if (!dedup.contains(entry.msgId)) {
-        delivered.push(entry.msgId);
-        dedup.put(entry.msgId);
+      // The store must round-trip the caller's msgId: the reverse index and
+      // every ACK below are keyed by it.
+      expect(entry.msgId).toBeDefined();
+      const msgId = entry.msgId!;
+      if (!dedup.contains(msgId)) {
+        delivered.push(msgId);
+        dedup.put(msgId);
       }
-      await restartedStore.markDelivered(entry.msgId);
+      await restartedStore.markDelivered(msgId);
     }
 
     // G1+G2: delivered count = 7, unique = 7 (no duplicates)
@@ -125,7 +130,7 @@ describe('CDC Exactly-Once Chaos (D2)', () => {
   it('C.2: should deduplicate when receiver ack is lost', async () => {
     const dir = createTempDir('recv');
     const store = createOutboxStore(dir);
-    const dedup = new DedupRing({ maxSize: 1000, ttlMs: 60_000 });
+    const dedup = new DedupRing({ maxCapacity: 1000, ttlMs: 60_000 });
     const consumerCalls: string[] = [];
 
     // Entry arrives from sender
@@ -193,22 +198,25 @@ describe('CDC Exactly-Once Chaos (D2)', () => {
     for (let i = 0; i < 5; i++) {
       const entry = makeCdcEntry(i + 1, i + 100, `cycle-${i}`);
       const created = await store.add(entry);
-      msgIds.push(created.msgId);
+      expect(created.msgId).toBe(entry.msgId);
+      msgIds.push(created.msgId!);
       // "Crash" — no markDelivered, fresh DedupRing on restart
     }
 
     // Simulate restart with empty DedupRing
-    const restartedDedup = new DedupRing({ maxSize: 1000, ttlMs: 60_000 });
+    const restartedDedup = new DedupRing({ maxCapacity: 1000, ttlMs: 60_000 });
     const restarted = createOutboxStore(dir);
     const pending = await restarted.fetchOldestPending(10);
 
     const delivered: string[] = [];
     for (const entry of pending) {
-      if (!restartedDedup.contains(entry.msgId)) {
-        delivered.push(entry.msgId);
-        restartedDedup.put(entry.msgId);
+      expect(entry.msgId).toBeDefined();
+      const msgId = entry.msgId!;
+      if (!restartedDedup.contains(msgId)) {
+        delivered.push(msgId);
+        restartedDedup.put(msgId);
       }
-      await restarted.markDelivered(entry.msgId);
+      await restarted.markDelivered(msgId);
     }
 
     // All 5 entries delivered exactly once

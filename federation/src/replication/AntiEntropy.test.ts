@@ -177,8 +177,8 @@ describe('AntiEntropy — findDiffRanges', () => {
     const ranges = await ae.findDiffRanges(tree);
     // Empty tree → single leaf node with range "" to "\uffff"
     expect(ranges).toHaveLength(1);
-    expect(ranges[0].start).toBe('');
-    expect(ranges[0].end).toBe('\uffff');
+    expect(ranges[0]!.start).toBe('');
+    expect(ranges[0]!.end).toBe('\uffff');
   });
 });
 

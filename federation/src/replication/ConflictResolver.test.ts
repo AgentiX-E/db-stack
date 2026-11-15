@@ -14,7 +14,7 @@ import { ConflictResolver, type ConflictValue, type CustomResolver, type Conflic
 import { HLC, makeHLC } from '../hlc/HLC';
 
 function hlcTs(wallTime: number, logical: number, nodeId: string) {
-  return makeHLC(wallTime, logical, nodeId);
+  return makeHLC(BigInt(wallTime), logical, nodeId);
 }
 
 /** Helper: create a ConflictValue from wall/logical/nodeId/value */

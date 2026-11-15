@@ -380,8 +380,11 @@ describe('MultiLeaderReplication — Events', () => {
 // ── Additional coverage for low-coverage paths ────────────────
 describe('MultiLeaderReplication event handling', () => {
   it('onHighLag registers and unregisters listeners', () => {
-    const outbox = { add: vi.fn() } as any;
-    const transport = { send: vi.fn() } as any;
+    const registryKey = 'mlr-high-lag';
+    InProcessTransport.resetRegistry(registryKey);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mlr-hl-'));
+    const outbox = new OutboxStore({ dataDir: dir, maxRetries: 3 });
+    const transport = new InProcessTransport({ nodeId: 'n-hl', registryKey });
     const hlcNew = new HLC('n-hl');
     const mlr = new MultiLeaderReplication({
       transport,
@@ -395,11 +398,17 @@ describe('MultiLeaderReplication event handling', () => {
     });
     expect(typeof unsub).toBe('function');
 
-    (mlr as any).emitter.emit('high-lag', 'target-1', 5000);
+    mlr['emitter'].emit('high-lag', 'target-1', 5000);
     expect(callCount).toBe(1);
 
     unsub();
-    (mlr as any).emitter.emit('high-lag', 'target-2', 10000);
+    mlr['emitter'].emit('high-lag', 'target-2', 10000);
     expect(callCount).toBe(1);
+
+    mlr.stop();
+    outbox.close();
+    transport.destroy();
+    InProcessTransport.resetRegistry(registryKey);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

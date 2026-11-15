@@ -31,7 +31,7 @@ import { TestCluster } from '@agentix-e/db-cluster/testing';
 // ── Repo B: db-federation ───────────────────────────────────
 import { OutboxStore } from '../../storage/OutboxStore';
 import { DedupRing } from '../../replication/DedupRing';
-import type { OutboxEntry } from '../../interfaces/outbox/OutboxEntry';
+import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry';
 import { HLC } from '../../hlc/HLC';
 
 // ── New: I7 modules ─────────────────────────────────────────
@@ -53,6 +53,17 @@ const E2E_TIMEOUT = 180_000;
 
 function tmpDir(label: string): string {
   return mkdtempSync(join(tmpdir(), `cross-e2e-${label}-`));
+}
+
+/** Outbox input for a CDC-captured entry. */
+function cdcEntry(msgId: string, payload: Record<string, unknown>, hlc: HLC): OutboxEntryInput & { msgId: string } {
+  return {
+    msgId,
+    targetPeerIds: ['cross-dc-peer'],
+    payload: new TextEncoder().encode(JSON.stringify(payload)),
+    timestamp: hlc.now(),
+    type: 'cdc_event',
+  };
 }
 
 describe('Cross-Repo End-to-End (D2)', () => {
@@ -82,8 +93,8 @@ describe('Cross-Repo End-to-End (D2)', () => {
           mapSize: 16 * 1024 * 1024,
         });
 
-        const dedupRing = new DedupRing({ maxSize: 1000, ttlMs: 60_000 });
-        const hlc = new HLC();
+        const dedupRing = new DedupRing({ maxCapacity: 1000, ttlMs: 60_000 });
+        const hlc = new HLC('cross-e2e');
 
         // Propose 10 entries via Raft adapter
         const proposedIds: string[] = [];
@@ -97,13 +108,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
         // CDC capture: write each proposal as outbox entry
         for (let i = 0; i < proposedIds.length; i++) {
           const msgId = `cdc:${proposedIds[i]}:e2e1`;
-          const entry: Omit<OutboxEntry, 'id'> = {
-            msgId,
-            payload: { lsn: i, index: proposedIds[i], data: `captured-${i}` },
-            timestamp: hlc.now(),
-            retryCount: 0,
-          };
-          await outboxStore.add(entry);
+          await outboxStore.add(cdcEntry(msgId, { lsn: i, index: proposedIds[i], data: `captured-${i}` }, hlc));
         }
 
         // Pump outbox entries through dedup
@@ -112,9 +117,11 @@ describe('Cross-Repo End-to-End (D2)', () => {
         expect(pending.length).toBe(proposedIds.length);
 
         for (const entry of pending) {
-          if (!dedupRing.contains(entry.msgId)) {
-            receivedMsgIds.push(entry.msgId);
-            dedupRing.put(entry.msgId);
+          expect(entry.msgId).toBeDefined();
+          const entryMsgId = entry.msgId!;
+          if (!dedupRing.contains(entryMsgId)) {
+            receivedMsgIds.push(entryMsgId);
+            dedupRing.put(entryMsgId);
           }
           await outboxStore.markDelivered(entry.id);
         }
@@ -161,20 +168,14 @@ describe('Cross-Repo End-to-End (D2)', () => {
           mapSize: 16 * 1024 * 1024,
         });
 
-        const dedupRing = new DedupRing({ maxSize: 1000, ttlMs: 60_000 });
-        const hlc = new HLC();
+        const dedupRing = new DedupRing({ maxCapacity: 1000, ttlMs: 60_000 });
+        const hlc = new HLC('cross-e2e');
         const writtenAuditIds: string[] = [];
 
         // Simulate 15 CDC-delivered events flowing to audit store
         for (let i = 0; i < 15; i++) {
           const msgId = `e2e2:${i}`;
-          const entry: Omit<OutboxEntry, 'id'> = {
-            msgId,
-            payload: { seq: i, data: `audit-e2e2-${i}` },
-            timestamp: hlc.now(),
-            retryCount: 0,
-          };
-          const created = await outboxStore.add(entry);
+          const created = await outboxStore.add(cdcEntry(msgId, { seq: i, data: `audit-e2e2-${i}` }, hlc));
 
           // Consumer callback writes to audit store
           if (!dedupRing.contains(msgId)) {
@@ -199,7 +200,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
 
         // CR2: Query returns all entries
         const queried = await auditStore.query({
-          resource: '/test/e2e2',
+          operation: 'e2e2-propose',
           limit: 50,
         });
         expect(queried.length).toBe(15);
@@ -229,7 +230,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
       const tempDirs = [crashOutboxDir, crashAuditDir];
 
       try {
-        const hlc = new HLC();
+        const hlc = new HLC('cross-e2e');
 
         const outboxStore = new OutboxStore({
           dataDir: crashOutboxDir,
@@ -239,7 +240,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
           mapSize: 16 * 1024 * 1024,
         });
 
-        const dedupRing = new DedupRing({ maxSize: 1000, ttlMs: 60_000 });
+        const dedupRing = new DedupRing({ maxCapacity: 1000, ttlMs: 60_000 });
         const auditStore = new FileAuditStore({
           dataDir: crashAuditDir,
           filePrefix: 'crash-e2e3',
@@ -250,13 +251,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
         // Phase 1: 5 normal entries
         for (let i = 0; i < 5; i++) {
           const msgId = `crash-e2e3:${i}`;
-          const entry: Omit<OutboxEntry, 'id'> = {
-            msgId,
-            payload: { seq: i, data: `normal-${i}` },
-            timestamp: hlc.now(),
-            retryCount: 0,
-          };
-          const created = await outboxStore.add(entry);
+          const created = await outboxStore.add(cdcEntry(msgId, { seq: i, data: `normal-${i}` }, hlc));
 
           if (!dedupRing.contains(msgId)) {
             dedupRing.put(msgId);
@@ -275,13 +270,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
         const crashMsgIds: string[] = [];
         for (let i = 0; i < 3; i++) {
           const msgId = `crash-e2e3:${5 + i}`;
-          const entry: Omit<OutboxEntry, 'id'> = {
-            msgId,
-            payload: { seq: 5 + i, data: `crash-${i}` },
-            timestamp: hlc.now(),
-            retryCount: 0,
-          };
-          await outboxStore.add(entry);
+          await outboxStore.add(cdcEntry(msgId, { seq: 5 + i, data: `crash-${i}` }, hlc));
           crashMsgIds.push(msgId);
           // "Crash" — no markDelivered, no audit write
         }
@@ -297,7 +286,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
           mapSize: 16 * 1024 * 1024,
         });
 
-        const restartedDedup = new DedupRing({ maxSize: 1000, ttlMs: 60_000 });
+        const restartedDedup = new DedupRing({ maxCapacity: 1000, ttlMs: 60_000 });
 
         // Fetch pending — crash entries + any un-acked from phase 1
         const allPending = await restartedOutbox.fetchOldestPending(20);
@@ -305,8 +294,10 @@ describe('Cross-Repo End-to-End (D2)', () => {
 
         const afterCrashAuditIds: string[] = [];
         for (const entry of allPending) {
-          if (!restartedDedup.contains(entry.msgId)) {
-            restartedDedup.put(entry.msgId);
+          expect(entry.msgId).toBeDefined();
+          const entryMsgId = entry.msgId!;
+          if (!restartedDedup.contains(entryMsgId)) {
+            restartedDedup.put(entryMsgId);
             const auditId = await auditStore.write({
               operation: 'crash-e2e3',
               actor: 'cross-e2e',
@@ -624,7 +615,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
       const cluster = new TestCluster({ nodeCount: 3, preVote: true });
       try {
         await cluster.start();
-        const leader = (await cluster.findLeader(15_000)).adapter;
+        const leader = (await cluster.findLeader()).adapter;
 
         // Write batch of identical data to all nodes via leader
         const values: Buffer[] = [];
@@ -665,11 +656,11 @@ describe('Cross-Repo End-to-End (D2)', () => {
       const cluster = new TestCluster({ nodeCount: 5, preVote: true });
       try {
         await cluster.start();
-        await (await cluster.findLeader(15_000)).adapter.proposeAndWait('i9-2-before-kill');
+        await (await cluster.findLeader()).adapter.proposeAndWait('i9-2-before-kill');
 
         // Kill a non-leader node
         const leaderNode = await cluster.findLeader();
-        const victimId = cluster.nodes.find((n: any) => n.id !== leaderNode.id)?.id ?? 2;
+        const victimId = cluster.nodes.find((n) => n.id !== leaderNode.id)?.id ?? 2;
         await cluster.killNode(victimId);
 
         // Propose more entries on remaining quorum
@@ -687,7 +678,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
         let converged = false;
         while (Date.now() - convergenceStart < 30_000) {
           try {
-            const ln = await cluster.findLeader(8_000);
+            const ln = await cluster.findLeader();
             if (ln) {
               converged = true;
               break;
@@ -727,7 +718,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
         sessionMgr.create('s9-3-a', { traceId, op: 'raft-proposal' });
         sessionMgr.create('s9-3-b', { traceId, op: 'federation-sync' });
 
-        const leader = (await cluster.findLeader(15_000)).adapter;
+        const leader = (await cluster.findLeader()).adapter;
         await leader.proposeAndWait('i9-3-before-restart');
 
         // Stop and restart cluster
@@ -735,7 +726,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
         await new Promise((r) => setTimeout(r, 500));
         await cluster.start();
 
-        const newLeader = (await cluster.findLeader(15_000)).adapter;
+        const newLeader = (await cluster.findLeader()).adapter;
         await newLeader.proposeAndWait('i9-3-after-restart');
 
         // Sessions should survive cluster restart
@@ -765,32 +756,35 @@ describe('Cross-Repo End-to-End (D2)', () => {
       const cluster = new TestCluster({ nodeCount: 3, preVote: true });
       try {
         await cluster.start();
-        const leader = (await cluster.findLeader(15_000)).adapter;
+        const leaderNode = await cluster.findLeader();
+        const leader = leaderNode.adapter;
 
         const eventBus = new EventBus();
         const firedEvents: string[] = [];
 
-        const disposable = eventBus.on('proposal' as any, (event: any) => {
-          firedEvents.push(event.type as string);
+        const disposable = eventBus.on('proposal.committed', (event) => {
+          firedEvents.push(event.type);
         });
 
         // Propose 5 entries + emit matching EventBus events
         for (let i = 1; i <= 5; i++) {
           const key = `i9-4-${i}`;
-          await leader.proposeAndWait(key);
+          const proposed = await leader.propose(key);
           eventBus.emit({
-            type: 'proposal',
-            key,
-            value: key,
+            type: 'proposal.committed',
+            index: Number(proposed.index),
+            term: Number(proposed.term),
+            data: key,
             timestamp: Date.now(),
-          } as any);
+            nodeId: leaderNode.id,
+          });
         }
 
         await new Promise((r) => setTimeout(r, 500));
 
         expect(firedEvents).toHaveLength(5);
         for (const ev of firedEvents) {
-          expect(ev).toBe('proposal');
+          expect(ev).toBe('proposal.committed');
         }
 
         disposable.dispose();
@@ -816,7 +810,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
         const traceCtx = new W3CTraceContextProvider();
         const preCrashTraceId = traceCtx.getTraceId();
 
-        const leader = (await cluster.findLeader(15_000)).adapter;
+        const leader = (await cluster.findLeader()).adapter;
 
         // Pre-crash: propose and audit
         const preLatencies: number[] = [];
@@ -837,12 +831,12 @@ describe('Cross-Repo End-to-End (D2)', () => {
 
         // Crash a non-leader — leader resumes
         const leaderNode = await cluster.findLeader();
-        const victimId = cluster.nodes.find((n: any) => n.id !== leaderNode.id)?.id ?? 2;
+        const victimId = cluster.nodes.find((n) => n.id !== leaderNode.id)?.id ?? 2;
         const crashTime = Date.now();
         await cluster.killNode(victimId);
 
         // Recover — must find a new leader
-        const newLeader = (await cluster.findLeader(15_000)).adapter;
+        const newLeader = (await cluster.findLeader()).adapter;
         const recoveryLatency = Date.now() - crashTime;
 
         // Post-crash: verify can still propose and write audit

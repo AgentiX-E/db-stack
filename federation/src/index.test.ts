@@ -49,12 +49,14 @@ describe('@agentix-e/db-federation types', () => {
       fetchOldestPending: vi.fn().mockResolvedValue([]),
       markDelivered: vi.fn().mockResolvedValue(undefined),
       getPendingCount: vi.fn().mockResolvedValue(0),
+      markFailed: vi.fn().mockReturnValue(false),
       getStats: vi.fn().mockReturnValue({} as OutboxStats),
     };
     expect(typeof store.add).toBe('function');
     expect(typeof store.fetchOldestPending).toBe('function');
     expect(typeof store.markDelivered).toBe('function');
     expect(typeof store.getPendingCount).toBe('function');
+    expect(typeof store.markFailed).toBe('function');
     expect(typeof store.getStats).toBe('function');
   });
 
@@ -225,8 +227,8 @@ describe('@agentix-e/db-federation replication types', () => {
         },
       ],
     };
-    expect(status.targets[0].connected).toBe(true);
-    expect(status.targets[0].lagMs).toBe(150);
+    expect(status.targets[0]!.connected).toBe(true);
+    expect(status.targets[0]!.lagMs).toBe(150);
   });
 
   it('should export IMultiLeaderReplication interface with all methods', () => {

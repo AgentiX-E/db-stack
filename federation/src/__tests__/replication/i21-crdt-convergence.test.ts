@@ -17,7 +17,8 @@ import {
   mvRegistersEqual,
   orSetsEqual,
 } from '../../replication/crdt-convergence';
-import { ConflictResolver } from '../../replication/ConflictResolver';
+import { ConflictResolver, type CRDTSetState } from '../../replication/ConflictResolver';
+import { HLC } from '../../hlc/HLC';
 
 // ── CRT1-CRT3: CRDT Type Unit Tests ─────────────────────────
 
@@ -98,11 +99,7 @@ describe('CRT2: LWWRegister', () => {
       hlcLogical: 0,
       nodeId: 'n1',
     });
-    reg.assign('new', {
-      wallTime: BigInt(200),
-      logical: 0,
-      nodeId: 'n2',
-    } as any);
+    reg.assign('new', new HLC('n2', 200n, 0));
     expect(reg.value).toBe('new');
     expect(reg.hlcWallTime).toBe(200);
   });
@@ -114,11 +111,7 @@ describe('CRT2: LWWRegister', () => {
       hlcLogical: 1,
       nodeId: 'n1',
     });
-    reg.assign('stale', {
-      wallTime: BigInt(100),
-      logical: 0,
-      nodeId: 'n2',
-    } as any);
+    reg.assign('stale', new HLC('n2', 100n, 0));
     expect(reg.value).toBe('current');
   });
 
@@ -129,11 +122,7 @@ describe('CRT2: LWWRegister', () => {
       hlcLogical: 0,
       nodeId: 'n1',
     });
-    reg.assign('big-node', {
-      wallTime: BigInt(100),
-      logical: 0,
-      nodeId: 'n9',
-    } as any);
+    reg.assign('big-node', new HLC('n9', 100n, 0));
     expect(reg.value).toBe('big-node'); // n9 > n1
   });
 
@@ -170,23 +159,15 @@ describe('CRT2: LWWRegister', () => {
 describe('CRT2: MVRegister', () => {
   it('assign replaces all values', () => {
     const reg = new MVRegister();
-    reg.assign('v1', {
-      wallTime: BigInt(100),
-      logical: 0,
-      nodeId: 'n1',
-    } as any);
-    reg.assign('v2', {
-      wallTime: BigInt(200),
-      logical: 0,
-      nodeId: 'n2',
-    } as any);
+    reg.assign('v1', new HLC('n1', 100n, 0));
+    reg.assign('v2', new HLC('n2', 200n, 0));
     expect(reg.values()).toEqual(['v2']);
   });
 
   it('add keeps concurrent values', () => {
     const reg = new MVRegister();
-    reg.add('v1', { wallTime: BigInt(100), logical: 0, nodeId: 'n1' } as any);
-    reg.add('v2', { wallTime: BigInt(100), logical: 0, nodeId: 'n2' } as any);
+    reg.add('v1', new HLC('n1', 100n, 0));
+    reg.add('v2', new HLC('n2', 100n, 0));
     const vals = reg.values().sort();
     expect(vals).toContain('v1');
     expect(vals).toContain('v2');
@@ -433,14 +414,14 @@ describe('CRT7: AntiEntropy with GCounter merge', () => {
     const local = {
       key: 'counter:views',
       value: JSON.stringify({ p: { n1: 5, n2: 3 }, n: { n1: 1, n2: 0 } }),
-      hlc: { wallTime: BigInt(100), logical: 0, nodeId: 'n1' } as any,
+      hlc: new HLC('n1', 100n, 0),
       nodeId: 'n1',
     };
 
     const remote = {
       key: 'counter:views',
       value: JSON.stringify({ p: { n1: 3, n2: 7 }, n: { n1: 0, n2: 0 } }),
-      hlc: { wallTime: BigInt(100), logical: 1, nodeId: 'n2' } as any,
+      hlc: new HLC('n2', 100n, 1),
       nodeId: 'n2',
     };
 
@@ -472,21 +453,21 @@ describe('CRT8: AntiEntropy with ORSet merge', () => {
     const local = {
       key: 'set:users',
       value: JSON.stringify(localSet.toState()),
-      hlc: { wallTime: BigInt(100), logical: 0, nodeId: 'n1' } as any,
+      hlc: new HLC('n1', 100n, 0),
       nodeId: 'n1',
     };
 
     const remote = {
       key: 'set:users',
       value: JSON.stringify(remoteSet.toState()),
-      hlc: { wallTime: BigInt(100), logical: 1, nodeId: 'n2' } as any,
+      hlc: new HLC('n2', 100n, 1),
       nodeId: 'n2',
     };
 
     const result = await resolver.resolve('set:users', local, remote, 'crdt-set');
     expect(result.merged).toBe(true);
 
-    const resolved: any = JSON.parse(result.resolvedValue);
+    const resolved: CRDTSetState = JSON.parse(result.resolvedValue);
     expect(resolved.elements['user:alice']).toBeDefined();
     expect(resolved.elements['user:charlie']).toBeDefined();
     // bob: n2-t1 is tombstoned, n1-t2 is still active → bob survives partially
@@ -514,18 +495,10 @@ describe('CRT8: AntiEntropy with ORSet merge', () => {
 describe('CRT9: MVRegister — LWW-only register', () => {
   it('converges to single value when HLCs are comparable', () => {
     const reg1 = new MVRegister();
-    reg1.add('val-a', {
-      wallTime: BigInt(100),
-      logical: 1,
-      nodeId: 'n1',
-    } as any);
+    reg1.add('val-a', new HLC('n1', 100n, 1));
 
     const reg2 = new MVRegister();
-    reg2.add('val-b', {
-      wallTime: BigInt(200),
-      logical: 0,
-      nodeId: 'n2',
-    } as any);
+    reg2.add('val-b', new HLC('n2', 200n, 0));
 
     // Merge — val-b supersedes val-a
     reg1.merge(reg2.toState());
@@ -534,18 +507,10 @@ describe('CRT9: MVRegister — LWW-only register', () => {
 
   it('keeps all concurrent values when HLCs are incomparable', () => {
     const reg1 = new MVRegister();
-    reg1.add('val-a', {
-      wallTime: BigInt(100),
-      logical: 0,
-      nodeId: 'n1',
-    } as any);
+    reg1.add('val-a', new HLC('n1', 100n, 0));
 
     const reg2 = new MVRegister();
-    reg2.add('val-b', {
-      wallTime: BigInt(100),
-      logical: 0,
-      nodeId: 'n2',
-    } as any);
+    reg2.add('val-b', new HLC('n2', 100n, 0));
 
     reg1.merge(reg2.toState());
     const vals = reg1.values().sort();
@@ -768,16 +733,16 @@ describe('CRT15: verifier detects law-violating merges', () => {
   const makeFaults = () => {
     let n = 0;
     return {
-      GCounter: (self: any, _other: any): void => {
+      GCounter: (self: GCounter, _other: GCounter): void => {
         self.counts[`fault#${++n}`] = 1;
       },
-      PNCounter: (self: any, _other: any): void => {
+      PNCounter: (self: PNCounter, _other: PNCounter): void => {
         self.increment(`fault#${++n}`, 1);
       },
-      LWWRegister: (self: any, _other: any): void => {
+      LWWRegister: (self: LWWRegister, _other: LWWRegister): void => {
         self.value = `${self.value}#${++n}`;
       },
-      MVRegister: (self: any, _other: any): void => {
+      MVRegister: (self: MVRegister, _other: MVRegister): void => {
         self.entries.push({
           value: `fault#${++n}`,
           wallTime: 100000 + n,
@@ -785,7 +750,7 @@ describe('CRT15: verifier detects law-violating merges', () => {
           nodeId: 'fault',
         });
       },
-      ORSet: (self: any, _other: any): void => {
+      ORSet: (self: ORSet, _other: ORSet): void => {
         self.add(`fault#${++n}`, `ft${n}`);
       },
     };

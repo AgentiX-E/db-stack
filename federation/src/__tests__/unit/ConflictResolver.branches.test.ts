@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   ConflictResolver,
+  type ConflictStrategy,
   type ConflictValue,
   type CRDTCounterState,
   type CRDTSetState,
@@ -48,7 +49,7 @@ function hv(
       deserialize: () => {
         throw new Error('not used');
       },
-    } as any,
+    },
     nodeId,
   };
 }
@@ -121,7 +122,9 @@ describe('ConflictResolver — resolve() dispatch & custom resolver', () => {
   it('falls back to LWW for an unknown strategy string (default case)', async () => {
     const local = hv('k', 'local', 100, 0, 'n1');
     const remote = hv('k', 'remote', 200, 0, 'n2');
-    const r = await resolver.resolve('k', local, remote, 'totally-unknown' as any);
+    // A strategy name read from configuration is not constrained by the union
+    // type; it is exactly the case the default branch exists for.
+    const r = await resolver.resolve('k', local, remote, 'totally-unknown' as ConflictStrategy);
     expect(r.strategyUsed).toBe('lww');
     expect(r.resolvedValue).toBe('remote');
   });
@@ -154,7 +157,7 @@ describe('ConflictResolver — resolve() dispatch & custom resolver', () => {
   });
 
   it('registerCustomResolver falls back to __fallback__ key when neither field set', async () => {
-    resolver.registerCustomResolver({} as any, async () => ({
+    resolver.registerCustomResolver({}, async () => ({
       resolvedValue: 'fallback',
       strategyUsed: 'custom',
       loserNodeIds: [],

@@ -16,7 +16,11 @@
  *   FCHAOS3 — Zero new dependencies beyond PartitioningTransport ref
  */
 
-import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from '@agentix-e/db-operations-chaosengine';
+import type {
+  IChaosTransport,
+  ChaosTransportStats,
+  ChaosFaultV2,
+} from '../../../../operations/packages/chaosengine/src/index';
 
 // ── Internal interface for PartitioningTransport ─────────────
 
@@ -25,6 +29,11 @@ export interface IPartitioningTransport {
   partitionedDcs: Set<string>;
   partitionedPeers: Set<string>;
   isolated: boolean;
+  /** Mutable fault knobs, read on every send. */
+  config: {
+    dcLatencyMs: number;
+    dcMessageLossProbability: number;
+  };
   inner: {
     destroy(): void;
     getStats?(): {
@@ -99,28 +108,22 @@ export class FederationChaosAdapter implements IChaosTransport {
     this.currentLatencyMs = 0;
     this._stopped = false;
     // Reset latency + loss config
-    const cfg = (this.transport as any).config ?? {};
-    cfg.dcLatencyMs = 0;
-    cfg.dcMessageLossProbability = 0;
-    (this.transport as any).config = cfg;
+    this.transport.config.dcLatencyMs = 0;
+    this.transport.config.dcMessageLossProbability = 0;
   }
 
   // ── Message Loss ───────────────────────────────────────
 
   setMessageLoss(rate: number): void {
     this.messageLossRate = Math.max(0, Math.min(1, rate));
-    const cfg = (this.transport as any).config ?? {};
-    cfg.dcMessageLossProbability = this.messageLossRate;
-    (this.transport as any).config = cfg;
+    this.transport.config.dcMessageLossProbability = this.messageLossRate;
   }
 
   // ── Latency Injection ──────────────────────────────────
 
   setLatency(ms: number): void {
     this.currentLatencyMs = Math.max(0, ms);
-    const cfg = (this.transport as any).config ?? {};
-    cfg.dcLatencyMs = this.currentLatencyMs;
-    (this.transport as any).config = cfg;
+    this.transport.config.dcLatencyMs = this.currentLatencyMs;
   }
 
   // ── Lifecycle ──────────────────────────────────────────

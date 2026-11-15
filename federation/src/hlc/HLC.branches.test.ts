@@ -30,7 +30,7 @@ describe('HLC — observe() time-relation matrix (branch completion)', () => {
     local.observe(remote);
 
     // maxWall = lastWall = remoteWall; pt lower → logical = max(7,30)+1 = 31
-    const ts = (local as any).lastLogical;
+    const ts = local['lastLogical'];
     expect(ts).toBe(31);
   });
 
@@ -45,8 +45,8 @@ describe('HLC — observe() time-relation matrix (branch completion)', () => {
     local.observe(remote);
 
     // maxWall = remoteWall = pt; local lower → logical = remote.logical + 1 = 43
-    expect((local as any).lastLogical).toBe(43);
-    expect((local as any).lastWall).toBe(remoteWall);
+    expect(local['lastLogical']).toBe(43);
+    expect(local['lastWall']).toBe(remoteWall);
   });
 
   it('advances logical when local wall is the sole max', () => {
@@ -60,8 +60,8 @@ describe('HLC — observe() time-relation matrix (branch completion)', () => {
     local.observe(remote);
 
     // maxWall = lastWall only → logical = lastLogical + 1 = 10
-    expect((local as any).lastLogical).toBe(10);
-    expect((local as any).lastWall).toBe(localWall);
+    expect(local['lastLogical']).toBe(10);
+    expect(local['lastWall']).toBe(localWall);
   });
 
   it('resets logical to 0 when pt is the sole max', () => {
@@ -74,8 +74,8 @@ describe('HLC — observe() time-relation matrix (branch completion)', () => {
     local.observe(remote);
 
     // maxWall = pt only → logical = 0
-    expect((local as any).lastLogical).toBe(0);
-    expect((local as any).lastWall).toBe(ptWall);
+    expect(local['lastLogical']).toBe(0);
+    expect(local['lastWall']).toBe(ptWall);
   });
 
   it('advances logical from remote when remote wall is the sole max', () => {
@@ -87,8 +87,8 @@ describe('HLC — observe() time-relation matrix (branch completion)', () => {
     local.observe(remote);
 
     // maxWall = remoteWall only → logical = remote.logical + 1 = 12
-    expect((local as any).lastLogical).toBe(12);
-    expect((local as any).lastWall).toBe(remoteWall);
+    expect(local['lastLogical']).toBe(12);
+    expect(local['lastWall']).toBe(remoteWall);
   });
 });
 
@@ -101,8 +101,8 @@ describe('HLC — max3 b-branch and instance compare()', () => {
     const remote = makeHLC(remoteWall, 7, 'node-b'); // b highest
 
     local.observe(remote);
-    expect((local as any).lastWall).toBe(remoteWall); // b chosen
-    expect((local as any).lastLogical).toBe(8); // remote.logical + 1
+    expect(local['lastWall']).toBe(remoteWall); // b chosen
+    expect(local['lastLogical']).toBe(8); // remote.logical + 1
   });
 
   it('instance .compare() delegates to compareHLC', () => {

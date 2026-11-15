@@ -32,7 +32,7 @@ function makeTopology(): TopologyManager {
 describe('CatastrophicFailoverManager — constructor default timeout', () => {
   it('falls back to DEFAULT_DC_TIMEOUT_MS when dcTimeoutMs is omitted', () => {
     const fm = new CatastrophicFailoverManager(makeTopology()); // no timeout → default 30_000
-    expect((fm as any).dcTimeoutMs).toBe(30_000);
+    expect(fm['dcTimeoutMs']).toBe(30_000);
   });
 });
 

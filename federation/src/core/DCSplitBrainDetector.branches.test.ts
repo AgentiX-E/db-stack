@@ -14,7 +14,7 @@ import { DCSplitBrainDetector, type DCHeartbeat } from './DCSplitBrainDetector';
 import { HLC } from '../hlc/HLC';
 
 function makeDetector(
-  overrides?: Partial<Parameters<typeof DCSplitBrainDetector>[0]> & {
+  overrides?: Partial<ConstructorParameters<typeof DCSplitBrainDetector>[0]> & {
     autoRecover?: boolean;
   },
 ) {
@@ -48,9 +48,9 @@ describe('DCSplitBrainDetector — lifecycle & heartbeat branches', () => {
     vi.useFakeTimers();
     const d = makeDetector();
     d.start();
-    const timer1 = (d as any).heartbeatTimer;
+    const timer1 = d['heartbeatTimer'];
     d.start(); // should no-op
-    expect((d as any).heartbeatTimer).toBe(timer1);
+    expect(d['heartbeatTimer']).toBe(timer1);
     d.stop();
   });
 
@@ -71,8 +71,9 @@ describe('DCSplitBrainDetector — lifecycle & heartbeat branches', () => {
       d.receiveHeartbeat(hb('dc-2', i, i));
     }
 
-    const chain = (d as any).dcHlcChains.get('dc-2');
-    expect(chain.length).toBeLessThanOrEqual(100);
+    const chain = d['dcHlcChains'].get('dc-2');
+    expect(chain).toBeDefined();
+    expect(chain!.length).toBeLessThanOrEqual(100);
     d.stop();
   });
 
@@ -83,17 +84,17 @@ describe('DCSplitBrainDetector — lifecycle & heartbeat branches', () => {
 
     const heartbeatSpy = vi.fn();
     const expiredSpy = vi.fn();
-    (d as any).emitter.on('heartbeat', heartbeatSpy);
-    (d as any).emitter.on('heartbeat-expired', expiredSpy);
+    d['emitter'].on('heartbeat', heartbeatSpy);
+    d['emitter'].on('heartbeat-expired', expiredSpy);
 
     // Seed a stale remote heartbeat well past the timeout
-    (d as any).remoteHeartbeats.set('dc-2', hb('dc-2', 1, 1, 0, Date.now() - 60_000));
+    d['remoteHeartbeats'].set('dc-2', hb('dc-2', 1, 1, 0, Date.now() - 60_000));
 
-    (d as any).broadcastHeartbeat();
+    d['broadcastHeartbeat']();
 
     expect(heartbeatSpy).toHaveBeenCalledTimes(1);
     expect(expiredSpy).toHaveBeenCalledTimes(1);
-    expect(expiredSpy.mock.calls[0][0].dcId).toBe('dc-2');
+    expect(expiredSpy.mock.calls[0]![0].dcId).toBe('dc-2');
     d.stop();
   });
 
@@ -103,20 +104,20 @@ describe('DCSplitBrainDetector — lifecycle & heartbeat branches', () => {
     const off = d.onSplitBrainResolved(cb);
 
     // No split-brain yet → emit manually to prove wiring
-    (d as any).emitter.emit('split-brain-resolved', { detectedAt: 1 });
+    d['emitter'].emit('split-brain-resolved', { detectedAt: 1 });
     expect(cb).toHaveBeenCalledTimes(1);
 
     off();
-    (d as any).emitter.emit('split-brain-resolved', { detectedAt: 2 });
+    d['emitter'].emit('split-brain-resolved', { detectedAt: 2 });
     expect(cb).toHaveBeenCalledTimes(1); // unchanged after unregister
   });
 
   it('broadcastHeartbeat early-returns when not started', () => {
     const d = makeDetector();
     const heartbeatSpy = vi.fn();
-    (d as any).emitter.on('heartbeat', heartbeatSpy);
+    d['emitter'].on('heartbeat', heartbeatSpy);
 
-    (d as any).broadcastHeartbeat(); // not started → no emit
+    d['broadcastHeartbeat'](); // not started → no emit
     expect(heartbeatSpy).not.toHaveBeenCalled();
   });
 

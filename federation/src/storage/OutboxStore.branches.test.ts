@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { OutboxStore, type OutboxStoreConfig } from './OutboxStore';
-import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
+import type { OutboxEntryInput } from '../interfaces/outbox/OutboxEntry';
 import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
 import { HLC } from '../hlc/HLC';
 import * as fs from 'fs';
@@ -32,18 +32,13 @@ function createTestStore(config?: Partial<OutboxStoreConfig>): OutboxStore {
   });
 }
 
-function makeEntry(payload: string, msgId?: string): Omit<OutboxEntry, 'id'> {
+function makeEntry(payload: string, msgId?: string): OutboxEntryInput {
   return {
+    msgId,
     targetPeerIds: ['peer-b'],
     payload: new TextEncoder().encode(payload),
     timestamp: new HLC('test-node').now(),
     type: 'test',
-    status: 'pending',
-    createdAt: Date.now(),
-    lastAttemptAt: null,
-    attemptCount: 0,
-    lastError: null,
-    ...(msgId ? ({ id: msgId } as any) : {}),
   };
 }
 
@@ -66,7 +61,7 @@ describe('OutboxStore — addBatch', () => {
   it('persists a multi-entry batch atomically with assigned IDs', async () => {
     const out = store.addBatch([makeEntry('a'), makeEntry('b'), makeEntry('c')]);
     expect(out).toHaveLength(3);
-    expect(out[0].id).toMatch(/^entry:\d+$/);
+    expect(out[0]!.id).toMatch(/^entry:\d+$/);
     expect(out.map((e) => new TextDecoder().decode(e.payload))).toEqual(['a', 'b', 'c']);
 
     expect(await store.getPendingCount()).toBe(3);
@@ -140,7 +135,7 @@ describe('OutboxStore — markDelivered / markFailed fallback scan', () => {
   it('markDelivered falls back to O(n) scan when msgId index is missing', async () => {
     const entry = await store.add(makeEntry('scan-deliver'));
     // Remove the msgId→seq reverse index to force the fallback scan path
-    (store as any).msgIdToSeqDb.removeSync(entry.id);
+    store['msgIdToSeqDb'].removeSync(entry.id);
 
     await store.markDelivered(entry.id);
     expect(store.isDelivered(entry.id)).toBe(true);
@@ -148,7 +143,7 @@ describe('OutboxStore — markDelivered / markFailed fallback scan', () => {
 
   it('markFailed falls back to O(n) scan when msgId index is missing', async () => {
     const entry = await store.add(makeEntry('scan-fail'));
-    (store as any).msgIdToSeqDb.removeSync(entry.id);
+    store['msgIdToSeqDb'].removeSync(entry.id);
 
     const result = store.markFailed(entry.id, 'boom');
     expect(result).toBe(false); // attempt 1 < maxRetries, still pending
@@ -186,8 +181,8 @@ describe('OutboxStore — dead letter stats & edge paths', () => {
 describe('OutboxStore — nullish defaults', () => {
   it('falls back to default maxRetries when config omits it', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-nullish-'));
-    const s = new OutboxStore({ dataDir: tmp } as any); // no maxRetries → ?? 3
-    expect((s as any).maxRetries).toBe(3);
+    const s = new OutboxStore({ dataDir: tmp }); // no maxRetries → ?? 3
+    expect(s['maxRetries']).toBe(3);
     s.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
@@ -196,7 +191,7 @@ describe('OutboxStore — nullish defaults', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-nullish2-'));
     const s = createTestStore({ dataDir: tmp });
     const partial = makeEntry('no-created-at');
-    delete (partial as any).createdAt;
+    delete partial.createdAt;
 
     const e = await s.add(partial);
     expect(e.createdAt).toBeGreaterThan(0);
@@ -208,10 +203,10 @@ describe('OutboxStore — nullish defaults', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-nullish3-'));
     const s = createTestStore({ dataDir: tmp });
     const partial = makeEntry('batch-no-created-at');
-    delete (partial as any).createdAt;
+    delete partial.createdAt;
 
     const out = s.addBatch([partial]);
-    expect(out[0].createdAt).toBeGreaterThan(0);
+    expect(out[0]!.createdAt).toBeGreaterThan(0);
     s.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
@@ -232,7 +227,7 @@ describe('OutboxStore — markFailed missing main entry + housekeeping dead-lett
   it('markFailed returns false when seq exists but main entry is missing', async () => {
     const e = await store.add(makeEntry('will-vanish'));
     // Corrupt: remove main entry but keep msgId→seq index
-    (store as any).mainDb.removeSync(e.id);
+    store['mainDb'].removeSync(e.id);
     // msgIdToSeqDb still has e.id → seq lookup succeeds, main get() returns undefined
     expect(store.markFailed(e.id, 'x')).toBe(false);
   });
@@ -248,9 +243,10 @@ describe('OutboxStore — markFailed missing main entry + housekeeping dead-lett
     // timestamp: relying on wall-clock movement between markFailed() and
     // housekeeping() made this pass only on slow storage.
     const deadKey = `dlq:${e.id}`;
-    const dead = (store as any).deadLetterDb.get(deadKey);
-    (store as any).deadLetterDb.putSync(deadKey, {
-      ...dead,
+    const dead = store['deadLetterDb'].get(deadKey);
+    expect(dead).toBeDefined();
+    store['deadLetterDb'].putSync(deadKey, {
+      ...dead!,
       deadAt: Date.now() - 10_000,
     });
 
@@ -263,12 +259,12 @@ describe('OutboxStore — isCapacityExceeded fallback guards', () => {
   it('returns false when getStats throws (defensive catch)', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cap-'));
     const s = createTestStore({ dataDir: tmp });
-    const orig = (s as any).mainDb.getStats;
-    (s as any).mainDb.getStats = () => {
+    const orig = s['mainDb'].getStats;
+    s['mainDb'].getStats = () => {
       throw new Error('stats unavailable');
     };
     expect(s.isCapacityExceeded()).toBe(false);
-    (s as any).mainDb.getStats = orig;
+    s['mainDb'].getStats = orig;
     s.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
@@ -276,12 +272,12 @@ describe('OutboxStore — isCapacityExceeded fallback guards', () => {
   it('guards against incomplete getStats shaping (pageSize/lastPageNumber/mapSize fallbacks)', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cap2-'));
     const s = createTestStore({ dataDir: tmp });
-    const orig = (s as any).mainDb.getStats;
+    const orig = s['mainDb'].getStats;
     // Return an object missing pageSize / lastPageNumber / mapSize to exercise
     // the `|| 4096`, ternary `: 0`, and `|| this.mapSize` fallback branches.
-    (s as any).mainDb.getStats = () => ({});
+    s['mainDb'].getStats = () => ({});
     expect(s.isCapacityExceeded()).toBe(false);
-    (s as any).mainDb.getStats = orig;
+    s['mainDb'].getStats = orig;
     s.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
@@ -292,12 +288,14 @@ describe('OutboxStore — _markFailed attemptCount nullish', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-attempt-'));
     const s = createTestStore({ dataDir: tmp, maxRetries: 3 });
     const e = await s.add(makeEntry('no-attempt'));
-    const seq = (s as any).msgIdToSeqDb.get(e.id);
+    const seq = s['msgIdToSeqDb'].get(e.id);
+    expect(seq).toBeDefined();
 
-    // Strip attemptCount from the stored entry to exercise `?? 0`.
-    const stored = (s as any).mainDb.get(`entry:${seq}`) as OutboxEntry;
-    delete (stored as any).attemptCount;
-    (s as any).mainDb.putSync(`entry:${seq}`, stored);
+    // Null out attemptCount to exercise `?? 0`. The record was written by an
+    // older build that did not persist the field.
+    const stored = s['mainDb'].get(`entry:${seq}`);
+    expect(stored).toBeDefined();
+    s['mainDb'].putSync(`entry:${seq}`, Object.assign(stored!, { attemptCount: undefined }));
 
     const result = s.markFailed(e.id, 'x');
     expect(result).toBe(false); // attempt 1 < maxRetries

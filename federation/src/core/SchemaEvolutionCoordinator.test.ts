@@ -115,8 +115,8 @@ describe('SchemaEvolutionCoordinator', () => {
 
       const history = coordinator.getAppliedChanges();
       expect(history).toHaveLength(2);
-      expect(history[0].id).toBe('v1-first');
-      expect(history[1].id).toBe('v2-second');
+      expect(history[0]!.id).toBe('v1-first');
+      expect(history[1]!.id).toBe('v2-second');
     });
 
     it('should exclude rolled back changes from history', async () => {

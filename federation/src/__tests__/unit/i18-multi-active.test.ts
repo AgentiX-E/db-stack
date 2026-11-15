@@ -379,27 +379,12 @@ describe('MA10-MA12: ConflictResolver — All Strategies', () => {
   });
 
   function makeValue(key: string, value: string, wallTime: number, logical: number, nodeId: string): ConflictValue {
-    const wt = BigInt(wallTime);
     return {
       key,
       value,
-      hlc: {
-        wallTime: wt,
-        logical,
-        nodeId,
-        compare: (other: { wallTime: bigint; logical: number }) =>
-          wt > other.wallTime ? 1 : wt < other.wallTime ? -1 : logical > other.logical ? 1 : -1,
-        serialize: () => `${wallTime}:${logical}:${nodeId}`,
-        deserialize: () =>
-          ({
-            wallTime: wt,
-            logical,
-            nodeId,
-            compare: () => 0,
-            serialize: () => '',
-            deserialize: () => ({ wallTime: 0n as bigint, logical: 0, nodeId: '' }) as any,
-          }) as any,
-      } as any,
+      // The real clock, pinned to the test's wall time: the LWW comparisons
+      // under test run against the production HLC ordering, not a stub.
+      hlc: new HLC(nodeId, BigInt(wallTime), logical),
       nodeId,
     };
   }

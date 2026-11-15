@@ -121,7 +121,7 @@ export class PartitioningTransport implements ITransport {
   private getPeerDc(peerId: string): string {
     if (peerId.startsWith('dc-')) {
       const parts = peerId.split('/');
-      if (parts.length > 0) return parts[0];
+      if (parts.length > 0) return parts[0] ?? '';
     }
     return '';
   }
@@ -151,7 +151,7 @@ export class PartitioningTransport implements ITransport {
 
     // Cross-DC latency
     const effectiveLatency = targetDc && targetDc !== this.dcId ? this.config.dcLatencyMs : 0;
-    const transportLatency = (this.inner as any).latencyMs ?? 0;
+    const transportLatency = this.inner['latencyMs'] ?? 0;
     const totalLatency = transportLatency + effectiveLatency;
 
     if (totalLatency > 0) {
@@ -227,7 +227,7 @@ class InMemoryDataProvider {
       nodeId: string;
     }
   > = new Map();
-  private data: { key: string; value: string; hlc: any; nodeId: string }[] = [];
+  private data: DataEntry[] = [];
 
   async getRange(start: string, end: string): Promise<DataEntry[]> {
     return this.data
@@ -252,8 +252,9 @@ class InMemoryDataProvider {
 
   async apply(key: string, value: string): Promise<void> {
     const existing = this.data.findIndex((e) => e.key === key);
-    if (existing >= 0) {
-      this.data[existing] = { ...this.data[existing], value };
+    const current = existing >= 0 ? this.data[existing] : undefined;
+    if (current) {
+      this.data[existing] = { ...current, value };
     } else {
       this.data.push({
         key,
@@ -425,7 +426,7 @@ export class FederationChaosCluster {
       case 'dc-partition': {
         // Partition the first DC from all others
         if (this.dcs.length >= 2) {
-          const isolatedDc = this.dcs[0];
+          const isolatedDc = this.dcs[0]!;
           const otherDcs = this.dcs.slice(1);
 
           for (const node of isolatedDc.nodes) {
@@ -446,7 +447,7 @@ export class FederationChaosCluster {
         // Crash one random node
         const allNodes = this.dcs.flatMap((dc) => dc.nodes);
         if (allNodes.length > 0) {
-          const target = allNodes[Math.floor(this.rng.next() * allNodes.length)];
+          const target = allNodes[Math.floor(this.rng.next() * allNodes.length)]!;
           target.transport.isolated = true;
         }
         break;
@@ -457,7 +458,7 @@ export class FederationChaosCluster {
         this.config.dcLatencyMs = 500;
         for (const dc of this.dcs) {
           for (const node of dc.nodes) {
-            (node.transport as any).config.dcLatencyMs = 500;
+            node.transport['config'].dcLatencyMs = 500;
           }
         }
         break;
@@ -540,8 +541,8 @@ export class FederationChaosCluster {
       try {
         const stats = await node.outbox.getStats();
         // If outbox has a very large pending queue (>1000), flag it
-        if ((stats as any).pendingCount > 1000) {
-          details.push(`Node ${node.id} has ${(stats as any).pendingCount} pending outbox entries`);
+        if (stats.pendingCount > 1000) {
+          details.push(`Node ${node.id} has ${stats.pendingCount} pending outbox entries`);
           noDataLoss = false;
         }
       } catch {
@@ -587,7 +588,7 @@ export class FederationChaosCluster {
     this.config.dcLatencyMs = 0;
     for (const dc of this.dcs) {
       for (const node of dc.nodes) {
-        (node.transport as any).config.dcLatencyMs = 0;
+        node.transport['config'].dcLatencyMs = 0;
       }
     }
     await this.sleep(1000);

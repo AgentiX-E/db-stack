@@ -32,7 +32,7 @@
  * Edition: D3.3-v1 (stage failure isolation)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -40,7 +40,7 @@ import { tmpdir } from 'node:os';
 import { OutboxStore } from '../../storage/OutboxStore';
 import { DedupRing } from '../../replication/DedupRing';
 import { HLC } from '../../hlc/HLC';
-import type { OutboxEntry } from '../../interfaces/outbox/OutboxEntry';
+import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry';
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -66,12 +66,13 @@ function cleanupAll(): void {
 
 afterAll(() => cleanupAll());
 
-function makeEntry(hlc: HLC, seq?: number): Omit<OutboxEntry, 'id'> {
+function makeEntry(hlc: HLC, seq?: number): OutboxEntryInput & { msgId: string } {
   return {
     msgId: `d3c:${seq ?? Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-    payload: { seq: seq ?? Date.now() },
+    targetPeerIds: ['peer-b'],
+    payload: new TextEncoder().encode(JSON.stringify({ seq: seq ?? Date.now() })),
     timestamp: hlc.now(),
-    retryCount: 0,
+    type: 'cdc_event',
   };
 }
 
@@ -86,19 +87,19 @@ async function measureBaseline(ops: number): Promise<number> {
     deadLetterTtlMs: 300_000,
     mapSize: 16 * 1024 * 1024,
   });
-  const hlc = new HLC();
+  const hlc = new HLC('d3-chaos-node');
 
   try {
     const latencies: number[] = [];
     for (let i = 0; i < ops; i++) {
       const t1 = performance.now();
-      store.add(makeEntry(hlc, i));
+      await store.add(makeEntry(hlc, i));
       const t2 = performance.now();
       latencies.push(t2 - t1);
     }
 
     const sorted = [...latencies].sort((a, b) => a - b);
-    const p95 = sorted[Math.floor(0.95 * sorted.length)];
+    const p95 = sorted[Math.floor(0.95 * sorted.length)]!;
     return p95;
   } finally {
     store.close();
@@ -148,8 +149,8 @@ describe('D3.3: Stage Isolation Chaos', () => {
         deadLetterTtlMs: 300_000,
         mapSize: 16 * 1024 * 1024,
       });
-      const dedup = new DedupRing({ maxSize: 5000, ttlMs: 300_000 });
-      const hlc = new HLC();
+      const dedup = new DedupRing({ maxCapacity: 5000, ttlMs: 300_000 });
+      const hlc = new HLC('d3-chaos-node');
 
       const injector = latencyInject(5); // inject 500ms delay every 5th op
 
@@ -161,7 +162,7 @@ describe('D3.3: Stage Isolation Chaos', () => {
           // OutboxStore write with injected latency
           await injector.check();
           const entry = makeEntry(hlc, i);
-          const created = store.add(entry);
+          const created = await store.add(entry);
 
           // DedupRing operates on the same entry — should NOT be affected
           // by OutboxStore's write latency (it's a separate in-memory operation)
@@ -173,8 +174,8 @@ describe('D3.3: Stage Isolation Chaos', () => {
 
         // IS1: DedupRing P95 < 5x baseline (baseline ≈ 0.01ms, 5x = 0.05ms)
         const sorted = [...dedupLatencies].sort((a, b) => a - b);
-        const p95 = sorted[Math.floor(0.95 * sorted.length)];
-        const p99 = sorted[Math.floor(0.99 * sorted.length)];
+        const p95 = sorted[Math.floor(0.95 * sorted.length)]!;
+        const p99 = sorted[Math.floor(0.99 * sorted.length)]!;
 
         console.table({
           'F1 DedupRing P95 (ms)': p95.toFixed(3),
@@ -194,7 +195,7 @@ describe('D3.3: Stage Isolation Chaos', () => {
         }
         // Verify dedup has ~100 entries via delivered count
         // Since entries are delivered, fetchOldestPending should reflect
-        const pending = store.fetchOldestPendingSync(150);
+        const pending = await store.fetchOldestPending(150);
         // Entries are pending (not marked delivered) — all 100 should be there
         expect(pending.length).toBe(100);
 
@@ -202,7 +203,7 @@ describe('D3.3: Stage Isolation Chaos', () => {
         const postLatencies: number[] = [];
         for (let i = 100; i < 130; i++) {
           const entry = makeEntry(hlc, i);
-          const created = store.add(entry);
+          const created = await store.add(entry);
 
           const t1 = performance.now();
           dedup.put(created.id);
@@ -234,8 +235,8 @@ describe('D3.3: Stage Isolation Chaos', () => {
         deadLetterTtlMs: 300_000,
         mapSize: 16 * 1024 * 1024,
       });
-      const dedup = new DedupRing({ maxSize: 5000, ttlMs: 300_000 });
-      const hlc = new HLC();
+      const dedup = new DedupRing({ maxCapacity: 5000, ttlMs: 300_000 });
+      const hlc = new HLC('d3-chaos-node');
 
       try {
         const outboxLatencies: number[] = [];
@@ -258,11 +259,11 @@ describe('D3.3: Stage Isolation Chaos', () => {
           // OutboxStore write during DedupRing GC pause — must NOT be affected
           const entry = makeEntry(hlc, i);
           const t1 = performance.now();
-          store.add(entry);
+          await store.add(entry);
           const t2 = performance.now();
 
           // Independent dedup operation
-          dedup.put(entry.id);
+          dedup.put(entry.msgId);
           currentDedupOps++;
 
           // Skip first 10 to avoid GC pause on startup
@@ -272,8 +273,8 @@ describe('D3.3: Stage Isolation Chaos', () => {
         }
 
         const sorted = [...outboxLatencies].sort((a, b) => a - b);
-        const p95 = sorted[Math.floor(0.95 * sorted.length)];
-        const max = sorted[sorted.length - 1];
+        const p95 = sorted[Math.floor(0.95 * sorted.length)]!;
+        const max = sorted[sorted.length - 1]!;
 
         console.table({
           'F2 OutboxStore P95 (ms)': p95.toFixed(2),
@@ -289,7 +290,7 @@ describe('D3.3: Stage Isolation Chaos', () => {
         expect(p95).toBeLessThan(25);
 
         // IS3: No data loss
-        const pending = store.fetchOldestPendingSync(150);
+        const pending = await store.fetchOldestPending(150);
         expect(pending.length).toBe(100);
       } finally {
         store.close();
@@ -310,8 +311,8 @@ describe('D3.3: Stage Isolation Chaos', () => {
         deadLetterTtlMs: 300_000,
         mapSize: 16 * 1024 * 1024,
       });
-      const dedup = new DedupRing({ maxSize: 5000, ttlMs: 300_000 });
-      const hlc = new HLC();
+      const dedup = new DedupRing({ maxCapacity: 5000, ttlMs: 300_000 });
+      const hlc = new HLC('d3-chaos-node');
 
       const outboxInjector = latencyInject(5);
 
@@ -322,7 +323,7 @@ describe('D3.3: Stage Isolation Chaos', () => {
           // OutboxStore latency injection
           await outboxInjector.check();
           const entry = makeEntry(hlc, i);
-          const created = store.add(entry);
+          const created = await store.add(entry);
 
           // DedupRing GC pause (every 15th op)
           if (i > 0 && i % 15 === 0) {
@@ -337,7 +338,7 @@ describe('D3.3: Stage Isolation Chaos', () => {
         }
 
         // IS3: All 100 entries preserved in OutboxStore
-        const pending = store.fetchOldestPendingSync(150);
+        const pending = await store.fetchOldestPending(150);
         expect(pending.length).toBe(100);
 
         // IS3: DedupRing delivers all unique IDs
@@ -372,7 +373,7 @@ describe('D3.3: Stage Isolation Chaos', () => {
         deadLetterTtlMs: 300_000,
         mapSize: 16 * 1024 * 1024,
       });
-      const hlc = new HLC();
+      const hlc = new HLC('d3-chaos-node');
 
       try {
         // Write 50 entries with addBatch
@@ -383,13 +384,13 @@ describe('D3.3: Stage Isolation Chaos', () => {
         expect(flushed.length).toBe(50);
 
         // Verify all flushed
-        expect(store.fetchOldestPendingSync(10).length).toBe(0);
+        expect((await store.fetchOldestPending(10)).length).toBe(0);
 
         // Write 50 more
         store.addBatch(Array.from({ length: 50 }, (_, i) => makeEntry(hlc, 100 + i)));
 
         // Pending count should be 50
-        const pending = store.fetchOldestPendingSync(60);
+        const pending = await store.fetchOldestPending(60);
         expect(pending.length).toBe(50);
 
         // Flush 30 of 50
@@ -397,12 +398,12 @@ describe('D3.3: Stage Isolation Chaos', () => {
         expect(partial.length).toBe(30);
 
         // 20 remaining
-        const remaining = store.fetchOldestPendingSync(30);
+        const remaining = await store.fetchOldestPending(30);
         expect(remaining.length).toBe(20);
 
         // Flush remaining
         store.fetchAndFlush(20);
-        expect(store.fetchOldestPendingSync(10).length).toBe(0);
+        expect((await store.fetchOldestPending(10)).length).toBe(0);
       } finally {
         store.close();
       }

@@ -36,7 +36,10 @@ class MockPartitioningTransport implements IPartitioningTransport {
     },
   };
 
-  config: any = { dcMessageLossProbability: 0, dcLatencyMs: 0 };
+  config: { dcMessageLossProbability: number; dcLatencyMs: number } = {
+    dcMessageLossProbability: 0,
+    dcLatencyMs: 0,
+  };
 
   constructor(dcId: string) {
     this.dcId = dcId;
@@ -305,7 +308,7 @@ describe('FederationChaosScenarios', () => {
 
 describe('E2E — FederationChaosAdapter + ChaosEngineV2', () => {
   it('E2E — DC partition via engine, heal via engine', async () => {
-    const { ChaosEngineV2 } = await import('@agentix-e/db-operations-chaosengine');
+    const { ChaosEngineV2 } = await import('../../../../operations/packages/chaosengine/src/index');
     const engine = new ChaosEngineV2();
 
     const mockDc1 = new MockPartitioningTransport('dc-1');
@@ -328,7 +331,7 @@ describe('E2E — FederationChaosAdapter + ChaosEngineV2', () => {
   });
 
   it('E2E — conflict storm scenario with recovery', async () => {
-    const { ChaosEngineV2 } = await import('@agentix-e/db-operations-chaosengine');
+    const { ChaosEngineV2 } = await import('../../../../operations/packages/chaosengine/src/index');
     const engine = new ChaosEngineV2();
 
     const mocks = [
@@ -360,7 +363,7 @@ describe('E2E — FederationChaosAdapter + ChaosEngineV2', () => {
   });
 
   it('E2E — scenario runner with federation adapters', async () => {
-    const { ChaosEngineV2 } = await import('@agentix-e/db-operations-chaosengine');
+    const { ChaosEngineV2 } = await import('../../../../operations/packages/chaosengine/src/index');
     const engine = new ChaosEngineV2();
 
     const mocks = [new MockPartitioningTransport('dc-1'), new MockPartitioningTransport('dc-2')];

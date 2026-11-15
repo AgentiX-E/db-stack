@@ -15,13 +15,14 @@
  *   - stop(): clears workers + removes listeners
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { MultiLeaderReplication } from './MultiLeaderReplication';
 import { HLC } from '../hlc/HLC';
 import type { ReplicationConfig } from '../interfaces/replication/IMultiLeaderReplication';
 import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
 import type { ITransport } from '../interfaces/transport/ITransport';
-import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
+import type { OutboxEntry, OutboxEntryInput } from '../interfaces/outbox/OutboxEntry';
+import type { TransportMessage } from '../interfaces/transport/TransportMessage';
 
 function makeConfig(overrides: Partial<ReplicationConfig> = {}): ReplicationConfig {
   return {
@@ -74,40 +75,62 @@ function entry(id: string, targetPeerIds: string[]): OutboxEntry {
   } as OutboxEntry;
 }
 
+/** The store double: the real interface, with each method still inspectable. */
+type MockOutboxStore = IOutboxStore & {
+  add: Mock<(entry: OutboxEntryInput) => Promise<OutboxEntry>>;
+  fetchOldestPending: Mock<(count: number, limit?: number) => Promise<OutboxEntry[]>>;
+  markDelivered: Mock<(entryId: string) => Promise<void>>;
+  markFailed: Mock<(entryId: string, error?: string) => boolean>;
+};
+
 interface MockOutbox {
-  store: IOutboxStore;
-  add: ReturnType<typeof vi.fn>;
-  fetchOldestPending: ReturnType<typeof vi.fn>;
-  markDelivered: ReturnType<typeof vi.fn>;
-  markFailed: ReturnType<typeof vi.fn>;
+  store: MockOutboxStore;
+  add: MockOutboxStore['add'];
+  fetchOldestPending: MockOutboxStore['fetchOldestPending'];
+  markDelivered: MockOutboxStore['markDelivered'];
+  markFailed: MockOutboxStore['markFailed'];
 }
 
 function mockOutbox(): MockOutbox {
-  const add = vi.fn().mockResolvedValue(undefined);
-  const fetchOldestPending = vi.fn().mockResolvedValue([]);
-  const markDelivered = vi.fn().mockResolvedValue(undefined);
-  const markFailed = vi.fn().mockResolvedValue(undefined);
-  const store = {
+  const add = vi.fn<(entry: OutboxEntryInput) => Promise<OutboxEntry>>().mockResolvedValue(entry('entry:1', []));
+  const fetchOldestPending = vi.fn<(count: number, limit?: number) => Promise<OutboxEntry[]>>().mockResolvedValue([]);
+  const markDelivered = vi.fn<(entryId: string) => Promise<void>>().mockResolvedValue(undefined);
+  const markFailed = vi.fn<(entryId: string, error?: string) => boolean>().mockReturnValue(false);
+  const store: MockOutboxStore = {
     add,
     fetchOldestPending,
     markDelivered,
     markFailed,
-  } as unknown as IOutboxStore;
+    getPendingCount: vi.fn(async () => 0),
+    getStats: vi.fn(async () => ({
+      totalEntries: 0,
+      pendingCount: 0,
+      deliveredCount: 0,
+      oldestPendingTimestamp: null,
+    })),
+  };
   return { store, add, fetchOldestPending, markDelivered, markFailed };
 }
 
-function mockTransport(sendImpl?: (msg: unknown) => Promise<boolean>): {
+function mockTransport(sendImpl?: (msg: TransportMessage) => Promise<boolean>): {
   transport: ITransport;
-  send: ReturnType<typeof vi.fn>;
+  send: Mock<(msg: TransportMessage) => Promise<boolean>>;
 } {
-  const send = vi.fn(sendImpl ?? (async () => true));
-  const transport = {
+  const send = vi.fn<(msg: TransportMessage) => Promise<boolean>>(sendImpl ?? (async () => true));
+  const transport: ITransport = {
     send,
-    broadcast: vi.fn().mockResolvedValue(0),
-    onMessage: vi.fn().mockReturnValue(vi.fn()),
-    getConnectedPeers: vi.fn().mockReturnValue([]),
-    getStats: vi.fn().mockReturnValue({}),
-  } as unknown as ITransport;
+    broadcast: vi.fn(async () => 0),
+    onMessage: vi.fn(() => () => {}),
+    getConnectedPeers: vi.fn(() => []),
+    getStats: vi.fn(() => ({
+      peersConnected: 0,
+      messagesSent: 0,
+      messagesReceived: 0,
+      bytesSent: 0,
+      bytesReceived: 0,
+      uptimeMs: 0,
+    })),
+  };
   return { transport, send };
 }
 
@@ -154,7 +177,7 @@ describe('MultiLeaderReplication — getStatus branches', () => {
 
     const status = await mlr.getStatus();
     expect(status.targets.length).toBe(1);
-    const t = status.targets[0];
+    const t = status.targets[0]!;
     expect(t.targetNodeId).toBe('t1');
     expect(t.connected).toBe(true);
     // lastSuccessAt was set, so lagMs >= 0 and != -1
@@ -188,7 +211,7 @@ describe('MultiLeaderReplication — getStatus branches', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const status = await mlr.getStatus();
-    const t = status.targets[0];
+    const t = status.targets[0]!;
     expect(t.lastSuccessAt).toBeNull();
     expect(t.lagMs).toBe(0);
 
@@ -231,7 +254,7 @@ describe('MultiLeaderReplication — retryFailed branches', () => {
 
     await mlr.start();
     // mark a failure so consecutiveFailures is non-zero
-    const worker = (mlr as any).workers.get('t1');
+    const worker = mlr['workers'].get('t1')!;
     worker.consecutiveFailures = 3;
 
     const n = await mlr.retryFailed('t1');
@@ -267,7 +290,7 @@ describe('MultiLeaderReplication — doTick branches', () => {
     await mlr.start();
     await new Promise((r) => setTimeout(r, 50));
 
-    const worker = (mlr as any).workers.get('t1');
+    const worker = mlr['workers'].get('t1')!;
     expect(send).toHaveBeenCalled();
     expect(store.markDelivered).toHaveBeenCalledWith('e1');
     expect(worker.lastSuccessAt).not.toBeNull();
@@ -302,7 +325,7 @@ describe('MultiLeaderReplication — doTick branches', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(store.markFailed).toHaveBeenCalledWith('e1', expect.any(String));
-    const worker = (mlr as any).workers.get('t1');
+    const worker = mlr['workers'].get('t1')!;
     expect(worker.consecutiveFailures).toBeGreaterThan(0);
     expect(worker.lastErrorAt).not.toBeNull();
 
@@ -333,7 +356,7 @@ describe('MultiLeaderReplication — doTick branches', () => {
     await mlr.start();
     await new Promise((r) => setTimeout(r, 50));
 
-    const worker = (mlr as any).workers.get('t1');
+    const worker = mlr['workers'].get('t1')!;
     expect(worker.lastErrorMessage).toMatch(/Worker error: outbox read failure/);
     expect(worker.consecutiveFailures).toBeGreaterThan(0);
 
@@ -344,10 +367,8 @@ describe('MultiLeaderReplication — doTick branches', () => {
     const { store } = mockOutbox();
     // transport.send throws a plain string (non-Error), exercising the
     // `err instanceof Error ? err.message : String(err)` branch
-    const { transport } = mockTransport(async () => {
-      // eslint-disable-next-line no-throw-literal -- a non-Error rejection is the fixture
-      throw 'plain-string-error';
-    });
+    // A non-Error rejection is the fixture: the worker must stringify it.
+    const { transport } = mockTransport(() => Promise.reject('plain-string-error'));
     store.fetchOldestPending.mockResolvedValueOnce([entry('e1', ['t1'])]);
 
     const mlr = new MultiLeaderReplication({
@@ -397,7 +418,7 @@ describe('MultiLeaderReplication — doTick branches', () => {
     await mlr.start();
     await new Promise((r) => setTimeout(r, 50));
 
-    const worker = (mlr as any).workers.get('t1');
+    const worker = mlr['workers'].get('t1')!;
     expect(worker.lastErrorMessage).toMatch(/Worker error: 42/);
     await mlr.stop();
   });
@@ -427,7 +448,7 @@ describe('MultiLeaderReplication — doTick branches', () => {
     await new Promise((r) => setTimeout(r, 30));
 
     expect(send).not.toHaveBeenCalled();
-    const worker = (mlr as any).workers.get('t1');
+    const worker = mlr['workers'].get('t1')!;
     expect(worker.lastSuccessAt).toBeNull();
 
     await mlr.stop();
@@ -456,9 +477,9 @@ describe('MultiLeaderReplication — lifecycle & nullish branches', () => {
     });
 
     await mlr.start();
-    const sizeAfterFirst = (mlr as any).workers.size;
+    const sizeAfterFirst = mlr['workers'].size;
     await mlr.start(); // second start → `if (this.started) return`
-    expect((mlr as any).workers.size).toBe(sizeAfterFirst);
+    expect(mlr['workers'].size).toBe(sizeAfterFirst);
 
     await mlr.stop();
   });
@@ -472,9 +493,9 @@ describe('MultiLeaderReplication — lifecycle & nullish branches', () => {
       config: makeConfig(),
     });
 
-    await mlr.replicate(0, 'data', undefined as any);
+    await mlr.replicate(0, 'data', undefined);
     expect(store.add).toHaveBeenCalled();
-    const arg = store.add.mock.calls[0][0];
+    const arg = store.add.mock.calls[0]![0];
     expect(arg.type).toBe('replicate');
   });
 
@@ -541,8 +562,8 @@ describe('MultiLeaderReplication — lifecycle & nullish branches', () => {
         },
       ],
     });
-    delete (cfg as any).tickMs; // force `tickMs ?? 100`
-    delete (cfg as any).batchSize; // force `batchSize ?? 1000`
+    delete cfg.tickMs; // force `tickMs ?? 100`
+    delete cfg.batchSize; // force `batchSize ?? 1000`
 
     const mlr = new MultiLeaderReplication({
       transport,
@@ -551,7 +572,7 @@ describe('MultiLeaderReplication — lifecycle & nullish branches', () => {
     });
     await mlr.start();
     await new Promise((r) => setTimeout(r, 30));
-    const worker = (mlr as any).workers.get('t1');
+    const worker = mlr['workers'].get('t1')!;
     expect(worker.tickMs).toBe(100);
     await mlr.stop();
   });
@@ -571,11 +592,11 @@ describe('MultiLeaderReplication — lifecycle & nullish branches', () => {
     });
     expect(typeof unsub).toBe('function');
 
-    (mlr as any).emitter.emit('target-disconnected', 't1');
+    mlr['emitter'].emit('target-disconnected', 't1');
     expect(calls).toBe(1);
 
     unsub();
-    (mlr as any).emitter.emit('target-disconnected', 't2');
+    mlr['emitter'].emit('target-disconnected', 't2');
     expect(calls).toBe(1);
   });
 
@@ -590,7 +611,7 @@ describe('MultiLeaderReplication — lifecycle & nullish branches', () => {
 
     const seen: string[] = [];
     const unsub = mlr.onTargetConnected((id) => seen.push(id));
-    (mlr as any).emitter.emit('target-connected', 't1');
+    mlr['emitter'].emit('target-connected', 't1');
     expect(seen).toContain('t1');
     unsub();
   });
@@ -622,13 +643,13 @@ describe('MultiLeaderReplication — scheduleTick cap & stop', () => {
 
       await mlr.start(); // schedules first doTick at delay 0
       // stop the worker before the timer callback runs
-      const worker = (mlr as any).workers.get('t1');
+      const worker = mlr['workers'].get('t1')!;
       await mlr.stop(); // sets stopRequested=true, clears timer
 
       // Even if a stale doTick were invoked, worker.stopRequested guards it.
       // Directly invoke doTick against a stopRequested worker to cover guard.
       worker.stopRequested = true;
-      await (mlr as any).doTick(worker);
+      await mlr['doTick'](worker);
       expect(send).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -659,7 +680,7 @@ describe('MultiLeaderReplication — scheduleTick cap & stop', () => {
       });
 
       await mlr.start();
-      const worker = (mlr as any).workers.get('t1');
+      const worker = mlr['workers'].get('t1')!;
 
       // Trigger the first send, then mark stop mid-batch.
       const firstSend = vi.mocked(send).mockImplementationOnce(async () => {
@@ -667,7 +688,7 @@ describe('MultiLeaderReplication — scheduleTick cap & stop', () => {
         return true;
       });
 
-      await (mlr as any).doTick(worker);
+      await mlr['doTick'](worker);
 
       // Only the first entry was attempted; the loop bailed on stopRequested.
       expect(send).toHaveBeenCalledTimes(1);
@@ -700,13 +721,13 @@ describe('MultiLeaderReplication — scheduleTick cap & stop', () => {
       }),
     });
 
-    (mlr as any).startWorker('t1', 'intra-dc', 3000);
-    const worker = (mlr as any).workers.get('t1');
+    mlr['startWorker']('t1', 'intra-dc', 3000);
+    const worker = mlr['workers'].get('t1')!;
     // scheduleTick with a delay larger than the 5s cap
-    (mlr as any).scheduleTick(worker, 999_999);
+    mlr['scheduleTick'](worker, 999_999);
     expect(worker.tickTimer).not.toBeNull();
     // capped timer still pending (not fired yet)
-    (mlr as any).scheduleTick(worker, 1);
+    mlr['scheduleTick'](worker, 1);
     void mlr;
   });
 
@@ -731,11 +752,11 @@ describe('MultiLeaderReplication — scheduleTick cap & stop', () => {
     });
 
     await mlr.start();
-    expect((mlr as any).workers.size).toBe(1);
+    expect(mlr['workers'].size).toBe(1);
 
     await mlr.stop();
-    expect((mlr as any).workers.size).toBe(0);
-    expect((mlr as any).started).toBe(false);
+    expect(mlr['workers'].size).toBe(0);
+    expect(mlr['started']).toBe(false);
   });
 
   it('scheduleTick returns early when stopRequested', () => {
@@ -760,7 +781,7 @@ describe('MultiLeaderReplication — scheduleTick cap & stop', () => {
       stopRequested: true,
       tickTimer: null,
     };
-    (mlr as any).scheduleTick(worker, 0);
+    mlr['scheduleTick'](worker, 0);
     expect(worker.tickTimer).toBeNull(); // early return → no timer scheduled
   });
 });

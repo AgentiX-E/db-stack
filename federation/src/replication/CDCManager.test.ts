@@ -17,7 +17,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { CDCManager } from './CDCManager';
 import { CDCEngine } from './CDCEngine';
-import { HLC, makeHLC } from '../hlc/HLC';
+import { HLC, makeHLC, compareHLC } from '../hlc/HLC';
 import type { CDCChangeEvent } from '../interfaces/replication/ICDCManager';
 
 describe('CDCManager — publication lifecycle', () => {
@@ -139,7 +139,7 @@ describe('CDCManager — subscription lifecycle', () => {
 
     subs = await manager.getSubscriptions();
     expect(subs).toHaveLength(1);
-    expect(subs[0].subscriptionId).toBe('sub2');
+    expect(subs[0]!.subscriptionId).toBe('sub2');
   });
 
   it('should error on duplicate subscription', async () => {
@@ -255,15 +255,15 @@ describe('CDCManager — onSlotInvalid', () => {
     const unsub = manager.onSlotInvalid(callback);
 
     // The CDCManager has a fireSlotInvalid method for testing
-    (manager as any).fireSlotInvalid('sub-1');
-    (manager as any).fireSlotInvalid('sub-2');
+    manager['fireSlotInvalid']('sub-1');
+    manager['fireSlotInvalid']('sub-2');
 
     expect(callback).toHaveBeenCalledTimes(2);
     expect(callback).toHaveBeenCalledWith('sub-1');
     expect(callback).toHaveBeenCalledWith('sub-2');
 
     unsub();
-    (manager as any).fireSlotInvalid('sub-3');
+    manager['fireSlotInvalid']('sub-3');
     expect(callback).toHaveBeenCalledTimes(2); // unsubscribed
   });
 });
@@ -292,7 +292,7 @@ describe('CDCManager — HLC timestamp ordering', () => {
     });
 
     // HLC timestamps must be strictly increasing
-    const cmp = hlc.compare(event1.timestamp, event2.timestamp);
+    const cmp = compareHLC(event1.timestamp, event2.timestamp);
     expect(cmp).toBeLessThan(0);
   });
 });

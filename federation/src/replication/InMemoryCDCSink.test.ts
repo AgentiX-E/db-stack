@@ -40,7 +40,7 @@ describe('InMemoryCDCSink', () => {
 
       const events = sink.getEvents();
       expect(events).toHaveLength(1);
-      expect(events[0].id).toBe('evt-1');
+      expect(events[0]!.id).toBe('evt-1');
     });
 
     it('should store multiple events in order', async () => {
@@ -53,9 +53,9 @@ describe('InMemoryCDCSink', () => {
 
       const events = sink.getEvents();
       expect(events).toHaveLength(3);
-      expect(events[0].id).toBe('evt-1');
-      expect(events[1].id).toBe('evt-2');
-      expect(events[2].id).toBe('evt-3');
+      expect(events[0]!.id).toBe('evt-1');
+      expect(events[1]!.id).toBe('evt-2');
+      expect(events[2]!.id).toBe('evt-3');
     });
 
     it('should be a no-op when emitting an empty array', async () => {

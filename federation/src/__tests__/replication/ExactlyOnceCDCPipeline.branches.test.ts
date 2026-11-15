@@ -19,6 +19,7 @@ import { mkdirSync, rmSync, existsSync } from 'fs';
 import * as path from 'path';
 import type { ITransport } from '../../interfaces/transport/ITransport';
 import type { TransportMessage } from '../../interfaces/transport/TransportMessage';
+import { HLC } from '../../hlc/HLC';
 
 const TEST_DIR = '/tmp/db-federation-test/cdc-pipeline-branches';
 
@@ -47,9 +48,12 @@ function fakeTransport(overrides?: Partial<ITransport>): ITransport {
     onMessage: vi.fn(() => vi.fn()),
     getConnectedPeers: vi.fn(() => []),
     getStats: vi.fn(() => ({
-      sentCount: 0,
-      receivedCount: 0,
-      reconnectCount: 0,
+      peersConnected: 0,
+      messagesSent: 0,
+      messagesReceived: 0,
+      bytesSent: 0,
+      bytesReceived: 0,
+      uptimeMs: 0,
     })),
     ...overrides,
   };
@@ -99,7 +103,7 @@ describe('ExactlyOnceCDCPipeline — inbound decode failure', () => {
       sourcePeerId: 'n1',
       targetPeerId: 'n1',
       payload: new TextEncoder().encode('not-json{{{'),
-      timestamp: 0 as any,
+      timestamp: new HLC('n1', 0n, 0),
       createdAt: Date.now(),
       type: 'cdc_event:users',
     };
@@ -138,10 +142,10 @@ describe('ExactlyOnceCDCPipeline — checkpoint & pump edge branches', () => {
   });
 
   it('startPump is idempotent (second call early-returns)', async () => {
-    (p as any).startPump();
-    const firstTimer = (p as any).pumpTimer;
-    (p as any).startPump(); // should no-op
-    expect((p as any).pumpTimer).toBe(firstTimer);
+    p['startPump']();
+    const firstTimer = p['pumpTimer'];
+    p['startPump'](); // should no-op
+    expect(p['pumpTimer']).toBe(firstTimer);
   });
 
   it("builds targetPeerId `remoteNodeId ?? ''` when remoteNodeId is absent", async () => {
@@ -163,25 +167,23 @@ describe('ExactlyOnceCDCPipeline — checkpoint & pump edge branches', () => {
       oldValues: null,
       newValues: { a: 1 },
     });
-    await (pl as any).pumpCycle();
+    await pl['pumpCycle']();
 
     expect(transport.send).toHaveBeenCalled();
     await pl.cleanup();
   });
 
   it('pumpCycle re-entrancy guard returns early when already pumping', async () => {
-    (p as any).pumpActive = true;
-    await (p as any).pumpCycle(); // should return immediately, resetting nothing
-    expect((p as any).pumpActive).toBe(true);
-    (p as any).pumpActive = false;
+    p['pumpActive'] = true;
+    await p['pumpCycle'](); // should return immediately, resetting nothing
+    expect(p['pumpActive']).toBe(true);
+    p['pumpActive'] = false;
   });
 
   it('transport.send rejecting with a non-Error → String(err) fallback', async () => {
     const transport = fakeTransport({
-      send: vi.fn(async () => {
-        // eslint-disable-next-line no-throw-literal -- a non-Error rejection is the fixture
-        throw 'string-failure';
-      }),
+      // A non-Error rejection is the fixture: the pump must stringify it.
+      send: vi.fn(() => Promise.reject('string-failure')),
     });
     const cfg = makeConfig({ transport });
     const pl = new ExactlyOnceCDCPipeline(cfg);
@@ -198,7 +200,7 @@ describe('ExactlyOnceCDCPipeline — checkpoint & pump edge branches', () => {
       oldValues: null,
       newValues: { a: 1 },
     });
-    await (pl as any).pumpCycle();
+    await pl['pumpCycle']();
 
     expect(pumpErrors.some((m) => m === 'string-failure')).toBe(true);
     await pl.cleanup();
@@ -216,9 +218,9 @@ describe('ExactlyOnceCDCPipeline — checkpoint & pump edge branches', () => {
     });
 
     // Force getPendingCount / fetchOldestPending to reject (non-Error).
-    vi.spyOn((pl as any).outbox, 'getPendingCount').mockRejectedValue('outbox-boom');
+    vi.spyOn(pl['outbox'], 'getPendingCount').mockRejectedValue('outbox-boom');
 
-    await (pl as any).pumpCycle();
+    await pl['pumpCycle']();
 
     expect(outboxErrors).toContain('outbox-boom');
     await pl.cleanup();
@@ -234,17 +236,24 @@ describe('ExactlyOnceCDCPipeline — checkpoint & pump edge branches', () => {
 
     // Inject a pending outbox entry whose payload is not valid JSON so that
     // the checkpoint-advance inner try/catch skips silently.
-    vi.spyOn((pl as any).outbox, 'getPendingCount').mockResolvedValue(1);
-    vi.spyOn((pl as any).outbox, 'fetchOldestPending').mockResolvedValue([
+    vi.spyOn(pl['outbox'], 'getPendingCount').mockResolvedValue(1);
+    vi.spyOn(pl['outbox'], 'fetchOldestPending').mockResolvedValue([
       {
         id: 'lsn0:tx0',
+        msgId: 'lsn0:tx0',
+        targetPeerIds: ['n1'],
         payload: new TextEncoder().encode('not-json!!!'),
-        timestamp: 0 as any,
+        timestamp: new HLC('n1', 0n, 0),
+        type: 'cdc_event:users',
+        status: 'pending',
         createdAt: Date.now(),
+        lastAttemptAt: null,
+        attemptCount: 0,
+        lastError: null,
       },
     ]);
 
-    await (pl as any).pumpCycle();
+    await pl['pumpCycle']();
 
     // send succeeded, markDelivered was reached; no throw on undecodable payload
     expect(transport.send).toHaveBeenCalled();

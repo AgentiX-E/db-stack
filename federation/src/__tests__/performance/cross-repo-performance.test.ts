@@ -34,12 +34,16 @@ import { TestCluster } from '@agentix-e/db-cluster/testing';
 // ── Repo B: db-federation ───────────────────────────────────
 import { OutboxStore } from '../../storage/OutboxStore';
 import { DedupRing } from '../../replication/DedupRing';
-import type { OutboxEntry } from '../../interfaces/outbox/OutboxEntry';
+import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry';
 import { HLC } from '../../hlc/HLC';
 
 // ── Repo C: db-operations ───────────────────────────────────
 import { FileAuditStore } from '@agentix-e/db-operations-audit';
-import { InMemoryBackupManager } from '@agentix-e/db-operations-backup';
+import {
+  InMemoryBackupManager,
+  InMemoryStorageBackend,
+  RetentionPolicyEvaluator,
+} from '@agentix-e/db-operations-backup';
 import { InMemoryAuditStore } from '@agentix-e/db-operations-audit';
 
 // ── Constants ───────────────────────────────────────────────
@@ -54,6 +58,25 @@ interface StageTiming {
 
 function tmpDir(label: string): string {
   return mkdtempSync(join(tmpdir(), `perf-e2e-${label}-`));
+}
+
+/** Outbox input for a CDC-captured entry. */
+function cdcEntry(msgId: string, payload: Record<string, unknown>, hlc: HLC): OutboxEntryInput & { msgId: string } {
+  return {
+    msgId,
+    targetPeerIds: ['cross-dc-peer'],
+    payload: new TextEncoder().encode(JSON.stringify(payload)),
+    timestamp: hlc.now(),
+    type: 'cdc_event',
+  };
+}
+
+/** Backup manager backed by in-memory storage with an unbounded retention policy. */
+function makeBackupManager(auditStore: InMemoryAuditStore): InMemoryBackupManager {
+  return new InMemoryBackupManager(
+    new InMemoryStorageBackend(),
+    new RetentionPolicyEvaluator({ maxFullSnapshots: 1000, maxTotalBytes: 1024 * 1024 * 1024 }),
+  );
 }
 
 const TEMP_DIRS: string[] = [];
@@ -92,8 +115,8 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
             deadLetterTtlMs: 300_000,
             mapSize: 16 * 1024 * 1024,
           });
-          const dedup = new DedupRing({ maxSize: 5000, ttlMs: 300_000 });
-          const hlc = new HLC();
+          const dedup = new DedupRing({ maxCapacity: 5000, ttlMs: 300_000 });
+          const hlc = new HLC('perf-node');
 
           // Warmup: propose 10 entries to stabilize cluster
           for (let i = 0; i < 10; i++) {
@@ -114,14 +137,8 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
 
             // Stage 2: CDC capture → OutboxStore
             const msgId = `perf:${result.index}:${i}`;
-            const entry: Omit<OutboxEntry, 'id'> = {
-              msgId,
-              payload: { seq: i, index: result.index, data: `bench-${i}` },
-              timestamp: hlc.now(),
-              retryCount: 0,
-            };
             const t3 = performance.now();
-            await outbox.add(entry);
+            await outbox.add(cdcEntry(msgId, { seq: i, index: result.index, data: `bench-${i}` }, hlc));
             const t4 = performance.now();
             STAGE_TIMINGS.push({ label: 'outbox-add', elapsedMs: t4 - t3 });
 
@@ -139,8 +156,10 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           const pending = await outbox.fetchOldestPending(ops + 10);
           const t7 = performance.now();
           for (const entry of pending) {
-            if (!dedup.contains(entry.msgId)) {
-              dedup.put(entry.msgId);
+            expect(entry.msgId).toBeDefined();
+            const entryMsgId = entry.msgId!;
+            if (!dedup.contains(entryMsgId)) {
+              dedup.put(entryMsgId);
             }
             await outbox.markDelivered(entry.id);
           }
@@ -189,13 +208,13 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           const dedupTimes = sorted('dedup');
 
           console.table({
-            'Raft propose P50 (ms)': percentile(raftTimes, 50).toFixed(2),
-            'Raft propose P95 (ms)': percentile(raftTimes, 95).toFixed(2),
-            'Raft propose P99 (ms)': percentile(raftTimes, 99).toFixed(2),
-            'OutboxStore P50 (ms)': percentile(outboxTimes, 50).toFixed(2),
-            'OutboxStore P95 (ms)': percentile(outboxTimes, 95).toFixed(2),
-            'DedupRing P50 (ms)': percentile(dedupTimes, 50).toFixed(2),
-            'DedupRing P95 (ms)': percentile(dedupTimes, 95).toFixed(2),
+            'Raft propose P50 (ms)': percentile(raftTimes, 50)!.toFixed(2),
+            'Raft propose P95 (ms)': percentile(raftTimes, 95)!.toFixed(2),
+            'Raft propose P99 (ms)': percentile(raftTimes, 99)!.toFixed(2),
+            'OutboxStore P50 (ms)': percentile(outboxTimes, 50)!.toFixed(2),
+            'OutboxStore P95 (ms)': percentile(outboxTimes, 95)!.toFixed(2),
+            'DedupRing P50 (ms)': percentile(dedupTimes, 50)!.toFixed(2),
+            'DedupRing P95 (ms)': percentile(dedupTimes, 95)!.toFixed(2),
             'Audit write batch (ms)': (t10 - t9).toFixed(2),
             'Total elapsed (s)': (totalElapsed / 1000).toFixed(2),
             'Throughput (ops/sec)': throughputOps.toFixed(2),
@@ -296,8 +315,8 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
             deadLetterTtlMs: 300_000,
             mapSize: 16 * 1024 * 1024,
           });
-          const dedup = new DedupRing({ maxSize: 1000, ttlMs: 300_000 });
-          const hlc = new HLC();
+          const dedup = new DedupRing({ maxCapacity: 1000, ttlMs: 300_000 });
+          const hlc = new HLC('perf-node');
 
           // Warmup
           for (let i = 0; i < 5; i++) {
@@ -315,13 +334,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
 
             // 2. CDC → Outbox
             const msgId = `lat:${result.index}:${i}`;
-            const entry: Omit<OutboxEntry, 'id'> = {
-              msgId,
-              payload: { seq: i },
-              timestamp: hlc.now(),
-              retryCount: 0,
-            };
-            await outbox.add(entry);
+            await outbox.add(cdcEntry(msgId, { seq: i }, hlc));
 
             // 3. Dedup
             if (!dedup.contains(msgId)) {
@@ -353,11 +366,11 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
             arr[Math.min(Math.floor((p / 100) * arr.length), arr.length - 1)];
 
           console.table({
-            'P50 pipeline (ms)': percentile(sorted, 50).toFixed(2),
-            'P95 pipeline (ms)': percentile(sorted, 95).toFixed(2),
-            'P99 pipeline (ms)': percentile(sorted, 99).toFixed(2),
-            'Min (ms)': sorted[0].toFixed(2),
-            'Max (ms)': sorted[sorted.length - 1].toFixed(2),
+            'P50 pipeline (ms)': percentile(sorted, 50)!.toFixed(2),
+            'P95 pipeline (ms)': percentile(sorted, 95)!.toFixed(2),
+            'P99 pipeline (ms)': percentile(sorted, 99)!.toFixed(2),
+            'Min (ms)': sorted[0]!.toFixed(2),
+            'Max (ms)': sorted[sorted.length - 1]!.toFixed(2),
           });
 
           // P1: P50 pipeline latency < 100ms
@@ -471,7 +484,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           await cluster.start();
           const leader = (await cluster.findLeader()).adapter;
 
-          const dedup = new DedupRing({ maxSize: 150_000, ttlMs: 600_000 });
+          const dedup = new DedupRing({ maxCapacity: 150_000, ttlMs: 600_000 });
           const outbox = new OutboxStore({
             dataDir: outboxDir,
             ttlMs: 600_000,
@@ -479,19 +492,14 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
             deadLetterTtlMs: 600_000,
             mapSize: 64 * 1024 * 1024,
           });
-          const hlc = new HLC();
+          const hlc = new HLC('perf-node');
 
           const BATCH = 100_000;
 
           // Phase 1: Write all entries to outbox
           const writeStart = performance.now();
           for (let i = 0; i < BATCH; i++) {
-            await outbox.add({
-              msgId: `i11-3:${i}`,
-              payload: { seq: i, data: `sync-data-${i}` },
-              timestamp: hlc.now(),
-              retryCount: 0,
-            });
+            await outbox.add(cdcEntry(`i11-3:${i}`, { seq: i, data: `sync-data-${i}` }, hlc));
           }
           const writeElapsedMs = performance.now() - writeStart;
 
@@ -503,10 +511,12 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           let deduped = 0;
           let duplicates = 0;
           for (const entry of pending) {
-            if (dedup.contains(entry.msgId)) {
+            expect(entry.msgId).toBeDefined();
+            const entryMsgId = entry.msgId!;
+            if (dedup.contains(entryMsgId)) {
               duplicates++;
             } else {
-              dedup.put(entry.msgId);
+              dedup.put(entryMsgId);
               deduped++;
             }
           }
@@ -547,7 +557,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           await cluster.start();
 
           const auditStore = new InMemoryAuditStore();
-          const backupMgr = new InMemoryBackupManager({ auditStore });
+          const backupMgr = makeBackupManager(auditStore);
 
           // Mixed workload: backup create + audit write + restore + list + prune
           const writeAudit = async (id: number) => {
@@ -555,14 +565,13 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
               operation: 'i11-4',
               actor: `session-${id % 10}`,
               resource: `/data/${id}`,
-              result: Math.random() > 0.1 ? 'success' : 'error',
+              result: Math.random() > 0.1 ? 'success' : 'failure',
               details: { seq: id, timestamp: Date.now() },
             });
           };
 
           const backupOps = async (id: number) => {
-            const backupId = `i11-4-bk-${id % 50}`;
-            await backupMgr.createBackup({ snapshotId: backupId });
+            await backupMgr.createBackup({ type: 'full', tags: { batch: `${id % 50}` } });
           };
 
           const listOps = async () => {
@@ -614,7 +623,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           const leader = (await cluster.findLeader()).adapter;
 
           const auditStore = new InMemoryAuditStore();
-          const backupMgr = new InMemoryBackupManager({ auditStore });
+          const backupMgr = makeBackupManager(auditStore);
 
           const ENTRIES = 10_000;
 
@@ -634,9 +643,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           // Snapshot → verify → restore cycle, 5 times
           let snapshotOk = 0;
           for (let cycle = 0; cycle < 5; cycle++) {
-            const result = await backupMgr.createBackup({
-              type: 'full',
-            } as any);
+            const result = await backupMgr.createBackup({ type: 'full' });
             const meta = result.snapshot ? await backupMgr.getBackup(result.snapshot.snapshotId) : null;
             if (meta) snapshotOk++;
           }
@@ -663,7 +670,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           await cluster.start();
           const leader = (await cluster.findLeader()).adapter;
 
-          const dedup = new DedupRing({ maxSize: 2000, ttlMs: 600_000 });
+          const dedup = new DedupRing({ maxCapacity: 2000, ttlMs: 600_000 });
           const outbox = new OutboxStore({
             dataDir: outboxDir,
             ttlMs: 600_000,
@@ -671,7 +678,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
             deadLetterTtlMs: 600_000,
             mapSize: 32 * 1024 * 1024,
           });
-          const hlc = new HLC();
+          const hlc = new HLC('perf-node');
 
           // Warm-up
           for (let i = 0; i < 10; i++) {
@@ -699,12 +706,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
                 const msgId = `i11-6:w${w}:${i}`;
                 if (!dedup.contains(msgId)) {
                   dedup.put(msgId);
-                  await outbox.add({
-                    msgId,
-                    payload: { seq: i, wave: w },
-                    timestamp: hlc.now(),
-                    retryCount: 0,
-                  });
+                  await outbox.add(cdcEntry(msgId, { seq: i, wave: w }, hlc));
                   ok++;
                 }
               } catch {

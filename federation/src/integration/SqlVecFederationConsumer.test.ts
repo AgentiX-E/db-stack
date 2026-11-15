@@ -56,6 +56,7 @@ describe('SqlVecFederationConsumer — AC 46.1: Wraps IConsensusLayer', () => {
     });
 
     await consumer.proposeReplicated({
+      key: 'remote:1',
       data: 'remote-data',
       type: 'sqlvec-replicate',
       sourceDc: 'dc-east',
@@ -81,6 +82,7 @@ describe('SqlVecFederationConsumer — AC 46.1: Wraps IConsensusLayer', () => {
     });
 
     await consumer.proposeReplicated({
+      key: 'remote:2',
       data: 'test-data',
       type: 'insert',
       sourceDc: 'dc-east',
@@ -88,7 +90,7 @@ describe('SqlVecFederationConsumer — AC 46.1: Wraps IConsensusLayer', () => {
       hlcTimestamp: hlc.now(),
     });
 
-    const payload = JSON.parse(consensus.propose.mock.calls[0][1]);
+    const payload = JSON.parse(consensus.propose.mock.calls[0]![1]);
     expect(payload.__federation).toBe(true);
     expect(payload.sourceDc).toBe('dc-east');
     expect(payload.sourceNodeId).toBe('node-x');
@@ -130,13 +132,10 @@ describe('SqlVecFederationConsumer — AC 46.2: HLC Causal Ordering', () => {
     });
 
     // Remote has a much higher wall time
-    const remoteTimestamp = {
-      wallTime: Number(preObserve.wallTime) + 1000,
-      logical: 1,
-      nodeId: 'remote-node',
-    };
+    const remoteTimestamp = new HLC('remote-node', preObserve.wallTime + 1000n, 1);
 
     await consumer.proposeReplicated({
+      key: 'remote:4',
       data: 'data',
       type: 'test',
       sourceDc: 'dc-east',
@@ -162,27 +161,24 @@ describe('SqlVecFederationConsumer — AC 46.2: HLC Causal Ordering', () => {
       nodeId: 'local-node',
     });
 
-    const timestamps: number[] = [];
+    const timestamps: bigint[] = [];
 
     // Simulate 5 proposals from different sources with increasing HLCs
     for (let i = 0; i < 5; i++) {
       await consumer.proposeReplicated({
+        key: `remote:${i}`,
         data: `data-${i}`,
         type: 'test',
         sourceDc: 'dc-east',
         sourceNodeId: `remote-${i}`,
-        hlcTimestamp: {
-          wallTime: 1000 + i * 100,
-          logical: 1,
-          nodeId: `remote-${i}`,
-        },
+        hlcTimestamp: new HLC(`remote-${i}`, BigInt(1000 + i * 100), 1),
       });
       timestamps.push(hlc.now().wallTime);
     }
 
     // Wall times should be monotonically increasing
     for (let i = 1; i < timestamps.length; i++) {
-      expect(timestamps[i]).toBeGreaterThanOrEqual(timestamps[i - 1]);
+      expect(timestamps[i]!).toBeGreaterThanOrEqual(timestamps[i - 1]!);
     }
   });
 });
@@ -247,11 +243,12 @@ describe('SqlVecFederationConsumer — AC 46.4: Re-entrant Propose', () => {
 
     // Step 1: Consume replicated entry
     await consumer.proposeReplicated({
+      key: 'remote:3',
       data: 'remote-write',
       type: 'write',
       sourceDc: 'dc-east',
       sourceNodeId: 'remote-node',
-      hlcTimestamp: { wallTime: 500, logical: 1, nodeId: 'remote-node' },
+      hlcTimestamp: new HLC('remote-node', 500n, 1),
     });
 
     // Step 2: Propose to local Raft
@@ -283,14 +280,14 @@ describe('SqlVecFederationConsumer — AC 46.5: Conflict Notification', () => {
       key: 'user:42',
       localValue: 'alice',
       remoteValue: 'bob',
-      localHlc: { wallTime: 100, logical: 1, nodeId: 'local' },
-      remoteHlc: { wallTime: 200, logical: 1, nodeId: 'remote' },
+      localHlc: new HLC('local', 100n, 1),
+      remoteHlc: new HLC('remote', 200n, 1),
       sourceDc: 'dc-east',
     });
 
     expect(consensus.propose).toHaveBeenCalledTimes(1);
 
-    const payload = JSON.parse(consensus.propose.mock.calls[0][1]);
+    const payload = JSON.parse(consensus.propose.mock.calls[0]![1]);
     expect(payload.__conflict).toBe(true);
     expect(payload.key).toBe('user:42');
     expect(payload.localValue).toBe('alice');

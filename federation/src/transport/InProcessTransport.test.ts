@@ -64,9 +64,9 @@ describe('InProcessTransport — Basic Send/Receive', () => {
 
     expect(result).toBe(true);
     expect(received).toHaveLength(1);
-    expect(received[0].sourcePeerId).toBe('node-a');
-    expect(received[0].targetPeerId).toBe('node-b');
-    expect(new TextDecoder().decode(received[0].payload)).toBe('hello');
+    expect(received[0]!.sourcePeerId).toBe('node-a');
+    expect(received[0]!.targetPeerId).toBe('node-b');
+    expect(new TextDecoder().decode(received[0]!.payload)).toBe('hello');
 
     unsub();
   });
@@ -140,8 +140,8 @@ describe('InProcessTransport — Broadcast', () => {
     expect(sentCount).toBe(2);
     expect(receivedB).toHaveLength(1);
     expect(receivedC).toHaveLength(1);
-    expect(receivedB[0].sourcePeerId).toBe('node-a');
-    expect(receivedC[0].sourcePeerId).toBe('node-a');
+    expect(receivedB[0]!.sourcePeerId).toBe('node-a');
+    expect(receivedC[0]!.sourcePeerId).toBe('node-a');
   });
 
   it('should return 0 when no peers connected', async () => {
@@ -204,10 +204,10 @@ describe('InProcessTransport — Peer Management', () => {
     });
 
     const peersA = a.getConnectedPeers();
-    expect(peersA[0].peerId).toBe('node-b');
-    expect(peersA[0].address).toContain('inproc://');
-    expect(peersA[0].latencyMs).toBe(15);
-    expect(peersA[0].connectedAt).toBeGreaterThan(0);
+    expect(peersA[0]!.peerId).toBe('node-b');
+    expect(peersA[0]!.address).toContain('inproc://');
+    expect(peersA[0]!.latencyMs).toBe(15);
+    expect(peersA[0]!.connectedAt).toBeGreaterThan(0);
 
     a.destroy();
     b.destroy();

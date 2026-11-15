@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CDCManager, type CDCEvent, type CDCTarget } from './CDCManager';
+import { CDCEngine } from '../replication/CDCEngine';
 import { HLC } from '../hlc/HLC';
 
 const hlc = new HLC('local');
@@ -112,7 +113,7 @@ describe('CDCManager (core) — capture & backpressure', () => {
     const warnings: unknown[] = [];
     mgr.onBackpressure(() => {});
     // buffer-warning is emitted via emitter; subscribe directly
-    (mgr as any).emitter.on('buffer-warning', (info: unknown) => warnings.push(info));
+    mgr['emitter'].on('buffer-warning', (info: unknown) => warnings.push(info));
 
     await mgr.start([]);
     // fill to 4 = 80% of 5 → warning threshold (>= 4)
@@ -215,21 +216,19 @@ describe('CDCManager (core) — PG-compatible surface', () => {
   it('onSlotInvalid registers and unregisters', async () => {
     const cb = vi.fn();
     const unsub = mgr.onSlotInvalid(cb);
-    (mgr as any).emitter.emit('slot-invalid', 'sub-1');
+    mgr['emitter'].emit('slot-invalid', 'sub-1');
     expect(cb).toHaveBeenCalledWith('sub-1');
     unsub();
-    (mgr as any).emitter.emit('slot-invalid', 'sub-2');
+    mgr['emitter'].emit('slot-invalid', 'sub-2');
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
   it('stop() survives an engine whose stop() throws (best-effort)', async () => {
     // Inject a failing engine to prove one engine's shutdown failure does not
     // abort the manager's graceful stop (MA5 best-effort semantics).
-    (mgr as any).engines.push({
-      stop: async () => {
-        throw new Error('stop boom');
-      },
-    });
+    const failing = new CDCEngine({ nodeId: 'local', hlc });
+    vi.spyOn(failing, 'stop').mockRejectedValueOnce(new Error('stop boom'));
+    mgr['engines'].push(failing);
     await expect(mgr.stop()).resolves.toBeUndefined();
     expect(mgr.getEngineCount()).toBe(0); // engines cleared after stop
   });

@@ -18,8 +18,12 @@ import { FederationManager, type IFederationConsumer } from './FederationManager
 import type { IMultiLeaderReplication, ReplicationConfig } from '../interfaces/replication/IMultiLeaderReplication';
 import type { ITransport } from '../interfaces/transport/ITransport';
 import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
+import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
+import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
 import { HLC } from '../hlc/HLC';
 import type { ConflictValue } from '../replication/ConflictResolver';
+import type { DataEntry } from '../replication/AntiEntropy';
+import type { SplitBrainEvent } from './DCSplitBrainDetector';
 
 function replicationConfig(): ReplicationConfig {
   return {
@@ -30,7 +34,7 @@ function replicationConfig(): ReplicationConfig {
   };
 }
 
-function mockReplication(): IMultiLeaderReplication {
+function mockReplication() {
   return {
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
@@ -61,11 +65,28 @@ function mockTransport(): ITransport {
   };
 }
 
+/** A complete stored entry, as `add()` returns it. */
+function storedEntry(): OutboxEntry {
+  return {
+    id: 'entry:1',
+    targetPeerIds: [],
+    payload: new Uint8Array(),
+    timestamp: new HLC('test-node').now(),
+    type: 'test',
+    status: 'pending',
+    createdAt: Date.now(),
+    lastAttemptAt: null,
+    attemptCount: 0,
+    lastError: null,
+  };
+}
+
 function mockOutbox(): IOutboxStore {
   return {
-    add: vi.fn().mockResolvedValue({ id: 'entry:1' } as any),
+    add: vi.fn().mockResolvedValue(storedEntry()),
     fetchOldestPending: vi.fn().mockResolvedValue([]),
     markDelivered: vi.fn().mockResolvedValue(undefined),
+    markFailed: vi.fn().mockReturnValue(false),
     getPendingCount: vi.fn().mockResolvedValue(0),
     getStats: vi.fn().mockResolvedValue({
       totalEntries: 0,
@@ -87,19 +108,8 @@ function makeManager(repl?: IMultiLeaderReplication): FederationManager {
   });
 }
 
-function makeHLC(wallTime: number, logical: number, nodeId: string): any {
-  return {
-    wallTime: BigInt(wallTime),
-    logical,
-    nodeId,
-    compare: (other: any) =>
-      wallTime > other.wallTime ? 1 : wallTime < other.wallTime ? -1 : logical > other.logical ? 1 : -1,
-    serialize: () => `${wallTime}:${logical}:${nodeId}`,
-    deserialize: (d: string) => {
-      const [w, l, n] = d.split(':');
-      return makeHLC(Number(w ?? '0'), Number(l ?? '0'), n ?? '');
-    },
-  };
+function makeHLC(wallTime: number, logical: number, nodeId: string): IHLCTimestamp {
+  return new HLC(nodeId, BigInt(wallTime), logical);
 }
 
 describe('FederationManager — replicate() conflict path', () => {
@@ -127,7 +137,7 @@ describe('FederationManager — replicate() conflict path', () => {
     expect(result.msgId).toContain('repl:0:');
     // The conflict path invokes onConflict for the registered consumer.
     expect(onConflict).toHaveBeenCalledTimes(1);
-    const conflict = onConflict.mock.calls[0][0];
+    const conflict = onConflict.mock.calls[0]![0];
     expect(conflict.key).toBe('customer:42');
     expect(conflict.remoteValue).toBe('remote-data');
     expect(conflict.localValue).toBe('local-data');
@@ -235,21 +245,21 @@ describe('FederationManager — AntiEntropy data provider closures', () => {
 });
 
 describe('FederationManager — buildDataProvider closures', () => {
-  function makeEntry(key: string, value: string, nodeId: string): any {
+  function makeEntry(key: string, value: string, nodeId: string): DataEntry {
     return { key, value, hlc: { wallTime: 1, logical: 0, nodeId }, nodeId };
   }
 
   it('getRange returns only entries within [start, end]', async () => {
     const fm = makeManager();
-    const store = new Map<string, any>();
-    const provider = (fm as any).buildDataProvider(store, 'node-a');
+    const store = new Map<string, DataEntry>();
+    const provider = fm['buildDataProvider'](store, 'node-a');
 
     store.set('a', makeEntry('a', 'va', 'node-a'));
     store.set('b', makeEntry('b', 'vb', 'node-a'));
     store.set('c', makeEntry('c', 'vc', 'node-a'));
 
     const mid = await provider.getRange('b', 'b');
-    expect(mid.map((e: any) => e.key)).toEqual(['b']);
+    expect(mid.map((e) => e.key)).toEqual(['b']);
 
     const all = await provider.getRange('', '\uffff');
     expect(all).toHaveLength(3);
@@ -257,8 +267,8 @@ describe('FederationManager — buildDataProvider closures', () => {
 
   it('getEntriesAfter returns sorted entries strictly after the key, limited', async () => {
     const fm = makeManager();
-    const store = new Map<string, any>();
-    const provider = (fm as any).buildDataProvider(store, 'node-a');
+    const store = new Map<string, DataEntry>();
+    const provider = fm['buildDataProvider'](store, 'node-a');
 
     store.set('b', makeEntry('b', 'vb', 'node-a'));
     store.set('a', makeEntry('a', 'va', 'node-a'));
@@ -266,7 +276,7 @@ describe('FederationManager — buildDataProvider closures', () => {
     store.set('c', makeEntry('c', 'vc', 'node-a'));
 
     const after = await provider.getEntriesAfter('b', 2);
-    expect(after.map((e: any) => e.key)).toEqual(['c', 'd']);
+    expect(after.map((e) => e.key)).toEqual(['c', 'd']);
 
     const none = await provider.getEntriesAfter('z', 5);
     expect(none).toEqual([]);
@@ -274,8 +284,8 @@ describe('FederationManager — buildDataProvider closures', () => {
 
   it('get returns the entry or null when absent', async () => {
     const fm = makeManager();
-    const store = new Map<string, any>();
-    const provider = (fm as any).buildDataProvider(store, 'node-a');
+    const store = new Map<string, DataEntry>();
+    const provider = fm['buildDataProvider'](store, 'node-a');
 
     store.set('k1', makeEntry('k1', 'v1', 'node-a'));
     expect(await provider.get('k1')).toMatchObject({ key: 'k1', value: 'v1' });
@@ -284,8 +294,8 @@ describe('FederationManager — buildDataProvider closures', () => {
 
   it('apply upserts an entry keyed by the given key', async () => {
     const fm = makeManager();
-    const store = new Map<string, any>();
-    const provider = (fm as any).buildDataProvider(store, 'node-a');
+    const store = new Map<string, DataEntry>();
+    const provider = fm['buildDataProvider'](store, 'node-a');
 
     await provider.apply('k1', 'v1');
     expect(store.get('k1')).toMatchObject({
@@ -326,7 +336,7 @@ describe('FederationManager — event callback wiring', () => {
     const fm = makeManager();
     await fm.start();
 
-    const events: any[] = [];
+    const events: SplitBrainEvent[] = [];
     fm.onSplitBrainDetected((e) => events.push(e));
 
     // Drive a real split-brain: two remote DCs each with >=3 monotonically
@@ -349,7 +359,7 @@ describe('FederationManager — event callback wiring', () => {
     // The manager forwards the detector's split-brain-detected event to its
     // own emitter, which our callback observes.
     expect(events.length).toBeGreaterThanOrEqual(1);
-    expect(events[0].winningDc).toBeDefined();
+    expect(events[0]!.winningDc).toBeDefined();
 
     await fm.stop();
   });

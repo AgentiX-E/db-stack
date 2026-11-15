@@ -29,14 +29,14 @@ describe('EdgeReplica — connect failure and reconnection', () => {
     edge.onError(onError);
 
     // Force _simulateConnect to reject.
-    vi.spyOn(edge as any, '_simulateConnect').mockRejectedValue(new Error('boom'));
+    edge['_simulateConnect'] = vi.fn().mockRejectedValue(new Error('boom'));
 
     await edge.connect(SRC);
 
     expect(onError).toHaveBeenCalledTimes(1);
-    expect((edge as any)._reconnectAttempts).toBe(1);
+    expect(edge['_reconnectAttempts']).toBe(1);
     // A reconnect timer should be scheduled (exponential backoff).
-    expect((edge as any)._reconnectTimer).not.toBeNull();
+    expect(edge['_reconnectTimer']).not.toBeNull();
   });
 
   it('wraps a non-Error rejection in a new Error', async () => {
@@ -46,27 +46,27 @@ describe('EdgeReplica — connect failure and reconnection', () => {
     edge.onError(onError);
 
     // Reject with a non-Error value to hit the `: new Error(String(err))` branch.
-    vi.spyOn(edge as any, '_simulateConnect').mockRejectedValue('raw string failure');
+    edge['_simulateConnect'] = vi.fn().mockRejectedValue('raw string failure');
 
     await edge.connect(SRC);
 
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
-    expect(onError.mock.calls[0][0].message).toBe('raw string failure');
+    expect(onError.mock.calls[0]![0]).toBeInstanceOf(Error);
+    expect(onError.mock.calls[0]![0].message).toBe('raw string failure');
   });
 
   it('stops reconnecting after max attempts and emits final error', async () => {
     vi.useFakeTimers();
     const edge = new EdgeReplica();
     // Set attempts to the cap so the next _scheduleReconnect hits the guard.
-    (edge as any)._reconnectAttempts = 10;
+    edge['_reconnectAttempts'] = 10;
     const onError = vi.fn();
     edge.onError(onError);
 
-    (edge as any)._scheduleReconnect();
+    edge['_scheduleReconnect']();
 
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0][0].message).toMatch(/Max reconnect attempts/);
+    expect(onError.mock.calls[0]![0].message).toMatch(/Max reconnect attempts/);
   });
 
   it('reconnect timer re-runs connect against the remembered source', async () => {
@@ -75,9 +75,9 @@ describe('EdgeReplica — connect failure and reconnection', () => {
     const connectSpy = vi.spyOn(edge, 'connect');
 
     // Establish a source and schedule a reconnect with minimal delay.
-    (edge as any)._source = SRC;
-    (edge as any)._reconnectAttempts = 0;
-    (edge as any)._scheduleReconnect();
+    edge['_source'] = SRC;
+    edge['_reconnectAttempts'] = 0;
+    edge['_scheduleReconnect']();
 
     // Advance past the backoff delay (2^0 * 1000 = 1000ms).
     await vi.advanceTimersByTimeAsync(1500);
@@ -150,7 +150,7 @@ describe('EdgeReplica — unsubscribe splice path', () => {
     const unsub = edge.onError(handler);
     unsub(); // splices error handler at idx 0
 
-    (edge as any)._emitError(new Error('x'));
+    edge['_emitError'](new Error('x'));
     expect(handler).not.toHaveBeenCalled();
   });
 });

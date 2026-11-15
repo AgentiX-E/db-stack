@@ -13,6 +13,16 @@
 import { describe, it, expect } from 'vitest';
 import { LWWRegister, MVRegister, ORSet } from './crdt-types';
 import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
+import { HLC } from '../hlc/HLC';
+
+/**
+ * A stamp with no `nodeId`, as a peer payload written before the field existed
+ * would carry. `IHLCTimestamp` declares `nodeId` as required, so the field is
+ * cleared at runtime instead of at the type level.
+ */
+function stampWithoutNodeId(wallTime: bigint, logical: number): IHLCTimestamp {
+  return Object.assign(new HLC('', wallTime, logical), { nodeId: undefined });
+}
 
 describe('LWWRegister — nodeId tiebreak and logical inequality', () => {
   it('assign tiebreaks by nodeId when HLC equal but logical differs handling', () => {
@@ -56,11 +66,7 @@ describe('LWWRegister — nodeId tiebreak and logical inequality', () => {
       nodeId: 'n1',
     });
     // higher wallTime but undefined nodeId → `hlc.nodeId ?? this.nodeId`
-    reg.assign('b', {
-      wallTime: BigInt(200),
-      logical: 0,
-      nodeId: undefined,
-    } as any);
+    reg.assign('b', stampWithoutNodeId(200n, 0));
     expect(reg.value).toBe('b');
     expect(reg.nodeId).toBe('n1'); // fell back to existing nodeId
   });
@@ -73,18 +79,10 @@ describe('LWWRegister — nodeId tiebreak and logical inequality', () => {
       nodeId: 'n1',
     });
     // same wallTime, higher logical → -1 (this < other)
-    const higher = {
-      wallTime: BigInt(100),
-      logical: 9,
-      nodeId: 'n1',
-    } as IHLCTimestamp;
-    const lower = {
-      wallTime: BigInt(100),
-      logical: 2,
-      nodeId: 'n1',
-    } as IHLCTimestamp;
-    expect((reg as any).compareTo(higher)).toBeLessThan(0);
-    expect((reg as any).compareTo(lower)).toBeGreaterThan(0);
+    const higher = new HLC('n1', 100n, 9);
+    const lower = new HLC('n1', 100n, 2);
+    expect(reg['compareTo'](higher)).toBeLessThan(0);
+    expect(reg['compareTo'](lower)).toBeGreaterThan(0);
   });
 
   it('merge tiebreaks by nodeId when HLC equal', () => {
@@ -134,22 +132,14 @@ describe('LWWRegister — nodeId tiebreak and logical inequality', () => {
 describe('MVRegister — prune predicate and nullish nodeId', () => {
   it('assign uses nullish `?? ""` for undefined nodeId', () => {
     const reg = new MVRegister();
-    reg.assign('v', {
-      wallTime: BigInt(100),
-      logical: 0,
-      nodeId: undefined,
-    } as any);
-    expect(reg.entries[0].nodeId).toBe('');
+    reg.assign('v', stampWithoutNodeId(100n, 0));
+    expect(reg.entries[0]!.nodeId).toBe('');
   });
 
   it('add uses nullish `?? ""` for undefined nodeId', () => {
     const reg = new MVRegister();
-    reg.add('v', {
-      wallTime: BigInt(100),
-      logical: 0,
-      nodeId: undefined,
-    } as any);
-    expect(reg.entries[0].nodeId).toBe('');
+    reg.add('v', stampWithoutNodeId(100n, 0));
+    expect(reg.entries[0]!.nodeId).toBe('');
   });
 
   it('pruneSuperseded removes duplicate entries (equality predicate true)', () => {
@@ -188,8 +178,8 @@ describe('ORSet — fully-tombstoned element pruning', () => {
     const set = new ORSet();
     set.add('elem', 'tag-1');
     // Tombstone the sole tag directly, then prune via merge (no-op remote).
-    (set as any).tombstones['elem'] = ['tag-1'];
-    (set as any).pruneTombstoned();
+    set['tombstones']['elem'] = ['tag-1'];
+    set['pruneTombstoned']();
     expect(set.contains('elem')).toBe(false);
     expect('elem' in set.elements).toBe(false);
   });

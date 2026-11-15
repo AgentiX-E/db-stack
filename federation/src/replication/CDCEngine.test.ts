@@ -62,12 +62,12 @@ describe('CDCEngine — AC 45.4: HLC Timestamps on Events', () => {
     });
 
     expect(events).toHaveLength(1);
-    expect(events[0].timestamp).toBeDefined();
-    expect(events[0].timestamp.nodeId).toBe('n1');
-    expect(events[0].timestamp.wallTime).toBeGreaterThan(0);
-    expect(events[0].timestamp.logical).toBeGreaterThanOrEqual(0);
-    expect(events[0].txId).toBeTruthy();
-    expect(events[0].lsn).toBeTruthy();
+    expect(events[0]!.timestamp).toBeDefined();
+    expect(events[0]!.timestamp.nodeId).toBe('n1');
+    expect(events[0]!.timestamp.wallTime).toBeGreaterThan(0);
+    expect(events[0]!.timestamp.logical).toBeGreaterThanOrEqual(0);
+    expect(events[0]!.txId).toBeTruthy();
+    expect(events[0]!.lsn).toBeTruthy();
   });
 
   it('should generate strictly increasing HLC for sequential events', () => {
@@ -89,11 +89,11 @@ describe('CDCEngine — AC 45.4: HLC Timestamps on Events', () => {
     });
 
     expect(events).toHaveLength(2);
-    const ts0 = events[0].timestamp;
-    const ts1 = events[1].timestamp;
+    const ts0 = events[0]!.timestamp;
+    const ts1 = events[1]!.timestamp;
 
     const cmp = (a: typeof ts0, b: typeof ts0): number => {
-      if (a.wallTime !== b.wallTime) return a.wallTime - b.wallTime;
+      if (a.wallTime !== b.wallTime) return a.wallTime < b.wallTime ? -1 : 1;
       return a.logical - b.logical;
     };
     expect(cmp(ts1, ts0)).toBeGreaterThan(0); // ts1 > ts0
@@ -120,10 +120,10 @@ describe('CDCEngine — Events', () => {
     });
 
     expect(events).toHaveLength(2);
-    expect(events[0].tableName).toBe('t1');
-    expect(events[0].operation).toBe('insert');
-    expect(events[1].tableName).toBe('t2');
-    expect(events[1].operation).toBe('delete');
+    expect(events[0]!.tableName).toBe('t1');
+    expect(events[0]!.operation).toBe('insert');
+    expect(events[1]!.tableName).toBe('t2');
+    expect(events[1]!.operation).toBe('delete');
   });
 
   it('should allow unsubscribe from onChange', () => {
@@ -156,9 +156,9 @@ describe('CDCEngine — Operation Types', () => {
       newValues: { id: 1, name: 'bob' },
     });
 
-    expect(events[0].operation).toBe('insert');
-    expect(events[0].newValues).toEqual({ id: 1, name: 'bob' });
-    expect(events[0].oldValues).toBeNull();
+    expect(events[0]!.operation).toBe('insert');
+    expect(events[0]!.newValues).toEqual({ id: 1, name: 'bob' });
+    expect(events[0]!.oldValues).toBeNull();
   });
 
   it('should handle update with old and new values', () => {
@@ -173,9 +173,9 @@ describe('CDCEngine — Operation Types', () => {
       newValues: { id: 1, name: 'robert' },
     });
 
-    expect(events[0].operation).toBe('update');
-    expect(events[0].oldValues).toEqual({ id: 1, name: 'bob' });
-    expect(events[0].newValues).toEqual({ id: 1, name: 'robert' });
+    expect(events[0]!.operation).toBe('update');
+    expect(events[0]!.oldValues).toEqual({ id: 1, name: 'bob' });
+    expect(events[0]!.newValues).toEqual({ id: 1, name: 'robert' });
   });
 
   it('should handle delete with oldValues', () => {
@@ -190,9 +190,9 @@ describe('CDCEngine — Operation Types', () => {
       newValues: null,
     });
 
-    expect(events[0].operation).toBe('delete');
-    expect(events[0].oldValues).toEqual({ id: 1, name: 'bob' });
-    expect(events[0].newValues).toBeNull();
+    expect(events[0]!.operation).toBe('delete');
+    expect(events[0]!.oldValues).toEqual({ id: 1, name: 'bob' });
+    expect(events[0]!.newValues).toBeNull();
   });
 });
 
@@ -366,7 +366,7 @@ describe('CDCManager — AC 45.5: Event Dispatch', () => {
 
     // Engine fires the callback; manager dispatch happens internally
     expect(onEngineCb).toHaveBeenCalledTimes(1);
-    const event = onEngineCb.mock.calls[0][0] as CDCChangeEvent;
+    const event = onEngineCb.mock.calls[0]![0] as CDCChangeEvent;
     expect(event.tableName).toBe('users');
   });
 });

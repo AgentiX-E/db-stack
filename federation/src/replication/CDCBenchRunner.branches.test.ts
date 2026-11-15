@@ -14,7 +14,7 @@ import { CDCBenchRunner } from './CDCBenchRunner';
 describe('CDCBenchRunner — _computePercentiles branch completion', () => {
   it('returns an all-zero percentile object for an empty sample', () => {
     const bench = new CDCBenchRunner();
-    const result = (bench as any)._computePercentiles([]);
+    const result = bench['_computePercentiles']([]);
     expect(result).toEqual({
       p50: 0,
       p95: 0,
@@ -28,7 +28,7 @@ describe('CDCBenchRunner — _computePercentiles branch completion', () => {
 
   it('clamps percentile index to 0 for a single-element sample', () => {
     const bench = new CDCBenchRunner();
-    const result = (bench as any)._computePercentiles([42]);
+    const result = bench['_computePercentiles']([42]);
     expect(result.p50).toBe(42);
     expect(result.p95).toBe(42);
     expect(result.p99).toBe(42);
@@ -41,7 +41,7 @@ describe('CDCBenchRunner — _computePercentiles branch completion', () => {
     const bench = new CDCBenchRunner();
     // 100 distinct ascending values 0..99
     const latencies = Array.from({ length: 100 }, (_, i) => i);
-    const result = (bench as any)._computePercentiles(latencies);
+    const result = bench['_computePercentiles'](latencies);
     // idx = ceil(p/100 * n) - 1
     expect(result.p50).toBe(49); // ceil(50) - 1
     expect(result.p95).toBe(94); // ceil(95) - 1

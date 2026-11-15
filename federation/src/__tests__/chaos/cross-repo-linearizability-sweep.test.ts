@@ -23,7 +23,7 @@
  * Each test runs 3 iterations with different random seeds for coverage.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -36,7 +36,7 @@ import { OperationRecorder } from '@agentix-e/db-cluster/testing';
 import { OutboxStore } from '../../storage/OutboxStore';
 import { DedupRing } from '../../replication/DedupRing';
 import { HLC } from '../../hlc/HLC';
-import type { OutboxEntry } from '../../interfaces/outbox/OutboxEntry';
+import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry';
 
 // ── Repo C: db-operations ───────────────────────────────────
 import { FileAuditStore } from '@agentix-e/db-operations-audit';
@@ -93,30 +93,26 @@ describe('D4: Cross-Repo Chaos + Linearizability Sweep', () => {
         const allMsgIds = new Set<string>();
         let expectedTotal = 0;
 
-        let outboxStore: OutboxStore;
-        let dedupRing: DedupRing;
-        let auditStore: FileAuditStore;
-        let hlc: HLC;
+        // Cross-repo components, created before the guarded block so the
+        // finally clause always has something to close.
+        const outboxStore = new OutboxStore({
+          dataDir: outboxDir,
+          ttlMs: 600_000,
+          maxRetries: 5,
+          deadLetterTtlMs: 600_000,
+          mapSize: 16 * 1024 * 1024,
+        });
+        const dedupRing = new DedupRing({ maxCapacity: 5000, ttlMs: 600_000 });
+        const auditStore = new FileAuditStore({
+          dataDir: auditDir,
+          filePrefix: `sweep-${seed}`,
+        });
+        const hlc = new HLC('d4-sweep');
 
         try {
           await cluster.start();
           const leader = await cluster.findLeader();
           expect(leader).toBeDefined();
-
-          // Init cross-repo components
-          outboxStore = new OutboxStore({
-            dataDir: outboxDir,
-            ttlMs: 600_000,
-            maxRetries: 5,
-            deadLetterTtlMs: 600_000,
-            mapSize: 16 * 1024 * 1024,
-          });
-          dedupRing = new DedupRing({ maxSize: 5000, ttlMs: 600_000 });
-          auditStore = new FileAuditStore({
-            dataDir: auditDir,
-            filePrefix: `sweep-${seed}`,
-          });
-          hlc = new HLC();
 
           // Warmup
           await leader.adapter.propose(JSON.stringify({ op: 'warmup', seed }));
@@ -148,11 +144,12 @@ describe('D4: Cross-Repo Chaos + Linearizability Sweep', () => {
 
                 const msgId = `d4:${seed}:${i}:${Date.now()}`;
                 allMsgIds.add(msgId);
-                const entry: Omit<OutboxEntry, 'id'> = {
+                const entry: OutboxEntryInput & { msgId: string } = {
                   msgId,
-                  payload: { seed, i, value, key },
+                  targetPeerIds: ['peer-b'],
+                  payload: new TextEncoder().encode(JSON.stringify({ seed, i, value, key })),
                   timestamp: hlc.now(),
-                  retryCount: 0,
+                  type: 'cdc_event',
                 };
                 const created = await outboxStore.add(entry);
 
@@ -182,9 +179,11 @@ describe('D4: Cross-Repo Chaos + Linearizability Sweep', () => {
           // ── Phase 2: Flush outbox & verify ──
           const pending = await outboxStore.fetchOldestPending(OPS_PER_SEED + 10);
           for (const entry of pending) {
-            if (!dedupRing.contains(entry.msgId)) {
-              dedupRing.put(entry.msgId);
-              deliveredMsgIds.add(entry.msgId);
+            expect(entry.msgId).toBeDefined();
+            const msgId = entry.msgId!;
+            if (!dedupRing.contains(msgId)) {
+              dedupRing.put(msgId);
+              deliveredMsgIds.add(msgId);
               expectedTotal++;
               await auditStore.write({
                 operation: 'd4-sweep-recovery',

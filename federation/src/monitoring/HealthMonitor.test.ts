@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { HealthMonitor, type HealthMonitorConfig } from './HealthMonitor';
+import { HealthMonitor, type FederationHealth, type HealthMonitorConfig } from './HealthMonitor';
 import type { IMultiLeaderReplication, ReplicationStatus } from '../interfaces/replication/IMultiLeaderReplication';
 
 function mockStatus(overrides: Partial<ReplicationStatus> = {}): ReplicationStatus {
@@ -79,7 +79,7 @@ describe('HealthMonitor — Classification', () => {
     });
     const health = await monitor.check();
     expect(health.healthyTargets).toBe(1);
-    expect(health.targets[0].status).toBe('healthy');
+    expect(health.targets[0]!.status).toBe('healthy');
   });
 
   it('should classify targets with moderate lag as warning', async () => {
@@ -105,7 +105,7 @@ describe('HealthMonitor — Classification', () => {
     });
     const health = await monitor.check();
     expect(health.warningTargets).toBe(1);
-    expect(health.targets[0].status).toBe('warning');
+    expect(health.targets[0]!.status).toBe('warning');
   });
 
   it('should classify targets with high lag as critical', async () => {
@@ -131,7 +131,7 @@ describe('HealthMonitor — Classification', () => {
     });
     const health = await monitor.check();
     expect(health.criticalTargets).toBe(1);
-    expect(health.targets[0].status).toBe('critical');
+    expect(health.targets[0]!.status).toBe('critical');
   });
 
   it('should classify disconnected targets as unknown', async () => {
@@ -153,7 +153,7 @@ describe('HealthMonitor — Classification', () => {
 
     const monitor = new HealthMonitor(repl);
     const health = await monitor.check();
-    expect(health.targets[0].status).toBe('unknown');
+    expect(health.targets[0]!.status).toBe('unknown');
   });
 
   it('should handle zero-lag as healthy', async () => {
@@ -175,7 +175,7 @@ describe('HealthMonitor — Classification', () => {
 
     const monitor = new HealthMonitor(repl);
     const health = await monitor.check();
-    expect(health.targets[0].status).toBe('healthy');
+    expect(health.targets[0]!.status).toBe('healthy');
   });
 });
 
@@ -258,18 +258,17 @@ describe('HealthMonitor — Health Change Events', () => {
     const repl = createMockReplication();
     const monitor = new HealthMonitor(repl);
 
-    let healthEventCount = 0;
-    let lastHealth: any = null;
+    // Collected rather than assigned to a `let`: the callback runs outside the
+    // test body, so control-flow analysis would treat a `let` as still null.
+    const emitted: FederationHealth[] = [];
     monitor.onHealthChange((health) => {
-      healthEventCount++;
-      lastHealth = health;
+      emitted.push(health);
     });
 
     await monitor.check();
 
-    expect(healthEventCount).toBe(1);
-    expect(lastHealth).not.toBeNull();
-    expect(lastHealth.totalTargets).toBe(2);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.totalTargets).toBe(2);
   });
 });
 
