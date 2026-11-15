@@ -130,8 +130,9 @@ class FederationBenchTarget {
       const keys = Array.from(shard.keys());
       const toTake = Math.min(remaining, Math.ceil(keys.length / 2), 5);
       for (let i = 0; i < toTake && i < keys.length; i++) {
-        const v = shard.get(keys[i]);
-        if (v) results.push(JSON.stringify({ key: keys[i], value: v }));
+        const key = keys[i]!;
+        const v = shard.get(key);
+        if (v) results.push(JSON.stringify({ key, value: v }));
       }
       remaining -= toTake;
     }

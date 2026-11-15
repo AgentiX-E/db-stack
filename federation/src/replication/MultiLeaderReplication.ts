@@ -109,7 +109,7 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
    * Writes to OutboxStore (crash-safe) and returns immediately.
    * The outbox workers handle async delivery in the background.
    */
-  async replicate(shardId: number, data: string, type: string): Promise<{ msgId: string }> {
+  async replicate(shardId: number, data: string, type?: string): Promise<{ msgId: string }> {
     const msgId = `repl:${shardId}:${randomUUID()}`;
     const timestamp = this.hlc.now();
 
@@ -126,11 +126,6 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
         deserialize: timestamp.deserialize.bind(timestamp),
       },
       type: type ?? 'replicate',
-      status: 'pending',
-      createdAt: Date.now(),
-      lastAttemptAt: null,
-      attemptCount: 0,
-      lastError: null,
     });
 
     return { msgId };

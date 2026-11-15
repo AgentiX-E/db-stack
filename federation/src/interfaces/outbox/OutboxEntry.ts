@@ -4,6 +4,15 @@ export interface OutboxEntry {
   /** Unique entry ID */
   id: string;
 
+  /**
+   * Caller-visible message ID.
+   *
+   * The store indexes it alongside `id` so an ACK can arrive under either
+   * name (see `OutboxStore._indexById`). Optional: entries written without one
+   * are addressable by `id` only.
+   */
+  msgId?: string;
+
   /** Target peer(s) to deliver to */
   targetPeerIds: string[];
 
@@ -33,3 +42,18 @@ export interface OutboxEntry {
 }
 
 export type OutboxStatus = 'pending' | 'delivered' | 'failed';
+
+/**
+ * Input accepted by `add()` / `addBatch()`.
+ *
+ * The store assigns `id`, always writes a fresh entry with status `pending`,
+ * zeroed attempt tracking and no error, and defaults `createdAt` to "now", so
+ * none of those fields are part of the caller's contract.
+ */
+export type OutboxEntryInput = Omit<
+  OutboxEntry,
+  'id' | 'status' | 'createdAt' | 'lastAttemptAt' | 'attemptCount' | 'lastError'
+> & {
+  /** Overrides the store-assigned creation timestamp (defaults to now). */
+  createdAt?: number;
+};

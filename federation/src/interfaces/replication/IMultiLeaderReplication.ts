@@ -40,8 +40,11 @@ export interface IMultiLeaderReplication {
   start(config: ReplicationConfig): Promise<void>;
   stop(): Promise<void>;
 
-  /** Replicate data to all targets (write to Outbox + async send) */
-  replicate(shardId: number, data: string, type: string): Promise<{ msgId: string }>;
+  /**
+   * Replicate data to all targets (write to Outbox + async send).
+   * `type` defaults to `'replicate'` when omitted.
+   */
+  replicate(shardId: number, data: string, type?: string): Promise<{ msgId: string }>;
 
   /** Get replication status for all targets */
   getStatus(): Promise<ReplicationStatus>;

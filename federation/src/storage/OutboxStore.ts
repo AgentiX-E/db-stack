@@ -36,7 +36,7 @@
  */
 
 import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
-import type { OutboxEntry, OutboxStatus } from '../interfaces/outbox/OutboxEntry';
+import type { OutboxEntry, OutboxEntryInput, OutboxStatus } from '../interfaces/outbox/OutboxEntry';
 import type { OutboxStats } from '../interfaces/types';
 import { open, type Database, type RootDatabase } from 'lmdb';
 import * as path from 'path';
@@ -56,8 +56,6 @@ export interface OutboxStoreConfig {
 }
 
 type DeadLetterEntry = OutboxEntry & { deadAt?: number };
-type EntryWithMsgId = OutboxEntry & { msgId?: string };
-
 export class OutboxStore implements IOutboxStore {
   /** Single LMDB environment — every index below is a named sub-database. */
   private readonly root: RootDatabase;
@@ -109,12 +107,12 @@ export class OutboxStore implements IOutboxStore {
    * and missing from another. Callers that need to amortise the commit cost
    * over many entries should use `addBatch()`.
    */
-  async add(entry: Omit<OutboxEntry, 'id'>): Promise<OutboxEntry> {
+  async add(entry: OutboxEntryInput): Promise<OutboxEntry> {
     return this._insert([entry])[0]!;
   }
 
   /** Persist N entries atomically in a single LMDB write transaction. */
-  private _insert(partials: Array<Omit<OutboxEntry, 'id'>>): OutboxEntry[] {
+  private _insert(partials: OutboxEntryInput[]): OutboxEntry[] {
     const created: OutboxEntry[] = [];
 
     this.root.transactionSync(() => {
@@ -150,7 +148,7 @@ export class OutboxStore implements IOutboxStore {
    */
   private _indexById(entry: OutboxEntry, seq: number): void {
     this.msgIdToSeqDb.putSync(entry.id, seq);
-    const msgId = (entry as EntryWithMsgId).msgId;
+    const msgId = entry.msgId;
     if (typeof msgId === 'string' && msgId.length > 0) {
       this.msgIdToSeqDb.putSync(msgId, seq);
     }
@@ -165,7 +163,7 @@ export class OutboxStore implements IOutboxStore {
    * @param entries — Array of partial entries to persist
    * @returns Array of created OutboxEntry with assigned IDs
    */
-  addBatch(entries: Array<Omit<OutboxEntry, 'id'>>): OutboxEntry[] {
+  addBatch(entries: OutboxEntryInput[]): OutboxEntry[] {
     if (entries.length === 0) return [];
     return this._insert(entries);
   }
@@ -392,7 +390,7 @@ export class OutboxStore implements IOutboxStore {
       this.mainDb.removeSync(entryKey);
       this.pendingDb.removeSync(`pending:${entryKey}`);
       this.msgIdToSeqDb.removeSync(entry.id);
-      const msgId = (entry as EntryWithMsgId).msgId;
+      const msgId = entry.msgId;
       if (typeof msgId === 'string' && msgId.length > 0) {
         this.msgIdToSeqDb.removeSync(msgId);
       }

@@ -77,11 +77,14 @@ function computeLatencyStats(sortedLatencies: number[]): LatencyStats {
   const p95Index = Math.floor(sortedLatencies.length * 0.95);
   const p99Index = Math.floor(sortedLatencies.length * 0.99);
 
+  // Non-empty, so the upper bound is always a real sample.
+  const last = sortedLatencies[sortedLatencies.length - 1]!;
+
   return {
-    p50: sortedLatencies[p50Index] ?? sortedLatencies[sortedLatencies.length - 1],
-    p95: sortedLatencies[p95Index] ?? sortedLatencies[sortedLatencies.length - 1],
-    p99: sortedLatencies[p99Index] ?? sortedLatencies[sortedLatencies.length - 1],
-    max: sortedLatencies[sortedLatencies.length - 1],
+    p50: sortedLatencies[p50Index] ?? last,
+    p95: sortedLatencies[p95Index] ?? last,
+    p99: sortedLatencies[p99Index] ?? last,
+    max: last,
   };
 }
 
@@ -152,7 +155,7 @@ function createDistribution(type: 'uniform' | 'zipfian' | 'latest', seed: number
  * console.log(result.throughput, 'ops/sec');
  * ```
  */
-export class YCSBExecutor<T = string> {
+export class YCSBExecutor<T extends string = string> {
   private config: YCSBConfig;
 
   constructor(config: YCSBConfig) {
@@ -212,6 +215,13 @@ export class YCSBExecutor<T = string> {
     }
   }
 
+  /**
+   * Generate a record value of `fieldLength` characters.
+   *
+   * The workload's record value is a fixed-width string, so `T` is constrained
+   * to `string` on the class: no cast through `unknown` is needed to hand it
+   * back as the target's value type.
+   */
   private generateRecordValue(): T {
     const { fieldLength } = this.config;
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -219,7 +229,7 @@ export class YCSBExecutor<T = string> {
     for (let i = 0; i < fieldLength; i++) {
       result += chars[Math.floor(Math.random() * chars.length)];
     }
-    return result as unknown as T;
+    return result as T;
   }
 
   private generateOperations(): Array<{
