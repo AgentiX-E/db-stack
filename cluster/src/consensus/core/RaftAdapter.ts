@@ -465,8 +465,16 @@ export class RaftAdapter {
     return this._doPropose(data);
   }
 
-  async proposeAndWait(data: string): Promise<void> {
-    await this._submit(data);
+  /**
+   * Propose an entry and resolve once it is committed and applied.
+   *
+   * Returns the position the entry committed at. It used to return `void`, so
+   * the only caller that needed the position (`RaftGroup.proposeAndWait`, which
+   * has to stamp it into the outbox record for point-in-time recovery) appended
+   * `raftIndex: 0` instead and asked a second question afterwards.
+   */
+  async proposeAndWait(data: string): Promise<{ index: string; term: string }> {
+    return this._submit(data);
   }
 
   /**

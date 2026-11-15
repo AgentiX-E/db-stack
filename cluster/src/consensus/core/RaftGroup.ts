@@ -15,7 +15,7 @@
 
 import { RaftAdapter, RaftConfig, SnapshotMeta } from './RaftAdapter';
 import { IShardReplica, ApplyEntry } from '../../interfaces/IShardReplica';
-import { IOutboxWriter } from '../../interfaces/IOutboxWriter';
+import { IOutboxWriter, OutboxRecord } from '../../interfaces/IOutboxWriter';
 import { SqliteStorage } from '../storage/SqliteStorage';
 import { Mutex } from 'async-mutex';
 import { getErrorMessage } from '../helpers/errorUtils';
@@ -139,7 +139,7 @@ export class RaftGroup {
     this.shardId = shardId;
     this.raft = new RaftAdapter(raftConfig);
     this.replica = replica;
-    this.outboxManager = outboxManager as any;
+    this.outboxManager = outboxManager;
     this.nodeId = raftConfig.id;
     this.maxLogEntries = raftConfig.maxLogEntries || 0;
     // The authoritative snapshot lives in the Raft storage engine, next to the
@@ -976,16 +976,15 @@ export class RaftGroup {
         // Also append to outbox
         try {
           const parsedData = JSON.parse(String(entry.data));
-          (this.outboxManager as any).append({
-            msgId: parsedData.msgId || `pipeline-${entry.index}`,
-            raftIndex: entry.index,
-            raftTerm: entry.term,
-            shardId: this.shardId,
-            targetDC: '*',
-            type: parsedData.type || 'exec',
-            payload: entry.data,
-            createdAt: entry.sentAt,
-          });
+          this.outboxManager.append(
+            this.buildOutboxRecord(
+              { msgId: parsedData.msgId || `pipeline-${entry.index}`, type: parsedData.type },
+              entry.data,
+              entry.index,
+              entry.term,
+              entry.sentAt,
+            ),
+          );
         } catch {
           // Outbox append is non-critical
         }
@@ -1079,20 +1078,50 @@ export class RaftGroup {
   //  Write path (Raft primary + Outbox fallback)
   // ──────────────────────────────────────────
 
+  /**
+   * Build the outbox record for a committed entry.
+   *
+   * Five call sites used to assemble this literal by hand, and two of them
+   * copied `entry.msgId` / `entry.type` straight through although both are
+   * optional on `ApplyEntry`. The copies only compiled because the record was
+   * passed through `as any`; without the cast the compiler points out that an
+   * entry proposed without an id reaches the outbox with `msgId: undefined`,
+   * where every such entry collapses onto one de-duplication key downstream.
+   * The record is built in one place instead, and an entry that arrives without
+   * an id is given one rather than being allowed to alias another.
+   *
+   * @param source   The entry the record describes (id and type are optional).
+   * @param payload  The serialised payload exactly as it was committed.
+   * @param index    Raft log index the entry committed at.
+   * @param term     Raft term the entry committed in.
+   * @param createdAt Commit timestamp; defaults to now.
+   */
+  private buildOutboxRecord(
+    source: { msgId?: string; type?: string },
+    payload: string | Buffer,
+    index: number,
+    term: number,
+    createdAt?: number,
+  ): OutboxRecord {
+    return {
+      msgId: source.msgId ?? `auto-${this.shardId}-${index}-${crypto.randomUUID()}`,
+      raftIndex: index,
+      raftTerm: term,
+      shardId: this.shardId,
+      targetDC: '*',
+      type: source.type ?? 'exec',
+      payload,
+      createdAt: createdAt ?? Date.now(),
+    };
+  }
+
   async propose(entry: ApplyEntry): Promise<void> {
     if (this._stopped) throw new Error('RaftGroup: group already stopped');
     const committed = await this.raft.propose(JSON.stringify(entry));
 
-    (this.outboxManager as any).append({
-      msgId: entry.msgId,
-      raftIndex: Number(committed.index),
-      raftTerm: Number(committed.term),
-      shardId: this.shardId,
-      targetDC: '*',
-      type: entry.type,
-      payload: JSON.stringify(entry),
-      createdAt: Date.now(),
-    });
+    this.outboxManager.append(
+      this.buildOutboxRecord(entry, JSON.stringify(entry), Number(committed.index), Number(committed.term)),
+    );
   }
 
   /**
@@ -1115,18 +1144,16 @@ export class RaftGroup {
         __batch: true,
         entries,
       }),
-    } as any;
+    };
     const committed = await this.raft.propose(JSON.stringify(batchEntry));
-    (this.outboxManager as any).append({
-      msgId: batchMsgId,
-      raftIndex: Number(committed.index),
-      raftTerm: Number(committed.term),
-      shardId: this.shardId,
-      targetDC: '*',
-      type: 'exec',
-      payload: JSON.stringify(batchEntry),
-      createdAt: Date.now(),
-    });
+    this.outboxManager.append(
+      this.buildOutboxRecord(
+        { msgId: batchMsgId, type: 'exec' },
+        JSON.stringify(batchEntry),
+        Number(committed.index),
+        Number(committed.term),
+      ),
+    );
   }
 
   /**
@@ -1137,32 +1164,22 @@ export class RaftGroup {
     if (this._stopped) throw new Error('RaftGroup: group already stopped');
     await this.raft.proposeAndWait(JSON.stringify(entry));
 
-    (this.outboxManager as any).append({
-      msgId: entry.msgId,
-      raftIndex: 0, // index tracked by caller if needed
-      raftTerm: 0,
-      shardId: this.shardId,
-      targetDC: '*',
-      type: entry.type,
-      payload: JSON.stringify(entry),
-      createdAt: Date.now(),
-    });
+    // The entry is applied by the time this returns, so its position is known:
+    // the record used to be appended with `raftIndex: 0`, which left every
+    // synchronously proposed entry unpositioned for point-in-time recovery.
+    const committed = await this.raft.proposeAndWait(JSON.stringify(entry));
+    this.outboxManager.append(
+      this.buildOutboxRecord(entry, JSON.stringify(entry), Number(committed.index), Number(committed.term)),
+    );
   }
 
   proposeAsync(entry: ApplyEntry): void {
     this.raft
       .propose(JSON.stringify(entry))
       .then((committed) => {
-        (this.outboxManager as any).append({
-          msgId: entry.msgId,
-          raftIndex: Number(committed.index),
-          raftTerm: Number(committed.term),
-          shardId: this.shardId,
-          targetDC: '*',
-          type: entry.type,
-          payload: JSON.stringify(entry),
-          createdAt: Date.now(),
-        });
+        this.outboxManager.append(
+          this.buildOutboxRecord(entry, JSON.stringify(entry), Number(committed.index), Number(committed.term)),
+        );
       })
       .catch((err: unknown) => {
         logger.error(

@@ -104,13 +104,15 @@ export interface IClusterTopology {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Interface for writing committed entries to the outbox/replication system.
- * This replaces direct OutboxManager reference in RaftGroupManager.
+ * The consensus → outbox contract is declared once, next to the code that
+ * consumes it (`interfaces/IOutboxWriter`), and re-exported here so the layer
+ * boundary list stays complete.
+ *
+ * This file used to declare a *second*, different `IOutboxWriter` — `write` and
+ * `getLastWrittenIndex`, which no component in the package calls — and that was
+ * the copy the package exported from `src/index.ts`. A third-party adapter could
+ * therefore implement the published interface faithfully and still be unable to
+ * satisfy `RaftGroup`, which asks for `append` and `appendBatch` behind an
+ * `as any`. The cast is gone and so is the duplicate.
  */
-export interface IOutboxWriter {
-  /** Write a committed entry */
-  write(shardId: string, index: number, term: number, data: string): Promise<void>;
-
-  /** Get the last written index for a shard */
-  getLastWrittenIndex(shardId: string): Promise<number>;
-}
+export type { IOutboxWriter, OutboxRecord } from '../../interfaces/IOutboxWriter';

@@ -134,7 +134,8 @@ export type { IStorageEngine, EngineApplyContext } from './interfaces/IStorageEn
 export type { IShardReplica, ApplyEntry } from './interfaces/IShardReplica';
 
 // ── Interfaces & shared types ─────────────────────────────
-export { IConsensusLayer, TopologyChange, IClusterTopology, IOutboxWriter } from './consensus/interfaces/interfaces';
+export { IConsensusLayer, TopologyChange, IClusterTopology } from './consensus/interfaces/interfaces';
+export type { IOutboxWriter, OutboxRecord } from './interfaces/IOutboxWriter';
 export { IWalStorage } from './interfaces/wal/IWalStorage';
 export { IShardManager } from './interfaces/shard/IShardManager';
 export { IShardStrategy } from './interfaces/shard/IShardStrategy';
