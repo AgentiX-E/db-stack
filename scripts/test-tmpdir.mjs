@@ -58,7 +58,35 @@ export function useTestTmpRoot(label) {
   process.env.TMPDIR = root;
   process.env.TMP = root;
   process.env.TEMP = root;
-  // `os.tmpdir()` memoises its result; reset the cache so later callers see it.
+  // `os.tmpdir()` memoises its result on some platforms; reset the cache so
+  // later callers see it.
   if (typeof os.tmpdir.resetCache === 'function') os.tmpdir.resetCache();
+  return root;
+}
+
+/**
+ * Re-create the test temp root if something removed it.
+ *
+ * `os.tmpdir()` is process-wide (one copy per worker thread), so every suite
+ * that calls `mkdtempSync` depends on the *same* directory existing. Any single
+ * test that deletes a path at or above that root — e.g. `rmSync(dirname(db))`
+ * where the database was created directly inside the root — takes the root out
+ * from under every later test on the same worker, which then fails with
+ * `ENOENT: no such file or directory, mkdtemp '<root>/...'` in a file that has
+ * nothing to do with the deleter.
+ *
+ * Callers re-assert the invariant per test (see the `beforeEach` hook in each
+ * `vitest.setup.ts`) rather than once per worker process, because the deletion
+ * happens mid-run. Re-creating an already-existing directory is a no-op, so the
+ * steady-state cost is one `existsSync`.
+ *
+ * @returns {string} the temp root that is now guaranteed to exist.
+ */
+export function ensureTestTmpRoot() {
+  const root = process.env.TMPDIR;
+  if (!root || root.length === 0) {
+    throw new Error('ensureTestTmpRoot: TMPDIR is unset — call useTestTmpRoot(label) first');
+  }
+  if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true });
   return root;
 }

@@ -1,4 +1,6 @@
 // Forward pino output to /dev/null during tests
+import { beforeEach } from 'vitest';
+
 process.env.LOG_LEVEL = 'silent';
 process.env.VITEST = 'true';
 
@@ -27,9 +29,17 @@ import * as path from 'path';
 // removes the "/tmp is pruned mid-run" class of failures that showed up as
 // SQLite "disk I/O error"; the helper falls back to a workspace-local `.tmp`
 // when /dev/shm is unavailable.
-import { useTestTmpRoot } from '../scripts/test-tmpdir.mjs';
+import { useTestTmpRoot, ensureTestTmpRoot } from '../scripts/test-tmpdir.mjs';
 
 useTestTmpRoot('cluster');
+
+// The temp root is process-wide, so one test that removes a path at or above it
+// breaks `mkdtempSync` for every later test on the same worker — reported as an
+// ENOENT in an unrelated file. Re-assert it before each test; a healthy root
+// costs one `existsSync`.
+beforeEach(() => {
+  ensureTestTmpRoot();
+});
 
 const pgStubDir = path.resolve(process.cwd(), 'node_modules/pg');
 fs.mkdirSync(pgStubDir, { recursive: true });

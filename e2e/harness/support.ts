@@ -12,7 +12,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join, resolve } from 'node:path';
-// @ts-expect-error — plain ESM helper shared with the vitest setups.
+// Plain ESM helper shared with the vitest setups; typed by scripts/test-tmpdir.d.mts.
 import { useTestTmpRoot } from '../../scripts/test-tmpdir.mjs';
 import { generateClusterCerts } from '@agentix-e/db-cluster/testing';
 import type { TestClusterCerts } from '@agentix-e/db-cluster/testing';

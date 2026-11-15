@@ -13,6 +13,15 @@ process.env.VITEST = 'true';
 // Durable commits cost ~19ms on the workspace overlayfs versus ~0.03ms on
 // tmpfs; the outbox/CDC suites are fsync-bound, so this is the difference
 // between a seconds-long run and a multi-minute one.
-import { useTestTmpRoot } from '../scripts/test-tmpdir.mjs';
+import { beforeEach } from 'vitest';
+import { useTestTmpRoot, ensureTestTmpRoot } from '../scripts/test-tmpdir.mjs';
 
 useTestTmpRoot('federation');
+
+// The temp root is process-wide, so one test that removes a path at or above it
+// breaks `mkdtempSync` for every later test on the same worker — reported as an
+// ENOENT in an unrelated file. Re-assert it before each test; a healthy root
+// costs one `existsSync`.
+beforeEach(() => {
+  ensureTestTmpRoot();
+});
