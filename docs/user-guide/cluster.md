@@ -302,8 +302,27 @@ import { TestCluster, generateClusterCerts, LinearizabilityChecker } from '@agen
 
 const cluster = new TestCluster({ nodeCount: 3 });
 await cluster.start();
-const leader = await cluster.leader();
+const leader = await cluster.findLeader();
+const followers = cluster.remainingNodes(leader.id);
+// … propose, kill, wait for a new leader …
+await cluster.stop(); // stops every node and removes its data directory
 ```
+
+`TestCluster` gives you `findLeader()`, `waitForNewLeader(excludeId)`, `killNode(id)`,
+`remainingNodes(excludeId)`, and the live `nodes` / `peerConfigs` / `dataDirs` arrays. Two
+details are worth knowing because they are the ones that bite in CI:
+
+- **Ports are not reserved.** `getFreePorts()` asks the OS and closes its probe socket before
+  returning, so another process on a busy runner can take the port before your node binds.
+  `start()` retries that specific failure with a fresh allocation (three attempts) and tears the
+  partial attempt down first — a node that did bind holds a different port, and leaving it
+  listening makes the retry collide with itself. A failure that is *not* a lost port race is
+  thrown on the first attempt, unchanged. Inject your own allocator with
+  `new TestCluster({ portAllocator })` to test that path.
+- **`start()` cleans up after itself, and `stop()` is not optional.** A failed start is torn down
+  before `start()` returns or retries, and `stop()` removes the temporary data directories it
+  created — call it from `afterEach` even when the case failed, or the next run inherits the
+  previous one's Raft log.
 
 For acceptance-level assurance, spawn real processes over TLS exactly as the project's own
 E2E suite does (`e2e/harness/raft-node.mjs`): the difference between "the tests pass" and
