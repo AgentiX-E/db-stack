@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bench/federation-ycsb.ts`.
 - **`OutboxStore` read `msgId` through `OutboxEntry & { msgId?: string }`**; the intersection
   is gone now that the type declares the field.
+- **`TcpSecureTransport` stopped reconnecting for good once the fast-retry budget was spent.**
+  `_connectToPeer` returned outright when `attempt > _maxRetries`, which at the defaults
+  (`initialRetryMs` 100, `maxRetryMs` 30 000, 5 attempts) is about 3.1 s. A datacenter that
+  was down for longer than that never became reachable again without a process restart, while
+  the outbox kept entries it had no path to deliver. The budget now bounds the *fast* attempts
+  only; past it the interval is the cap. `send()` also arms the channel when it has to refuse
+  a message — a refusal that only reports the failure leaves recovery to a timer that may
+  already have given up.
 
 ## [1.1.0] — 2026-08-05
 

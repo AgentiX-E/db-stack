@@ -325,3 +325,75 @@ describe('TcpSecureTransport — AC 46.9: Lifecycle', () => {
     expect(mockRaft.stop).toHaveBeenCalled();
   });
 });
+
+/**
+ * Reconnection — the channel must survive an outage of unknown length.
+ *
+ * A cross-DC gateway is not restarted because a peer came back; the same
+ * process has to re-establish the channel itself. Both halves of that are
+ * covered here: a refused send arms the channel, and reconnection keeps going
+ * past the fast-attempt budget instead of ending.
+ */
+describe('TcpSecureTransport — reconnection after an outage', () => {
+  /** A double that reports a peer list, so the delivery guard is exercised. */
+  function mockWithStatus(connectedPeers: number[]) {
+    return {
+      ...createMockRaftTransport(),
+      register: vi.fn(),
+      getStatus: vi.fn().mockReturnValue({ connectedPeers }),
+    };
+  }
+
+  function message(targetPeerId = 'node-2'): TransportMessage {
+    return {
+      messageId: 'msg-reconnect',
+      sourcePeerId: 'node-1',
+      targetPeerId,
+      payload: new Uint8Array([1]),
+      timestamp: ts('node-1'),
+      createdAt: Date.now(),
+      type: 'replicate',
+    };
+  }
+
+  function makeTransport(mockRaft: ReturnType<typeof mockWithStatus>) {
+    return new TcpSecureTransport({
+      nodeId: 'node-1',
+      peerAddresses: ['127.0.0.1:7001', '127.0.0.1:7002'],
+      tls: { cert: 'c', key: 'k', ca: 'ca' },
+      initialRetryMs: 1,
+      maxRetryMs: 5,
+      _transportOverride: mockRaft,
+    });
+  }
+
+  it('arms the channel when a send is refused for an unconnected peer', async () => {
+    const mockRaft = mockWithStatus([]);
+    const transport = makeTransport(mockRaft);
+    await transport.start();
+
+    const delivered = await transport.send(message());
+
+    expect(delivered).toBe(false);
+    // The refusal has to do more than report: `register` is how the pool is told
+    // this peer should be reachable again.
+    expect(mockRaft.register).toHaveBeenCalledWith(expect.objectContaining({ id: 2, port: 7002 }));
+    await transport.stop();
+  });
+
+  it('keeps retrying past the fast-attempt budget instead of ending reconnection', async () => {
+    const mockRaft = mockWithStatus([]);
+    mockRaft.register.mockImplementation(() => {
+      throw new Error('datacenter still down');
+    });
+    const transport = makeTransport(mockRaft);
+    await transport.start();
+
+    // The fast budget is five attempts; an outage outlives it.
+    for (let attempt = 0; attempt < 8; attempt++) transport.reconnect('node-2');
+
+    expect((transport as unknown as { _attemptCount: Map<string, number> })._attemptCount.get('node-2')).toBe(8);
+    expect((transport as unknown as { _retryTimers: Map<string, unknown> })._retryTimers.has('node-2')).toBe(true);
+    await transport.stop();
+  });
+});

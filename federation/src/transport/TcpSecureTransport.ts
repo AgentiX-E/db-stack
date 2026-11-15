@@ -174,11 +174,15 @@ export class TcpSecureTransport implements ITransport {
 
     const attempt = (this._attemptCount.get(peerId) ?? 0) + 1;
     this._attemptCount.set(peerId, attempt);
-    if (attempt > this._maxRetries) return;
 
     const baseMs = this.config.initialRetryMs ?? 100;
     const maxMs = this.config.maxRetryMs ?? 30000;
-    const delay = Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
+    // `_maxRetries` bounds the *fast* attempts, not the lifetime of the channel.
+    // It used to end reconnection outright, so a datacenter that was down for
+    // longer than the fast backoff budget (~3 s at the defaults) never came back
+    // without a process restart — the outbox kept the entries and had no way to
+    // deliver them. Past the budget the interval is capped instead of abandoned.
+    const delay = attempt > this._maxRetries ? maxMs : Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
 
     const numericId = this.numericByLogical.get(peerId);
     if (numericId === undefined || typeof this.transport.register !== 'function') {
@@ -248,6 +252,11 @@ export class TcpSecureTransport implements ITransport {
     const status = this.transport.getStatus?.();
     if (status && !status.connectedPeers.includes(targetId)) {
       this._lastSendError = `peer ${msg.targetPeerId} (${targetId}) not connected`;
+      // Arm the channel while refusing the message. The outbox retries the
+      // delivery, and each retry has to be able to make the peer reachable
+      // again; a refusal that only reports the failure leaves recovery to a
+      // timer that may already have given up.
+      this._connectToPeer(msg.targetPeerId);
       return false;
     }
 

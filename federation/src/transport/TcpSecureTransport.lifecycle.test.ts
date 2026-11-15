@@ -7,8 +7,9 @@
  *
  *   - `send()` must refuse to report success for an unreachable peer, otherwise
  *     the outbox marks the entry delivered and drops it forever.
- *   - `reconnect()` backoff must stop after `_maxRetries`, otherwise a dead DC
- *     causes an infinite timer loop.
+ *   - `reconnect()` backoff must stop *accelerating* after `_maxRetries`, but
+ *     must not stop reconnecting: a dead DC is not a deleted DC, and giving up
+ *     left the outbox holding entries with no path to delivery.
  *   - Numeric wire ids and logical peer ids must round-trip in both shapes the
  *     underlying transport can return, otherwise inbound frames are addressed
  *     to a peer that does not exist in the logical space.
@@ -264,20 +265,46 @@ describe('TcpSecureTransport — reconnect backoff', () => {
     expect(() => t.reconnect('dc-west-1')).not.toThrow();
   });
 
-  it('retries with backoff and gives up after the retry budget', async () => {
+  it('backs off fast, then keeps retrying at the capped interval', async () => {
+    // The previous name for this case was "retries with backoff and gives up
+    // after the retry budget", and giving up was the defect: a datacenter that
+    // stayed down for longer than the fast budget never became reachable again
+    // without a process restart, while the outbox kept entries it could never
+    // deliver. The budget bounds the *fast* attempts; past it the interval is
+    // capped. Both halves are asserted here — the schedule and the fact that it
+    // does not end.
     vi.useFakeTimers();
     const override = mockTransport({ registerThrows: true });
     const t = transport(override);
     const register = override.register as ReturnType<typeof vi.fn>;
 
+    // initialRetryMs = 10, maxRetryMs = 40, _maxRetries = 5.
+    const started = Date.now();
+    const at: number[] = [];
+    register.mockImplementation(() => {
+      at.push(Date.now() - started);
+      throw new Error('register refused');
+    });
+
     t.reconnect('dc-west-1');
     expect(register).toHaveBeenCalledTimes(1);
 
-    // 5 retries max: attempt 6 short-circuits before touching the transport.
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(200);
 
-    expect(register.mock.calls.length).toBeLessThanOrEqual(5);
-    expect(register.mock.calls.length).toBeGreaterThan(1);
+    // Attempts 1–5 double (10, 20, 40, …) but never exceed the cap; attempt 6
+    // onwards is scheduled at exactly the cap instead of not at all.
+    expect(at).toEqual([0, 10, 30, 70, 110, 150, 190]);
+
+    // Still alive long after the budget: the channel is not abandoned.
+    const before = register.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(register.mock.calls.length).toBe(before + 100);
+
+    // And the interval is the cap, not an unbounded doubling.
+    const afterBudget = at.slice(3);
+    for (let i = 1; i < afterBudget.length; i++) {
+      expect(afterBudget[i]! - afterBudget[i - 1]!).toBe(40);
+    }
   });
 
   it('clears a pending retry timer when reconnect() is called again', async () => {
