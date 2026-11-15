@@ -13,7 +13,8 @@ import { runEngineConformance } from '../../testing/engine-conformance';
 import { MemoryStorageEngine } from '../../engines/MemoryStorageEngine';
 import { SqliteKeyValueEngine, sqliteCodec } from '../fixtures/SqliteKeyValueEngine';
 import { EngineBackedReplica } from '../../engines/EngineBackedReplica';
-import { decodeSnapshotEnvelope } from '../../engines/EngineBackedReplica';
+import { decodeSnapshotEnvelope, SNAPSHOT_ENVELOPE_VERSION } from '../../engines/EngineBackedReplica';
+import { SqlVecErrorCode } from '../../interfaces/types';
 
 /** Codec for the reference engine's JSON wire format. */
 const memoryCodec = {
@@ -101,5 +102,65 @@ describe('engine SPI — adapter behaviour that is engine independent', () => {
     expect(await replica.getAppliedIndex()).toBe(0);
     await replica.apply({ index: 1, term: 1, command: 'kv', data: memoryCodec.put('a', '1') });
     expect(await replica.getAppliedIndex()).toBe(1);
+  });
+
+  it('carries the entry type and message id into the apply context', async () => {
+    // PITR writes stamp an operation and a message id on the entry; the engine
+    // needs both to build its own recovery journal, so the adapter must not drop
+    // them — and must not invent them when the writer did not set them.
+    const engine = new MemoryStorageEngine();
+    const replica = new EngineBackedReplica({ shardId: 2, engine });
+    await replica.apply({
+      index: 1,
+      term: 4,
+      command: 'kv',
+      type: 'put',
+      msgId: 'pitr-1',
+      data: memoryCodec.put('a', '1'),
+    });
+    await replica.apply({ index: 2, term: 4, command: 'kv', data: memoryCodec.put('b', '2') });
+
+    expect(engine.appliedContexts[0]).toMatchObject({
+      shardId: 2,
+      index: 1,
+      applyTerm: 4,
+      operation: 'put',
+      msgId: 'pitr-1',
+    });
+    expect(engine.appliedContexts[1]).not.toHaveProperty('operation');
+    expect(engine.appliedContexts[1]).not.toHaveProperty('msgId');
+  });
+
+  it('rejects a snapshot from a newer envelope version instead of reinterpreting its bytes', async () => {
+    const engine = new MemoryStorageEngine();
+    const replica = new EngineBackedReplica({ shardId: 1, engine });
+    await replica.apply({ index: 1, term: 1, command: 'kv', data: memoryCodec.put('a', '1') });
+
+    const bytes = Buffer.from(await replica.snapshot());
+    bytes.writeUInt16BE(SNAPSHOT_ENVELOPE_VERSION + 1, 4);
+
+    await expect(replica.restore(bytes)).rejects.toMatchObject({ code: SqlVecErrorCode.FAILED_PRECONDITION });
+    await expect(replica.restore(bytes)).rejects.toThrow(
+      `Unsupported snapshot envelope version ${SNAPSHOT_ENVELOPE_VERSION + 1}`,
+    );
+    expect(JSON.parse((await replica.query(memoryCodec.get('a'))).toString('utf8'))).toEqual({ value: '1' });
+  });
+
+  it('rejects a raw engine snapshot that was never framed', async () => {
+    // `engine.snapshot()` is the engine's own format: valid for restore(), but it
+    // carries no shard, index or term. Handing it to the replica must be a clear
+    // rejection rather than a restore that silently loses the position.
+    const engine = new MemoryStorageEngine();
+    const replica = new EngineBackedReplica({ shardId: 1, engine });
+    await replica.apply({ index: 1, term: 1, command: 'kv', data: memoryCodec.put('a', '1') });
+    await replica.apply({ index: 2, term: 1, command: 'kv', data: memoryCodec.put('b', '2') });
+    await replica.apply({ index: 3, term: 1, command: 'kv', data: memoryCodec.put('c', '3') });
+
+    await expect(replica.restore(await engine.snapshot())).rejects.toMatchObject({
+      code: SqlVecErrorCode.INVALID_ARGUMENT,
+    });
+    await expect(replica.restore(await engine.snapshot())).rejects.toThrow(/bad magic/);
+    expect(await replica.getAppliedIndex()).toBe(3);
+    expect(JSON.parse((await replica.query(memoryCodec.get('c'))).toString('utf8'))).toEqual({ value: '3' });
   });
 });
