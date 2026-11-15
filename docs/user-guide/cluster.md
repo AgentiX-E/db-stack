@@ -132,6 +132,21 @@ the engine read while writes were in flight), a follower that installs that snap
 diverges permanently. `EngineBackedReplica` waits for in-flight applies before capturing;
 a hand-written replica must do the same.
 
+**What the middleware guarantees you, and what it refuses:**
+
+| Situation | Behaviour |
+|---|---|
+| `snapshot()` returns a non-`Buffer` (a JSON string, say) | Refused at capture, naming the type — Raft would otherwise "store" it as nothing |
+| `snapshot()` returns 0 bytes | Refused at capture: a handler that exists means the application owns state, so an empty snapshot would truncate the log for an index it does not describe |
+| No handler registered at all | Allowed. A log-only group has nothing to capture and still needs a boundary |
+| A snapshot larger than 256 KiB | Transferred in chunks, one transfer per peer at a time; a follower that falls behind a compaction recovers by installing it |
+| `installSnapshot()` throws | The replica stops applying and says so. It will not report the leader's applied index over state it never received |
+
+A follower that was down while the leader compacted can therefore only recover by
+installing a snapshot — the log it missed is gone. Give `installSnapshot()` the same
+atomicity you give `snapshot()`: Raft has already discarded the log the snapshot replaces
+by the time you are called.
+
 ---
 
 ## 3. Sharding
