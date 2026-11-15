@@ -255,4 +255,90 @@ describe('harness contract', () => {
     expect(error!.message).toContain('timed out after 150ms');
     expect(error!.message).toContain('an impossible condition');
   }, 10_000);
+
+  it('waitUntil appends whatever the describe callback reports', async () => {
+    const error = await waitUntil(
+      async () => undefined,
+      120,
+      'a described condition',
+      20,
+      async () => ({
+        nodes: [{ id: 2, stateSize: 3 }],
+      }),
+    )
+      .then(() => undefined)
+      .catch((err: Error) => err);
+    expect(error!.message).toContain('a described condition');
+    expect(error!.message).toContain('stateSize');
+    expect(error!.message).toContain('"id":2');
+  }, 10_000);
+
+  it('waitUntil truncates a verbose diagnostic instead of printing all of it', async () => {
+    const error = await waitUntil(
+      async () => undefined,
+      120,
+      'a verbose condition',
+      20,
+      () => 'x'.repeat(2_000),
+    )
+      .then(() => undefined)
+      .catch((err: Error) => err);
+    expect(error!.message).toContain('a verbose condition');
+    expect(error!.message).toMatch(/x{1200}…/);
+    expect(error!.message).not.toContain('x'.repeat(1_400));
+  }, 10_000);
+
+  it('waitUntil renders a diagnostic it cannot serialise', async () => {
+    // A live cluster status object can hold a circular reference (a node that
+    // points at its own transport). `JSON.stringify` throws on that, and losing
+    // the timeout message to a serialisation error would be an own goal.
+    const circular: Record<string, unknown> = { id: 1 };
+    circular.self = circular;
+    const error = await waitUntil(
+      async () => undefined,
+      120,
+      'a circular condition',
+      20,
+      () => circular,
+    )
+      .then(() => undefined)
+      .catch((err: Error) => err);
+    expect(error!.message).toContain('a circular condition');
+    expect(error!.message).toContain('[object Object]');
+  }, 10_000);
+
+  it('waitUntil renders a diagnostic that serialises to nothing', async () => {
+    // `JSON.stringify(fn)` is `undefined`, not a string; printing "undefined"
+    // would be worse than printing the function's own source.
+    const error = await waitUntil(
+      async () => undefined,
+      120,
+      'an unserialisable condition',
+      20,
+      () => () => 42,
+    )
+      .then(() => undefined)
+      .catch((err: Error) => err);
+    expect(error!.message).toContain('an unserialisable condition');
+    expect(error!.message).toContain('42');
+  }, 10_000);
+
+  it('waitUntil keeps the timeout when the describe callback itself throws', async () => {
+    // Reaching into a live cluster is exactly the thing that fails when the wait
+    // failed. A secondary error must not replace "timed out after 120ms".
+    const error = await waitUntil(
+      async () => undefined,
+      120,
+      'a condition with broken diagnostics',
+      20,
+      () => {
+        throw new Error('diagnostics-boom');
+      },
+    )
+      .then(() => undefined)
+      .catch((err: Error) => err);
+    expect(error!.message).toContain('timed out after 120ms');
+    expect(error!.message).toContain('diagnostics unavailable');
+    expect(error!.message).toContain('diagnostics-boom');
+  }, 10_000);
 });

@@ -298,12 +298,22 @@ export function spawnGateway(config: Record<string, unknown>, label: string): Ch
   return new ChildNode(label, child);
 }
 
-/** Poll until `probe` returns a value, then return it. */
+/**
+ * Poll until `probe` returns a value, then return it.
+ *
+ * On timeout the error carries everything the caller can cheaply supply: the
+ * last error the probe threw, the last falsy value it returned, and whatever
+ * `describe` reports about the live system. A wait that expires without saying
+ * *what it saw* costs a second full run to explain — and a 60-second wait
+ * against a real cluster is expensive enough that "it timed out" is not a
+ * useful report.
+ */
 export async function waitUntil<T>(
   probe: () => Promise<T | undefined | null | false>,
   timeoutMs: number,
   label: string,
   intervalMs = 100,
+  describe?: () => unknown | Promise<unknown>,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
@@ -317,6 +327,35 @@ export async function waitUntil<T>(
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error(
-    `timed out after ${timeoutMs}ms waiting for ${label}${lastError ? ` (last error: ${String(lastError)})` : ''}`,
+    `timed out after ${timeoutMs}ms waiting for ${label}` +
+      (lastError ? ` (last error: ${String(lastError)})` : '') +
+      (describe ? ` (${await safeDescribe(describe)})` : ''),
   );
+}
+
+/** One-line, bounded rendering of whatever a probe or a describer returned. */
+function render(value: unknown): string {
+  let text: string;
+  try {
+    text = typeof value === 'string' ? value : JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  if (text === undefined) text = String(value);
+  return text.length > 1_200 ? `${text.slice(0, 1_200)}…` : text;
+}
+
+/**
+ * Run the caller's timeout diagnostic without letting it replace the timeout.
+ *
+ * `describe` reaches into live clusters, so it can throw for the same reason the
+ * wait timed out. Losing the "timed out after 60s" line to a secondary error is
+ * how a stalled cluster gets reported as a broken status call.
+ */
+async function safeDescribe(describe: () => unknown | Promise<unknown>): Promise<string> {
+  try {
+    return render(await describe());
+  } catch (err) {
+    return `diagnostics unavailable: ${String(err)}`;
+  }
 }

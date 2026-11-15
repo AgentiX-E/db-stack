@@ -72,6 +72,28 @@ async function statusOf(node: ChildNode): Promise<NodeStatus> {
   return node.status<NodeStatus>();
 }
 
+/**
+ * One line per node: what the engine has, what Raft has applied, and how far the
+ * log reaches. The three numbers together separate "the follower never received
+ * the entry" (lastLogIndex behind) from "it received it and never applied it"
+ * (raftApplied behind) from "it applied it and the engine dropped it" (stateSize
+ * behind while raftApplied is current).
+ */
+async function describeDivergence(): Promise<string> {
+  const rows = await Promise.all(
+    nodes.map(async (node) => {
+      if (node.exited) return `${node.label}: exited`;
+      try {
+        const s = await statusOf(node);
+        return `${node.label}: stateSize=${s.stateSize} applied=${s.raftApplied} commit=${s.commitIndex} lastLog=${s.lastLogIndex} snapshot=${s.snapshot?.lastIncludedIndex ?? 'none'}`;
+      } catch (err) {
+        return `${node.label}: status failed (${String(err)})`;
+      }
+    }),
+  );
+  return rows.join(' | ');
+}
+
 async function findLeader(active: ChildNode[], timeoutMs = 45_000): Promise<ChildNode> {
   return waitUntil(
     async () => {
@@ -260,6 +282,10 @@ describe('engine SPI on a real cluster (mTLS, separate processes)', () => {
       60_000,
       'every node to apply every write before the restart',
       250,
+      // Applying is asynchronous, so the interesting fact on a timeout is *which*
+      // node is behind and by how much — `written.length` alone cannot tell a
+      // stalled follower from a slow one.
+      async () => `wrote ${written.length}: ${await describeDivergence()}`,
     );
     for (const status of beforeRestart) {
       expect(status.stateSize).toBe(written.length);
