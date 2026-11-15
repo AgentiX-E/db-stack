@@ -226,6 +226,46 @@ describe('InMemoryDistributedTracer', () => {
     tracer.inject(carrier);
     expect(carrier['traceparent']).toBeUndefined();
   });
+
+  // Additional: a second end() call must not duplicate or mutate the span
+  it('records a span once when end() is called twice', () => {
+    const tracer = new InMemoryDistributedTracer();
+    const { end } = tracer.startSpan('double-end');
+    end();
+    end('error', 'late failure');
+
+    const completed = tracer.getCompletedSpans();
+    expect(completed).toHaveLength(1);
+    expect(completed[0]!.status).toBe('ok');
+    expect(completed[0]!.errorMessage).toBeUndefined();
+    expect(tracer.getCurrentSpan()).toBeUndefined();
+  });
+
+  // Additional: a parent from another process is not an active span here
+  it('reports no current span after ending a span joined to an external parent', () => {
+    const tracer = new InMemoryDistributedTracer();
+    const { end } = tracer.startSpan('child-of-remote', {
+      parentSpanId: 'remote-span',
+      traceId: 'remote-trace',
+    });
+    expect(tracer.getCurrentSpan()).toBeDefined();
+
+    end();
+
+    expect(tracer.getCurrentSpan()).toBeUndefined();
+    const completed = tracer.getCompletedSpans();
+    expect(completed[0]!.parentSpanId).toBe('remote-span');
+    expect(completed[0]!.traceId).toBe('remote-trace');
+  });
+
+  // Additional: a header with no separators yields empty identifiers
+  it('extracts empty identifiers from a traceparent without separators', () => {
+    const tracer = new InMemoryDistributedTracer();
+    expect(tracer.extract({ traceparent: 'garbage' })).toEqual({
+      traceId: '',
+      parentSpanId: '',
+    });
+  });
 });
 
 describe('InMemoryTelemetryExporter', () => {
