@@ -121,16 +121,44 @@ async function gatewayStatus(gateway: ChildNode): Promise<GatewayStatus> {
 }
 
 async function waitForValue(where: 'east' | 'west', key: string, value: string, timeoutMs = 60_000) {
-  return waitUntil(
-    async () => {
-      const gateway = where === 'east' ? eastGateway : westGateway;
-      const status = await gatewayStatus(gateway);
-      return status.state[key] === value ? status : undefined;
-    },
-    timeoutMs,
-    `${where} to converge on ${key}=${value}`,
-    250,
-  );
+  try {
+    return await waitUntil(
+      async () => {
+        const gateway = where === 'east' ? eastGateway : westGateway;
+        const status = await gatewayStatus(gateway);
+        return status.state[key] === value ? status : undefined;
+      },
+      timeoutMs,
+      `${where} to converge on ${key}=${value}`,
+      250,
+    );
+  } catch (err) {
+    // A convergence timeout is only diagnosable with the state of both sides:
+    // which peers each gateway thinks it is connected to, what it still holds in
+    // its outbox, where its Raft group is. Without this the failure is a bare
+    // "timed out", which is what one run of this suite produced on a runner and
+    // could not be explained afterwards.
+    const dump = await Promise.all(
+      [['east', eastGateway] as const, ['west', westGateway] as const].map(async ([side, gateway]) => {
+        try {
+          const status = await gatewayStatus(gateway);
+          return {
+            side,
+            isLeader: status.isLeader,
+            term: status.term,
+            commitIndex: status.commitIndex,
+            pending: status.pending,
+            connectedPeers: status.connectedPeers,
+            transport: status.transport,
+          };
+        } catch (statusErr) {
+          return { side, statusError: String(statusErr) };
+        }
+      }),
+    );
+    console.error(`[AC-Fx] convergence timeout: ${JSON.stringify(dump, null, 2)}`);
+    throw err;
+  }
 }
 
 let eastGateway: ChildNode;
@@ -456,6 +484,13 @@ describe('Cross-cluster sync over mTLS (two real clusters)', () => {
       type: 'insert',
     });
     await eastGateway.waitFor((m) => m.type === 'replicated', 20_000, 'east replication during outage');
+
+    // Hold the outage past the transport's fast-retry budget (100 + 200 + 400 +
+    // 800 + 1600 ms at the defaults). Without this the case only passes when the
+    // runner happens to notice the disconnect late enough — on a slow runner the
+    // budget was exhausted, reconnection stopped for good, and this test hung for
+    // two minutes while the outbox kept a message it could never deliver.
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
 
     // The outbox must retain the entry while the peer is unreachable.
     await waitUntil(
