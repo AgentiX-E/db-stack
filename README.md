@@ -2,12 +2,12 @@
 
 One monorepo for the three layers of the AgentiX-E database platform:
 
-| Package | Directory | Role |
-|---------|-----------|------|
-| `@agentix-e/db-cluster` | `cluster/` | Raft consensus, sharding, HA/fencing, WAL + PITR, transport (mTLS) |
-| `@agentix-e/db-federation` | `federation/` | Cross-datacenter replication: CDC, outbox, conflict resolution, anti-entropy |
+| Package                    | Directory     | Role                                                                                      |
+| -------------------------- | ------------- | ----------------------------------------------------------------------------------------- |
+| `@agentix-e/db-cluster`    | `cluster/`    | Raft consensus, sharding, HA/fencing, WAL + PITR, transport (mTLS)                        |
+| `@agentix-e/db-federation` | `federation/` | Cross-datacenter replication: CDC, outbox, conflict resolution, anti-entropy              |
 | `@agentix-e/db-operations` | `operations/` | Engine-agnostic operations framework — 21 packages (health, backup, metrics, security, …) |
-| `@agentix-e/db-stack-e2e` | `e2e/` | End-to-end acceptance suites + benchmarks (private, not published) |
+| `@agentix-e/db-stack-e2e`  | `e2e/`        | End-to-end acceptance suites + benchmarks (private, not published)                        |
 
 The layers depend in one direction only:
 
@@ -27,12 +27,14 @@ corepack enable
 pnpm install
 
 pnpm build          # tsc for every package, then an ESM-specifier codemod
-pnpm typecheck      # tsc --noEmit per package
+pnpm check:gates    # fails if a config or script is wired to nothing
+pnpm typecheck      # tsc --noEmit per package (the published surface)
+pnpm typecheck:tests # the same, for every test and benchmark in the tree
 pnpm test           # unit + integration suites (turbo)
 pnpm coverage       # v8 coverage per package
 pnpm coverage:gate  # fails unless EVERY dimension is ≥ 95% in EVERY package
 pnpm e2e            # real multi-process clusters over mutual TLS
-pnpm verify         # the whole local gate: lint → format → typecheck → coverage → e2e
+pnpm verify         # the whole local gate: gates → lint → format → typecheck → coverage → e2e
 pnpm bench:real     # YCSB workloads against a real 3-node cluster
 ```
 
@@ -40,14 +42,22 @@ pnpm bench:real     # YCSB workloads against a real 3-node cluster
 
 ```ts
 // Consensus
-import { RaftAdapter, RaftTcpTransport, SqliteStorage } from '@agentix-e/db-cluster';
+import {
+  RaftAdapter,
+  RaftTcpTransport,
+  SqliteStorage,
+} from "@agentix-e/db-cluster";
 
 // Cross-cluster replication
-import { FederationManager, MultiLeaderReplication, OutboxStore, TcpSecureTransport }
-  from '@agentix-e/db-federation';
+import {
+  FederationManager,
+  MultiLeaderReplication,
+  OutboxStore,
+  TcpSecureTransport,
+} from "@agentix-e/db-federation";
 
 // Operations framework
-import { health, backup, metrics } from '@agentix-e/db-operations';
+import { health, backup, metrics } from "@agentix-e/db-operations";
 ```
 
 The `@agentix-e/db-cluster/testing` entry ships the integration harness
@@ -56,18 +66,18 @@ packages can build real clusters in their own tests instead of copying internals
 
 ## Documentation
 
-| Start here | What it covers |
-|---|---|
-| [docs/getting-started.md](docs/getting-started.md) | Empty directory → 3-node mTLS cluster → a replicated write, in 15 minutes |
-| [docs/concepts.md](docs/concepts.md) | The mental model: consensus groups, shards, federation, guarantees |
-| [docs/architecture.md](docs/architecture.md) | High-level architecture and component inventory |
-| [docs/user-guide/cluster.md](docs/user-guide/cluster.md) | Consensus, sharding, snapshots, HA/fencing, sessions, watch, PITR |
-| [docs/user-guide/federation.md](docs/user-guide/federation.md) | CDC, outbox, conflict resolution, anti-entropy, topology |
-| [docs/user-guide/operations.md](docs/user-guide/operations.md) | The 21 engine-agnostic operations packages |
-| [docs/user-guide/engine-adapters.md](docs/user-guide/engine-adapters.md) | Plugging **your** database engine into the middleware |
-| [docs/user-guide/production-runbook.md](docs/user-guide/production-runbook.md) | Certificates, capacity, monitoring, failure handling, DR |
-| [docs/maturity.md](docs/maturity.md) | Feature-by-feature verification matrix, measured coverage, and the gaps |
-| [docs/glossary.md](docs/glossary.md) | Every term, defined as this project uses it |
+| Start here                                                                     | What it covers                                                            |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| [docs/getting-started.md](docs/getting-started.md)                             | Empty directory → 3-node mTLS cluster → a replicated write, in 15 minutes |
+| [docs/concepts.md](docs/concepts.md)                                           | The mental model: consensus groups, shards, federation, guarantees        |
+| [docs/architecture.md](docs/architecture.md)                                   | High-level architecture and component inventory                           |
+| [docs/user-guide/cluster.md](docs/user-guide/cluster.md)                       | Consensus, sharding, snapshots, HA/fencing, sessions, watch, PITR         |
+| [docs/user-guide/federation.md](docs/user-guide/federation.md)                 | CDC, outbox, conflict resolution, anti-entropy, topology                  |
+| [docs/user-guide/operations.md](docs/user-guide/operations.md)                 | The 21 engine-agnostic operations packages                                |
+| [docs/user-guide/engine-adapters.md](docs/user-guide/engine-adapters.md)       | Plugging **your** database engine into the middleware                     |
+| [docs/user-guide/production-runbook.md](docs/user-guide/production-runbook.md) | Certificates, capacity, monitoring, failure handling, DR                  |
+| [docs/maturity.md](docs/maturity.md)                                           | Feature-by-feature verification matrix, measured coverage, and the gaps   |
+| [docs/glossary.md](docs/glossary.md)                                           | Every term, defined as this project uses it                               |
 
 Internal artefacts — product whitepaper, detailed technical design, ADRs, roadmap, audit
 and progress reports — live in the companion repository
@@ -111,27 +121,27 @@ the packages needs.
 
 ## Testing philosophy
 
-* **Real, not simulated.** Cluster tests spawn OS processes that speak TLS 1.3 with
+- **Real, not simulated.** Cluster tests spawn OS processes that speak TLS 1.3 with
   mutual certificate verification. Federation tests run two independent clusters and
   replicate between them over a real TLS link. A node that is killed is a real process
   that dies; a certificate signed by a foreign CA is really rejected.
-* **Coverage is a floor, per dimension.** Lines, statements, functions and branches are
-  each gated at ≥ 95% per package, and implementation directories are *not* excluded
+- **Coverage is a floor, per dimension.** Lines, statements, functions and branches are
+  each gated at ≥ 95% per package, and implementation directories are _not_ excluded
   from measurement.
-* **No skipped suites in the gate.** Soak (`test:soak`) and micro-benchmark suites are
+- **No skipped suites in the gate.** Soak (`test:soak`) and micro-benchmark suites are
   the only ones outside the pull-request gate; they run on a schedule
   (`.github/workflows/benchmark.yml`) because they need wall-clock time, not because
   they are failing.
 
 ## Benchmarks and authoritative measures
 
-| Measure | Tool | Where |
-|---------|------|-------|
-| Throughput / latency percentiles | **YCSB** core workloads A–F against a real 3-node cluster | `e2e/bench/real-ycsb.ts`, nightly workflow |
-| Linearizability of concurrent histories | Wing & Gong / Knossos-style checker (`LinearizabilityChecker`) | `cluster/src/testing`, chaos suites |
-| Consensus safety | **TLA+** specs for joint consensus and log replication | `cluster/tla/` |
-| Crash/partition behaviour | Jepsen-style chaos harness (partitions, drops, leader kills) | `cluster/src/__tests__/chaos`, `federation/src/__tests__/chaos` |
-| Package consumability | import every published entry point from `dist` in plain Node | `scripts/check-package.mjs` |
+| Measure                                 | Tool                                                           | Where                                                           |
+| --------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------- |
+| Throughput / latency percentiles        | **YCSB** core workloads A–F against a real 3-node cluster      | `e2e/bench/real-ycsb.ts`, nightly workflow                      |
+| Linearizability of concurrent histories | Wing & Gong / Knossos-style checker (`LinearizabilityChecker`) | `cluster/src/testing`, chaos suites                             |
+| Consensus safety                        | **TLA+** specs for joint consensus and log replication         | `cluster/tla/`                                                  |
+| Crash/partition behaviour               | Jepsen-style chaos harness (partitions, drops, leader kills)   | `cluster/src/__tests__/chaos`, `federation/src/__tests__/chaos` |
+| Package consumability                   | import every published entry point from `dist` in plain Node   | `scripts/check-package.mjs`                                     |
 
 ## CI
 

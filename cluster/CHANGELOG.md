@@ -5,6 +5,43 @@ All notable changes to @agentix-e/db-cluster will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`pnpm typecheck:tests`** — the test tree and the benchmarks are now compiled with the
+  production compiler options (`strict`, `noUncheckedIndexedAccess` included). The package
+  had carried a `tsconfig.test.json` that no script, turbo task or workflow referenced; 297
+  type errors were sitting under it, several of them in tests that could not fail.
+- **`OutboxRecord`** on the published surface, and `IOutboxWriter.append` / `appendBatch`
+  declared on it. `RaftGroup` calls both — behind an `as any` — while `src/index.ts`
+  exported a *different* `IOutboxWriter` (`write`, `getLastWrittenIndex`) that no component
+  in the package calls. A third-party adapter could implement the documented interface and
+  still be unable to satisfy `RaftGroup`.
+
+### Changed
+
+- **`RaftAdapter.proposeAndWait` returns `{ index, term }`** instead of `void`. It was the
+  only caller that needed the position — `RaftGroup.proposeAndWait` — which appended the
+  outbox record with `raftIndex: 0` and then had no way to correct it.
+- **Breaking:** `IOutboxWriter` no longer declares `write` / `getLastWrittenIndex`. They were
+  never called; the interface described a contract no implementation used.
+
+### Fixed
+
+- **Outbox records for entries proposed without a `msgId` carried `msgId: undefined`**, so
+  every such entry collapsed onto one de-duplication key downstream. The record is now built
+  in one place (`RaftGroup.buildOutboxRecord`) and an entry that arrives without an identity
+  is given one.
+- **`RaftGroup.proposeAndWait` produced unpositioned outbox records** (`raftIndex: 0`), which
+  point-in-time recovery cannot place.
+- **`proposeBatch` passed an entry through `as any`** for no reason; the literal already
+  satisfies `Partial<ApplyEntry>`.
+- **`bench:ycsb` pointed at `bench/ycsb/run-ycsb.ts`**, which does not exist. It now runs the
+  package's own YCSB entry point (`bench/raft-ycsb.ts`).
+
+---
+
 ## [1.2.0] — 2026-11-15
 
 ### Added

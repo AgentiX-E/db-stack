@@ -5,6 +5,34 @@ All notable changes to @agentix-e/db-federation will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`OutboxEntry.msgId`** — the field `OutboxStore._indexById` has always indexed
+  ("O(1) ACK/delivery tracking via msgId → index"), documented in the store, and never
+  declared. The store read it through a cast, so no caller could set it and an ACK by
+  message id had nothing to resolve against.
+- **`OutboxEntryInput`** — the caller's contract for `add()` / `addBatch()`. `Omit<OutboxEntry,
+  'id'>` required `status`, `createdAt`, `lastAttemptAt`, `attemptCount` and `lastError`, every
+  one of which the store overwrites.
+- **`pnpm typecheck:tests`** — every test and benchmark is compiled with the production
+  compiler options. The package had carried a `tsconfig.test.json` that no script referenced;
+  317 type errors were sitting under it.
+
+### Changed
+
+- **`IMultiLeaderReplication.replicate(..., type?)`** — `type` is optional, which is what the
+  only implementation already does (`type ?? 'replicate'`).
+
+### Fixed
+
+- **`MultiLeaderReplication.replicate` passed four fields the outbox store discards.**
+- **`bench:ycsb` pointed at `bench/ycsb/run-ycsb.ts`**, which does not exist; it now runs
+  `bench/federation-ycsb.ts`.
+- **`OutboxStore` read `msgId` through `OutboxEntry & { msgId?: string }`**; the intersection
+  is gone now that the type declares the field.
+
 ## [1.1.0] — 2026-08-05
 
 ### Added

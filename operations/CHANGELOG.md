@@ -12,9 +12,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`FileAuditStore.close()`** — awaits every rotation compression still in flight.
   Background gzip is off the write path by design, but it was not awaitable, so a
   caller that shut the store down raced a compressor that still held a path.
+- **`IComponentRegistrar.registerFunctional`** — the convenience registration path that
+  `HealthOrchestrator` implements and every adapter, service and fixture in this repository
+  calls. It existed on the class and on no interface, so a consumer holding an
+  `IHealthOrchestrator` could not see it and every caller had to name the concrete class.
+  `FunctionalChecks` and `FunctionalCheckResult` name the closure shapes.
+- **`IAlertRuleManager.evaluateSnapshot(snapshot)`** — the only evaluation path that can
+  work. The interface previously declared `evaluate()` with no arguments, which the sole
+  implementation satisfied with `return []`: a consumer holding the interface could evaluate
+  rules forever and never see an alert.
+- **`pnpm typecheck:tests`** — all 21 packages' tests and the benchmarks are compiled with
+  the production compiler options. The package had carried a `tsconfig.test.json` that no
+  script referenced and that switched `noUncheckedIndexedAccess` off; 578 type errors were
+  sitting under it.
+
+### Changed
+
+- **`KeyManagerConfig.keyLength` / `hashAlgorithm` are optional**, and defaults are resolved
+  explicitly instead of by spreading an object that let an explicit `undefined` clobber them.
+- **`EnvelopeEncryptionConfig.autoGenerateKey` is optional** (the implementation already
+  treated it as "default true").
+- **`ILogger` declares the `(message, context)` overload** its implementations handled and
+  its documentation promised. Callers had already worked around it with `as any`.
+- **`InMemoryLogger.child()` returns `InMemoryLogger`**, which is what it always returned.
+- **`FederatedQueryRouter.setRoutingPolicy` takes `Partial<RoutingPolicy>`**, which the
+  implementation already merged over its defaults.
+- **Breaking:** `IAlertRuleManager.evaluate()` is gone, replaced by `evaluateSnapshot`.
 
 ### Fixed
 
+- **`AuditLogManager` built an entry with `hash: undefined as unknown as string`** and then
+  patched it. The hash is now computed from the entry that is actually stored.
+- **`SchemaFederator.executeRepair` caught `err: any`**, the only untyped throw path left in
+  the package; it narrows `unknown` now.
+- **`bench:ycsb` pointed at `bench/ycsb/run-ycsb.ts`**, which does not exist. Each package now
+  runs its own YCSB entry point.
 - **`FileAuditStore` deleted files it had not compressed.** Rotation reuses segment
   names (`audit-YYYYMMDD-0001.ndjson`), so a compressor that outlived its directory
   found *a* file at its old path — the next run's — and unlinked it, because the
