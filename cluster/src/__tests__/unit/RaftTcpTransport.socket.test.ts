@@ -117,6 +117,80 @@ describe('RaftTcpTransport — peer connections', () => {
   });
 });
 
+describe('RaftTcpTransport — reachability', () => {
+  it('reports a live, certificate-verified peer as reachable', () => {
+    // AC 44.1 — the question `send()` cannot answer on its own: `send()` is
+    // non-blocking and buffers when no connection is live, so an application that
+    // needs to know whether a frame left the process has to ask the socket.
+    expect(first.canReach(2)).toBe(true);
+  });
+
+  it('reports a peer with no connection as unreachable', () => {
+    expect(first.canReach(5)).toBe(false);
+  });
+
+  it('reports every peer as unreachable before start and after stop', async () => {
+    const fresh = transportFor(3, 0, [4]);
+    // No pool exists until start(), and a frame written now would go nowhere.
+    expect(fresh.canReach(4)).toBe(false);
+
+    const live = transportFor(5, 0);
+    await live.start();
+    await live.stop();
+    expect(live.canReach(1)).toBe(false);
+  });
+});
+
+describe('RaftTcpTransport — handler removal', () => {
+  it('stops delivering to a handler removed with offMessage', async () => {
+    // AC 44.2 — `onMessage` registers on the inner emitter, and nothing removed
+    // it. A transport that is stopped and reused therefore delivered every
+    // inbound message once per registration.
+    const delivered: RaftMessage[] = [];
+    const handler = (msg: RaftMessage): void => {
+      delivered.push(msg);
+    };
+
+    first.onMessage(handler);
+
+    await second.send(2, [
+      {
+        msgType: 5,
+        from: '2',
+        to: '1',
+        term: '9',
+        entries: [{ index: '5', term: '9', entryType: 0, data: 'before-off' }],
+      },
+    ]);
+    await vi.waitFor(() => expect(delivered).toHaveLength(1), 10_000);
+
+    first.offMessage(handler);
+    expect(first.listenerCount('message')).toBe(0);
+
+    // A second, still-registered handler proves the next frame really arrives —
+    // without it, `delivered` staying at 1 would also be explained by the frame
+    // never being sent, which is not what this case is about.
+    const observed: RaftMessage[] = [];
+    const probe = (msg: RaftMessage): void => {
+      observed.push(msg);
+    };
+    first.onMessage(probe);
+
+    await second.send(2, [
+      {
+        msgType: 5,
+        from: '2',
+        to: '1',
+        term: '10',
+        entries: [{ index: '6', term: '10', entryType: 0, data: 'after-off' }],
+      },
+    ]);
+    await vi.waitFor(() => expect(observed).toHaveLength(1), 10_000);
+    expect(delivered).toHaveLength(1);
+    first.offMessage(probe);
+  });
+});
+
 describe('RaftTcpTransport — message delivery', () => {
   it('delivers an uncompressed raft message with the sender id preserved', async () => {
     const received = nextMessage(second);

@@ -488,7 +488,18 @@ export class ExactlyOnceCDCPipeline {
           };
 
           // G1: Send — if transport fails, entry stays pending (retry)
-          await transport.send(msg);
+          //
+          // The refusal has to be acted on here. `send()` returns false when the
+          // transport cannot reach the peer, and the previous code discarded
+          // that answer and marked the entry delivered anyway — the one comment
+          // in this file that promised at-least-once delivery sat directly above
+          // the line that turned it into at-most-once. A refused entry now goes
+          // to the catch below, which keeps it pending and retries it until the
+          // outbox moves it to the dead-letter queue.
+          const sent = await transport.send(msg);
+          if (!sent) {
+            throw new Error(`Transport refused message to ${msg.targetPeerId ?? '(unknown)'}`);
+          }
 
           // G4: Mark delivered after successful transport
           await this.outbox.markDelivered(entry.id);

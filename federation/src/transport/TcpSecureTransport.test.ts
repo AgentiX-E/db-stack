@@ -235,7 +235,13 @@ describe('TcpSecureTransport — Get Connected Peers', () => {
 
     const peers = transport.getConnectedPeers();
     expect(peers).toHaveLength(2);
-    expect(peers[0]!.peerId).toBe('2');
+    // A legacy address list carries no identities, so both the logical and the
+    // wire id are synthesised; the numbers skip this node's own id so that the
+    // first peer is never mistaken for the local node.
+    expect(peers[0]!.peerId).toBe('node-2');
+    // A wire id that belongs to no configured peer is reported as the number it
+    // arrived as. It used to be indistinguishable from a mapped peer, because
+    // every unmapped id was also possible as a synthetic one.
     expect(peers[1]!.peerId).toBe('3');
   });
 });
@@ -377,7 +383,9 @@ describe('TcpSecureTransport — reconnection after an outage', () => {
     expect(delivered).toBe(false);
     // The refusal has to do more than report: `register` is how the pool is told
     // this peer should be reachable again.
-    expect(mockRaft.register).toHaveBeenCalledWith(expect.objectContaining({ id: 2, port: 7002 }));
+    // Synthetic peer ids skip this node's own id, so the first address is
+    // `node-2` (id 2) and the second is `node-3` (id 3).
+    expect(mockRaft.register).toHaveBeenCalledWith(expect.objectContaining({ id: 2, port: 7001 }));
     await transport.stop();
   });
 
@@ -428,19 +436,22 @@ describe('TcpSecureTransport — reconnection after an outage', () => {
     });
     await transport.start();
 
-    transport.reconnect('node-1');
+    // `node-1` is this node: the synthetic list starts at `node-2`.
+    transport.reconnect('node-2');
 
-    expect(mockRaft.register).toHaveBeenCalledWith({ id: 1, host: '127.0.0.1', port: 7000 });
+    expect(mockRaft.register).toHaveBeenCalledWith({ id: 2, host: '127.0.0.1', port: 7000 });
     await transport.stop();
   });
 
   it('derives wire ids from a peer list that gives none', async () => {
     // The `peers` shape does not require `transportNodeId`; without a derivation
-    // every peer would register as id `undefined`.
+    // every peer would register as id `undefined`. The number comes from the
+    // logical id, which is also the number in the peer's certificate common
+    // name — the two have to agree or the peer is unreachable.
     const mockRaft = mockWithStatus([]);
     const transport = new TcpSecureTransport({
-      nodeId: 'dc-east',
-      peers: [{ nodeId: 'alpha', host: '10.0.0.1', port: 7001 }],
+      nodeId: 'dc-east-3',
+      peers: [{ nodeId: 'dc-west-7', host: '10.0.0.1', port: 7001 }],
       tls: { cert: 'c', key: 'k', ca: 'ca' },
       initialRetryMs: 1,
       maxRetryMs: 5,
@@ -448,9 +459,9 @@ describe('TcpSecureTransport — reconnection after an outage', () => {
     });
     await transport.start();
 
-    transport.reconnect('alpha');
+    transport.reconnect('dc-west-7');
 
-    expect(mockRaft.register).toHaveBeenCalledWith({ id: 1, host: '10.0.0.1', port: 7001 });
+    expect(mockRaft.register).toHaveBeenCalledWith({ id: 7, host: '10.0.0.1', port: 7001 });
     await transport.stop();
   });
 

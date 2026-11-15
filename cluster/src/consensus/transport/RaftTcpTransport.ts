@@ -401,6 +401,11 @@ export class RaftTcpTransport extends EventEmitter {
     this.on('message', handler);
   }
 
+  /** Remove a handler registered with `onMessage`. */
+  offMessage(handler: MessageHandler): void {
+    this.off('message', handler);
+  }
+
   /**
    * Get current connection status (for monitoring)
    */
@@ -420,6 +425,36 @@ export class RaftTcpTransport extends EventEmitter {
       totalPeers: this._registeredNodes.size - 1, // Exclude self
       started: this._started,
     };
+  }
+
+  /**
+   * Whether a frame written right now would reach a live socket rather than a
+   * buffer.
+   *
+   * `send()` is deliberately non-blocking: with no connection it pushes the
+   * frame into `_pendingMessages` and returns, because blocking the Raft tick on
+   * network I/O costs an election. That is right for Raft and wrong for an
+   * application that needs to know whether a message left the process — the
+   * federation outbox marks an entry delivered on `true`, so "buffered" reported
+   * as "delivered" loses the message the moment the peer does not come back.
+   *
+   * Distinguishes the two by looking at the live connection, not at the last
+   * status snapshot: a peer that has gone away is still listed in
+   * `connectedPeers` until the pool's own event handler runs, which is up to a
+   * second later, and that second is exactly when the message is lost.
+   */
+  canReach(peerId: number): boolean {
+    if (this._stopped || !this.pool) return false;
+    const conn = this.pool.tryGetConnection(peerId);
+    if (!conn || !conn.connected || conn.destroyed) return false;
+    const socket = conn.socket;
+    if (socket === null || socket.destroyed || !socket.writable) return false;
+    // A socket exists from the moment `connect()` is called, which is well
+    // before the handshake decides whether the peer is who it claims to be. A
+    // connection whose certificate the CA rejected is not a way to reach anyone,
+    // and reporting it as one sends the message to a socket that is about to be
+    // destroyed.
+    return socket.authorized === true;
   }
 
   /**

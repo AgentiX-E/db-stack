@@ -141,7 +141,7 @@ describe('TcpSecureTransport — production transport construction', () => {
     const built = new TcpSecureTransport({
       nodeId: 'dc-east-1',
       listen: { host: '127.0.0.1', port: 0 },
-      peers: [{ nodeId: 'dc-west-1', host: '127.0.0.1', port: 7101 }],
+      peers: [{ nodeId: 'dc-west-2', host: '127.0.0.1', port: 7101 }],
       tls: TLS,
     });
 
@@ -151,17 +151,34 @@ describe('TcpSecureTransport — production transport construction', () => {
     expect(built.getStats().messagesSent).toBe(0);
   });
 
-  it('normalises peers without explicit wire ids to index + 1', () => {
+  it('derives each peer wire id from its logical id, not its position', () => {
+    // Position-based numbering made the first peer id 1 while this node also
+    // derived 1 from `dc-east-1`: two identities, one number, and nothing ever
+    // connected. The number now comes from the peer's own id.
     const built = new TcpSecureTransport({
-      nodeId: 'dc-east-1',
+      nodeId: 'dc-east-4',
       peers: [
-        { nodeId: 'dc-west-1', host: '127.0.0.1', port: 7101 },
-        { nodeId: 'dc-west-2', host: '127.0.0.1', port: 7102 },
+        { nodeId: 'dc-west-5', host: '127.0.0.1', port: 7101 },
+        { nodeId: 'dc-west-6', host: '127.0.0.1', port: 7102 },
       ],
       tls: TLS,
     });
 
     expect(built.getConnectedPeers()).toEqual([]);
+  });
+
+  it('refuses a peer list whose derived wire ids collide with this node', () => {
+    // `dc-east-1` and `dc-west-1` both derive 1. Silently accepting it made the
+    // two nodes one node on the wire, so the only honest outcome is an error
+    // while the configuration is still being edited.
+    expect(
+      () =>
+        new TcpSecureTransport({
+          nodeId: 'dc-east-1',
+          peers: [{ nodeId: 'dc-west-1', host: '127.0.0.1', port: 7101 }],
+          tls: TLS,
+        }),
+    ).toThrow(/Wire id 1 names both/);
   });
 
   it('derives peers from a legacy address list', () => {
@@ -188,7 +205,7 @@ describe('TcpSecureTransport — send() delivery confirmation', () => {
     await t.start();
 
     expect(await t.send(message('dc-west-2'))).toBe(false);
-    expect(t.getLastSendError()).toBe('peer dc-west-2 (6) not connected');
+    expect(t.getLastSendError()).toBe('peer dc-west-2 (6) not reachable');
     expect(t.getLastSendError()).not.toBeNull();
   });
 

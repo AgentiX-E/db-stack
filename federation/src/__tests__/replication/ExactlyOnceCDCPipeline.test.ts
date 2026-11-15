@@ -10,6 +10,7 @@
  * AC 47.7 — Backpressure when pending queue exceeds maxPending (G5)
  * AC 47.8 — Dead letter after max retries
  * AC 47.9 — webhook subscription delivery
+ * AC 47.10 — a refused send stays pending (at-least-once, not at-most-once)
  * E2E.1 — Full round-trip: produce → outbox → pump → transport → receive → dedup
  * E2E.2 — Crash recovery test: simulate crash, verify checkpoint resume
  */
@@ -206,6 +207,47 @@ describe('ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline', () => 
     expect(msg.sourcePeerId).toBe('n1');
     expect(msg.targetPeerId).toBe('remote-1');
     expect(msg.type).toContain('cdc_event');
+  });
+
+  // AC 47.10: a refused send must not be recorded as a delivery
+  it('AC 47.10: a refused send keeps the entry pending instead of marking it delivered', async () => {
+    // `send()` returning false is the transport saying "I could not reach the
+    // peer". The pump used to ignore that answer and call `markDelivered`
+    // anyway: the entry disappeared from the outbox, the checkpoint advanced, and
+    // the change was never replicated. The comment two lines above promised
+    // at-least-once; the code delivered at-most-once.
+    const refusing: ITransport = {
+      ...transport,
+      send: vi.fn(async (): Promise<boolean> => false),
+    };
+
+    pipeline = new ExactlyOnceCDCPipeline({
+      ...makePipelineConfig({ pumpIntervalMs: 30 }),
+      transport: refusing,
+      remoteNodeId: 'remote-1',
+    });
+
+    await pipeline.start();
+    pipeline.watchTable('users');
+    pipeline.appendChange({
+      tableName: 'users',
+      operation: 'insert',
+      oldValues: null,
+      newValues: { id: 7 },
+    });
+
+    await new Promise((r) => setTimeout(r, 250));
+    const metrics = await pipeline.getMetrics();
+    await pipeline.stop();
+
+    expect(refusing.send).toHaveBeenCalled();
+    // Not delivered — and still accounted for. Once the retry budget is spent the
+    // outbox moves the entry to the dead-letter queue, which is the designed
+    // terminal state: an operator can see it and replay it. What must never
+    // happen is the third possibility, where the entry is gone and nothing was
+    // sent.
+    expect(metrics.totalDelivered).toBe(0);
+    expect(metrics.pendingCount + metrics.deadLetterCount).toBeGreaterThanOrEqual(1);
   });
 
   // AC 47.4: G2 — At-most-once delivery via DedupRing
