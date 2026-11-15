@@ -184,17 +184,19 @@ export class TcpSecureTransport implements ITransport {
     // deliver them. Past the budget the interval is capped instead of abandoned.
     const delay = attempt > this._maxRetries ? maxMs : Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
 
-    const numericId = this.numericByLogical.get(peerId);
-    if (numericId === undefined || typeof this.transport.register !== 'function') {
+    // One lookup, one guard. The previous shape consulted `numericByLogical`
+    // first and then searched `resolvePeers()` again, which made the `!peer`
+    // branch unreachable — a second call to a pure function cannot disagree with
+    // the first unless the config changed underneath it — while still allocating
+    // a peer list on every reconnect.
+    const peer = resolvePeers(this.config).find((p) => p.nodeId === peerId);
+    if (!peer || typeof this.transport.register !== 'function') {
       return;
     }
 
-    const peer = resolvePeers(this.config).find((p) => p.nodeId === peerId);
-    if (!peer) return;
-
     try {
       this.transport.register({
-        id: numericId,
+        id: peer.transportNodeId,
         host: peer.host,
         port: peer.port,
       });
