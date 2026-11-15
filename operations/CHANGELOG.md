@@ -62,6 +62,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `close()` and then polls, bounded, for the observable state. A fixed sleep plus an
   exact file count is a coin flip on a loaded runner; the property under test is the
   split of entries between segments.
+- **The audit trail became unreadable as soon as it rotated.** `rotate()` archives the
+  retired segment as `.ndjson.gz`, and `query()`, `get()` and `count()` only ever opened
+  `.ndjson`. Every entry in an archived segment was on disk and invisible to the store:
+  `query()` returned only the current segment, `get()` could not find an entry by id, and
+  `count()` reported a number that silently shrank at each rotation. `createGunzip` was
+  imported and never called, which is what the unfinished path looked like. Scans now read
+  compressed segments, and a corrupt archive is skipped rather than aborting the scan.
+- **A segment could be counted twice while it was being archived.** Rotation writes the
+  `.gz` and only then unlinks the original; a query that landed in that window read both
+  copies and reported every entry twice. The archive now wins over its namesake.
+- **A `dataDir` that exists but is not a directory** was accepted at construction and failed
+  on the first write with ENOENT. The constructor reads the directory now, so the
+  configuration error surfaces where it is made.
 
 ## [1.2.0] — 2026-08-10
 

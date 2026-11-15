@@ -6,7 +6,8 @@
  *   - Automatic log rotation by size or time
  *   - Crash-safe writes (write to .tmp, fsync, rename)
  *   - Compression (gzip) of rotated files
- *   - Query support via streaming scan (bounded by maxScanLines)
+ *   - Query support via a bounded scan across active and compressed segments
+ *     (`maxScanLines`), so rotation does not make the trail unreadable
  *   - Pruning deletes rotated files older than retention period
  *
  * @module @agentix-e/db-operations-audit/impl
@@ -32,7 +33,7 @@ import {
 } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import { createGzip, createGunzip } from 'node:zlib';
+import { createGzip, gunzipSync } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import type { IAuditStore, WriteAuditEntryOptions, AuditQueryFilter } from '../interfaces/index.js';
 import type { AuditEntry } from '@agentix-e/db-operations-core/types';
@@ -141,6 +142,9 @@ export class FileAuditStore implements IAuditStore {
 
     // Inverted until now: the directory was created only if it already existed, so
     // a store pointed at a fresh path failed on its first write with ENOENT.
+    // A path that exists but is not a directory now fails here, at construction:
+    // `resolveActiveFile` reads the directory without a fallback, because a store
+    // that cannot list its own segments cannot safely choose one to append to.
     if (!existsSync(this.dataDir)) {
       mkdirSync(this.dataDir, { recursive: true });
     }
@@ -180,26 +184,21 @@ export class FileAuditStore implements IAuditStore {
 
   /** Find or create the active (current write) file. */
   private resolveActiveFile(): string {
-    try {
-      const files = readdirSync(this.dataDir);
-      // Find the highest sequence .ndjson that is not compressed
-      let active = '';
-      let maxSeq = -1;
-      for (const f of files) {
-        const match = f.match(new RegExp(`^${this.filePrefix}-(\\d{8})-(\\d{4})\\.ndjson$`));
-        if (match) {
-          const seq = parseInt(match[2]!, 10);
-          if (seq > maxSeq) {
-            maxSeq = seq;
-            active = join(this.dataDir, f);
-          }
+    const files = readdirSync(this.dataDir);
+    // Find the highest sequence .ndjson that is not compressed
+    let active = '';
+    let maxSeq = -1;
+    for (const f of files) {
+      const match = f.match(new RegExp(`^${this.filePrefix}-(\\d{8})-(\\d{4})\\.ndjson$`));
+      if (match) {
+        const seq = parseInt(match[2]!, 10);
+        if (seq > maxSeq) {
+          maxSeq = seq;
+          active = join(this.dataDir, f);
         }
       }
-      if (active) return active;
-    } catch {
-      /* ignore */
     }
-    return this.generateFilePath();
+    return active || this.generateFilePath();
   }
 
   /** Check if rotation is needed. */
@@ -351,66 +350,109 @@ export class FileAuditStore implements IAuditStore {
 
   // ── Internal ────────────────────────────────────────────────
 
-  /** Scan all .ndjson and .ndjson.gz files, returning parsed entries. */
+  /**
+   * Read a segment, decompressing it when rotation has archived it.
+   *
+   * Returns `null` for a segment that cannot be read or decoded. One damaged
+   * archive must not hide the entries in the segments after it, so the failure is
+   * scoped to the file rather than to the scan.
+   */
+  private readSegment(path: string, compressed: boolean): string | null {
+    try {
+      const raw = readFileSync(path);
+      return compressed ? gunzipSync(raw).toString('utf-8') : raw.toString('utf-8');
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The files worth reading, sorted, with an archived segment winning over a
+   * namesake that is being removed.
+   *
+   * Rotation writes `X.ndjson.gz` and only then unlinks `X.ndjson`. Between the
+   * two, both exist with the same entries in them, so a scan that reads both
+   * reports every one of them twice — and a duplicate in an audit report is a
+   * wrong number in a compliance statement. The archive is authoritative because
+   * it is written last and completely.
+   *
+   * Returns `null` when the directory cannot be listed.
+   */
+  private listReadableFiles(): string[] | null {
+    let files: string[];
+    try {
+      files = readdirSync(this.dataDir).sort();
+    } catch {
+      // The directory is gone (unmounted, pruned). An audit read over a missing
+      // store returns what exists — nothing — rather than throwing at the caller
+      // who is already investigating an incident.
+      return null;
+    }
+
+    const archived = new Set(files.filter((f) => f.endsWith('.ndjson.gz')).map((f) => f.slice(0, -3)));
+    return files.filter((f) => !(f.endsWith('.ndjson') && archived.has(f)));
+  }
+
+  /** Scan all `.ndjson`, `.ndjson.gz` and `.json` files, returning parsed entries. */
   private scanEntries(): AuditEntry[] {
     const results: AuditEntry[] = [];
     let scanned = 0;
 
-    try {
-      const files = readdirSync(this.dataDir).sort();
-      for (const f of files) {
-        if (scanned >= this.maxScanLines) break;
+    const files = this.listReadableFiles();
+    if (files === null) return results;
 
-        if (f.endsWith('.json')) {
-          // Single JSON array format
-          try {
-            const content = readFileSync(join(this.dataDir, f), 'utf-8');
-            const entries = JSON.parse(content) as AuditEntry[];
-            for (const e of entries) {
-              if (scanned >= this.maxScanLines) break;
-              results.push(e);
-              scanned++;
-            }
-          } catch {
-            /* ignore parse errors */
-          }
-        } else if (f.endsWith('.ndjson')) {
-          // NDJSON format
+    for (const f of files) {
+      if (scanned >= this.maxScanLines) break;
+
+      if (f.endsWith('.json')) {
+        // Single JSON array format
+        try {
           const content = readFileSync(join(this.dataDir, f), 'utf-8');
-          const lines = content.split('\n').filter((l) => l.trim().length > 0);
-          for (const line of lines) {
+          const entries = JSON.parse(content) as AuditEntry[];
+          for (const e of entries) {
             if (scanned >= this.maxScanLines) break;
-            try {
-              const entry = JSON.parse(line) as AuditEntry;
-              results.push(entry);
-              scanned++;
-            } catch {
-              /* skip malformed lines */
-            }
+            results.push(e);
+            scanned++;
+          }
+        } catch {
+          /* ignore parse errors */
+        }
+      } else if (f.endsWith('.ndjson') || f.endsWith('.ndjson.gz')) {
+        // NDJSON, compressed once rotation has archived the segment. Dropping the
+        // compressed ones made the trail unreadable after the first rotation: the
+        // entries were on disk and `query()`, `get()` and `count()` all reported
+        // that they were not.
+        const content = this.readSegment(join(this.dataDir, f), f.endsWith('.gz'));
+        if (content === null) continue;
+
+        for (const line of content.split('\n')) {
+          if (scanned >= this.maxScanLines) break;
+          if (line.trim().length === 0) continue;
+          try {
+            const entry = JSON.parse(line) as AuditEntry;
+            results.push(entry);
+            scanned++;
+          } catch {
+            /* skip malformed lines, including a torn final line */
           }
         }
-        // .gz files are not scanned for performance reasons
       }
-    } catch {
-      /* ignore */
     }
 
     return results;
   }
 
-  /** Count total lines across all NDJSON files. */
+  /** Count total lines across all NDJSON segments, compressed or not. */
   private lineCount(): number {
+    const files = this.listReadableFiles();
+    if (files === null) return 0;
+
     let count = 0;
-    try {
-      const files = readdirSync(this.dataDir);
-      for (const f of files) {
-        if (f.endsWith('.ndjson')) {
-          const content = readFileSync(join(this.dataDir, f), 'utf-8');
-          count += content.split('\n').filter((l) => l.trim().length > 0).length;
-        }
-      }
-    } catch {
-      /* ignore */
+    for (const f of files) {
+      if (!f.endsWith('.ndjson') && !f.endsWith('.ndjson.gz')) continue;
+      const content = this.readSegment(join(this.dataDir, f), f.endsWith('.gz'));
+      if (content === null) continue;
+      count += content.split('\n').filter((l) => l.trim().length > 0).length;
     }
     return count;
   }
