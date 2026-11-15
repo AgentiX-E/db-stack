@@ -65,7 +65,14 @@ export interface RaftConfig {
   preVote?: boolean;
   /** Enable check quorum (default: true). */
   checkQuorum?: boolean;
-  /** Snapshot interval (0 = disabled). Every N committed entries triggers snapshot. */
+  /**
+   * Entries between snapshots (default `DEFAULT_SNAPSHOT_INTERVAL` = 200).
+   *
+   * Lower keeps the log a restart replays short and pays for it in capture cost
+   * (measured: p99 proposal latency 31 ms at 100 versus 12 ms at 200 — retention is
+   * identical). Setting it above the write volume means no snapshot happens at all,
+   * which is a choice to replay every entry after a restart.
+   */
   snapshotInterval?: number;
   /** Max log entries before forced compaction (0 = no limit). */
   maxLogEntries?: number;
@@ -102,6 +109,28 @@ export interface RaftConfig {
   /** Local transport address (used for @maboke123/raft-core RaftConfig). */
   address?: string;
 }
+
+/**
+ * Entries between snapshots when the operator does not choose one.
+ *
+ * Measured on real 3-node mTLS clusters (`bench/snapshot-threshold-sweep.ts`, 600
+ * proposals per threshold):
+ *
+ * | threshold | retained log | snapshot@ | proposal p50 | proposal p99 |
+ * |---:|---:|---:|---:|---:|
+ * | 100 | 51 | 600 | 9.73 ms | 31.49 ms |
+ * | 200 | 51 | 600 | 9.05 ms | 12.36 ms |
+ * | 1000 | 651 | none | 8.95 ms | 11.26 ms |
+ * | 5000 | 651 | none | 8.76 ms | 10.61 ms |
+ *
+ * Two conclusions. A threshold above the write volume means *no* snapshot at all — the
+ * log holds every entry a restart would replay — which is why "leave it to the library
+ * default" is not a neutral choice. And 100 vs 200 changes nothing about retention
+ * (both end with the 51-entry tail) while costing four times the p99, because capture
+ * runs twice as often. 200 is raft-core's default, so this constant documents and
+ * pins existing behaviour rather than changing it.
+ */
+export const DEFAULT_SNAPSHOT_INTERVAL = 200;
 
 export interface CommittedEntry {
   index: string;
@@ -167,6 +196,8 @@ export class RaftAdapter {
 
   // Stored reference for getStorage() compatibility
   private sqliteStorage: any = null;
+  /** Storage opened from `storagePath`. Only this one is ours to close. */
+  private _ownsStorage = false;
 
   /** Concurrency limiter for proposeAndWait (CONCURRENCY_MAX=128).
    * Prevents burst-induced mass timeouts: Raft serializes through a single
@@ -204,6 +235,21 @@ export class RaftAdapter {
     tcpConfig?: RaftTcpTransportConfig,
     sharedTransport?: SharedTransport | { transport: SharedTransport; shardId: number },
   ): Promise<void> {
+    // A second init on a live adapter used to re-enter the whole build: it
+    // constructed a fresh SqliteStorage, assigned it over `this.sqliteStorage`,
+    // and left the previous handle open and unreachable. Depending on how far
+    // raft-core got before failing, the node could also keep serving on the old
+    // storage while the adapter believed it owned the new one. Refusing is the
+    // only outcome that cannot corrupt a node; `stop()` then `init()` is the
+    // supported way to restart. Checked before the handler is installed so a
+    // refused call changes nothing at all.
+    if (this.node || this.sqliteStorage) {
+      throw new SqlVecError(
+        'RaftAdapter is already initialized; call stop() before init() again',
+        SqlVecErrorCode.INTERNAL_ERROR,
+      );
+    }
+
     if (applyHandler) this.applyHandler = applyHandler;
 
     try {
@@ -214,11 +260,13 @@ export class RaftAdapter {
         // Existing SqliteStorage instance passed directly
         storage = new SqliteNodeStorage(this.config.storage);
         this.sqliteStorage = this.config.storage;
+        this._ownsStorage = false;
       } else if (this.config.storagePath) {
         const { SqliteStorage } = await import('../storage/SqliteStorage');
         const ss = new SqliteStorage({ file: this.config.storagePath, maxLogSize: 0 });
         ss.open();
         this.sqliteStorage = ss;
+        this._ownsStorage = true;
         storage = new SqliteNodeStorage(ss);
       } else if (this.config.useInMemoryStorage) {
         storage = new InMemoryNodeStorage();
@@ -399,11 +447,13 @@ export class RaftAdapter {
         heartbeatIntervalMs: Math.max(10, this.config.heartbeatTick * tickIntervalMs),
         // `snapshotInterval` was documented as "entries between snapshots" but never
         // reached raft-core, so an operator asking for a snapshot every 15 entries
-        // silently got the library default and the log grew to match. It is now
-        // forwarded — but only when the operator set it: applying this package's own
-        // default here would silently change snapshot frequency (and the cost that
-        // goes with it) for every existing deployment.
-        ...(this.config.snapshotInterval === undefined ? {} : { snapshotThreshold: this.config.snapshotInterval }),
+        // silently got the library default and the log grew to match. It is forwarded
+        // unconditionally now, with this package's own default when unset: leaving the
+        // number to the library means a dependency bump can change how much log a
+        // deployment replays after a restart, with nothing in this repository changing.
+        // The default is raft-core's current 200, so no existing deployment moves — it
+        // is now stated here, measured (`bench/snapshot-threshold-sweep.ts`) and tested.
+        snapshotThreshold: this.config.snapshotInterval ?? DEFAULT_SNAPSHOT_INTERVAL,
       };
 
       // ── Step 5: Create RaftNode ──────────────────────────────
@@ -430,6 +480,10 @@ export class RaftAdapter {
 
       logger.info({ nodeId: this.config.id }, '[RaftAdapter] Initialized with @maboke123/raft-core');
     } catch (err: unknown) {
+      // Release whatever got built before the failure. Nothing else can: the
+      // caller only sees a rejected promise and has no handle on the storage or
+      // the listener that a half-finished init already opened.
+      await this.releaseResources();
       throw new SqlVecError(
         `Failed to initialize @maboke123/raft-core: ${getErrorMessage(err)}`,
         SqlVecErrorCode.INTERNAL_ERROR,
@@ -728,20 +782,41 @@ export class RaftAdapter {
   }
 
   /**
-   * Get the length of the retained (not-yet-compacted) Raft log.
+   * How many entries the Raft log still holds, i.e. how much a restart must replay.
    *
    * This is the authoritative measure of bounded log growth: a healthy node
-   * compacts its log on snapshot, so `lastLog - applied` stays near the
-   * snapshot threshold instead of growing monotonically with the total number
-   * of committed entries. It intentionally differs from physical file size,
-   * which is sensitive to SQLite WAL freelist layout and does not shrink on
-   * DELETE-based compaction.
+   * compacts its log on snapshot, so the retained count stays near the snapshot
+   * threshold instead of growing with the total number of committed entries. It
+   * intentionally differs from physical file size, which is sensitive to SQLite
+   * WAL freelist layout and does not shrink on DELETE-based compaction.
+   *
+   * Counted from the log itself (`firstIndex .. lastIndex` inclusive), not from
+   * `lastLog - applied`: those two are equal only while a node is idle, because the
+   * apply loop keeps `applied` one step behind the head. The previous formula
+   * therefore reported `0` or `1` for a node whose log held six hundred entries, and
+   * every "the log stays bounded" assertion built on it passed without measuring.
    */
   async getRetainedLogLength(): Promise<number> {
-    const progress = await this.getProgress();
-    const lastLog = progress.lastLog ?? 0;
-    const applied = progress.applied ?? 0;
-    return Math.max(0, lastLog - applied);
+    const logManager = (
+      this.node as unknown as {
+        logManager?: { getFirstIndex?: () => number; getLastIndex?: () => number };
+      } | null
+    )?.logManager;
+    if (
+      !logManager ||
+      typeof logManager.getFirstIndex !== 'function' ||
+      typeof logManager.getLastIndex !== 'function'
+    ) {
+      return 0;
+    }
+    try {
+      const first = logManager.getFirstIndex();
+      const last = logManager.getLastIndex();
+      // An empty log reports first=1, last=0 (and a compacted one starts above 1).
+      return last < first ? 0 : last - first + 1;
+    } catch {
+      return 0;
+    }
   }
 
   /**
@@ -824,8 +899,27 @@ export class RaftAdapter {
    * does — then races its own previous incarnation for the port, and the loser
    * comes up unable to receive anything. Awaiting is source-compatible: a caller
    * that ignores the promise behaves exactly as before.
+   *
+   * Storage passed in through `config.storage` is *not* closed: this adapter did
+   * not create it, and a caller may hand the same storage to more than one
+   * group. Closing it here would pull the database out from under its owner,
+   * while a storage this adapter opened from `storagePath` must be closed or the
+   * process leaks a native handle it can never reach again.
    */
   async stop(): Promise<void> {
+    await this.releaseResources();
+  }
+
+  /**
+   * Tear down everything `init` built, in reverse order of construction.
+   *
+   * Shared by `stop()` and by `init`'s own failure path. An `init` that threw
+   * halfway used to leave the storage handle, the TLS listener and the timers
+   * running with no reference held by any caller: nothing in the public API
+   * suggested a cleanup was owed, so the correct usage leaked. Releasing on the
+   * way out makes a failed `init` a no-op instead of a trap.
+   */
+  private async releaseResources(): Promise<void> {
     const node = this.node;
     this.node = null;
     if (node) {
@@ -859,13 +953,16 @@ export class RaftAdapter {
       }
     }
 
-    if (this.sqliteStorage) {
+    const storage = this.sqliteStorage;
+    const ownsStorage = this._ownsStorage;
+    this.sqliteStorage = null;
+    this._ownsStorage = false;
+    if (storage && ownsStorage) {
       try {
-        this.sqliteStorage.close();
+        storage.close();
       } catch (err) {
         console.warn('[RaftAdapter] SQLite storage close failed:', err);
       }
-      this.sqliteStorage = null;
     }
   }
 

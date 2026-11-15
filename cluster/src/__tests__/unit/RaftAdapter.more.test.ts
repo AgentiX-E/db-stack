@@ -483,7 +483,7 @@ describe('RaftAdapter — snapshot API & resource teardown', () => {
   });
 
   // AC 34.35
-  it('stop() tears down all resources with error isolation', () => {
+  it('stop() tears down all resources with error isolation', async () => {
     const adapter = new RaftAdapter(minimalConfig());
     const node = {
       stop: vi.fn(() => {
@@ -510,8 +510,13 @@ describe('RaftAdapter — snapshot API & resource teardown', () => {
     (adapter as any).transport = transport;
     (adapter as any).originalTcpTransport = originalTcp;
     (adapter as any).sqliteStorage = sqlite;
+    // A storage this adapter opened itself: it is the one that must be closed,
+    // because nothing else holds a reference to it.
+    (adapter as any)._ownsStorage = true;
 
-    expect(() => adapter.stop()).not.toThrow();
+    // Awaited: error isolation means the promise resolves, not that a rejected
+    // promise is acceptable.
+    await expect(adapter.stop()).resolves.toBeUndefined();
     expect(node.stop).toHaveBeenCalled();
     expect(transport.stop).toHaveBeenCalled();
     expect(originalTcp.stop).toHaveBeenCalled();
@@ -519,6 +524,22 @@ describe('RaftAdapter — snapshot API & resource teardown', () => {
     expect((adapter as any).node).toBeNull();
     expect((adapter as any).transport).toBeNull();
     expect((adapter as any).originalTcpTransport).toBeNull();
+    expect((adapter as any).sqliteStorage).toBeNull();
+    expect((adapter as any)._ownsStorage).toBe(false);
+  });
+
+  it('stop() leaves a caller-supplied storage open', async () => {
+    const adapter = new RaftAdapter(minimalConfig());
+    const sqlite = { close: vi.fn() };
+
+    (adapter as any).sqliteStorage = sqlite;
+    (adapter as any)._ownsStorage = false;
+
+    await adapter.stop();
+    // The adapter did not open it, and the same storage may be shared with
+    // another group: closing it here would pull the database out from under
+    // its owner.
+    expect(sqlite.close).not.toHaveBeenCalled();
     expect((adapter as any).sqliteStorage).toBeNull();
   });
 

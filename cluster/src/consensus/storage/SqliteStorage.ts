@@ -34,6 +34,33 @@ import { resolveLogLevel } from '../../observability/logLevel';
 const logger = pino({ level: resolveLogLevel() });
 
 // ──────────────────────────────────────────
+//  Open handle accounting
+// ──────────────────────────────────────────
+
+/**
+ * Live better-sqlite3 handles owned by this module.
+ *
+ * A leaked handle is invisible to assertions: the process keeps running, the
+ * suite stays green, and the failure only shows up at teardown as
+ * `terminate called after throwing an instance of 'Napi::Error'` (exit 134) —
+ * no stack, no test name. Exposing the count makes "the middleware does not
+ * leak storage" a property a test can assert, which is the only form in which
+ * it can be kept true.
+ */
+let openHandleCount = 0;
+
+/**
+ * How many SQLite handles this module currently holds open.
+ *
+ * Every open should be matched by a close; suites assert this returns to its
+ * starting value. Deliberately no reset: a reset would let a leak be cleared
+ * rather than fixed.
+ */
+export function openSqliteHandleCount(): number {
+  return openHandleCount;
+}
+
+// ──────────────────────────────────────────
 //  Types
 // ──────────────────────────────────────────
 
@@ -200,8 +227,16 @@ export class SqliteStorage {
   /**
    * Open the SQLite database and create tables if needed.
    * Must be called before any other method.
+   *
+   * Idempotent. Calling it twice used to build a second better-sqlite3 database
+   * and assign it over the first, so the original handle was reachable from
+   * nowhere and could never be closed; the node then ran on a handle while the
+   * log file it thought it owned was still held by the orphan. Re-opening after
+   * `close()` is supported and reuses the same file.
    */
   open(): void {
+    if (this.db) return;
+
     // Ensure parent directory exists
     const dir = path.dirname(this.filePath);
     if (!fs.existsSync(dir)) {
@@ -209,6 +244,7 @@ export class SqliteStorage {
     }
 
     this.db = new Database(this.filePath);
+    openHandleCount += 1;
 
     // Apply PRAGMAs
     this.db.pragma(`journal_mode = ${this.opts.journalMode}`);
@@ -258,6 +294,12 @@ export class SqliteStorage {
 
   /**
    * Close the database connection.
+   *
+   * Idempotent, and it returns the object to the pre-open state so `open()` can
+   * bring it back. `_initialized` is cleared with the handle: leaving it set
+   * made a closed storage answer `isOpen` questions inconsistently and turned
+   * every later call into a `null.prepare` TypeError instead of the documented
+   * "Database not open".
    */
   close(): void {
     if (this.db) {
@@ -268,7 +310,9 @@ export class SqliteStorage {
       }
       this.db.close();
       this.db = null;
+      openHandleCount -= 1;
     }
+    this._initialized = false;
     this.stmtInsertLog = null;
     this.stmtGetLog = null;
     this.stmtGetLogRange = null;
@@ -907,6 +951,16 @@ export class SqliteStorage {
    */
   getDb(): Database.Database | null {
     return this.db;
+  }
+
+  /**
+   * Whether a live database handle is held.
+   *
+   * Cheap and synchronous, so callers (health checks, shutdown paths, tests)
+   * can ask before invoking a method that would otherwise throw.
+   */
+  get isOpen(): boolean {
+    return this.db !== null;
   }
 
   // ──────────────────────────────────────────
