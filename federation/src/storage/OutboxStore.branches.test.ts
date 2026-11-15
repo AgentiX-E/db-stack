@@ -255,31 +255,104 @@ describe('OutboxStore — markFailed missing main entry + housekeeping dead-lett
   });
 });
 
-describe('OutboxStore — isCapacityExceeded fallback guards', () => {
+describe('OutboxStore — isCapacityExceeded', () => {
+  let store: OutboxStore;
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cap-'));
+    store = createTestStore({ dataDir, mapSize: 16 * 1024 * 1024 });
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Replace the environment's stats (the object the store actually reads) for
+   * one assertion, or make the read throw.
+   */
+  function stubRootStats(stats: Record<string, number> | 'throw'): void {
+    const original = store['root'].getStats;
+    const stub =
+      stats === 'throw'
+        ? () => {
+            throw new Error('stats unavailable');
+          }
+        : () => stats;
+    store['root'].getStats = stub as unknown as typeof original;
+  }
+
+  it('reports capacity exceeded once 80% of the map is in use', () => {
+    stubRootStats({ pageSize: 1000, lastPageNumber: 900, mapSize: 1_000_000 });
+
+    expect(store.isCapacityExceeded()).toBe(true);
+  });
+
   it('returns false when getStats throws (defensive catch)', () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cap-'));
-    const s = createTestStore({ dataDir: tmp });
-    const orig = s['mainDb'].getStats;
-    s['mainDb'].getStats = () => {
-      throw new Error('stats unavailable');
-    };
-    expect(s.isCapacityExceeded()).toBe(false);
-    s['mainDb'].getStats = orig;
-    s.close();
-    fs.rmSync(tmp, { recursive: true, force: true });
+    stubRootStats('throw');
+
+    expect(store.isCapacityExceeded()).toBe(false);
   });
 
   it('guards against incomplete getStats shaping (pageSize/lastPageNumber/mapSize fallbacks)', () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cap2-'));
-    const s = createTestStore({ dataDir: tmp });
-    const orig = s['mainDb'].getStats;
-    // Return an object missing pageSize / lastPageNumber / mapSize to exercise
-    // the `|| 4096`, ternary `: 0`, and `|| this.mapSize` fallback branches.
-    s['mainDb'].getStats = () => ({});
-    expect(s.isCapacityExceeded()).toBe(false);
-    s['mainDb'].getStats = orig;
-    s.close();
-    fs.rmSync(tmp, { recursive: true, force: true });
+    // A partial stats object must not turn into NaN: the 4096 / 0 / configured
+    // map-size fallbacks keep the utilisation calculation at zero.
+    stubRootStats({});
+
+    expect(store.isCapacityExceeded()).toBe(false);
+  });
+
+  it('uses the configured map size when the environment does not report one', () => {
+    stubRootStats({ pageSize: 1024, lastPageNumber: 14_000 });
+
+    // 14_000 * 1024 = 14.3 MB of the configured 16 MB map → 85% → exceeded.
+    expect(store.isCapacityExceeded()).toBe(true);
+  });
+});
+
+describe('OutboxStore — dead letter and the msgId reverse index', () => {
+  let store: OutboxStore;
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-dlmsgid-'));
+    store = createTestStore({ dataDir, maxRetries: 1 });
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('drops the msgId index on dead-lettering and reindexes the revived entry', async () => {
+    const msgId = 'msg-needs-ack';
+    const entry = await store.add(makeEntry('dead-lettered', msgId));
+
+    // maxRetries=1: the first failure moves the entry out of the queue.
+    expect(store.markFailed(msgId, 'peer unreachable')).toBe(true);
+
+    const dead = store.getDeadLetterEntries();
+    expect(dead).toHaveLength(1);
+    expect(dead[0]!.id).toBe(entry.id);
+    expect(dead[0]!.msgId).toBe(msgId);
+    expect(dead[0]!.status).toBe('failed');
+    expect(dead[0]!.lastError).toBe('peer unreachable');
+
+    // The message id no longer resolves to a live entry.
+    expect(store.markFailed(msgId)).toBe(false);
+
+    expect(store.retryDeadLetter(entry.id)).toBe(true);
+    const [revived] = await store.fetchOldestPending(1);
+    expect(revived!.id).not.toBe(entry.id);
+    expect(revived!.msgId).toBe(msgId);
+    expect(revived!.attemptCount).toBe(0);
+
+    // An ACK by message id still finds the revived entry.
+    await store.markDelivered(msgId);
+    expect(store.isDelivered(msgId)).toBe(true);
+    expect(await store.getPendingCount()).toBe(0);
   });
 });
 
