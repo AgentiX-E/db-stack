@@ -17,6 +17,7 @@ Legend for the coverage column — test types actually executed against the feat
 | **E** | End-to-end: **separate OS processes over TLS 1.3 with mutual authentication** |
 | **P** | Performance: a benchmark that runs on a GitHub runner and fails on regression |
 | **R** | Recovery: crash, restart, snapshot install, log truncation                    |
+| **M** | Mutation: the source is altered on purpose and the suite must notice          |
 
 ---
 
@@ -27,7 +28,7 @@ Legend for the coverage column — test types actually executed against the feat
 | Capability                                    | Verification  | Notes                                                                                                                         |
 | --------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | Leader election, pre-vote, check-quorum       | U · I · E · P | Real elections in 3- and 5-node TLS clusters; median and p95 over five trials on a real cluster (`AC 29.1`)                    |
-| Log replication, commit index, apply ordering | U · I · L · E · P | Every entry applied in index order on every node; latency and throughput measured through `RaftAdapter` (`AC 29.6`, `AC 41.1`) |
+| Log replication, commit index, apply ordering | U · I · L · E · P · M | Every entry applied in index order on every node; latency and throughput measured through `RaftAdapter` (`AC 29.6`, `AC 41.1`) |
 | Entry position forwarded to the application   | U · I · C · E | `index`/`term` reach the engine; asserted end-to-end                                                                          |
 | Joint consensus membership change             | U · I · E     | C_old,new → C_new, rollback on failure                                                                                        |
 | Learner (non-voting) catch-up                 | U · I · E     | Promoted only after catching up                                                                                               |
@@ -36,7 +37,7 @@ Legend for the coverage column — test types actually executed against the feat
 | Snapshots: take, frame, install, compact      | U · I · R · E | 30-byte envelope, CRC32, position, cross-shard rejection                                                                      |
 | Restart from a snapshot, single node          | R · E         | The engine, not the log, is the recovery source                                                                               |
 | Restart from a snapshot, **whole cluster**    | R · E         | Three processes, snapshots every 15 entries, all killed and restarted: every key returns and the cluster accepts writes again |
-| Log compaction and retention limits           | U · I · B · P | Enforced bounds, no unbounded growth; retained log 21 → 21 across 300 proposals and 1.0–1.4 KB retained per proposal (`AC 41.5`, `AC 41.6`) |
+| Log compaction and retention limits           | U · I · B · P · M | Enforced bounds, no unbounded growth; retained log 21 → 21 across 300 proposals and 1.0–1.4 KB retained per proposal (`AC 41.5`, `AC 41.6`) |
 | Point-in-time recovery                        | U · I         | Records are positioned by Raft index                                                                                          |
 | Session and watch APIs                        | U · I · E     | Reads-your-writes, change notification                                                                                        |
 | Event bus                                     | U · I · B     | Ordered delivery, backpressure                                                                                                |
@@ -199,6 +200,7 @@ pnpm lint && pnpm format:check
 pnpm coverage:e2e                                    # e2e harness, same 95 % thresholds
 pnpm coverage:gate                                   # all four packages, every dimension
 pnpm e2e                                             # 35 real-process TLS acceptance tests
+pnpm test:mutation                                   # mutation score, cluster + federation
 (cd cluster && pnpm test:perf)                       # 22 benchmarks on a real 3-node TLS cluster
 pnpm verify                                          # all of the above, in order
 ```
@@ -207,6 +209,27 @@ The benchmark suite runs on GitHub runners from `.github/workflows/benchmark.yml
 are attached to each run so a regression is visible next to the change that caused it. The
 same suite runs on every pull request as the `benchmark` job in `ci.yml`, because a benchmark
 nobody calls is a benchmark that stays broken.
+
+**How the mutation score is produced.** Two modules are under mutation testing — the one that
+owns durable state (`cluster/src/consensus/storage/SqliteStorage.ts`) and the one that owns the
+wire (`federation/src/transport/TcpSecureTransport.ts`). Stryker alters the source one change at a
+time and runs the tests that cover the change; a change no test notices is a behaviour nothing
+constrains.
+
+| Package | Module | Mutants | Killed | Survived | Score | Threshold |
+|---|---|---:|---:|---:|---:|---:|
+| cluster | `SqliteStorage.ts` | 510 | 356–359 (+19 timeout) | 130–133 | **73.8–74.4 %** | break 70 |
+| federation | `TcpSecureTransport.ts` | 260 | 208 (+1 timeout) | 56 (+6 no coverage) | **77.1 %** | break 70 |
+
+A green suite says the assertions pass. It does not say they would fail if the behaviour changed —
+that is what the score adds, and it is why the surviving mutants are listed in the roadmap as work
+rather than reported as a number.
+
+The cluster score moves by about half a point between runs, which is why the break threshold sits
+three points below the observed value rather than one. The movement is not noise in the product: it
+comes from the 19 mutants that time out, whose verdict depends on how much of the runner the four
+test-runner processes get that minute. A threshold tight enough to catch that movement would fail on
+a busy CI machine and teach people to ignore it.
 
 **How the performance numbers are produced.** Every latency case goes through
 `src/testing/latency.ts`: an explicit warmup window that is discarded, then nearest-rank

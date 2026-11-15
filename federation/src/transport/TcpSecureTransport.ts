@@ -55,6 +55,13 @@ interface IRaftTransport {
     totalPeers: number;
     started: boolean;
   };
+  /**
+   * Whether a frame would reach a live socket rather than an in-memory buffer.
+   * Absent on doubles that have no sockets to inspect.
+   */
+  canReach?(peerId: number): boolean;
+  /** Detach a handler installed with `onMessage`. */
+  offMessage?(handler: MessageHandler): void;
   getBoundPort?(): number;
 }
 
@@ -107,6 +114,15 @@ export class TcpSecureTransport implements ITransport {
   private readonly logicalByNumeric = new Map<number, string>();
   /** logical peer id → numeric wire id */
   private readonly numericByLogical = new Map<string, number>();
+  /**
+   * The resolved peer list, computed once.
+   *
+   * Deriving it again on every reconnect meant re-running the wire-id rules —
+   * which can now throw on a configuration that cannot be addressed — inside a
+   * fire-and-forget path where the failure would surface as an unhandled
+   * rejection rather than as the configuration error it is.
+   */
+  private readonly peers: Array<TcpSecureTransportPeer & { transportNodeId: number }>;
   private started = false;
   private _messagesSent = 0;
   private _messagesReceived = 0;
@@ -124,9 +140,24 @@ export class TcpSecureTransport implements ITransport {
   constructor(config: TcpSecureTransportConfig) {
     this.config = config;
     this._uptimeStart = Date.now();
-    this.localId = config.transportNodeId ?? deriveNumericId(config.nodeId);
+    this.localId = requireNumericId(config.nodeId, config.transportNodeId, 'node');
 
-    const peers = resolvePeers(config);
+    const peers = resolvePeers(config, this.localId);
+    const clash = peers.find((peer) => peer.transportNodeId === this.localId);
+    if (clash) {
+      // Two nodes addressed by one wire id are one node as far as the transport
+      // is concerned: every frame this node sends to that peer is addressed to
+      // itself and dropped, and the peer's frames arrive here as if they were
+      // local. Nothing reports it — `send()` returns true into a routing table
+      // that has one entry where there should be two — so it has to be refused
+      // while the configuration is still in someone's hands.
+      throw new Error(
+        `Wire id ${this.localId} names both this node (${config.nodeId}) and peer ${clash.nodeId}; ` +
+          'give one of them an explicit transportNodeId',
+      );
+    }
+
+    this.peers = peers;
     for (const peer of peers) {
       this.logicalByNumeric.set(peer.transportNodeId, peer.nodeId);
       this.numericByLogical.set(peer.nodeId, peer.transportNodeId);
@@ -189,7 +220,7 @@ export class TcpSecureTransport implements ITransport {
     // branch unreachable — a second call to a pure function cannot disagree with
     // the first unless the config changed underneath it — while still allocating
     // a peer list on every reconnect.
-    const peer = resolvePeers(this.config).find((p) => p.nodeId === peerId);
+    const peer = this.peers.find((p) => p.nodeId === peerId);
     if (!peer || typeof this.transport.register !== 'function') {
       return;
     }
@@ -238,7 +269,15 @@ export class TcpSecureTransport implements ITransport {
       return false;
     }
 
-    const targetId = this.numericByLogical.get(msg.targetPeerId) ?? deriveNumericId(msg.targetPeerId);
+    const targetId = this.numericByLogical.get(msg.targetPeerId);
+    if (targetId === undefined) {
+      // An address that is not a configured peer used to be given a derived wire
+      // id and handed to the transport, which either buffered it forever or sent
+      // it to whatever node happened to hold that number. A message to an
+      // unknown peer is a routing error and has to be reported as one.
+      this._lastSendError = `peer ${msg.targetPeerId} is not a configured peer`;
+      return false;
+    }
 
     // Delivery confirmation, part of the at-least-once contract.
     //
@@ -251,9 +290,16 @@ export class TcpSecureTransport implements ITransport {
     //
     // Only transports that expose a typed numeric peer list can be checked —
     // injected test doubles have no `getStatus()` and skip the guard.
-    const status = this.transport.getStatus?.();
-    if (status && !status.connectedPeers.includes(targetId)) {
-      this._lastSendError = `peer ${msg.targetPeerId} (${targetId}) not connected`;
+    //
+    // Prefer the transport's live check over its status snapshot. The snapshot
+    // is refreshed by the pool's disconnect handler, so for up to a second after
+    // a peer goes away it still lists that peer; `canReach` asks the socket.
+    const reachable = this.transport.canReach
+      ? this.transport.canReach(targetId)
+      : (this.transport.getStatus?.()?.connectedPeers.includes(targetId) ?? true);
+    const status = this.transport.canReach ? null : this.transport.getStatus?.();
+    if ((status && !status.connectedPeers.includes(targetId)) || (this.transport.canReach && !reachable)) {
+      this._lastSendError = `peer ${msg.targetPeerId} (${targetId}) not reachable`;
       // Arm the channel while refusing the message. The outbox retries the
       // delivery, and each retry has to be able to make the peer reachable
       // again; a refusal that only reports the failure leaves recovery to a
@@ -408,32 +454,108 @@ export class TcpSecureTransport implements ITransport {
 
     this.transport.onMessage(handler);
     return () => {
-      // RaftTcpTransport clears its handler set on stop().
+      // Detach from the inner emitter. The previous body was empty and its
+      // comment claimed `RaftTcpTransport` cleared the handler set on stop() —
+      // it does not, so a stopped transport kept this object alive through the
+      // closure and a restarted one delivered every inbound message twice.
+      this.transport.offMessage?.(handler);
     };
   }
 }
 
-/** Normalise the two accepted peer shapes into one list with numeric ids. */
-function resolvePeers(config: TcpSecureTransportConfig): Array<TcpSecureTransportPeer & { transportNodeId: number }> {
-  if (config.peers && config.peers.length > 0) {
-    return config.peers.map((peer, index) => ({
-      ...peer,
-      transportNodeId: peer.transportNodeId ?? index + 1,
-    }));
+/**
+ * Normalise the two accepted peer shapes into one list with numeric ids.
+ *
+ * A peer's wire id is derived from its logical id with the same function that
+ * derives this node's, not from its position in the list. Position-based ids
+ * were the source of a defect that made a documented configuration unusable:
+ * `peers: [{ nodeId: 'dc-east' }]` gave the peer id 1 by position while this
+ * node derived its own id from `'dc-west'`, which also fell back to 1 — so both
+ * ends of a two-datacenter link claimed to be node 1, the routing table had one
+ * entry for two nodes, and nothing ever connected. Deriving from the id makes
+ * the two ends agree by construction, because both compute it from the same
+ * input.
+ */
+function resolvePeers(
+  config: TcpSecureTransportConfig,
+  localId: number,
+): Array<TcpSecureTransportPeer & { transportNodeId: number }> {
+  // The legacy address list carries no identities, only positions, so both the
+  // logical and the wire id are synthesised. Numbering by position alone made
+  // `nodeId: 'node-1'` — the id this project's own tests use — collide with its
+  // first peer, which the transport then treated as the same node. Synthetic
+  // numbers skip the local one.
+  let synthetic = 1;
+  const nextSynthetic = (): number => {
+    while (synthetic === localId) synthetic += 1;
+    return synthetic++;
+  };
+
+  const peers: Array<TcpSecureTransportPeer & { transportNodeId: number }> =
+    config.peers && config.peers.length > 0
+      ? config.peers.map((peer) => ({
+          ...peer,
+          transportNodeId: requireNumericId(peer.nodeId, peer.transportNodeId, 'peer'),
+        }))
+      : (config.peerAddresses ?? []).map((address) => ({
+          nodeId: `node-${nextSynthetic()}`,
+          host: extractHost(address),
+          port: extractPort(address),
+          transportNodeId: synthetic - 1,
+        }));
+
+  const seen = new Map<number, string>();
+  for (const peer of peers) {
+    const owner = seen.get(peer.transportNodeId);
+    if (owner !== undefined) {
+      throw new Error(
+        `Wire id ${peer.transportNodeId} names both peer ${owner} and peer ${peer.nodeId}; ` +
+          'give one of them an explicit transportNodeId',
+      );
+    }
+    seen.set(peer.transportNodeId, peer.nodeId);
   }
 
-  return (config.peerAddresses ?? []).map((address, index) => ({
-    nodeId: `node-${index + 1}`,
-    host: extractHost(address),
-    port: extractPort(address),
-    transportNodeId: index + 1,
-  }));
+  return peers;
 }
 
-function deriveNumericId(nodeId: string): number {
+/**
+ * Map a logical node id to the numeric id used on the wire, or `null` when the
+ * id carries no number to take.
+ *
+ * The contract this replaces was a silent fallback to the constant 1: every
+ * digit-free node id — `dc-west`, `eu-central`, `us-east` — became wire id 1, so
+ * two datacenters configured exactly as the documentation shows both claimed to
+ * be node 1, the routing table held one entry where there should have been two,
+ * and nothing ever connected.
+ *
+ * Guessing is not the fix. `RaftTcpTransport._handleIncoming` derives the
+ * identity of an inbound connection from the certificate's common name
+ * (`raft-node-<id>`), which means the wire id is not a local choice — it is a
+ * fact about the certificate, and any value chosen here that disagrees with it
+ * produces a peer that cannot be reached and an error that blames the network.
+ * Returning `null` lets the constructor refuse the configuration with the one
+ * sentence the user needs: give this node a `transportNodeId` that matches its
+ * certificate, or put the number in its id.
+ */
+function deriveNumericId(nodeId: string): number | null {
   const digits = nodeId.replace(/[^0-9]/g, '');
+  if (digits.length === 0) return null;
   const parsed = parseInt(digits, 10);
-  return Number.isNaN(parsed) ? 1 : parsed;
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/** The id, or the diagnosis. Never a guess that disagrees with the certificate. */
+function requireNumericId(nodeId: string, explicit: number | undefined, role: string): number {
+  if (explicit !== undefined) return explicit;
+  const derived = deriveNumericId(nodeId);
+  if (derived === null) {
+    throw new Error(
+      `${role} ${nodeId} has no number in its id, so its wire id cannot be derived; pass an explicit ` +
+        'transportNodeId that matches the number in its certificate common name (raft-node-<n>)',
+    );
+  }
+  return derived;
 }
 
 function extractHost(address: string): string {

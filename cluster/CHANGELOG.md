@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`RaftTcpTransport.canReach(peerId)`** — whether a frame written right now would reach a
+  live, certificate-verified socket rather than the in-memory buffer `send()` falls back to.
+  `send()` is non-blocking by design here (blocking the Raft tick on I/O costs an election),
+  which left callers unable to tell "sent" from "queued" — and one of them,
+  `@agentix-e/db-federation`'s outbox, was deleting entries on the wrong answer.
+- **`RaftTcpTransport.offMessage(handler)`** — the counterpart of `onMessage`. Without it a
+  stopped transport stayed registered on the inner emitter and held its owner alive after
+  shutdown.
+- **A `mutation` job in `ci.yml`** and `test:mutation` — Stryker scores `SqliteStorage.ts`
+  against its own tests: 510 mutants, **74.41 %** killed, `break: 72`. The score is a
+  measurement of the tests; it found 130 changes they do not notice, including an early
+  return that can be deleted without a single failure.
 - **`openSqliteHandleCount()`** — live better-sqlite3 handles owned by the package.
   A leaked handle is invisible to assertions: the suite stays green and the process
   aborts at teardown with `terminate called after throwing an instance of 'Napi::Error'`

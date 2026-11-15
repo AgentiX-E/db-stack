@@ -201,6 +201,29 @@ await transport.start();
 Certificates are the identity: a peer presenting a certificate from an unknown CA fails
 the handshake and appears as a connection error — never as a silent no-op.
 
+### 7.1 The wire id comes from the certificate
+
+Each node is addressed across the wire by a number, and that number is not a free choice:
+an inbound connection is identified by the number in its certificate's common name
+(`raft-node-<n>`). The transport therefore derives the number from the node id — `dc-west-7`
+becomes 7 — and refuses to start when it cannot:
+
+```
+Error: node dc-west has no number in its id, so its wire id cannot be derived; pass an
+explicit transportNodeId that matches the number in its certificate common name (raft-node-<n>)
+```
+
+Name nodes with a number (`dc-west-1`, `dc-west-2`) or pass `transportNodeId` explicitly.
+Two nodes that end up with the same number are refused at construction as well: they would
+otherwise be one node on the wire, the routing table would hold one entry for two peers, and
+`send()` would report success into it.
+
+> **Changed in 1.3.** Before this, every id without a digit fell back to `1`, which is also
+> the default id of a peer listed first. A federation configured with `dc-west` and
+> `dc-east` never connected — the listeners came up, `getConnectedPeers()` stayed empty, and
+> every send refused with `peer dc-east (1) not connected`. If you have such a
+> configuration, it was not working; give the nodes numbers.
+
 ---
 
 ## 8. Operating a federation

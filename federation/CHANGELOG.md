@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`TcpSecureTransport.canReach(peerId)`** on the transport seam, and
+  `RaftTcpTransport.canReach()` behind it — whether a frame written now would reach a live
+  socket rather than an in-memory buffer. `send()` is deliberately non-blocking inside Raft
+  (blocking the tick on I/O costs an election), so "buffered" and "sent" were
+  indistinguishable from the outside until this existed.
+- **`RaftTcpTransport.offMessage(handler)`** — the counterpart of `onMessage`. The receive
+  bridge returned an unsubscribe function that did nothing, and its comment claimed
+  `RaftTcpTransport` cleared the handler set on `stop()`, which it does not.
+- **A TLS fault-injection suite** (`src/__tests__/chaos/tls-fault-injection.test.ts`,
+  AC 43.1–43.11) — real listeners, real certificates, real handshakes; the faults are a peer
+  that is stopped, a peer that resets, a peer whose certificate comes from another CA, a peer
+  that accepts and never reads, and twenty reconnects that must leave no timer behind.
+  Every transport defect below was found by it on its first run.
+
 - **`OutboxEntry.msgId`** — the field `OutboxStore._indexById` has always indexed
   ("O(1) ACK/delivery tracking via msgId → index"), documented in the store, and never
   declared. The store read it through a cast, so no caller could set it and an ACK by
@@ -22,10 +36,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A peer's wire id is derived from its logical id, not from its position.** `peers:
+  [{ nodeId: 'dc-east' }]` used to give the peer id 1 because it was first in the list,
+  while a local `nodeId: 'dc-west'` also derived 1 — two nodes, one number. The number is
+  now taken from the id (`dc-7` → 7), which is also the number in the peer's certificate
+  common name (`raft-node-<n>`), so the two ends agree by construction.
+- **A wire id that cannot be derived is refused at construction.** `RaftTcpTransport`
+  identifies an inbound connection by its certificate CN, so a wire id is not a local
+  choice: any value that disagrees with the certificate produces a peer that is
+  unreachable for a reason no error message can show. A digit-free `nodeId` with no
+  explicit `transportNodeId` now fails immediately with the sentence that says what to
+  pass, instead of silently claiming id 1.
+- **`send()` to a peer that is not configured is refused.** It used to derive a wire id
+  for any address and hand it to the transport, which either buffered it forever or sent
+  it to whatever node held that number.
+
 - **`IMultiLeaderReplication.replicate(..., type?)`** — `type` is optional, which is what the
   only implementation already does (`type ?? 'replicate'`).
 
 ### Fixed
+
+- **`TcpSecureTransport.send()` reported success for a message it had only buffered.**
+  `RaftTcpTransport.send()` is non-blocking: with no connection it pushes the frame into
+  `_pendingMessages` and resolves. `TcpSecureTransport` treated that as delivered, so
+  `MultiLeaderReplication` called `outbox.markDelivered()` and the entry was gone —
+  measured: with the peer stopped, `send()` answered `true` while the buffer could never
+  flush, and the peer received nothing. The delivery contract in this package is
+  at-least-once; the code was delivering at-most-once.
+- **`ExactlyOnceCDCPipeline` ignored the result of `send()`.** The pump awaited the
+  transport, discarded the boolean and marked the entry delivered unconditionally — the
+  comment above it read "G1: Send — if transport fails, entry stays pending (retry)",
+  which was the opposite of what the two lines below did. A refused send now throws into
+  the existing handler, which keeps the entry pending until the retry budget is spent and
+  the outbox moves it to the dead-letter queue.
+- **Two nodes whose `nodeId` contained no digits were the same node on the wire.** Every
+  such id fell back to 1, which is also the default peer id, so a two-datacenter cluster
+  configured with `dc-west` / `dc-east` never connected at all: `getConnectedPeers()`
+  stayed empty and every `send()` refused with "peer dc-east (1) not connected" — a
+  configuration that reads as correct, fails at runtime, and names a peer that is up.
+  Measured before the fix: `A peers: []`, `B received: 0`.
+- **A peer's wire id collided with this node's when the address list was used.**
+  `peerAddresses: ['127.0.0.1:7001']` synthesised `node-1` for the peer by position, which
+  is the same id `nodeId: 'node-1'` derives. Synthetic ids now skip the local one.
+- **A wire-id collision is refused instead of accepted.** Two peers, or a peer and this
+  node, sharing one number produced a routing table with one entry for two nodes: frames
+  addressed to that peer were addressed to this node and dropped, and `send()` still
+  answered `true` into it.
+- **The receive bridge could not be unsubscribed.** `setupMessageBridge` returned an empty
+  function, so a stopped transport stayed registered on the inner emitter, holding the
+  object alive through the closure.
 
 - **`MultiLeaderReplication.replicate` passed four fields the outbox store discards.**
 - **`bench:ycsb` pointed at `bench/ycsb/run-ycsb.ts`**, which does not exist; it now runs
