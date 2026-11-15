@@ -132,7 +132,7 @@ because a harness bug produces confident, meaningless acceptance passes.
 | `cluster` | 98.4 % | 98.4 % | 98.8 % | 97.3 % |
 | `federation` | 99.3 % | 99.3 % | 99.8 % | 97.8 % |
 | `operations` | 98.2 % | 98.2 % | 98.9 % | 95.9 % |
-| `e2e` (harness) | 100 % | 100 % | 100 % | 95.4 % |
+| `e2e` (harness) | 100 % | 100 % | 100 % | 100 % |
 
 The `e2e` row covers `e2e/harness/support.ts` — process supervision, IPC, port allocation,
 log capture. The two `.mjs` programs it spawns (`raft-node.mjs`, `federation-gateway.mjs`)
@@ -175,7 +175,7 @@ pnpm typecheck && pnpm lint && pnpm format:check     # static gates
 (cd operations && pnpm coverage)
 pnpm coverage:e2e                                    # e2e harness, same 95 % thresholds
 pnpm coverage:gate                                   # all four packages, every dimension
-pnpm e2e                                             # 29 real-process TLS acceptance tests
+pnpm e2e                                             # 30 real-process TLS acceptance tests
 pnpm verify                                          # all of the above, in order
 ```
 

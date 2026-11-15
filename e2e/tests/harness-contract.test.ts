@@ -214,6 +214,39 @@ describe('harness contract', () => {
     }
   }, 20_000);
 
+  it('drops blank output and caps the log tail it keeps', async () => {
+    // Two rules that only matter under load: a chunk that trims to nothing must not
+    // occupy a slot in the tail (a node that ends every line with a newline emits
+    // plenty of them), and the tail must stay bounded when a wedged node spews
+    // thousands of lines. Both are driven deterministically here rather than left to
+    // whichever child happens to be chatty on a given platform — coverage that varies
+    // by runner is a flaky gate, which is worse than no gate.
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], {
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+    });
+    const node = new ChildNode('blank-lines', child);
+    try {
+      child.stdout!.emit('data', Buffer.from('   \n'));
+      child.stderr!.emit('data', Buffer.from('\n'));
+      expect(node.stdoutTail).toEqual([]);
+      expect(node.stderrTail).toEqual([]);
+
+      for (let i = 0; i < 210; i += 1) child.stdout!.emit('data', Buffer.from(`line ${i}`));
+      for (let i = 0; i < 45; i += 1) child.stderr!.emit('data', Buffer.from(`err ${i}`));
+      expect(node.stdoutTail).toHaveLength(200);
+      expect(node.stdoutTail.at(-1)).toBe('line 209');
+      expect(node.stderrTail).toHaveLength(40);
+      expect(node.stderrTail.at(-1)).toBe('err 44');
+
+      // A dead child's stdin can raise EPIPE after it exits; that must be swallowed
+      // rather than crash the suite that is busy asserting something else.
+      expect(() => child.stdin!.emit('error', new Error('EPIPE'))).not.toThrow();
+    } finally {
+      node.kill();
+      await node.waitForExit();
+    }
+  }, 20_000);
+
   it('waitUntil gives up with a message naming the condition', async () => {
     const error = await waitUntil(async () => undefined, 150, 'an impossible condition', 25)
       .then(() => undefined)
