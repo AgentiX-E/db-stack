@@ -21,10 +21,10 @@ export class NoopLogger implements ILogger {
     return this;
   }
 
-  trace = NOOP;
-  debug = NOOP;
-  info = NOOP;
-  warn = NOOP;
-  error = NOOP;
-  fatal = NOOP;
+  trace: ILogger['trace'] = NOOP;
+  debug: ILogger['debug'] = NOOP;
+  info: ILogger['info'] = NOOP;
+  warn: ILogger['warn'] = NOOP;
+  error: ILogger['error'] = NOOP;
+  fatal: ILogger['fatal'] = NOOP;
 }
