@@ -124,13 +124,39 @@ function createRouterWithPeers(count: number): FederationQueryRouter {
 
 // ── Bench helpers ──
 
-function bench(label: string, fn: () => void, limitNs: number): void {
+/**
+ * Latency benchmark.
+ *
+ * `P50` in a label is a claim about a distribution. This helper used to take a
+ * single sample — the first call, which carries process warm-up, JIT and module
+ * initialisation. That is what failed on a runner at 1.0086 ms against a 1 ms
+ * limit for a `resolveRoute` call that costs 380 ns (median of 501 samples,
+ * measured on the same commit): the number described start-up, not routing, and
+ * whether it cleared the budget depended on how busy the runner was.
+ *
+ * Warm up, then report the median and the p99 of `iterations` calls. The budgets
+ * are unchanged; only the quantity being compared to them is now the one their
+ * labels name.
+ */
+function bench(label: string, fn: () => void, limitNs: number, iterations = 501): void {
   it(label, () => {
-    const start = process.hrtime.bigint();
-    fn();
-    const elapsed = Number(process.hrtime.bigint() - start);
-    process.stdout.write(`\n  [${label}] ${(elapsed / 1e6).toFixed(3)}ms (${elapsed}ns, limit=${limitNs}ns)`);
-    expect(elapsed).toBeLessThan(limitNs);
+    for (let i = 0; i < 50; i++) fn();
+
+    const samples: number[] = [];
+    for (let i = 0; i < iterations; i++) {
+      const start = process.hrtime.bigint();
+      fn();
+      samples.push(Number(process.hrtime.bigint() - start));
+    }
+    samples.sort((a, b) => a - b);
+
+    const p50 = samples[Math.floor(iterations / 2)]!;
+    const p99 = samples[Math.floor(iterations * 0.99)]!;
+    process.stdout.write(
+      `\n  [${label}] p50=${(p50 / 1e6).toFixed(3)}ms p99=${(p99 / 1e6).toFixed(3)}ms ` +
+        `(limit=${limitNs}ns, n=${iterations})`,
+    );
+    expect(p50).toBeLessThan(limitNs);
   });
 }
 
