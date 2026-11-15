@@ -136,14 +136,30 @@ data keys instead of rewriting the database.
 ```ts
 import { FileAuditStore } from '@agentix-e/db-operations-audit';
 
-const audit = new FileAuditStore({ path: '/var/log/db/audit.jsonl' });
-await audit.append({ action: 'config.update', actor: { id: 'alice' }, resource: { id: 'replica-set' },
-  severity: 'info', category: 'admin', message: 'increased max_connections' });
-const page = await audit.query({ search: 'max_connections', sortBy: 'timestamp', sortDir: 'desc' });
+// `dataDir` is the directory, not a file: the store rotates within it
+// (audit-YYYYMMDD-0001.ndjson, then .ndjson.gz) and creates it if absent.
+const audit = new FileAuditStore({ dataDir: '/var/log/db', maxAgeMs: 24 * 60 * 60 * 1000 });
+
+await audit.write({
+  operation: 'config.update',
+  actor: 'alice',
+  resource: 'replica-set',
+  result: 'success',
+  severity: 'info',
+  details: { setting: 'max_connections', from: 100, to: 200 },
+});
+
+const recent = await audit.query({ actor: 'alice', limit: 50 });
+
+// Rotation compresses the previous segment in the background. `close()` waits for
+// it, so a shutdown never leaves a half-written archive behind.
+await audit.close();
 ```
 
 Audit entries are hash-chained; tampering with an earlier record breaks verification of
-everything after it.
+everything after it. `close()` is optional on `IAuditStore` — in-memory stores have
+nothing to drain — but a file-backed store should be closed before the directory it owns
+is moved or deleted.
 
 ### 3.6 Rolling upgrade
 
