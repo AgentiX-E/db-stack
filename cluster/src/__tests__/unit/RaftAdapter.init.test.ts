@@ -260,7 +260,9 @@ describe('RaftAdapter.init — storage & transport construction', () => {
     const transport = new MockTransport(String(1));
     const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport }));
     const applied: string[] = [];
-    await adapter.init((data) => applied.push(data));
+    await adapter.init((data) => {
+      applied.push(data);
+    });
 
     expect((adapter as any).node).not.toBeNull();
     expect((adapter as any).transport).toBe(transport);
@@ -319,7 +321,9 @@ describe('RaftAdapter.init — storage & transport construction', () => {
     const transport = new MockTransport(String(1));
     const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport }));
     const applied: string[] = [];
-    await adapter.init((data) => applied.push(data));
+    await adapter.init((data) => {
+      applied.push(data);
+    });
 
     // The state machine's applyHandler closure increments committedCount and
     // delegates to the adapter's applyHandler.
@@ -335,7 +339,9 @@ describe('RaftAdapter.init — storage & transport construction', () => {
     const transport = new MockTransport(String(1));
     const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport }));
     const applied: string[] = [];
-    await adapter.init((data) => applied.push(data));
+    await adapter.init((data) => {
+      applied.push(data);
+    });
 
     const node = (adapter as any).node;
     const expectedIndex = node.getLastApplied() + 1;

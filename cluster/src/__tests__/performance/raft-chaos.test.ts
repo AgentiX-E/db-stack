@@ -124,7 +124,7 @@ describe('Raft Chaos Engineering', () => {
       process.stdout.write(`\n  [Failover] L=${leaderId} → ${newLeader.id} term=${currentTerm} → ${newTerm}`);
 
       for (let i = 1; i < terms.length; i++) {
-        expect(terms[i]).toBeGreaterThanOrEqual(terms[i - 1]);
+        expect(terms[i]!).toBeGreaterThanOrEqual(terms[i - 1]!);
       }
       process.stdout.write('\n');
     },

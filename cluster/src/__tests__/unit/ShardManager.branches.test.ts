@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ShardManager } from '../../shard/ShardManager';
 import { HashShardStrategy } from '../../shard/ShardStrategy';
 import type { IShardStrategy } from '../../interfaces/shard/IShardStrategy';
+import type { OperationResult } from '../../interfaces/types';
 
 function failingStrategy(): IShardStrategy {
   return {
@@ -74,7 +75,7 @@ describe('ShardManager — branch completion', () => {
         getShardForKey: vi.fn(),
         computeAssignments: vi.fn(
           () =>
-            new Promise((resolve) => {
+            new Promise<OperationResult<Record<string, string[]>>>((resolve) => {
               // Never resolves synchronously — keeps rebalancing flag true.
               setTimeout(() => resolve({ success: true, data: {} }), 50);
             }),

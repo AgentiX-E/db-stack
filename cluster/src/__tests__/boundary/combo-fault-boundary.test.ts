@@ -70,30 +70,21 @@ describe('Boundary: Composite Faults (CF)', () => {
   );
 
   it(
-    'CF.2: 3× cycle — partition + propose + compact + heal',
+    // The name used to claim a partition. TestCluster wires replicas in-process
+    // and has no transport to cut, so no node was ever isolated and the case
+    // measured propose+compact only. Real partitioning needs the chaos layer
+    // (`ChaosFaultV2.partition`, exercised by the chaos suite); the honest name
+    // is the one below.
+    'CF.2: 3× cycle — propose + compact with a rotating target, no partition',
     async () => {
       await withCluster(3, async (cluster) => {
         // 3 cycles: each cycle isolates a different node,
         // proposes on majority, compacts, then heals
         for (let cycle = 0; cycle < 3; cycle++) {
-          const nodes = (cluster as any).nodes as Array<{
-            id: number;
-            adapter: {
-              proposeAndWait: (d: string) => Promise<void>;
-              compactLogs: () => Promise<void>;
-              getAppliedIndex: () => Promise<number>;
-            };
-          }>;
+          const nodes = cluster.nodes;
 
           const leader = await cluster.findLeader();
-          const isolateId = nodes[cycle % nodes.length].id;
-
-          // Isolate with partition
-          const transport = nodes.find((n) => n.id === isolateId)?.adapter as any;
-          if (transport?._forceStop) {
-            // Can't truly partition TestCluster — simulate by overloading
-            // the isolated node
-          }
+          const targetId = nodes[cycle % nodes.length]!.id;
 
           // Propose on active nodes
           for (let i = 0; i < 20; i++) {
@@ -105,14 +96,19 @@ describe('Boundary: Composite Faults (CF)', () => {
           }
 
           // Compact logs
-          await leader.adapter.compactLogs();
+          await leader.adapter.compactLogs(await leader.adapter.getAppliedIndex());
 
-          console.log(`[CF.2] Cycle ${cycle}: leader ${isolateId}, index=${await leader.adapter.getAppliedIndex()}`);
+          console.log(`[CF.2] Cycle ${cycle}: leader ${targetId}, index=${await leader.adapter.getAppliedIndex()}`);
         }
 
-        // Verify cluster still works
+        // Verify the cluster still works, and that the cycles actually moved it.
+        // The assertion uses the position the proposal returns: the applied
+        // index is published by raft's apply loop on its own schedule, so
+        // comparing two reads of it here measures the loop, not the proposal.
         const finalLeader = await cluster.findLeader();
-        await finalLeader.adapter.proposeAndWait('cf2-final');
+        const before = await finalLeader.adapter.getAppliedIndex();
+        const committed = await finalLeader.adapter.proposeAndWait('cf2-final');
+        expect(Number(committed.index)).toBeGreaterThan(before);
         console.log('[CF.2] 3 cycles completed');
       });
     },
@@ -132,7 +128,7 @@ describe('Boundary: Composite Faults (CF)', () => {
         let successes = 0;
         let failures = 0;
         let leadershipChanges = 0;
-        let currentLeader = leader.nodeId;
+        let currentLeader = leader.id;
 
         for (let round = 0; round < 5; round++) {
           // Find current leader
@@ -140,9 +136,9 @@ describe('Boundary: Composite Faults (CF)', () => {
           try {
             const found = await cluster.findLeader();
             leaderNode = found;
-            if (found.nodeId !== currentLeader) {
+            if (found.id !== currentLeader) {
               leadershipChanges++;
-              currentLeader = found.nodeId;
+              currentLeader = found.id;
             }
           } catch {
             // Election in progress

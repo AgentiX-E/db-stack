@@ -120,7 +120,7 @@ describe('ShardStateMachine', () => {
 
   describe('snapshot round-trip', () => {
     it('should round-trip through takeSnapshot and installSnapshot', async () => {
-      let state = Buffer.alloc(0);
+      let state: Buffer = Buffer.alloc(0);
 
       const sm = new ShardStateMachine({
         takeSnapshotCallback: () => state,

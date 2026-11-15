@@ -59,9 +59,9 @@ describe('Raft Throughput & Latency Benchmark', () => {
 
       const sorted = [...latencies].sort((a, b) => a - b);
       const mean = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-      const median = sorted[50];
-      const p95 = sorted[94];
-      const p99 = sorted[98];
+      const median = sorted[50]!;
+      const p95 = sorted[94]!;
+      const p99 = sorted[98]!;
       const totalTime = sorted.reduce((a, b) => a + b, 0);
       const throughput = totalTime > 0 ? (100 / totalTime) * 1000 : 0;
 
@@ -103,8 +103,8 @@ describe('Raft Throughput & Latency Benchmark', () => {
       const sorted = [...latencies].sort((a, b) => a - b);
       process.stdout.write(
         `\n  [Latency 50] mean=${Math.round(mean)}ms ` +
-          `median=${Math.round(sorted[24])}ms ` +
-          `P99=${Math.round(sorted[48])}ms\n`,
+          `median=${Math.round(sorted[24]!)}ms ` +
+          `P99=${Math.round(sorted[48]!)}ms\n`,
       );
     },
     BENCH_TIMEOUT,

@@ -12,7 +12,7 @@
  * .catch is triggered by spying delayMs to reject, simulating a timer failure.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OnlineShardMigration } from '../../shard/OnlineShardMigration';
 
 function asAny(m: OnlineShardMigration): any {

@@ -107,7 +107,7 @@ function waitForMessage(
   filter?: (msg: WorkerMessage) => boolean,
 ): Promise<WorkerMessage> {
   const existing = nodes.flatMap((n) => n.messages.filter((m) => m.type === type && (!filter || filter(m))));
-  if (existing.length > 0) return Promise.resolve(existing[0]);
+  if (existing.length > 0) return Promise.resolve(existing[0]!);
 
   return new Promise<WorkerMessage>((resolve, reject) => {
     const checkInterval = setInterval(() => {
@@ -210,7 +210,7 @@ describe('Raft Core Multi-Node Cluster', () => {
       const id = i + 1;
       const peers = ports.map((p, idx) => ({ id: idx + 1, host: '127.0.0.1', port: p })).filter((p) => p.id !== id);
       const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), `raft-core-test-n${id}-`));
-      const node = createNode(id, ports[i], peers, certs.nodes[i], dataDir);
+      const node = createNode(id, ports[i]!, peers, certs.nodes[i]!, dataDir);
       newNodes.push(node);
     }
 

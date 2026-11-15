@@ -82,7 +82,7 @@ describe('LTS: Long-Term Stability', () => {
         cluster = new TestCluster({ nodeCount: 3 });
         await cluster.start();
         // Verify all nodes healthy with leader
-        const leader = await cluster.findLeader(20_000);
+        const leader = await cluster.findLeader();
         expect(leader).toBeDefined();
         expect(leader.adapter).toBeDefined();
         return;
@@ -187,7 +187,7 @@ describe('LTS: Long-Term Stability', () => {
 
         // Leader changes
         try {
-          const currentLeader = await cluster.findLeader(5_000);
+          const currentLeader = await cluster.findLeader();
           if (currentLeader) {
             const cid = currentLeader.id ?? -1;
             if (lastLeader !== null && cid !== lastLeader) {
@@ -214,7 +214,7 @@ describe('LTS: Long-Term Stability', () => {
         // than by the total number of committed entries.
         let retainedLog = 0;
         try {
-          const leader = await cluster.findLeader(5_000);
+          const leader = await cluster.findLeader();
           if (leader?.adapter) {
             retainedLog = await leader.adapter.getRetainedLogLength();
           }
@@ -257,7 +257,7 @@ describe('LTS: Long-Term Stability', () => {
       expect(snapshots.length).toBeGreaterThanOrEqual(2);
 
       // LTS.1: Throughput — final throughput must be positive (system still working)
-      const finalSnap = snapshots[snapshots.length - 1];
+      const finalSnap = snapshots[snapshots.length - 1]!;
       console.log(`[LTS] Throughput: final=${finalSnap.throughput.toFixed(1)} ops/sec`);
       if (THROUGHPUT_FLOOR_RATIO > 0) {
         // Multi-core: compare second half to first half
@@ -308,7 +308,7 @@ describe('LTS: Long-Term Stability', () => {
       expect(leaderChanges).toBeLessThanOrEqual(LEADER_CHANGES_MAX);
 
       // LTS.6: System responsive at end
-      const finalLeader = await cluster.findLeader(15_000);
+      const finalLeader = await cluster.findLeader();
       expect(finalLeader).toBeDefined();
       expect(finalLeader.adapter).toBeDefined();
       await finalLeader.adapter.proposeAndWait(`lts-final-check-${Date.now()}`);

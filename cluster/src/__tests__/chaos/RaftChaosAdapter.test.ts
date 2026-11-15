@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SeededRandom } from '../chaos-harness';
-import type { ChaosConfig } from '../chaos-harness';
+import { SeededRandom } from './chaos-harness';
+import type { ChaosConfig } from './chaos-harness';
 import { RaftChaosAdapter, RaftChaosScenarios } from './RaftChaosAdapter';
 import type { IChaosInjectingTransport } from './RaftChaosAdapter';
 

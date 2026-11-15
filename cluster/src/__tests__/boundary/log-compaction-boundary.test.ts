@@ -79,7 +79,7 @@ describe('Boundary: Raft Log Compaction', () => {
 
         // Verify all nodes responsive — no crash after 10k entries
         for (let i = 0; i < 3; i++) {
-          const nodeLeader = await cluster.findLeader(5_000);
+          const nodeLeader = await cluster.findLeader();
           expect(nodeLeader).toBeDefined();
         }
         console.log(`[BC.1] All 3 nodes responsive after 10k entries`);

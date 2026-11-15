@@ -48,7 +48,9 @@ describe('WatchApi — branch completion', () => {
   describe('parseKeyFromData edge cases', () => {
     it('ignores a JSON payload whose key is not a string', () => {
       const results: WatchEvent[] = [];
-      watch.watch('', (e) => results.push(e));
+      watch.watch('', (e) => {
+        results.push(e);
+      });
 
       // key: 42 (number) → parseKeyFromData returns null → not dispatched.
       bus.emit(createCommittedEvent(1, JSON.stringify({ key: 42, value: 'x' })));
@@ -58,7 +60,9 @@ describe('WatchApi — branch completion', () => {
 
     it('ignores a JSON payload without a key field', () => {
       const results: WatchEvent[] = [];
-      watch.watch('', (e) => results.push(e));
+      watch.watch('', (e) => {
+        results.push(e);
+      });
 
       // No "key" field → parseKeyFromData returns null (JSON branch).
       bus.emit(createCommittedEvent(1, JSON.stringify({ value: 'x' })));
@@ -68,7 +72,9 @@ describe('WatchApi — branch completion', () => {
 
     it('returns null for empty non-JSON data', () => {
       const results: WatchEvent[] = [];
-      watch.watch('', (e) => results.push(e));
+      watch.watch('', (e) => {
+        results.push(e);
+      });
 
       // Non-JSON, no '=' → rawKey is '' → null → not dispatched.
       bus.emit(createCommittedEvent(1, ''));
@@ -80,7 +86,9 @@ describe('WatchApi — branch completion', () => {
   describe('parseValueFromData fallback', () => {
     it('falls back to raw data when JSON has no value field', () => {
       const values: string[] = [];
-      watch.watch('', (e) => values.push(e.value));
+      watch.watch('', (e) => {
+        values.push(e.value);
+      });
 
       // JSON with key but no value → parseValueFromData returns the raw data.
       bus.emit(createCommittedEvent(1, JSON.stringify({ key: 'k' })));
@@ -94,7 +102,13 @@ describe('WatchApi — branch completion', () => {
       vi.useFakeTimers();
 
       const received: WatchEvent[] = [];
-      watch.watch('t:', (e) => received.push(e), { timeoutMs: 1000 });
+      watch.watch(
+        't:',
+        (e) => {
+          received.push(e);
+        },
+        { timeoutMs: 1000 },
+      );
 
       expect(watch.activeWatchCount()).toBe(1);
 
@@ -109,7 +123,13 @@ describe('WatchApi — branch completion', () => {
 
     it('does not schedule a timeout when timeoutMs is 0', () => {
       const received: WatchEvent[] = [];
-      watch.watch('t:', (e) => received.push(e), { timeoutMs: 0 });
+      watch.watch(
+        't:',
+        (e) => {
+          received.push(e);
+        },
+        { timeoutMs: 0 },
+      );
 
       expect(watch.activeWatchCount()).toBe(1);
       // No timer scheduled so the watch remains active after any wait.
@@ -119,7 +139,9 @@ describe('WatchApi — branch completion', () => {
   describe('_cleanup idempotency and exception isolation', () => {
     it('is idempotent when disposed more than once', () => {
       const received: WatchEvent[] = [];
-      const d = watch.watch('x:', (e) => received.push(e));
+      const d = watch.watch('x:', (e) => {
+        received.push(e);
+      });
 
       d.dispose();
       // Second dispose hits _cleanup with the entry already gone (early return).
@@ -134,7 +156,9 @@ describe('WatchApi — branch completion', () => {
       // Register a watch, then corrupt one of its disposables to throw on
       // dispose. Cleanup must still proceed (swallow) and remove the watch.
       const received: WatchEvent[] = [];
-      const d = watch.watch('y:', (e) => received.push(e));
+      const d = watch.watch('y:', (e) => {
+        received.push(e);
+      });
 
       // Reach into the internal watches map and replace one disposable.
       const internal = (watch as any)._watches;

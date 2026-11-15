@@ -49,19 +49,21 @@ function createMockRaft(term: number = 1, leader?: string): any {
   };
 }
 
+type ChunkOverrides = Omit<Partial<InstallSnapshotRequest>, 'data'> & { data?: string | Buffer };
+
 /** Create a mock InstallSnapshotRequest */
-function makeChunk(overrides: Partial<InstallSnapshotRequest> & { data?: string }): InstallSnapshotRequest {
-  const buf = Buffer.from(overrides.data ?? 'data');
+function makeChunk(overrides: ChunkOverrides = {}): InstallSnapshotRequest {
+  const { data, ...rest } = overrides;
   return {
     term: 1,
-    leaderId: '1',
+    leaderId: 1,
     lastIncludedIndex: 100,
     lastIncludedTerm: 1,
     offset: 0,
-    data: buf,
     done: false,
-    ...overrides,
-  } as unknown as InstallSnapshotRequest;
+    ...rest,
+    data: Buffer.from(data ?? 'data'),
+  };
 }
 
 describe('InstallSnapshotHandler - Unit', () => {
@@ -117,9 +119,9 @@ describe('InstallSnapshotHandler - Unit', () => {
 
     // 10KB / 4KB = 3 chunks (4KB + 4KB + 2KB)
     expect(chunks.length).toBe(3);
-    expect(chunks[0].data.length).toBe(4096);
-    expect(chunks[1].data.length).toBe(4096);
-    expect(chunks[2].data.length).toBe(10000 - 8192);
+    expect(chunks[0]!.data.length).toBe(4096);
+    expect(chunks[1]!.data.length).toBe(4096);
+    expect(chunks[2]!.data.length).toBe(10000 - 8192);
   });
 
   //
@@ -146,7 +148,7 @@ describe('InstallSnapshotHandler - Unit', () => {
     }
 
     expect(chunks.length).toBe(1);
-    expect(chunks[0].done).toBe(true);
+    expect(chunks[0]!.done).toBe(true);
   });
 
   //
@@ -295,8 +297,8 @@ describe('InstallSnapshotHandler - Unit', () => {
     const progress = handler.getAssemblyProgress();
     expect(progress.length).toBeGreaterThanOrEqual(1);
     if (progress.length > 0) {
-      expect(progress[0].chunks).toBe(1);
-      expect(progress[0].bytesReceived).toBeGreaterThan(0);
+      expect(progress[0]!.chunks).toBe(1);
+      expect(progress[0]!.bytesReceived).toBeGreaterThan(0);
     }
   });
 
@@ -375,14 +377,14 @@ describe('InstallSnapshotHandler - Unit', () => {
       chunks.push(chunk);
     }
     expect(chunks.length).toBe(1); // small file fits in one chunk
-    expect(chunks[0].done).toBe(true);
+    expect(chunks[0]!.done).toBe(true);
 
     // Phase 3: Receive and assemble on a new handler (receiver side)
     const receiver = new InstallSnapshotHandler('/tmp/test-snapshots-receiver', 2);
     const raft = createMockRaft(5); // receiver term = 5, leader term = 5
     const installCallback = vi.fn().mockResolvedValue(undefined);
 
-    const res = await receiver.handleChunk(chunks[0], raft as any, installCallback);
+    const res = await receiver.handleChunk(chunks[0]!, raft as any, installCallback);
     expect(res.success).toBe(true);
     expect(installCallback).toHaveBeenCalledTimes(1);
 
@@ -454,7 +456,7 @@ describe('InstallSnapshotHandler - Unit', () => {
     // Advance past the timeout, then trigger cleanStaleStates via a new chunk.
     await new Promise((r) => setTimeout(r, 5));
     await shortHandler.handleChunk(
-      makeChunk({ data: 'new', offset: 10, done: false, leaderId: '2', lastIncludedIndex: 200 }),
+      makeChunk({ data: 'new', offset: 10, done: false, leaderId: 2, lastIncludedIndex: 200 }),
       raft as any,
       vi.fn(),
     );
@@ -537,7 +539,7 @@ describe('InstallSnapshotHandler - Unit', () => {
 
     // Both chunks are exactly 4096 bytes (full reads, no truncation).
     expect(chunks.length).toBe(2);
-    expect(chunks[0].data.length).toBe(4096);
-    expect(chunks[1].data.length).toBe(4096);
+    expect(chunks[0]!.data.length).toBe(4096);
+    expect(chunks[1]!.data.length).toBe(4096);
   });
 });

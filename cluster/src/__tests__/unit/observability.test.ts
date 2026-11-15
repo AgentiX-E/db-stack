@@ -242,9 +242,9 @@ describe('HealthProbe (OBS3)', () => {
     health.register('raft', () => ({ ok: true, latencyMs: 1 }));
     const status = health.fullStatus();
     expect(status.status).toBe('healthy');
-    expect(status.probes.liveness.ok).toBe(true);
-    expect(status.probes.readiness.ok).toBe(true);
-    expect(status.probes.startup.ok).toBe(true);
+    expect(status.probes.liveness!.ok).toBe(true);
+    expect(status.probes.readiness!.ok).toBe(true);
+    expect(status.probes.startup!.ok).toBe(true);
   });
 
   it('OBS3.8: fullStatus degraded when startup not complete', () => {

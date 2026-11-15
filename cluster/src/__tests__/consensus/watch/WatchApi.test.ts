@@ -35,7 +35,9 @@ describe('WatchApi', () => {
 
   it('精确前缀匹配：watch key prefix 时只收到匹配的事件', () => {
     const results: WatchEvent[] = [];
-    watch.watch('users:', (e) => results.push(e));
+    watch.watch('users:', (e) => {
+      results.push(e);
+    });
 
     bus.emit(createCommittedEvent(1, JSON.stringify({ key: 'users:1', value: 'Alice' })));
     bus.emit(createCommittedEvent(2, JSON.stringify({ key: 'users:2', value: 'Bob' })));
@@ -47,7 +49,9 @@ describe('WatchApi', () => {
 
   it('空字符串前缀匹配所有 key', () => {
     const results: WatchEvent[] = [];
-    watch.watch('', (e) => results.push(e));
+    watch.watch('', (e) => {
+      results.push(e);
+    });
 
     bus.emit(createCommittedEvent(1, JSON.stringify({ key: 'a', value: '1' })));
     bus.emit(createCommittedEvent(2, JSON.stringify({ key: 'b', value: '2' })));
@@ -58,7 +62,9 @@ describe('WatchApi', () => {
 
   it('非 JSON data 时从 data 中解析 key', () => {
     const results: WatchEvent[] = [];
-    watch.watch('config:', (e) => results.push(e));
+    watch.watch('config:', (e) => {
+      results.push(e);
+    });
 
     bus.emit(createCommittedEvent(1, 'config:timeout=30s'));
     bus.emit(createCommittedEvent(2, 'config:retries=3'));
@@ -72,7 +78,9 @@ describe('WatchApi', () => {
 
   it('dispose() 后不再接收事件', () => {
     const received: WatchEvent[] = [];
-    const disposable = watch.watch('test:', (e) => received.push(e));
+    const disposable = watch.watch('test:', (e) => {
+      received.push(e);
+    });
 
     bus.emit(createCommittedEvent(1, JSON.stringify({ key: 'test:1', value: 'a' })));
     disposable.dispose();
@@ -85,8 +93,12 @@ describe('WatchApi', () => {
   it('shutdown() 后所有 watch 失效', () => {
     const r1: WatchEvent[] = [];
     const r2: WatchEvent[] = [];
-    watch.watch('a:', (e) => r1.push(e));
-    watch.watch('b:', (e) => r2.push(e));
+    watch.watch('a:', (e) => {
+      r1.push(e);
+    });
+    watch.watch('b:', (e) => {
+      r2.push(e);
+    });
 
     expect(watch.activeWatchCount()).toBe(2);
 
@@ -107,7 +119,9 @@ describe('WatchApi', () => {
 
   it('1000 个快速 proposals 不丢失事件', () => {
     const received: WatchEvent[] = [];
-    watch.watch('', (e) => received.push(e));
+    watch.watch('', (e) => {
+      received.push(e);
+    });
 
     for (let i = 1; i <= 1000; i++) {
       bus.emit(createCommittedEvent(i, JSON.stringify({ key: `k${i}`, value: `v${i}` })));
@@ -126,7 +140,9 @@ describe('WatchApi', () => {
     });
 
     watch.watch('crash:', crashHandler);
-    watch.watch('good:', (e) => good.push(e));
+    watch.watch('good:', (e) => {
+      good.push(e);
+    });
 
     expect(() => {
       bus.emit(createCommittedEvent(1, JSON.stringify({ key: 'crash:1', value: 'x' })));
@@ -140,7 +156,9 @@ describe('WatchApi', () => {
 
   it('正确解析 JSON data 的 value', () => {
     const values: string[] = [];
-    watch.watch('', (e) => values.push(e.value));
+    watch.watch('', (e) => {
+      values.push(e.value);
+    });
 
     bus.emit(createCommittedEvent(1, JSON.stringify({ key: 'k', value: 42 })));
     bus.emit(createCommittedEvent(2, JSON.stringify({ key: 'k', value: 'hello' })));

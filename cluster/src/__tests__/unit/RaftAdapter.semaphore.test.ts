@@ -18,13 +18,14 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { RaftAdapter, type RaftConfig } from '../../consensus/core/RaftAdapter';
-import { SqlVecError, SqlVecErrorCode } from '../../consensus/core/SqlVecError';
+import { SqlVecError, SqlVecErrorCode } from '../../interfaces/types';
 
 function minimalConfig(overrides: Partial<RaftConfig> = {}): RaftConfig {
   return {
-    nodeId: 'sem-test-' + (Math.random() * 1e9).toString(36),
-    peers: ['peer-1'],
-    port: 0,
+    id: 1,
+    peers: [2, 3],
+    electionTick: 10,
+    heartbeatTick: 2,
     ...overrides,
   };
 }

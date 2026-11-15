@@ -32,13 +32,15 @@ function makePeers(n: number, offset = 0) {
   return Array.from({ length: n }, (_, i) => makePeer(String(i + 1 + offset)));
 }
 
+type MockMembership = { oldPeers?: string[]; newPeers?: string[] } | null;
+
 function createMockRaftGroup() {
   return {
     proposeMembershipChange: vi.fn(async () => ({ success: true, phase: 'joint' as any })),
     getConsensusPhase: vi.fn(() => 'normal' as any),
-    getCurrentMembership: vi.fn(() => null),
+    getCurrentMembership: vi.fn((): MockMembership => null),
     getProgress: vi.fn(async () => ({ commit: 100, applied: 100 })),
-    getLeader: vi.fn(async () => '1'),
+    getLeader: vi.fn(async (): Promise<string | null> => '1'),
     getLeaderHealth: vi.fn(async () => ({ isLeader: true, peerCount: 3 })),
     propose: vi.fn(async () => {}),
     isLeader: vi.fn(async () => true),
@@ -114,7 +116,7 @@ describe('RaftJointConsensusEngine — branch completion', () => {
       groupA.getLeader = vi.fn(async () => null);
 
       const groupB = createMockRaftGroup();
-      groupB.getCurrentMembership = vi.fn(() => ({})) as any; // truthy, no peer fields
+      groupB.getCurrentMembership = vi.fn(() => ({})); // truthy, no peer fields
       groupB.getLeader = vi.fn(async () => null);
 
       const engine = new RaftJointConsensusEngine(

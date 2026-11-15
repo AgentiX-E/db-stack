@@ -157,7 +157,7 @@ describe('RaftTcpTransport — start() lifecycle', () => {
   it('start uses default connect timeout/retry when config omits them', async () => {
     const t = new RaftTcpTransport(validConfig());
     await t.start();
-    const opts = mocks.poolCtor.mock.calls[0][0];
+    const opts = mocks.poolCtor.mock.calls[0]![0];
     expect(opts.connectTimeoutMs).toBe(5000);
     expect(opts.initialRetryMs).toBe(100);
     expect(opts.maxRetryMs).toBe(30000);
@@ -171,7 +171,7 @@ describe('RaftTcpTransport — start() lifecycle', () => {
 
     // Capture the registered callback via addNode? The callback is assigned
     // to pool.onConnectionCreated during start(). Inspect the constructed pool.
-    const created = mocks.poolCtor.mock.calls[0][0];
+    const created = mocks.poolCtor.mock.calls[0]![0];
     expect(created).toBeTruthy();
   });
 });
@@ -365,7 +365,7 @@ describe('RaftTcpTransport — _handleIncoming', () => {
     dataHandler(Buffer.from('xxxx'));
     // buffer under the composed id key exists
     const keys = Array.from(priv(t)._buffers.keys());
-    expect(keys.some((k: string) => k.startsWith('2:'))).toBe(true);
+    expect(keys.some((k) => String(k).startsWith('2:'))).toBe(true);
   });
 });
 
@@ -392,7 +392,7 @@ describe('RaftTcpTransport — _processData', () => {
     await priv(t)._processData(2, frame);
     await vi.waitFor(() => {
       expect(msgHandler).toHaveBeenCalled();
-      const [emitted] = msgHandler.mock.calls[0];
+      const [emitted] = msgHandler.mock.calls[0]!;
       expect(String(emitted.from)).toBe('2');
     });
   });
@@ -425,7 +425,7 @@ describe('RaftTcpTransport — _processData', () => {
     // Complete the frame.
     await priv(t)._processData(2, frame.subarray(2));
     await vi.waitFor(() => expect(msgHandler).toHaveBeenCalled());
-    expect(String(msgHandler.mock.calls[0][0].from)).toBe('2');
+    expect(String(msgHandler.mock.calls[0]![0].from)).toBe('2');
   });
 });
 
@@ -838,7 +838,7 @@ describe('RaftTcpTransport — remaining branch coverage', () => {
     await priv(t)._processData(2, frame);
     await vi.waitFor(() => {
       expect(msgHandler).toHaveBeenCalled();
-      expect(String(msgHandler.mock.calls[0][0].from)).toBe('7');
+      expect(String(msgHandler.mock.calls[0]![0].from)).toBe('7');
     });
   });
 });

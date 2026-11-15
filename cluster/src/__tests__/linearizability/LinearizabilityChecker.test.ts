@@ -160,9 +160,9 @@ describe('LinearizabilityChecker', () => {
 
     const ops = LinearizabilityChecker.pairEvents(events);
     expect(ops.length).toBe(2);
-    expect(ops[0].clientId).toBe('a');
-    expect(ops[0].call.operation).toBe('write');
-    expect(ops[1].call.operation).toBe('read');
-    expect(ops[1].ret.value).toBe('1');
+    expect(ops[0]!.clientId).toBe('a');
+    expect(ops[0]!.call.operation).toBe('write');
+    expect(ops[1]!.call.operation).toBe('read');
+    expect(ops[1]!.ret.value).toBe('1');
   });
 });

@@ -106,7 +106,6 @@ function createMockOutbox(): IOutboxWriter {
     append: vi.fn().mockResolvedValue(undefined),
     appendBatch: vi.fn().mockResolvedValue(undefined),
     write: vi.fn().mockResolvedValue(undefined),
-    getLastWritten: vi.fn().mockResolvedValue(0),
     getLastWrittenIndex: vi.fn().mockResolvedValue(0),
   };
 }

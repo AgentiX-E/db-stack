@@ -78,7 +78,7 @@ describe('BatchedRaftTransport — branch completion', () => {
     await transport.start();
     simulateIncoming({ type: 'RequestVote' });
     await vi.waitFor(() => expect(handler).toHaveBeenCalled());
-    expect(handler.mock.calls[0][1]).toEqual({ type: 'RequestVote' });
+    expect(handler.mock.calls[0]![1]).toEqual({ type: 'RequestVote' });
   });
 
   it('incoming request with no handler is a no-op', async () => {
@@ -99,7 +99,7 @@ describe('BatchedRaftTransport — branch completion', () => {
     await transport.start();
     simulateIncoming({ type: 'RequestVote' });
     await vi.waitFor(() => expect(mockSendToPeer).toHaveBeenCalled());
-    const [peerId, frame] = mockSendToPeer.mock.calls[0];
+    const [peerId, frame] = mockSendToPeer.mock.calls[0]!;
     const payload = JSON.parse(frame.subarray(5).toString('utf-8'));
     expect(payload.requestId).toBeDefined();
     expect(peerId).toBe(2);

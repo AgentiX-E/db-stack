@@ -153,7 +153,7 @@ describe('HAFailoverDetector — Unit', () => {
     // Second check — should fire quorum_loss
     await leaderlessDetector.checkNow();
     expect(events.length).toBe(1);
-    expect(events[0].type).toBe('quorum_loss');
+    expect(events[0]!.type).toBe('quorum_loss');
     expect(events[0].shardId).toBe('s0');
 
     leaderlessDetector.stop();
@@ -263,8 +263,8 @@ describe('HAFailoverDetector — PATH 2 (leader stagnation) & PATH 3 (node failu
     await new Promise((r) => setTimeout(r, 80));
     await d.checkNow(); // commit index unchanged + 80ms elapsed > 50ms → fire
     expect(failoverEvents.length).toBe(1);
-    expect(failoverEvents[0].type).toBe('leader_failure');
-    expect(failoverEvents[0].suspectedLeaderId).toBe('node-1');
+    expect(failoverEvents[0]!.type).toBe('leader_failure');
+    expect(failoverEvents[0]!.suspectedLeaderId).toBe('node-1');
 
     d.stop();
   });
@@ -327,8 +327,8 @@ describe('HAFailoverDetector — PATH 2 (leader stagnation) & PATH 3 (node failu
     await d.checkNow(); // missed = 2
     await d.checkNow(); // missed = 3 → fire node_failure
     expect(failoverEvents.length).toBe(1);
-    expect(failoverEvents[0].type).toBe('node_failure');
-    expect(failoverEvents[0].affectedNodeId).toBe('node-2');
+    expect(failoverEvents[0]!.type).toBe('node_failure');
+    expect(failoverEvents[0]!.affectedNodeId).toBe('node-2');
 
     d.stop();
   });
@@ -453,7 +453,7 @@ describe('HAFailoverDetector — error isolation & RTT sampling', () => {
 
     // The second handler still received the event despite the first throwing.
     expect(events.length).toBe(1);
-    expect(events[0].type).toBe('quorum_loss');
+    expect(events[0]!.type).toBe('quorum_loss');
     d.stop();
   });
 

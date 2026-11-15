@@ -150,8 +150,8 @@ describe('AdaptiveElectionTimeout', () => {
     aet.start();
     vi.advanceTimersByTime(200);
     expect(onChange).toHaveBeenCalledTimes(1);
-    const newTick = onChange.mock.calls[0][0];
-    const oldTick = onChange.mock.calls[0][1];
+    const newTick = onChange.mock.calls[0]![0];
+    const oldTick = onChange.mock.calls[0]![1];
     expect(newTick).toBe(20); // 100/10*2
     expect(oldTick).toBe(10);
     aet.stop();

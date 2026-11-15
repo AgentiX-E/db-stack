@@ -8,7 +8,7 @@
  * @module bench/ycsb/YCSBExecutor
  */
 
-import type { YCSBConfig, WorkloadType, YCSBResult } from './YCSBWorkload.js';
+import type { YCSBConfig, WorkloadType } from './YCSBWorkload.js';
 
 // ── Public types ──────────────────────────────────────────────────
 
@@ -77,11 +77,13 @@ function computeLatencyStats(sortedLatencies: number[]): LatencyStats {
   const p95Index = Math.floor(sortedLatencies.length * 0.95);
   const p99Index = Math.floor(sortedLatencies.length * 0.99);
 
+  const last = sortedLatencies[sortedLatencies.length - 1]!;
+
   return {
-    p50: sortedLatencies[p50Index] ?? sortedLatencies[sortedLatencies.length - 1],
-    p95: sortedLatencies[p95Index] ?? sortedLatencies[sortedLatencies.length - 1],
-    p99: sortedLatencies[p99Index] ?? sortedLatencies[sortedLatencies.length - 1],
-    max: sortedLatencies[sortedLatencies.length - 1],
+    p50: sortedLatencies[p50Index] ?? last,
+    p95: sortedLatencies[p95Index] ?? last,
+    p99: sortedLatencies[p99Index] ?? last,
+    max: last,
   };
 }
 

@@ -44,6 +44,27 @@ function createMockShared() {
   };
 }
 
+/** Minimal valid AppendEntries request envelope. */
+function appendEntriesRequest(term: number): RPCMessage {
+  return {
+    type: 'AppendEntries',
+    direction: 'request',
+    payload: {
+      term,
+      leaderId: '1',
+      prevLogIndex: 0,
+      prevLogTerm: 0,
+      entries: [],
+      leaderCommit: 0,
+    },
+  };
+}
+
+/** Minimal valid AppendEntries response envelope. */
+function appendEntriesResponse(term: number): RPCMessage {
+  return { type: 'AppendEntries', direction: 'response', payload: { term, success: true } };
+}
+
 describe('SharedBatchedTransport - Unit', () => {
   let mockShared: ReturnType<typeof createMockShared>;
   let transport: SharedBatchedTransport;
@@ -105,20 +126,20 @@ describe('SharedBatchedTransport - Unit', () => {
   //
   it('AC 23.5: send() dispatches wire message with requestId', async () => {
     await transport.start();
-    const sendPromise = transport.send('2', { type: 1 } as RPCMessage);
+    const sendPromise = transport.send('2', appendEntriesRequest(1));
 
     expect(mockShared.send).toHaveBeenCalled();
-    const callArg = mockShared.send.mock.calls[0][1][0];
+    const callArg = mockShared.send.mock.calls[0]![1][0];
     expect(callArg.requestId).toBeDefined();
     expect(callArg._shardId).toBe(0);
     expect(callArg.to).toBe('2');
 
     // Resolve by sending back response
-    const handlerFn = mockShared.onMessage.mock.calls[0][0];
-    handlerFn(0, { requestId: callArg.requestId, msg: { type: 2, direction: 'response' } });
+    const handlerFn = mockShared.onMessage.mock.calls[0]![0];
+    handlerFn(0, { requestId: callArg.requestId, msg: appendEntriesResponse(2) });
 
     const result = await sendPromise;
-    expect(result.type).toBe(2);
+    expect(result).toEqual(appendEntriesResponse(2));
   });
 
   //
@@ -126,14 +147,14 @@ describe('SharedBatchedTransport - Unit', () => {
   //
   it('AC 23.6: send() resolves when matching response arrives', async () => {
     await transport.start();
-    const sendPromise = transport.send('2', { type: 1 } as RPCMessage);
+    const sendPromise = transport.send('2', appendEntriesRequest(1));
 
-    const callArg = mockShared.send.mock.calls[0][1][0];
-    const handlerFn = mockShared.onMessage.mock.calls[0][0];
-    handlerFn(0, { requestId: callArg.requestId, msg: { type: 100, direction: 'response' } });
+    const callArg = mockShared.send.mock.calls[0]![1][0];
+    const handlerFn = mockShared.onMessage.mock.calls[0]![0];
+    handlerFn(0, { requestId: callArg.requestId, msg: appendEntriesResponse(100) });
 
     const result = await sendPromise;
-    expect(result.type).toBe(100);
+    expect(result).toEqual(appendEntriesResponse(100));
   });
 
   //
@@ -141,7 +162,7 @@ describe('SharedBatchedTransport - Unit', () => {
   //
   it('AC 23.7: send() rejects on timeout', async () => {
     await transport.start();
-    const sendPromise = transport.send('2', { type: 1 } as RPCMessage);
+    const sendPromise = transport.send('2', appendEntriesRequest(1));
     vi.advanceTimersByTime(20000);
     await expect(sendPromise).rejects.toThrow(/timeout/);
   });
@@ -152,21 +173,22 @@ describe('SharedBatchedTransport - Unit', () => {
   it('AC 23.8: send() rejects when doSend fails', async () => {
     mockShared.send.mockRejectedValue(new Error('Network error'));
     await transport.start();
-    await expect(transport.send('2', { type: 1 } as RPCMessage)).rejects.toThrow('Network error');
+    await expect(transport.send('2', appendEntriesRequest(1))).rejects.toThrow('Network error');
   });
 
   //
   // AC 23.9: Incoming request routes to handler
   //
   it('AC 23.9: Incoming request routes to handler', async () => {
-    const handler = vi.fn().mockResolvedValue({ type: 200 } as RPCMessage);
+    const handler = vi.fn().mockResolvedValue(appendEntriesResponse(200));
     transport.onMessage(handler);
     await transport.start();
 
-    const handlerFn = mockShared.onMessage.mock.calls[0][0];
-    handlerFn(0, { requestId: 'req-1', msg: { type: 10 }, from: '2' });
+    const handlerFn = mockShared.onMessage.mock.calls[0]![0]!;
+    const incoming = appendEntriesRequest(10);
+    handlerFn(0, { requestId: 'req-1', msg: incoming, from: '2' });
 
-    expect(handler).toHaveBeenCalledWith('2', { type: 10 });
+    expect(handler).toHaveBeenCalledWith('2', incoming);
   });
 
   //
@@ -174,14 +196,14 @@ describe('SharedBatchedTransport - Unit', () => {
   //
   it('AC 23.10: Incoming response routes to pending', async () => {
     await transport.start();
-    const sendPromise = transport.send('2', { type: 1 } as RPCMessage);
+    const sendPromise = transport.send('2', appendEntriesRequest(1));
 
-    const callArg = mockShared.send.mock.calls[0][1][0];
-    const handlerFn = mockShared.onMessage.mock.calls[0][0];
-    handlerFn(0, { requestId: callArg.requestId, msg: { type: 2, direction: 'response' } });
+    const callArg = mockShared.send.mock.calls[0]![1][0];
+    const handlerFn = mockShared.onMessage.mock.calls[0]![0];
+    handlerFn(0, { requestId: callArg.requestId, msg: appendEntriesResponse(2) });
 
     const result = await sendPromise;
-    expect(result.type).toBe(2);
+    expect(result).toEqual(appendEntriesResponse(2));
   });
 
   //
@@ -189,7 +211,7 @@ describe('SharedBatchedTransport - Unit', () => {
   //
   it('AC 23.11: Stop rejects pending requests', async () => {
     await transport.start();
-    const sendPromise = transport.send('2', { type: 1 } as RPCMessage);
+    const sendPromise = transport.send('2', appendEntriesRequest(1));
     await transport.stop();
     await expect(sendPromise).rejects.toThrow(/stopped/);
   });
@@ -207,13 +229,13 @@ describe('SharedBatchedTransport - Unit', () => {
   // AC 23.13: Shard filtering
   //
   it('AC 23.13: Shard filtering ignores other shardIds', async () => {
-    const handler = vi.fn().mockResolvedValue({ type: 200 } as RPCMessage);
+    const handler = vi.fn().mockResolvedValue(appendEntriesResponse(200));
     transport.onMessage(handler);
     await transport.start();
 
-    const handlerFn = mockShared.onMessage.mock.calls[0][0];
+    const handlerFn = mockShared.onMessage.mock.calls[0]![0]!;
     // Message for shard 1, but transport is for shard 0
-    handlerFn(1, { requestId: 'req-1', msg: { type: 10 }, from: '2' });
+    handlerFn(1, { requestId: 'req-1', msg: appendEntriesRequest(10), from: '2' });
 
     // Handler should NOT be called (wrong shard)
     expect(handler).not.toHaveBeenCalled();

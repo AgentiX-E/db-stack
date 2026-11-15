@@ -10,11 +10,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  SnapshotManager,
-  type SnapshotManagerConfig,
-  type SnapshotDescriptor,
-} from '../../snapshot/SnapshotManager.js';
+import { SnapshotManager } from '../../snapshot/SnapshotManager.js';
+import type { SnapshotManagerConfig, SnapshotDescriptor } from '../../snapshot/ISnapshotManager.js';
 import type { SnapshotMeta } from '../../interfaces/types.js';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';

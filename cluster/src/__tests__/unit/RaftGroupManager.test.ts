@@ -20,6 +20,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { RaftHealthStatus } from '../../consensus/core/RaftGroupManager';
 
 // ── Mock RaftGroup ──────────────────────────────────────────
 const mockGroups = new Map<number, any>();
@@ -36,6 +37,13 @@ vi.mock('../../consensus/core/RaftGroup', () => {
       public _leader: number | null = null;
       public _proposed: any[] = [];
       public _appliedOK = 0;
+      public _isLeader: boolean | undefined = undefined;
+      public _progress: { commit: number; applied: number } | undefined = undefined;
+      public _forceLeader: boolean | undefined = undefined;
+      public _topologyChanges: unknown[] | undefined = undefined;
+      public _campaignCalls: number | undefined = undefined;
+      public _term: number | undefined = undefined;
+      public _membershipChanges: number | undefined = undefined;
 
       constructor(shardId: number, config: any, replica: any, outboxManager: any) {
         this.shardId = shardId;
@@ -502,8 +510,8 @@ describe('RaftGroupManager', () => {
       const status = await manager.getHealthStatus();
 
       expect(status).toHaveLength(2);
-      const s701 = status.find((s) => s.shardId === '701' || s.shardId === 701);
-      const s702 = status.find((s) => s.shardId === '702' || s.shardId === 702);
+      const s701 = status.find((s: RaftHealthStatus) => s.shardId === 701);
+      const s702 = status.find((s: RaftHealthStatus) => s.shardId === 702);
       expect(s701).toBeDefined();
       expect(s702).toBeDefined();
     });

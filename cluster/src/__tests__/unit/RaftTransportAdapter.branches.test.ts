@@ -61,15 +61,15 @@ describe('RaftTransportAdapter — branch completion', () => {
       entries: [{ index: '1', term: '1', data: ab }],
     };
     await adapter.send('1', [msg]);
-    const sent = send.mock.calls[0][1][0];
-    expect(sent.entries[0].data).toBe(Buffer.from([9, 8, 7]).toString('base64'));
+    const sent = send.mock.calls[0]![1][0];
+    expect(sent.entries[0]!.data).toBe(Buffer.from([9, 8, 7]).toString('base64'));
   });
 
   it('send skips null/undefined entries in the message list', async () => {
     const realMsg = { msgType: 1, from: '1', to: '2', term: '1' };
     await adapter.send('1', [null, undefined, realMsg]);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0][1]).toEqual([realMsg]);
+    expect(send.mock.calls[0]![1]).toEqual([realMsg]);
   });
 
   it('send uses the "1" fallback when the first entry index is absent', async () => {

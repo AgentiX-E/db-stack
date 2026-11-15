@@ -44,8 +44,8 @@ describe('ReshardPlanner — branch completion', () => {
       const planId = await planner.executePlan(plan);
 
       // Give the fire-and-forget promise a couple of microtask ticks.
-      await vi.waitFor(() => {
-        const progress = planner.progressMap?.get(planId);
+      await vi.waitFor(async () => {
+        const progress = await planner.getProgress(planId);
         expect(progress?.status).toBe('failed');
       });
 
@@ -83,8 +83,8 @@ describe('ReshardPlanner — branch completion', () => {
 
       // Release the migration so it can proceed.
       gate();
-      await vi.waitFor(() => {
-        const progress = planner.progressMap?.get(planId);
+      await vi.waitFor(async () => {
+        const progress = await planner.getProgress(planId);
         expect(progress?.status).toBe('completed');
       });
     });
@@ -129,8 +129,8 @@ describe('ReshardPlanner — branch completion', () => {
       expect(result.mismatches).toBe(1);
 
       gate();
-      await vi.waitFor(() => {
-        const progress = planner.progressMap?.get(planId);
+      await vi.waitFor(async () => {
+        const progress = await planner.getProgress(planId);
         expect(progress?.status).toBe('completed');
       });
     });
@@ -146,8 +146,8 @@ describe('ReshardPlanner — branch completion', () => {
 
       const plan = await planner.createSplitPlan(1, 'mid');
       await planner.executePlan(plan);
-      await vi.waitFor(() => {
-        const progress = planner.progressMap?.get(plan.planId);
+      await vi.waitFor(async () => {
+        const progress = await planner.getProgress(plan.planId);
         expect(progress?.status).toBe('completed');
       });
 
@@ -165,8 +165,8 @@ describe('ReshardPlanner — branch completion', () => {
 
       const plan = await planner.createSplitPlan(1, 'mid');
       await planner.executePlan(plan);
-      await vi.waitFor(() => {
-        const progress = planner.progressMap?.get(plan.planId);
+      await vi.waitFor(async () => {
+        const progress = await planner.getProgress(plan.planId);
         expect(progress?.status).toBe('completed');
       });
 
@@ -222,8 +222,8 @@ describe('ReshardPlanner — branch completion', () => {
     it('executes a move plan that skips the dual-writing phase', async () => {
       const plan = await planner.createMovePlan(42, 'node-z');
       const planId = await planner.executePlan(plan);
-      await vi.waitFor(() => {
-        const progress = planner.progressMap?.get(planId);
+      await vi.waitFor(async () => {
+        const progress = await planner.getProgress(planId);
         expect(progress?.status).toBe('completed');
       });
       const progress = await planner.getProgress(planId);

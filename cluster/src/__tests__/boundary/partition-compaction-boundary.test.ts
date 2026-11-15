@@ -62,7 +62,8 @@ async function verifyConvergence(cluster: ChaosCluster, maxWait = VERIFY_TIMEOUT
   while (Date.now() < deadline) {
     const results = await Promise.all(cluster.nodes.map((n) => safeGetAppliedIndex(n)));
     lastApplieds = results;
-    if (lastApplieds.every((v) => v === lastApplieds[0]) && lastApplieds[0] > 0) {
+    const first = lastApplieds[0];
+    if (first !== undefined && lastApplieds.every((v) => v === first) && first > 0) {
       return;
     }
     await new Promise((r) => setTimeout(r, 500));
@@ -74,7 +75,8 @@ async function compactAll(cluster: ChaosCluster): Promise<void> {
   const errors: string[] = [];
   for (const node of cluster.nodes) {
     try {
-      await node.adapter.compactLogs();
+      const applied = await node.adapter.getAppliedIndex();
+      await node.adapter.compactLogs(applied);
     } catch (e: any) {
       errors.push(`node ${node.id}: ${e?.message ?? e}`);
     }
@@ -211,7 +213,7 @@ describe('Boundary: Partition + Compaction (BP)', () => {
         let totalWritten = 0;
 
         for (let round = 0; round < 5; round++) {
-          const isolateId = cluster.nodes[round % 3].id;
+          const isolateId = cluster.nodes[round % 3]!.id;
 
           // Find current leader
           let activeLeader = cluster.nodes.find((n) => n.id === leaderId);

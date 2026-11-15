@@ -45,9 +45,11 @@ function createMockReplica(): IShardReplica {
 
 function createMockOutbox(): IOutboxWriter {
   return {
+    append: vi.fn(),
+    appendBatch: vi.fn(),
     write: vi.fn().mockResolvedValue(undefined),
-    flush: vi.fn().mockResolvedValue(undefined),
-  } as unknown as IOutboxWriter;
+    getLastWrittenIndex: vi.fn().mockResolvedValue(0),
+  };
 }
 
 function createMockTopology(): IClusterTopology {
@@ -65,14 +67,7 @@ describe('Batch Learner Management', () => {
 
   beforeEach(async () => {
     // Create manager with InMemoryStorage (test mode)
-    manager = new RaftGroupManager(
-      createMockReplica(),
-      createMockOutbox(),
-      {
-        useInMemoryStorage: true,
-      } as any,
-      createMockTopology(),
-    );
+    manager = new RaftGroupManager(createMockOutbox(), 100, undefined, createMockTopology());
   });
 
   //

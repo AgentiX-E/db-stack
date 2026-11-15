@@ -20,19 +20,20 @@ let messageHandler: ((msg: any) => void) | null = null;
 
 vi.mock('../../consensus/transport/RaftTcpTransport', () => ({
   RaftTcpTransport: vi.fn().mockImplementation((_config: any) => {
-    const emitter = new EventEmitter();
-    emitter.start = mockStart;
-    emitter.stop = mockStop;
-    emitter.send = mockSend;
-    emitter.register = mockRegister;
-    emitter.getStatus = mockGetStatus;
-    emitter.getCircuitBreakerMetrics = mockGetCircuitBreakerMetrics;
-    const origOn = emitter.on.bind(emitter);
-    emitter.on = vi.fn((event: string, handler: (...args: any[]) => void) => {
+    const transport = Object.assign(new EventEmitter(), {
+      start: mockStart,
+      stop: mockStop,
+      send: mockSend,
+      register: mockRegister,
+      getStatus: mockGetStatus,
+      getCircuitBreakerMetrics: mockGetCircuitBreakerMetrics,
+    });
+    const origOn = transport.on.bind(transport);
+    transport.on = vi.fn((event: string, handler: (...args: any[]) => void) => {
       if (event === 'message') messageHandler = handler as (msg: any) => void;
       return origOn(event, handler);
     });
-    return emitter;
+    return transport;
   }),
 }));
 

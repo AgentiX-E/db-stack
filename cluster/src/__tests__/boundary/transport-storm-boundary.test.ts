@@ -139,14 +139,22 @@ describe('Boundary: Transport Storm (A1)', () => {
       await withCluster(async (cluster) => {
         const leader = await cluster.findLeader();
 
-        const promises: Promise<void>[] = [];
+        // `catch(() => {})` used to swallow every failure, which is the opposite
+        // of what this case claims to verify ("no TypeError from pool offset").
+        // Collect them and assert on the class the case is about.
+        const promises: Promise<unknown>[] = [];
+        const failures: unknown[] = [];
         for (let i = 0; i < 50; i++) {
-          promises.push(leader.adapter.proposeAndWait(`ts4-${i}`).catch(() => {}));
+          promises.push(
+            leader.adapter.proposeAndWait(`ts4-${i}`).catch((err: unknown) => {
+              failures.push(err);
+            }),
+          );
         }
 
         await Promise.all(promises);
         console.log('[TS.4] pool null-safety verified');
-        expect(true).toBe(true);
+        expect(failures.filter((err) => err instanceof TypeError)).toHaveLength(0);
       });
     },
     TS_TIMEOUT,

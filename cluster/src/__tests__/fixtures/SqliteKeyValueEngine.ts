@@ -47,7 +47,7 @@ function decode(buffer: Buffer): Request {
 }
 
 function encode(request: Request): Buffer {
-  const parts = [request.op];
+  const parts: string[] = [request.op];
   if (request.key !== undefined) parts.push(request.key);
   if (request.value !== undefined) parts.push(request.value);
   return Buffer.from(parts.join('\0'), 'utf8');

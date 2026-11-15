@@ -157,8 +157,8 @@ describe('SqliteLogStorage', () => {
 
     const entries = await log.getEntries(1, 2);
     expect(entries).toHaveLength(2);
-    expect(entries[0].index).toBe(1);
-    expect(entries[1].index).toBe(2);
+    expect(entries[0]!.index).toBe(1);
+    expect(entries[1]!.index).toBe(2);
   });
 
   it('should truncate from a given index', async () => {
@@ -401,8 +401,8 @@ describe('SqliteConfigStorage', () => {
     expect(data).not.toBeNull();
     expect(data!.voters).toHaveLength(2);
     expect(data!.learners).toHaveLength(1);
-    expect(data!.voters[0].id).toBe('1');
-    expect(data!.learners[0].id).toBe('3');
+    expect(data!.voters[0]!.id).toBe('1');
+    expect(data!.learners[0]!.id).toBe('3');
   });
 
   it('should overwrite previously stored config', async () => {
@@ -411,7 +411,7 @@ describe('SqliteConfigStorage', () => {
 
     const data = await config.read();
     expect(data!.voters).toHaveLength(1);
-    expect(data!.voters[0].id).toBe('new');
+    expect(data!.voters[0]!.id).toBe('new');
   });
 });
 

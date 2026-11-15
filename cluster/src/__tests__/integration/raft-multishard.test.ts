@@ -74,7 +74,7 @@ async function waitForLeader(
     await sleep(POLL_INTERVAL_MS);
   }
 
-  throw new Error(`No leader elected in shard "${nodes[0].shardId}" after ${timeoutMs}ms`);
+  throw new Error(`No leader elected in shard "${nodes[0]!.shardId}" after ${timeoutMs}ms`);
 }
 
 async function waitForCommitOnNode(
@@ -106,7 +106,7 @@ function buildPeerConfig(peerIds: number[], ports: number[]) {
   return peerIds.map((id, i) => ({
     id,
     host: '127.0.0.1',
-    port: ports[i],
+    port: ports[i]!,
   }));
 }
 
@@ -155,18 +155,18 @@ describe('Multi-shard Raft cluster', () => {
     peerIds: number[],
     ports: number[],
     nodeLabels: string[], // cert index labels like 'raft-node-1', 'raft-node-2' etc.
-  ): Promise<ShardNode[]> {
-    const nodes: ShardNode[] = [];
+  ): Promise<ShardNodeInternal[]> {
+    const nodes: ShardNodeInternal[] = [];
     const peerConfigs = buildPeerConfig(peerIds, ports);
 
     for (let i = 0; i < peerIds.length; i++) {
-      const nodeId = peerIds[i];
-      const port = ports[i];
+      const nodeId = peerIds[i]!;
+      const port = ports[i]!;
       const dataDir = createTempDir(`multishard-${shardId}-n${nodeId}-`);
       tempDirs.push(dataDir);
 
       const otherPeers = peerConfigs.filter((p) => p.id !== nodeId);
-      const certIndex = nodeLabels ? parseInt(nodeLabels[i].replace('raft-node-', '')) - 1 : nodeId - 1;
+      const certIndex = nodeLabels ? parseInt(nodeLabels[i]!.replace('raft-node-', ''), 10) - 1 : nodeId - 1;
 
       const adapter = new RaftAdapter({
         id: nodeId,
@@ -193,9 +193,9 @@ describe('Multi-shard Raft cluster', () => {
           node: { id: nodeId, host: '127.0.0.1', port },
           peers: otherPeers,
           tls: {
-            key: certs.nodes[certIndex].key,
-            cert: certs.nodes[certIndex].cert,
-            ca: certs.nodes[certIndex].ca,
+            key: certs.nodes[certIndex]!.key,
+            cert: certs.nodes[certIndex]!.cert,
+            ca: certs.nodes[certIndex]!.ca,
           },
           connectTimeoutMs: 5000,
           initialRetryMs: 100,

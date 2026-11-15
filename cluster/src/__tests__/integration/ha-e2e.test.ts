@@ -29,7 +29,7 @@ import { HAFailoverDetector } from '../../ha/HAFailoverDetector';
 import { generateClusterCerts, type TestClusterCerts } from './test-certs';
 import { getFreePorts, createTempDir, cleanupTempDir } from './test-utils';
 import { join } from 'node:path';
-import { type IConsensusLayer } from '../../consensus/interfaces/interfaces';
+import { type IConsensusLayer, type IClusterTopology } from '../../consensus/interfaces/interfaces';
 
 // ──────────────────────────────────────────
 //  Constants
@@ -79,7 +79,7 @@ class AdapterConsensusLayer implements IConsensusLayer {
 
   async getCommitIndex(_shardId: string): Promise<number> {
     const progress = await this.adapter.getProgress();
-    return progress.commit;
+    return progress.commit ?? 0;
   }
 
   registerShard(_shardId: string, _config?: any): void {}
@@ -100,6 +100,10 @@ class AdapterConsensusLayer implements IConsensusLayer {
     ];
   }
   async campaign(_shardId: string): Promise<void> {}
+
+  setForceLeader(enabled: boolean): void {
+    this.adapter.setForceLeader(enabled);
+  }
 
   on(event: string, handler: (...args: any[]) => void): void {
     this.handlers.set(event, handler);
@@ -217,7 +221,7 @@ describe('HA E2E Integration - 3-node cluster', () => {
     const peerConfigs = Array.from({ length: NODE_COUNT }, (_, i) => ({
       id: i + 1,
       host: '127.0.0.1',
-      port: ports[i],
+      port: ports[i]!,
     }));
 
     const committedArrays: string[][] = Array.from({ length: NODE_COUNT }, () => []);
@@ -225,7 +229,7 @@ describe('HA E2E Integration - 3-node cluster', () => {
     nodes = [];
     for (let i = 0; i < NODE_COUNT; i++) {
       const id = i + 1;
-      const nodeCommitted = committedArrays[i];
+      const nodeCommitted = committedArrays[i]!;
       const nodePeerConfigs = peerConfigs.filter((p) => p.id !== id);
 
       const adapter = new RaftAdapter({
@@ -234,7 +238,7 @@ describe('HA E2E Integration - 3-node cluster', () => {
         electionTick: ELECTION_TICK,
         heartbeatTick: HEARTBEAT_TICK,
         tickIntervalMs: TICK_INTERVAL_MS,
-        storagePath: join(dataDirs[i], 'raft.db'),
+        storagePath: join(dataDirs[i]!, 'raft.db'),
         snapshotInterval: 100000,
         environment: 'development',
         preVote: true,
@@ -247,11 +251,11 @@ describe('HA E2E Integration - 3-node cluster', () => {
           nodeCommitted.push(data);
         },
         {
-          node: { id, host: '127.0.0.1', port: ports[i] },
+          node: { id, host: '127.0.0.1', port: ports[i]! },
           peers: nodePeerConfigs,
           tls: {
-            cert: certs.nodes[i].cert,
-            key: certs.nodes[i].key,
+            cert: certs.nodes[i]!.cert,
+            key: certs.nodes[i]!.key,
             ca: certs.caPem,
           },
           connectTimeoutMs: 5000,
@@ -350,16 +354,19 @@ describe('HA E2E Integration - 3-node cluster', () => {
   it('AC 25.4: FencingManager fences node, checkWriteAllowed rejects', async () => {
     const fm = new FencingManager();
     const nodeId = 'node-to-fence';
+    // FencingManager keys shard state by numeric id; SHARD_ID is a name used
+    // elsewhere in this suite, so the fencing case gets its own id.
+    const fenceShardId = 1;
 
     // Check write allowed before fencing (no state exists yet — default)
-    const beforeFence = fm.checkWriteAllowed(SHARD_ID);
+    const beforeFence = fm.checkWriteAllowed(fenceShardId);
     expect(beforeFence).toEqual({ allowed: true });
 
     // Fence the node
     fm.fenceNode(nodeId);
 
     // Receive heartbeat — node is alive, term 5, leader election
-    fm.receiveHeartbeat(SHARD_ID, 5, nodeId);
+    fm.receiveHeartbeat(fenceShardId, 5, nodeId);
 
     // FencingManager doesn't automatically deny all writes after fenceNode
     // fenceNode marks the node but write check depends on shard state
@@ -411,11 +418,11 @@ describe('HA E2E Integration - 3-node cluster', () => {
     expect(peerIds.length).toBe(2);
 
     // Simulate peer failure via topology
-    leaderNode.topology.setPeerDead(peerIds[0]);
-    expect(leaderNode.topology.isPeerAlive(peerIds[0])).toBe(false);
+    leaderNode.topology.setPeerDead(peerIds[0]!);
+    expect(leaderNode.topology.isPeerAlive(peerIds[0]!)).toBe(false);
 
     // Restore
-    leaderNode.topology.setPeerAlive(peerIds[0]);
-    expect(leaderNode.topology.isPeerAlive(peerIds[0])).toBe(true);
+    leaderNode.topology.setPeerAlive(peerIds[0]!);
+    expect(leaderNode.topology.isPeerAlive(peerIds[0]!)).toBe(true);
   });
 });

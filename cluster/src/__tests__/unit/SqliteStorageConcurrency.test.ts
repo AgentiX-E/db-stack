@@ -208,7 +208,7 @@ describe('SqliteStorage Concurrency & Isolation', () => {
 
     for (let i = 0; i < 5; i++) {
       const expected = (i + 1) * 5;
-      expect(instances[i].getLastIndex()).toBe(expected);
+      expect(instances[i]!.getLastIndex()).toBe(expected);
     }
   });
 

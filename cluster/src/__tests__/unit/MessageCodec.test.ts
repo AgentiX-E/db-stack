@@ -141,8 +141,8 @@ describe('MessageCodec - Unit', () => {
     };
     const decoded = encodeAndDecode(msg);
     expect(decoded.entries).toHaveLength(2);
-    expect(decoded.entries![0].index).toBe('10');
-    expect(decoded.entries![1].index).toBe('11');
+    expect(decoded.entries![0]!.index).toBe('10');
+    expect(decoded.entries![1]!.index).toBe('11');
   });
 
   //
@@ -159,7 +159,7 @@ describe('MessageCodec - Unit', () => {
     };
     const decoded = encodeAndDecode(msg);
     // decode normalises: Buffer -> base64 string
-    expect(typeof decoded.entries![0].data).toBe('string');
+    expect(typeof decoded.entries![0]!.data).toBe('string');
   });
 
   //
@@ -263,7 +263,7 @@ describe('MessageCodec - Unit', () => {
     };
     const decoded = encodeAndDecode(msg);
     expect(decoded.entries).toHaveLength(1);
-    expect(typeof decoded.entries![0].data).toBe('string');
+    expect(typeof decoded.entries![0]!.data).toBe('string');
   });
 
   //
@@ -306,8 +306,8 @@ describe('MessageCodec - Unit', () => {
     expect(decoded.reject).toBe(true);
     expect(decoded.rejectHint).toBe('conflict');
     expect(decoded.entries).toHaveLength(2);
-    expect(decoded.entries![0].index).toBe('1');
-    expect(decoded.entries![1].index).toBe('2');
+    expect(decoded.entries![0]!.index).toBe('1');
+    expect(decoded.entries![1]!.index).toBe('2');
   });
 
   //
@@ -328,7 +328,7 @@ describe('MessageCodec - Unit', () => {
     const decoded = MessageCodec.decode(frame);
     expect(decoded.msgType).toBe(6);
     // MsgPack path normalises Uint8Array back to Buffer via normaliseEntryData.
-    expect(decoded.entries![0].data).toBeInstanceOf(Buffer);
+    expect(decoded.entries![0]!.data).toBeInstanceOf(Buffer);
   });
 
   it('decode() throws on an empty buffer', () => {

@@ -365,7 +365,7 @@ export class JepsenController {
       try {
         // Random operation: 70% write, 30% read
         const isWrite = Math.random() < 0.7;
-        const key = keys[Math.floor(Math.random() * keys.length)];
+        const key = keys[Math.floor(Math.random() * keys.length)]!;
 
         if (isWrite) {
           const value = `v${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -394,7 +394,7 @@ export class JepsenController {
    */
   async isHealthy(): Promise<boolean> {
     try {
-      await this.cluster.findLeader(10_000);
+      await this.cluster.findLeader();
       return true;
     } catch {
       return false;
@@ -444,7 +444,7 @@ export class JepsenController {
     const nodeIds = Object.keys(stateByNode).map(Number);
     if (nodeIds.length < 2) return { consistent: true, stateByNode, mismatches: [] };
 
-    const firstNodeId = nodeIds[0];
+    const firstNodeId = nodeIds[0]!;
     for (const key of keys) {
       const baseline = stateByNode[firstNodeId]?.[key] ?? null;
       for (const nid of nodeIds.slice(1)) {

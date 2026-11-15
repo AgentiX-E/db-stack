@@ -28,6 +28,7 @@ import { RaftGroup } from '../../consensus/core/RaftGroup';
 import type { IShardReplica } from '../../interfaces/IShardReplica';
 import type { IOutboxWriter } from '../../interfaces/IOutboxWriter';
 import type { ApplyEntry } from '../../interfaces/IShardReplica';
+import { DEFAULT_PIPELINE_CONFIG } from '../../interfaces/types';
 
 // ── Mock RaftAdapter ─────────────────────────────────────────
 const mockRaftAdapter: any = {
@@ -89,7 +90,6 @@ function createMockOutbox(): IOutboxWriter {
     append: vi.fn().mockResolvedValue(undefined),
     appendBatch: vi.fn().mockResolvedValue(undefined),
     write: vi.fn().mockResolvedValue(undefined),
-    getLastWritten: vi.fn().mockResolvedValue(0),
     getLastWrittenIndex: vi.fn().mockResolvedValue(0),
   };
 }
@@ -114,7 +114,7 @@ function createGroup(
     r,
     o,
     '/tmp/snap',
-    { batchSize: 10, batchIntervalMs: 5000 },
+    { ...DEFAULT_PIPELINE_CONFIG, batchSize: 10, batchIntervalMs: 5000 },
   );
   return { group, outbox: o, replica: r };
 }
@@ -277,7 +277,7 @@ describe('RaftGroup Concurrency Model', () => {
 
     // Verify sequential indices
     for (let i = 0; i < committedIndices.length - 1; i++) {
-      expect(committedIndices[i + 1]).toBe(committedIndices[i] + 1);
+      expect(committedIndices[i + 1]!).toBe(committedIndices[i]! + 1);
     }
   }, 15000);
 

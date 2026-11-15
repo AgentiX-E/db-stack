@@ -123,7 +123,7 @@ describe('RaftGroup — Unit', () => {
     await group.propose(entry);
     expect(mockRaftAdapter.propose).toHaveBeenCalled();
     expect(MOCK_OUTBOX.append).toHaveBeenCalled();
-    const outboxCall = MOCK_OUTBOX.append.mock.calls[0];
+    const outboxCall = MOCK_OUTBOX.append.mock.calls[0]!;
     expect(outboxCall[0].msgId).toBe('m1');
     expect(outboxCall[0].raftIndex).toBe(1);
   });
@@ -152,11 +152,17 @@ describe('RaftGroup — Unit', () => {
   //
   // AC 15.4: proposeAndWait delegates to raft.proposeAndWait
   //
-  it('AC 15.4: proposeAndWait delegates to raft', async () => {
+  it('AC 15.4: proposeAndWait delegates to raft, and the outbox record carries the position', async () => {
     const entry = { msgId: 'm3', type: 'exec', data: '{"z":3}' };
     await group.proposeAndWait(entry);
     expect(mockRaftAdapter.proposeAndWait).toHaveBeenCalled();
     expect(MOCK_OUTBOX.append).toHaveBeenCalled();
+    // The record is positioned by the commit the proposal returned. It used to
+    // be appended with `raftIndex: 0`, which is not a position: point-in-time
+    // recovery cannot place such an entry.
+    expect(MOCK_OUTBOX.append).toHaveBeenCalledWith(
+      expect.objectContaining({ msgId: 'm3', raftIndex: 1, raftTerm: 1 }),
+    );
   });
 
   //

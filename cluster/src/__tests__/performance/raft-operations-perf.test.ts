@@ -52,7 +52,7 @@ class BenchmarkRaftLog {
 
 /** Minimal Raft adapter for propose benchmarking */
 class BenchmarkRaftAdapter {
-  private log = new BenchmarkRaftLog();
+  readonly log = new BenchmarkRaftLog();
   private term = 1;
 
   async propose(data: string): Promise<number> {

@@ -317,7 +317,7 @@ describe('PeerConnection lifecycle', () => {
     conn.lastTx = Date.now() - 16_000;
     (conn as any)._checkHealth();
     expect(heartbeatSpy).toHaveBeenCalled();
-    await heartbeatSpy.mock.results[0].value;
+    await heartbeatSpy.mock.results[0]!.value;
   });
 
   it('_checkHealth no-ops when disconnected', () => {
@@ -729,7 +729,7 @@ describe('ConnectionPool markStale / getters / metrics', () => {
     const pool = new ConnectionPool(makeConfig());
     const metrics = pool.getCircuitBreakerMetrics();
     expect(metrics).toHaveLength(2);
-    expect(metrics[0].name).toBeDefined();
+    expect(metrics[0]!.name).toBeDefined();
   });
 });
 

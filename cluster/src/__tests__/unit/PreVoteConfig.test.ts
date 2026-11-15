@@ -66,7 +66,7 @@ describe('PreVote Configuration', () => {
   // AC PV.3: Override preserves other default values
   //
   it('AC PV.3: overrides only affect specified fields', () => {
-    const baseConfig: Record<string, any> = {
+    const baseConfig = {
       id: 1,
       peers: [2, 3],
       electionTick: 10,

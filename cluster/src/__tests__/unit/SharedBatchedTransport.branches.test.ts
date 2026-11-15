@@ -29,7 +29,7 @@ describe('SharedBatchedTransport — branch completion', () => {
   let mockShared: ReturnType<typeof createMockShared>;
   let transport: SharedBatchedTransport;
 
-  const getHandler = () => mockShared.onMessage.mock.calls[0][0];
+  const getHandler = () => mockShared.onMessage.mock.calls[0]![0];
 
   beforeEach(() => {
     mockShared = createMockShared();
@@ -62,7 +62,7 @@ describe('SharedBatchedTransport — branch completion', () => {
     h(0, { from: '2', msg: { type: 1 } }); // no requestId
     await vi.waitFor(() => expect(handler).toHaveBeenCalled());
     // No requestId -> inner is the whole wireMsg (from+msg), passed as innerMsg.
-    expect(handler.mock.calls[0][1]).toEqual({ from: '2', msg: { type: 1 } });
+    expect(handler.mock.calls[0]![1]).toEqual({ from: '2', msg: { type: 1 } });
   });
 
   it('request direction with no handler is a no-op', async () => {
@@ -89,7 +89,7 @@ describe('SharedBatchedTransport — branch completion', () => {
     const h = getHandler();
     h(0, { from: '2', msg: { type: 1 } }); // no requestId
     await vi.waitFor(() => expect(mockShared.send).toHaveBeenCalled());
-    const sent = mockShared.send.mock.calls[0][1][0];
+    const sent = mockShared.send.mock.calls[0]![1][0];
     expect(sent.requestId).toBeDefined();
     expect(sent.msg.direction).toBe('response');
     expect(sent.to).toBe('2');
@@ -125,7 +125,7 @@ describe('SharedBatchedTransport — branch completion', () => {
     const h = getHandler();
     h(0, { requestId: 'r4', msg: { type: 1 } }); // no from field
     await vi.waitFor(() => expect(mockShared.send).toHaveBeenCalled());
-    const sent = mockShared.send.mock.calls[0][1][0];
+    const sent = mockShared.send.mock.calls[0]![1][0];
     expect(sent.to).toBe('');
   });
 });

@@ -16,10 +16,28 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RaftTcpTransport } from '../../consensus/transport/RaftTcpTransport';
+import { RaftTcpTransport, type RaftTcpTransportConfig } from '../../consensus/transport/RaftTcpTransport';
+import type { RaftMessage } from '../../consensus/transport/MessageCodec';
+
+/**
+ * send() takes encoded RaftMessage batches. These tests only care that a send
+ * is attempted against an unreachable peer, so one minimal batch carries the
+ * label.
+ */
+function sendBatch(label: string): RaftMessage[] {
+  return [
+    {
+      msgType: 1,
+      from: '1',
+      to: '1',
+      term: '1',
+      entries: [{ index: '0', term: '1', entryType: 0, data: label }],
+    },
+  ];
+}
 
 // Minimal config (mirrors validConfig from RaftTcpTransport.test.ts)
-function minimalConfig(): any {
+function minimalConfig(): RaftTcpTransportConfig {
   const id = Math.floor(Math.random() * 9000) + 1000;
   return {
     node: { id, host: '127.0.0.1', port: 29000 + id },
@@ -29,7 +47,6 @@ function minimalConfig(): any {
       key: '-----BEGIN KEY-----\nMOCK\n-----END KEY-----',
       ca: '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----',
     },
-    heartbeatIntervalMs: 100,
     connectTimeoutMs: 200,
   };
 }
@@ -84,7 +101,7 @@ describe('RaftTcpTransport Storm (TST)', () => {
     const PEER_ID = 9010;
     transport.register({ id: PEER_ID, host: '127.0.0.1', port: 29998 });
 
-    const sends = Array.from({ length: 10 }, (_, i) => transport.send(PEER_ID, `msg-${i}`).catch(() => {}));
+    const sends = Array.from({ length: 10 }, (_, i) => transport.send(PEER_ID, sendBatch(`msg-${i}`)).catch(() => {}));
 
     await Promise.all(sends);
 
@@ -111,7 +128,7 @@ describe('RaftTcpTransport Storm (TST)', () => {
     // send() on stopped transport should reject cleanly
     let error: any = null;
     try {
-      await transport.send(9003, { type: 'data', payload: 'x'.repeat(1024) });
+      await transport.send(9003, sendBatch('x'.repeat(1024)));
     } catch (e) {
       error = e;
     }
@@ -129,7 +146,9 @@ describe('RaftTcpTransport Storm (TST)', () => {
       t.register({ id: 29996 + cycle, host: '127.0.0.1', port: 29996 + cycle });
 
       // Fire sends and immediate stop
-      const sends = Array.from({ length: 5 }, (_, i) => t.send(29996 + cycle, `cycle-${cycle}-${i}`).catch(() => {}));
+      const sends = Array.from({ length: 5 }, (_, i) =>
+        t.send(29996 + cycle, sendBatch(`cycle-${cycle}-${i}`)).catch(() => {}),
+      );
 
       // Give sends a tick to start, then stop
       await new Promise((r) => setTimeout(r, 5));
@@ -153,7 +172,7 @@ describe('RaftTcpTransport Storm (TST)', () => {
     transport.register({ id: 9005, host: '127.0.0.1', port: 29995 });
 
     // Trigger connects that will fail (peer unreachable)
-    const sends = Array.from({ length: 5 }, (_, i) => transport.send(9005, `data-${i}`).catch(() => {}));
+    const sends = Array.from({ length: 5 }, (_, i) => transport.send(9005, sendBatch(`data-${i}`)).catch(() => {}));
 
     await Promise.all(sends);
 

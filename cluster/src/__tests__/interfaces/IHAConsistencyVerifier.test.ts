@@ -83,7 +83,7 @@ describe('IHAConsistencyVerifier', () => {
     const result = await mock.verifyShard('shard-1');
     expect(result.verified).toBe(false);
     expect(result.mismatches).toHaveLength(1);
-    expect(result.mismatches[0].nodeId).toBe('node-2');
-    expect(result.mismatches[0].actualChecksum).toBe('xyz789');
+    expect(result.mismatches[0]!.nodeId).toBe('node-2');
+    expect(result.mismatches[0]!.actualChecksum).toBe('xyz789');
   });
 });

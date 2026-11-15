@@ -18,6 +18,7 @@ vi.mock('../../consensus/core/RaftGroup', () => {
       public config: any;
       public replica: any;
       public outboxManager: any;
+      public flexQuorum: { writeQuorum: number; readQuorum: number; commitQuorum: number };
       public _initCalled = false;
       public _stopped = false;
       public _leader: number | null = null;

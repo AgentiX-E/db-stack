@@ -22,7 +22,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { TestCluster } from '../../__tests__/integration/TestCluster';
+import { TestCluster, type TestNode } from '../../__tests__/integration/TestCluster';
 
 const BOF_TIMEOUT = 600_000;
 
@@ -30,7 +30,7 @@ const BOF_TIMEOUT = 600_000;
  * Send `count` proposals in `batchSize`-way batches.
  */
 async function batchPropose(
-  leader: ReturnType<TestCluster['nodes'][number]>,
+  leader: TestNode,
   count: number,
   batchSize: number,
   prefix: string,

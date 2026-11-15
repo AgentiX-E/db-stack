@@ -22,6 +22,8 @@ import type {
 } from '../../consensus/joint-consensus/IClusterMembershipTransition';
 import type { IConsensusLayer } from '../../consensus/interfaces/interfaces';
 import { TestCluster } from '../../__tests__/integration/TestCluster';
+import type { RaftGroup } from '../../consensus/core/RaftGroup';
+import type { RaftConsensusPhase } from '../../interfaces/types';
 
 // ============================================================
 // 辅助函数
@@ -48,15 +50,17 @@ function createMockRaftGroup(slowMs: number = 0) {
   let _internalPhase: string = 'normal';
 
   return {
-    proposeMembershipChange: vi.fn(async (change: any) => {
-      if (slowMs > 0) await sleep(slowMs);
-      if (change.changeId?.includes('-new')) {
-        _internalPhase = 'normal';
-        return { success: true, phase: 'normal' as any };
-      }
-      _internalPhase = 'joint';
-      return { success: true, phase: 'joint' as any };
-    }),
+    proposeMembershipChange: vi.fn(
+      async (change: any): Promise<{ success: boolean; phase: RaftConsensusPhase; error?: string }> => {
+        if (slowMs > 0) await sleep(slowMs);
+        if (change.changeId?.includes('-new')) {
+          _internalPhase = 'normal';
+          return { success: true, phase: 'normal' as any };
+        }
+        _internalPhase = 'joint';
+        return { success: true, phase: 'joint' as any };
+      },
+    ),
     getConsensusPhase: vi.fn(() => {
       if (_internalPhase === 'joint') return 'joint' as any;
       return 'normal' as any;
@@ -64,7 +68,7 @@ function createMockRaftGroup(slowMs: number = 0) {
     getCurrentMembership: vi.fn(() => null),
     getProgress: vi.fn(async () => ({ commit: 100, applied: 100 })),
     getLeader: vi.fn(async () => 1),
-    getLeaderHealth: vi.fn(async () => ({ isLeader: true, peerCount: 3 })),
+
     propose: vi.fn(async () => {}),
     isLeader: vi.fn(async () => true),
     campaign: vi.fn(async () => {}),
@@ -72,7 +76,17 @@ function createMockRaftGroup(slowMs: number = 0) {
   };
 }
 
-function createMockConsensusLayer(): IConsensusLayer {
+/**
+ * The engine's constructor takes a RaftGroup, which needs a live raft-core
+ * node. The mock below implements the members the engine actually calls, so it
+ * is asserted into the RaftGroup view here — the single conversion point.
+ */
+function asRaftGroup(group: ReturnType<typeof createMockRaftGroup>): RaftGroup {
+  const partial: Partial<RaftGroup> = group;
+  return partial as RaftGroup;
+}
+
+function createMockConsensusLayer() {
   return {
     start: vi.fn(),
     stop: vi.fn(),
@@ -88,7 +102,7 @@ function createMockConsensusLayer(): IConsensusLayer {
     on: vi.fn(),
     off: vi.fn(),
     setForceLeader: vi.fn(),
-  } as any;
+  };
 }
 
 // ============================================================
@@ -449,7 +463,7 @@ describe('RaftJointConsensusEngine — 集成 RaftGroupManager', () => {
   it('AC-D1-C1: 配置无变更时立即返回成功 (configsEqual)', async () => {
     // 覆盖 _configsEqual 的 early-return 分支
     const engine = new RaftJointConsensusEngine(
-      () => createMockRaftGroup(),
+      () => asRaftGroup(createMockRaftGroup()),
       () => createMockConsensusLayer(),
     );
 
@@ -496,7 +510,7 @@ describe('RaftJointConsensusEngine — 集成 RaftGroupManager', () => {
       callCount++;
       if (callCount === 2) {
         // 第2次调用（C_NEW）失败
-        return { success: false, error: 'C_NEW propose failed' };
+        return { success: false, phase: 'joint' as RaftConsensusPhase, error: 'C_NEW propose failed' };
       }
       return { success: true, phase: 'normal' as any };
     });
@@ -575,7 +589,7 @@ describe('RaftJointConsensusEngine — 覆盖率补充', () => {
     for (const g of [group1, group2]) {
       g.proposeMembershipChange = vi.fn(async (change) => {
         callCount++;
-        if (callCount > 1) return { success: false, error: 'C_NEW phase error' };
+        if (callCount > 1) return { success: false, phase: 'joint' as RaftConsensusPhase, error: 'C_NEW phase error' };
         return { success: true, phase: 'normal' as any };
       });
     }
@@ -706,7 +720,7 @@ describe('RaftJointConsensusEngine — 覆盖率补充', () => {
     mockGroup.proposeMembershipChange = vi.fn(async (change) => {
       callCount++;
       if (callCount === 1) {
-        return { success: false, phase: 'normal', error: 'already in progress' };
+        return { success: false, phase: 'normal' as RaftConsensusPhase, error: 'already in progress' };
       }
       return { success: true, phase: 'normal' as any };
     });

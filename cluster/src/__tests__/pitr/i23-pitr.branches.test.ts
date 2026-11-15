@@ -65,8 +65,9 @@ describe('PITRManager — branch completion', () => {
       },
     ]);
     const cps = pitr.getCheckpoints('s1');
-    expect(cps[0].snapshotIndex).toBe(5);
-    expect(cps[1].snapshotIndex).toBe(1);
+    expect(cps).toHaveLength(2);
+    expect(cps[0]!.snapshotIndex).toBe(5);
+    expect(cps[1]!.snapshotIndex).toBe(1);
   });
 
   it('getRPO returns 0 when no checkpoint has ever been taken', () => {

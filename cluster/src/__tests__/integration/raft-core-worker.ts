@@ -64,7 +64,7 @@ async function main() {
     // ── State ──
     const committedLog: string[] = [];
     let currentLeader: number | null = null;
-    let raftAdapter: RaftAdapter;
+    let raftAdapter: InstanceType<typeof RaftAdapter>;
 
     // ── Build RaftAdapter ──
     if (USE_IN_MEMORY) {

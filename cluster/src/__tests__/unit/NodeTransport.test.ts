@@ -38,22 +38,21 @@ let messageHandler: ((msg: any) => void) | null = null;
 vi.mock('../../consensus/transport/RaftTcpTransport', () => {
   return {
     RaftTcpTransport: vi.fn().mockImplementation((_config: any) => {
-      const emitter = new EventEmitter();
-      emitter.start = mockStart;
-      emitter.stop = mockStop;
-      emitter.send = mockSend;
-      emitter.register = mockRegister;
-      emitter.getStatus = mockGetStatus;
-      emitter.getCircuitBreakerMetrics = mockGetCircuitBreakerMetrics;
-      emitter.on = emitter.on.bind(emitter);
-      emitter.emit = emitter.emit.bind(emitter);
+      const transport = Object.assign(new EventEmitter(), {
+        start: mockStart,
+        stop: mockStop,
+        send: mockSend,
+        register: mockRegister,
+        getStatus: mockGetStatus,
+        getCircuitBreakerMetrics: mockGetCircuitBreakerMetrics,
+      });
       // Capture the internal 'message' listener
-      const origOn = emitter.on.bind(emitter);
-      emitter.on = vi.fn((event: string, handler: (...args: any[]) => void) => {
+      const origOn = transport.on.bind(transport);
+      transport.on = vi.fn((event: string, handler: (...args: any[]) => void) => {
         if (event === 'message') messageHandler = handler as (msg: any) => void;
         return origOn(event, handler);
       });
-      return emitter;
+      return transport;
     }),
     RaftTcpTransportConfig: {},
   } as any;
@@ -101,7 +100,7 @@ describe('NodeTransport', () => {
     const wrapper = nt.forShard(42);
     await wrapper.send(1, [{ type: 'AppendEntries' }]);
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const msgs = mockSend.mock.calls[0][1];
+    const msgs = mockSend.mock.calls[0]![1];
     expect(msgs[0]._shardId).toBe(42);
   });
 
@@ -150,7 +149,7 @@ describe('NodeTransport', () => {
     if (messageHandler) messageHandler({ type: 'RequestVote', _shardId: 3 });
     expect(handler).toHaveBeenCalledWith(3, expect.objectContaining({ type: 'RequestVote' }));
     // _shardId should be cleaned up
-    const msgArg = handler.mock.calls[0][1];
+    const msgArg = handler.mock.calls[0]![1];
     expect(msgArg._shardId).toBeUndefined();
   });
 

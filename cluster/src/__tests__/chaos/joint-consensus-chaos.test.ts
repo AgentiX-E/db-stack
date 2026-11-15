@@ -34,7 +34,8 @@
 import { describe, it, expect } from 'vitest';
 import { ChaosCluster, waitForStability } from './chaos-harness.js';
 import { OperationRecorder } from '../linearizability/LinearizabilityChecker';
-import { RaftJointConsensusEngine, type PeerConfig } from '../../consensus/joint-consensus/RaftJointConsensusEngine.js';
+import { RaftJointConsensusEngine } from '../../consensus/joint-consensus/RaftJointConsensusEngine.js';
+import type { PeerConfig } from '../../consensus/joint-consensus/IClusterMembershipTransition.js';
 
 // ── Timeouts ────────────────────────────────────────────────
 
@@ -516,7 +517,7 @@ describe('D2: Joint Consensus Chaos Testing', () => {
         // Partition the follower that would receive the C_JOINT proposal.
         const followers = cluster.nodes.filter((n) => n.id !== leader);
         const isolatedFollower = followers[1]; // isolate one follower
-        await cluster.injectFault('partition', [isolatedFollower.id]);
+        await cluster.injectFault('partition', [isolatedFollower!.id]);
 
         const { engine } = createEngineOnNode(cluster, leader);
 

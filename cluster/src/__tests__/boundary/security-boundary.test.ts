@@ -92,7 +92,6 @@ describe('Boundary: Security (SEC)', () => {
           key: '-----BEGIN KEY-----\nMOCK\n-----END KEY-----',
           ca: '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----',
         },
-        heartbeatIntervalMs: 500,
         connectTimeoutMs: 200,
       });
 
@@ -140,7 +139,6 @@ describe('Boundary: Security (SEC)', () => {
           key: '-----BEGIN KEY-----\nMOCK\n-----END KEY-----',
           ca: '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----',
         },
-        heartbeatIntervalMs: 500,
         connectTimeoutMs: 200,
       });
 
@@ -151,7 +149,18 @@ describe('Boundary: Security (SEC)', () => {
       });
 
       // Fire 100 sends, then immediately stop
-      const sends = Array.from({ length: 100 }, (_, i) => transport.send(99904, `sec4-msg-${i}`).catch(() => {}));
+      const sends = Array.from({ length: 100 }, (_, i) =>
+        transport
+          .send(99904, [
+            {
+              msgType: 1,
+              from: '99903',
+              to: '99904',
+              term: '1',
+            },
+          ])
+          .catch(() => {}),
+      );
 
       await transport.stop();
 

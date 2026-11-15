@@ -146,7 +146,7 @@ describe('BatchedRaftTransport (Unit)', () => {
 
     // Respond to each request with a unique value
     for (let i = 0; i < 100; i++) {
-      simulateIncoming(makeResponseMsg(requestIds[i], { matchIndex: i }));
+      simulateIncoming(makeResponseMsg(requestIds[i]!, { matchIndex: i }));
     }
 
     const results = await Promise.all(promises);
@@ -246,7 +246,7 @@ describe('BatchedRaftTransport (Unit)', () => {
 
     // Respond to each with its own index
     for (let i = 0; i < count; i++) {
-      simulateIncoming(makeResponseMsg(requestIds[i], { index: i }));
+      simulateIncoming(makeResponseMsg(requestIds[i]!, { index: i }));
     }
 
     const results = await Promise.all(promises);

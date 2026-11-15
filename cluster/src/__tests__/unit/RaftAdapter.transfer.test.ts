@@ -91,20 +91,15 @@ describe('RaftAdapter.transferLeadership', () => {
     expect(timerManager.stopHeartbeatTimer).toHaveBeenCalled();
   });
 
-  it(
-    'should throw on timeout when leader does not change',
-    { timeout: 15_000 },
-    async () => {
-      const adapter = createAdapterWithMockNode({
-        isLeader: true,
-        getLeader: 1, // Always returns self (same as nodeId)
-        getNodeId: 1,
-      });
+  it('should throw on timeout when leader does not change', { timeout: 15_000 }, async () => {
+    const adapter = createAdapterWithMockNode({
+      isLeader: true,
+      getLeader: 1, // Always returns self (same as nodeId)
+      getNodeId: 1,
+    });
 
-      await expect(adapter.transferLeadership('2')).rejects.toThrow(/timed out/);
-    },
-    15_000,
-  );
+    await expect(adapter.transferLeadership('2')).rejects.toThrow(/timed out/);
+  });
 });
 
 describe('RaftAdapter.stopHeartbeat', () => {

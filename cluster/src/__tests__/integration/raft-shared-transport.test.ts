@@ -33,7 +33,7 @@
  *   AC 12.6: All adapters cleanly stop (no port leaks)
  */
 
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { RaftAdapter } from '../../consensus/core/RaftAdapter';
 import { NodeTransport, NodeTransportConfig } from '../../consensus/transport/NodeTransport';
 import { generateClusterCerts } from './test-certs';
@@ -148,16 +148,16 @@ describe('Single-process multi-RaftGroup via SharedBatchedTransport', () => {
     const peerConfigs = tlsCerts.nodes.map((_, i) => ({
       id: i + 1,
       host: '127.0.0.1',
-      port: ports[i],
+      port: ports[i]!,
     }));
 
     for (let i = 0; i < NODE_COUNT; i++) {
       const nodeId = i + 1;
 
       const transportConfig: NodeTransportConfig = {
-        node: { id: nodeId, host: '127.0.0.1', port: ports[i] },
+        node: { id: nodeId, host: '127.0.0.1', port: ports[i]! },
         peers: peerConfigs.filter((p) => p.id !== nodeId),
-        tls: tlsCerts.nodes[i],
+        tls: tlsCerts.nodes[i]!,
       };
 
       const transport = new NodeTransport(transportConfig);
@@ -172,7 +172,7 @@ describe('Single-process multi-RaftGroup via SharedBatchedTransport', () => {
       const shards: ShardNode[] = [];
 
       for (let s = 0; s < SHARDS_PER_NODE; s++) {
-        const shardDataDir = join(dataDirs[i], `shard${s}`);
+        const shardDataDir = join(dataDirs[i]!, `shard${s}`);
         const committed: string[] = [];
 
         const adapter = new RaftAdapter({
@@ -180,9 +180,9 @@ describe('Single-process multi-RaftGroup via SharedBatchedTransport', () => {
           storagePath: shardDataDir,
           electionTick: ELECTION_TICK,
           heartbeatTick: HEARTBEAT_TICK,
-          tickInterval: TICK_INTERVAL_MS,
+          tickIntervalMs: TICK_INTERVAL_MS,
           peers: [1, 2, 3],
-          environment: 'test',
+          environment: 'development',
         });
 
         const applyHandler = (data: string) => {
@@ -194,7 +194,7 @@ describe('Single-process multi-RaftGroup via SharedBatchedTransport', () => {
         shards.push({ adapter, nodeId, shardIndex: s, dataDir: shardDataDir, committed });
       }
 
-      cluster.push({ nodeId, host: '127.0.0.1', port: ports[i], transport, shards, dataDir: dataDirs[i] });
+      cluster.push({ nodeId, host: '127.0.0.1', port: ports[i]!, transport, shards, dataDir: dataDirs[i]! });
     }
 
     // Give transports time to establish TCP connections
@@ -262,7 +262,7 @@ describe('Single-process multi-RaftGroup via SharedBatchedTransport', () => {
     await proposeAndWait(leader1, shardGroup1, 'entry-shard1-isolated');
 
     // Shard 1 nodes should NOT have shard 0 entries
-    const shard0Entries = shardGroup0[0].committed;
+    const shard0Entries = shardGroup0[0]!.committed;
     for (const s of shardGroup1) {
       for (const entry of shard0Entries) {
         if (entry.startsWith('entry-shard0')) {
@@ -272,7 +272,7 @@ describe('Single-process multi-RaftGroup via SharedBatchedTransport', () => {
     }
 
     // Shard 0 nodes should NOT have shard 1 entries
-    const shard1Entries = shardGroup1[0].committed;
+    const shard1Entries = shardGroup1[0]!.committed;
     for (const s of shardGroup0) {
       for (const entry of shard1Entries) {
         if (entry.startsWith('entry-shard1')) {

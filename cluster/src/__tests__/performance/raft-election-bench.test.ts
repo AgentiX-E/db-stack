@@ -45,8 +45,8 @@ describe('Raft Election Benchmark', () => {
     // Statistical analysis
     const sorted = [...electionTimes].sort((a, b) => a - b);
     const mean = electionTimes.reduce((a, b) => a + b, 0) / electionTimes.length;
-    const median = sorted[5]; // index 5 of 10
-    const p95 = sorted[9]; // index 9 of 10
+    const median = sorted[5]!; // index 5 of 10
+    const p95 = sorted[9]!; // index 9 of 10
 
     // Mean election time should be within reasonable bounds
     expect(mean).toBeGreaterThan(0);
@@ -56,7 +56,7 @@ describe('Raft Election Benchmark', () => {
     // Log distribution for inspection
     process.stdout.write(
       `\n  [Election times (ms)] mean=${Math.round(mean)} median=${Math.round(median)} P95=${Math.round(p95)} ` +
-        `min=${Math.round(sorted[0])} max=${Math.round(sorted[9])}\n`,
+        `min=${Math.round(sorted[0]!)} max=${Math.round(sorted[9]!)}\n`,
     );
   }, 30000);
 
@@ -94,8 +94,8 @@ describe('Raft Election Benchmark', () => {
     const entries = Array.from({ length: 10 }, (_, i) => ({ index: i + 1, term: 2 }));
 
     for (let i = 1; i < entries.length; i++) {
-      expect(entries[i].index).toBeGreaterThan(entries[i - 1].index);
-      expect(entries[i].term).toBeGreaterThanOrEqual(entries[i - 1].term);
+      expect(entries[i]!.index).toBeGreaterThan(entries[i - 1]!.index);
+      expect(entries[i]!.term).toBeGreaterThanOrEqual(entries[i - 1]!.term);
     }
   });
 
@@ -126,7 +126,7 @@ describe('Raft Election Benchmark', () => {
     // Terms should never decrease
     const terms = [1, 2, 2, 3, 3, 4, 5, 5, 5, 6];
     for (let i = 1; i < terms.length; i++) {
-      expect(terms[i]).toBeGreaterThanOrEqual(terms[i - 1]);
+      expect(terms[i]!).toBeGreaterThanOrEqual(terms[i - 1]!);
     }
   });
 });

@@ -23,7 +23,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { TestCluster } from '../../__tests__/integration/TestCluster';
+import { TestCluster, type TestNode } from '../../__tests__/integration/TestCluster';
 
 const FC_TIMEOUT = 600_000; // 10 min
 
@@ -47,9 +47,13 @@ describe('Boundary: Fail-Recover Cycles', () => {
    * Run one fail-recover cycle:
    *   1. Write `entries` entries to leader
    *   2. Kill current leader node
-   *   3. Wait for new leader
-   *   4. Verify old entries are present
+   *   3. Wait for new leader among the survivors
+   *   4. Restart the cluster so the next cycle has a full quorum again
    *   5. Return new leader
+   *
+   * A 3-node cluster can only lose one node and keep a majority, so the
+   * crashed node has to come back before the next cycle. TestCluster has no
+   * per-node restart, so recovery is a full `start()`.
    */
   async function failRecoverCycle(
     entries: number,
@@ -74,19 +78,15 @@ describe('Boundary: Fail-Recover Cycles', () => {
     console.log(`[FC] ${cycleLabel}: crashing leader node-${leaderId} (${successes} written)`);
     const crashStart = Date.now();
 
-    try {
-      await cluster.nodes[leaderId - 1].adapter.destroy();
-    } catch {
-      // Destroy may throw if already crashed
-    }
+    await cluster.killNode(leaderId);
 
     // Wait for new leader
     const electionStart = Date.now();
-    let newLeader = null;
+    let newLeader: TestNode | null = null;
     for (let retry = 0; retry < 30; retry++) {
       try {
-        newLeader = await cluster.findLeader(5_000);
-        if (newLeader && newLeader.id !== -1) break;
+        newLeader = await cluster.findLeader();
+        break;
       } catch {
         // No leader yet—wait
       }
@@ -101,6 +101,9 @@ describe('Boundary: Fail-Recover Cycles', () => {
     }
 
     console.log(`[FC] ${cycleLabel}: new leader node-${newLeader.id} elected in ${electionMs}ms`);
+
+    // Bring the crashed node back for the next cycle.
+    await cluster.start();
 
     return { successes, crashes: 1, electionMs };
   }
@@ -175,29 +178,19 @@ describe('Boundary: Fail-Recover Cycles', () => {
   it(
     'FC.4: cascade crash before sync (no entries expected)',
     async () => {
-      // Kill all nodes except one to test sole-survivor availability
-      let survivors = 0;
-      for (let i = 2; i >= 0; i--) {
-        try {
-          await cluster.nodes[i].adapter.destroy();
-        } catch {
-          // Already crashed
-        }
-        survivors = i;
+      // Leave exactly one node alive: kill the two highest ids.
+      for (const id of [3, 2]) {
+        await cluster.killNode(id);
       }
+      expect(cluster.nodes).toHaveLength(1);
 
       // Wait — only 1 node left, Raft requires majority
       console.log('[FC.4] All nodes crashed except 1 — should not elect leader');
-      await new Promise((r) => setTimeout(r), 15_000);
+      await new Promise((r) => setTimeout(r, 15_000));
 
-      try {
-        const loneLeader = await cluster.findLeader(5_000);
-        // With minority, should NOT have a leader
-        console.log('[FC.4] Single survivor has no leader (expected)');
-        expect(loneLeader).toBeNull();
-      } catch {
-        console.log('[FC.4] No leader (expected)');
-      }
+      // With a minority of nodes alive, no leader may ever be elected.
+      await expect(cluster.findLeader()).rejects.toThrow(/No leader elected/);
+      console.log('[FC.4] Single survivor has no leader (expected)');
     },
     FC_TIMEOUT,
   );

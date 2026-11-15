@@ -44,6 +44,8 @@ export interface ChaosConfig {
   preVote: boolean;
   /** Random seed for deterministic reproducibility (default: 42) */
   seed: number;
+  /** Entries between raft snapshots on the underlying nodes (default: 100 000) */
+  snapshotInterval?: number;
 }
 
 export const DEFAULT_CHAOS_CONFIG: ChaosConfig = {
@@ -55,6 +57,7 @@ export const DEFAULT_CHAOS_CONFIG: ChaosConfig = {
   crashDurationMs: 2000,
   preVote: true,
   seed: 42,
+  snapshotInterval: 100_000,
 };
 
 export function chaosConfig(overrides: Partial<ChaosConfig>): ChaosConfig {
@@ -187,6 +190,9 @@ export class ChaosInjectingTransport implements Transport {
 
 // ── ChaosCluster ─────────────────────────────────────────────
 
+/** Node type as exposed by {@link ChaosCluster.nodes}. */
+export type TestNodeInfo = TestNode;
+
 export class ChaosCluster {
   private cluster: TestCluster;
   private config: ChaosConfig;
@@ -216,7 +222,7 @@ export class ChaosCluster {
       preVote: this.config.preVote,
       checkQuorum: true,
       enableInstallSnapshot: true,
-      snapshotInterval: 100_000,
+      snapshotInterval: this.config.snapshotInterval,
     });
   }
 
@@ -404,7 +410,7 @@ export class ChaosCluster {
     if (this.config.nodeCrashProbability > 0 && this.rng.next() < this.config.nodeCrashProbability) {
       const activeIds = this.getActiveNodeIds();
       if (activeIds.length > 1) {
-        const target = activeIds[Math.floor(this.rng.next() * activeIds.length)];
+        const target = activeIds[Math.floor(this.rng.next() * activeIds.length)]!;
         await this.injectFault('crash', [target]);
       }
     }

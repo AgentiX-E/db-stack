@@ -169,7 +169,7 @@ describe('FencingManager - Unit', () => {
 
     vi.advanceTimersByTime(1500);
     expect(callback).toHaveBeenCalled();
-    expect(callback.mock.calls[0][0]).toContain('missed leader heartbeat');
+    expect(callback.mock.calls[0]![0]).toContain('missed leader heartbeat');
   });
 
   //
@@ -249,11 +249,11 @@ describe('FencingManager - edge cases', () => {
   it('AC 21.19: same-term heartbeat refreshes an unfenced shard', () => {
     fm = new FencingManager();
     fm.receiveHeartbeat(0, 1, '1');
-    const before = fm.getStatus().shards[0].lastHeartbeatMs;
+    const before = fm.getStatus().shards[0]!.lastHeartbeatMs;
 
     vi.advanceTimersByTime(100);
     fm.receiveHeartbeat(0, 1, '1'); // same term, still unfenced → refresh
-    const after = fm.getStatus().shards[0].lastHeartbeatMs;
+    const after = fm.getStatus().shards[0]!.lastHeartbeatMs;
 
     expect(after).toBeGreaterThan(before);
     expect(fm.getShardState(0)).toBe('unfenced');
@@ -319,7 +319,7 @@ describe('FencingManager - edge cases', () => {
     vi.advanceTimersByTime(1500);
 
     expect(panicCb).toHaveBeenCalled();
-    expect(panicCb.mock.calls[0][0]).toContain('missed leader heartbeat');
+    expect(panicCb.mock.calls[0]![0]).toContain('missed leader heartbeat');
     expect(fm.getShardState(0)).toBe('fenced');
   });
 

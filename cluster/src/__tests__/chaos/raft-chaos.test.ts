@@ -307,7 +307,7 @@ describe('Raft Chaos Suite', () => {
           // Randomly partition some nodes
           const activeIds = cluster.getActiveNodeIds();
           if (activeIds.length > 1) {
-            const targetId = activeIds[Math.floor(Math.random() * activeIds.length)];
+            const targetId = activeIds[Math.floor(Math.random() * activeIds.length)]!;
             await cluster.injectFault('partition', [targetId]);
           }
           await new Promise((r) => setTimeout(r, 500));
@@ -419,7 +419,7 @@ describe('Raft Chaos Suite', () => {
 
         // Isolate one node (minority partition)
         const allIds = cluster.getActiveNodeIds();
-        const isolatedId = allIds[allIds.length - 1]; // isolate last node
+        const isolatedId = allIds[allIds.length - 1]!; // isolate last node
         await cluster.injectFault('partition', [isolatedId]);
         await new Promise((r) => setTimeout(r, 1000));
 

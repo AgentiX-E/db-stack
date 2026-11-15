@@ -393,7 +393,7 @@ describe('Raft Transport Stress & Resilience', () => {
 
     const allPeerList: PeerInfo[] = [];
     for (let i = 0; i < count; i++) {
-      allPeerList.push({ id: i + 1, host: '127.0.0.1', port: ports[i] });
+      allPeerList.push({ id: i + 1, host: '127.0.0.1', port: ports[i]! });
     }
 
     for (let i = 0; i < count; i++) {
@@ -401,7 +401,7 @@ describe('Raft Transport Stress & Resilience', () => {
       // Only pass OTHER nodes as peers (not self)
       const peers = allPeerList.filter((p) => p.id !== id);
       const dataDir = createTempDir(`node-${id}`);
-      const node = createNode(id, ports[i], peers, certs[i], dataDir, electionTick, heartbeatTick, customEnv);
+      const node = createNode(id, ports[i]!, peers, certs[i]!, dataDir, electionTick, heartbeatTick, customEnv);
       nodes.push(node);
     }
 
@@ -470,7 +470,7 @@ describe('Raft Transport Stress & Resilience', () => {
       const leader = await findLeader();
 
       // Send 100 proposals concurrently
-      const promises: Promise<void>[] = [];
+      const promises: Promise<{ index: number }>[] = [];
       for (let i = 0; i < 100; i++) {
         promises.push(proposeToLeader(leader, `concurrent-${i}`, nodes));
       }
@@ -525,10 +525,10 @@ describe('Raft Transport Stress & Resilience', () => {
       }
 
       const newDataDir = createTempDir(`node-${follower.id}-restart`);
-      const newNode = createNode(follower.id, followerPort, peerList, certs[follower.id - 1], newDataDir);
+      const newNode = createNode(follower.id, followerPort, peerList, certs[follower.id - 1]!, newDataDir);
       // Replace the node in the list
       const idx = nodes.findIndex((n) => n.id === follower.id);
-      cleanupTempDir(nodes[idx].dataDir);
+      cleanupTempDir(nodes[idx]!.dataDir);
       nodes[idx] = newNode;
 
       // Wait for it to come online
@@ -576,7 +576,7 @@ describe('Raft Transport Stress & Resilience', () => {
       const peerList: PeerInfo[] = nodes.map((n) => ({ id: n.id, host: '127.0.0.1', port: n.port }));
 
       const dataDir3 = createTempDir('node-3-catchup');
-      const node3 = createNode(3, port3, peerList, certs[2], dataDir3, 15, 3);
+      const node3 = createNode(3, port3, peerList, certs[2]!, dataDir3, 15, 3);
       nodes.push(node3);
 
       await waitForMessage(node3, 'ready', 15000);
@@ -625,9 +625,9 @@ describe('Raft Transport Stress & Resilience', () => {
         .map((n) => ({ id: n.id, host: '127.0.0.1', port: n.port }));
 
       const newDataDir = createTempDir('node-isolated-heal');
-      const healedNode = createNode(toIsolate.id, portNew, survivingPeers, certs[toIsolate.id - 1], newDataDir);
+      const healedNode = createNode(toIsolate.id, portNew, survivingPeers, certs[toIsolate.id - 1]!, newDataDir);
       const idx = nodes.findIndex((n) => n.id === toIsolate.id);
-      cleanupTempDir(nodes[idx].dataDir);
+      cleanupTempDir(nodes[idx]!.dataDir);
       nodes[idx] = healedNode;
 
       await waitForMessage(healedNode, 'ready', 15000);
@@ -655,7 +655,7 @@ describe('Raft Transport Stress & Resilience', () => {
 
       // Send 10 proposals, verifying correct requestId → response matching
       const count = 10;
-      const promises: Promise<void>[] = [];
+      const promises: Promise<{ index: number }>[] = [];
       for (let i = 0; i < count; i++) {
         promises.push(proposeToLeader(leader, `collision-test-${i}`, nodes));
       }
