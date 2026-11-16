@@ -23,6 +23,7 @@ import type {
   WindowConflict,
   MaintenanceSchedulerStats,
   PauseRequest,
+  ResumeRequest,
   RecurrenceMode,
   DayOfWeek,
 } from '../interfaces/IMaintenanceScheduler.js';
@@ -107,6 +108,43 @@ function parseCron(expr: string): CronSchedule {
     months: parseCronField(fields[3]!, 1, 12),
     daysOfWeek: parseCronField(fields[4]!, 0, 6),
   };
+}
+
+/**
+ * Parse a `HH:MM` start time, or `null` when the value cannot name a time of day.
+ *
+ * `Number('25')` is 25 rather than `NaN`, and `setUTCHours(25, 0)` rolls over to
+ * 01:00 the next day, so a range check is the only thing separating a real time
+ * from a typo. Without it a window described as `25:00` is silently scheduled an
+ * hour nobody asked for — the failure a schedule must never have.
+ *
+ * Out-of-range values are malformed in exactly the way `'aa:bb'` is: the
+ * projection yields no occurrences and throws nothing.
+ */
+function parseStartTime(value: string): { hour: number; minute: number } | null {
+  const parts = value.split(':');
+  const hour = Number(parts[0]);
+  const minute = Number(parts[1]);
+  const hourInvalid = !Number.isInteger(hour) || hour < 0 || hour > 23;
+  const minuteInvalid = !Number.isInteger(minute) || minute < 0 || minute > 59;
+  if (hourInvalid || minuteInvalid) return null;
+  return { hour, minute };
+}
+
+/**
+ * Days of the month that name a real calendar day, in `1..31`.
+ *
+ * `Date.UTC(year, month, 0)` is the last day of the *previous* month, so a `0`
+ * entry fires a window one month early on a date the operator never named;
+ * `>31` has no meaning at all. Both are dropped rather than clamped.
+ */
+function validDaysOfMonth(days: readonly number[]): Set<number> {
+  const result = new Set<number>();
+  for (const day of days) {
+    const isDayOfMonth = Number.isInteger(day) && day >= 1 && day <= 31;
+    if (isDayOfMonth) result.add(day);
+  }
+  return result;
 }
 
 // ── Scheduler ───────────────────────────────────────────────
@@ -348,8 +386,14 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     }
   }
 
-  async requestResume(resources: string[]): Promise<void> {
-    // Resources are resumed by the caller via onResume callback
+  async requestResume(request: ResumeRequest): Promise<void> {
+    // Drives the caller's callback for every resource and awaits it, exactly as
+    // requestPause does for onPaused. The body used to be empty, so `await
+    // requestResume(resources)` resolved with nothing resumed: the caller was
+    // told the database was back in service while it stayed paused.
+    for (const resource of request.resources) {
+      await request.onResume(resource);
+    }
   }
 
   // ── Statistics ───────────────────────────────────────────
@@ -420,16 +464,12 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
   }
 
   private _projectDaily(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
-    const parts = win.startTime!.split(':');
-    const h = Number(parts[0]);
-    const m = Number(parts[1]);
-    const hInvalid = isNaN(h);
-    const mInvalid = isNaN(m);
-    if (hInvalid || mInvalid) return;
+    const start = parseStartTime(win.startTime!);
+    if (start === null) return;
 
     // Set cursor to today at startTime HH:MM
     let cursor = new Date(fromMs);
-    cursor.setUTCHours(h, m, 0, 0);
+    cursor.setUTCHours(start.hour, start.minute, 0, 0);
 
     // If cursor is before the range start, advance to tomorrow
     const cursorTime = cursor.getTime();
@@ -448,18 +488,24 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
 
   private _projectWeekly(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
     const daysArr = win.daysOfWeek!;
-    const parts = win.startTime!.split(':');
-    const h = Number(parts[0]);
-    const m = Number(parts[1]);
-    const hInvalid = isNaN(h);
-    const mInvalid = isNaN(m);
-    if (hInvalid || mInvalid) return;
+    const start = parseStartTime(win.startTime!);
+    if (start === null) return;
 
     const targetDays = new Set(daysArr.map((d) => DAY_INDEX[d]));
-    let cursorMs = fromMs;
-    const startDate = new Date(cursorMs);
-    startDate.setUTCHours(h, m, 0, 0);
-    cursorMs = startDate.getTime();
+    // Align the cursor to HH:MM on the range-start day, then respect the lower
+    // bound: that instant is already in the past whenever the caller asks later
+    // in the day, and an occurrence that began before the range is not upcoming.
+    // Without the step, a 23:00 weekly window asked about at 23:58 is reported
+    // as still ahead — a start time the caller can never use. `_projectDaily`,
+    // `_projectMonthly`, `_projectOnce` and `_projectCron` all guard this bound;
+    // weekly was the only projection that did not.
+    const startDate = new Date(fromMs);
+    startDate.setUTCHours(start.hour, start.minute, 0, 0);
+    let cursorMs = startDate.getTime();
+    const cursorBeforeRange = cursorMs < fromMs;
+    if (cursorBeforeRange) {
+      cursorMs = cursorMs + DAY_MS;
+    }
 
     while (cursorMs < toMs) {
       const cursorDate = new Date(cursorMs);
@@ -473,18 +519,16 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
   }
 
   private _projectMonthly(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
-    const daysArr = win.daysOfMonth!;
-    const parts = win.startTime!.split(':');
-    const h = Number(parts[0]);
-    const m = Number(parts[1]);
-    const hInvalid = isNaN(h);
-    const mInvalid = isNaN(m);
-    if (hInvalid || mInvalid) return;
+    const start = parseStartTime(win.startTime!);
+    if (start === null) return;
 
-    const targetDays = new Set(daysArr);
+    const targetDays = validDaysOfMonth(win.daysOfMonth!);
+    // No entry names a calendar day, so no month can match. Returning here also
+    // avoids the loop below, which would otherwise iterate the range to no end.
+    if (targetDays.size === 0) return;
 
     let cursor = new Date(fromMs);
-    cursor.setUTCHours(h, m, 0, 0);
+    cursor.setUTCHours(start.hour, start.minute, 0, 0);
     cursor.setUTCDate(1);
 
     let cursorMs = cursor.getTime();
@@ -500,7 +544,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
 
       for (const day of targetDays) {
         const clampedDay = day > lastDay ? lastDay : day;
-        const candidate = new Date(Date.UTC(year, month, clampedDay, h, m, 0, 0));
+        const candidate = new Date(Date.UTC(year, month, clampedDay, start.hour, start.minute, 0, 0));
         const candidateMs = candidate.getTime();
 
         const afterStart = candidateMs >= fromMs;
@@ -518,7 +562,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       const newMonth = month + 1;
       const rolloverYear = newMonth > 11 ? year + 1 : year;
       const rolledMonth = newMonth > 11 ? newMonth - 12 : newMonth;
-      cursor = new Date(Date.UTC(rolloverYear, rolledMonth, 1, h, m, 0, 0));
+      cursor = new Date(Date.UTC(rolloverYear, rolledMonth, 1, start.hour, start.minute, 0, 0));
       cursorMs = cursor.getTime();
     }
   }

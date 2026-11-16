@@ -382,9 +382,14 @@ describe('M-M: MaintenanceWindowScheduler', () => {
 
   it("MWS8: weekly recurrence on today's weekday", () => {
     const s = new MaintenanceWindowScheduler();
-    const dw = (['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const)[new Date().getDay()]!;
+    // Pinned to an explicit UTC instant: deriving the weekday from
+    // `new Date().getDay()` mixes host-local time with the UTC projection and
+    // made this case flip whenever the range happened to straddle the start
+    // time. See AC 54 for the projection's lower-bound contract.
+    const from = Date.UTC(2026, 10, 15, 10, 0, 0, 0); // Sunday 10:00 UTC
+    const dw = (['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const)[new Date(from).getUTCDay()]!;
     s.registerWindow(mkW({ recurrence: 'weekly', startTime: '23:00', daysOfWeek: [dw] }));
-    expect(s.getUpcomingOccurrences(Date.now(), Date.now() + D_MS * 7).length).toBe(1);
+    expect(s.getUpcomingOccurrences(from, from + D_MS * 7).length).toBe(1);
   });
 
   it('MWS9: monthly recurrence day 15', () => {
@@ -515,7 +520,6 @@ describe('M-M: MaintenanceWindowScheduler', () => {
       onPaused: async (r) => {
         paused.push(r);
       },
-      onResume: async () => {},
     });
     expect(paused).toEqual(['r1', 'r2']);
   });

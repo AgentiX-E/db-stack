@@ -151,7 +151,24 @@ export interface PauseRequest {
   resumeAt: number;
   /** Callback invoked when pause is confirmed. */
   onPaused: (resource: string) => Promise<void>;
-  /** Callback invoked when resume is requested. */
+}
+
+/**
+ * Request to resume resources paused by a maintenance window.
+ *
+ * The resume half of a `PauseRequest`. It carries the confirmation callback the
+ * pause already had, because a resume that resolves without calling back is
+ * indistinguishable from one that resumed nothing — which is what
+ * `requestResume` used to be.
+ */
+export interface ResumeRequest {
+  /** Window instance that opened the pause interval. */
+  instanceId: string;
+  /** Resources to resume. */
+  resources: string[];
+  /** Resume time (ms since epoch). */
+  resumeAt: number;
+  /** Callback invoked once a resource is resumed. */
   onResume: (resource: string) => Promise<void>;
 }
 
@@ -170,7 +187,15 @@ export interface IMaintenanceScheduler {
   /** Force start a window immediately (emergency override). */
   forceStart(windowId: string): WindowInstance;
 
-  /** Get all upcoming occurrences within a time range. */
+  /**
+   * Project the occurrences of every registered window in `[fromMs, toMs)`.
+   *
+   * An occurrence is reported when its *start* lies in the range: `fromMs` is
+   * inclusive, `toMs` is exclusive. A window that began before `fromMs` is not
+   * reported even if its duration is still running — call `getWindowInstances()`
+   * for windows already in progress. Occurrences are sorted by start time and
+   * repeated projections are idempotent.
+   */
   getUpcomingOccurrences(fromMs: number, toMs: number): WindowOccurrence[];
 
   /** Check if two windows would overlap at given times. */
@@ -191,8 +216,16 @@ export interface IMaintenanceScheduler {
   /** Schedule a pause of dependent resources. */
   requestPause(request: PauseRequest): Promise<void>;
 
-  /** Resume previously paused resources. */
-  requestResume(resources: string[]): Promise<void>;
+  /**
+   * Resume resources paused by a window, awaiting `onResume` for each one.
+   *
+   * The first rejection propagates and the remaining resources are not touched,
+   * so the caller learns which resource refused to come back.
+   *
+   * **Breaking:** this took a bare `resources: string[]` and had an empty body,
+   * so it reported success without resuming anything.
+   */
+  requestResume(request: ResumeRequest): Promise<void>;
 
   /** Get scheduler statistics. */
   getStats(): MaintenanceSchedulerStats;

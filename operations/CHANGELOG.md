@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   work. The interface previously declared `evaluate()` with no arguments, which the sole
   implementation satisfied with `return []`: a consumer holding the interface could evaluate
   rules forever and never see an alert.
+- **`ResumeRequest`** — the resume half of a `PauseRequest`, carrying the `onResume`
+  confirmation callback. `requestResume` had no way to report what it did, because it took
+  a bare string array and had an empty body.
 - **`pnpm typecheck:tests`** — all 21 packages' tests and the benchmarks are compiled with
   the production compiler options. The package had carried a `tsconfig.test.json` that no
   script referenced and that switched `noUncheckedIndexedAccess` off; 578 type errors were
@@ -38,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`FederatedQueryRouter.setRoutingPolicy` takes `Partial<RoutingPolicy>`**, which the
   implementation already merged over its defaults.
 - **Breaking:** `IAlertRuleManager.evaluate()` is gone, replaced by `evaluateSnapshot`.
+- **Breaking:** `IMaintenanceScheduler.requestResume` takes a `ResumeRequest`, not a
+  `resources: string[]`. See the Fixed entry below for why the old signature could not work.
 
 ### Fixed
 
@@ -91,6 +96,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A `dataDir` that exists but is not a directory** was accepted at construction and failed
   on the first write with ENOENT. The constructor reads the directory now, so the
   configuration error surfaces where it is made.
+- **A weekly maintenance window reported a start time that had already passed.**
+  `getUpcomingOccurrences(from, to)` documents occurrences whose start lies in
+  `[from, to)`. The daily, monthly, once and cron projections all enforce that lower
+  bound; the weekly projection aligned its cursor to `HH:MM` on the range-start day and
+  emitted it unconditionally. Asking at 23:58 about a `23:00` weekly window therefore
+  returned the window of 58 minutes earlier as "upcoming" — a start an operator can
+  never act on, and one extra occurrence in every projection that spanned the start
+  time. The cursor now advances a day when the aligned instant precedes the range, the
+  same rule `_projectDaily` already applied. Found by the CI unit job failing at 23:58
+  and passing all day; the projection is now specified by AC 54.1–54.13 against fixed
+  UTC instants rather than `Date.now()`.
+- **`requestResume` resumed nothing.** The body was empty, so `await
+  scheduler.requestResume(['orders'])` resolved immediately and the caller concluded the
+  database was back in service while it stayed paused — a success signal that does not mean
+  success. `requestPause` had always driven its `onPaused` callback; the resume half never
+  existed even though `PauseRequest` declared `onResume`. `requestResume` now takes a
+  `ResumeRequest` and awaits `onResume` for every resource, propagating the first failure so
+  the caller learns which resource refused to come back. AC 56.1–56.5.
+- **An out-of-range `startTime` silently scheduled the window at a different hour.**
+  `Number('25')` is 25, not `NaN`, and `setUTCHours(25, 0)` rolls over to 01:00 the next
+  day: `startTime: '25:00'` ran an hour nobody asked for, `'23:60'` ran at midnight,
+  `'03:-5'` at 02:55. Only `NaN` was treated as malformed. The three projections that read
+  `startTime` now share one `parseStartTime`, which requires an integer hour in `0..23` and
+  an integer minute in `0..59`; anything else produces no occurrences, exactly as `'aa:bb'`
+  already did. AC 55.1–55.3.
+- **A `daysOfMonth` entry of `0` fired the window one month early.** `Date.UTC(year,
+  month, 0)` is the last day of the *previous* month, so a `0` entry — or any negative one —
+  projected a window on a date the operator never named, and projected it once per month
+  iteration under a per-iteration de-duplication set (`[0, 15]` produced the 30th of
+  November twice). Entries outside `1..31` are now dropped rather than interpreted;
+  `31` in a short month is still clamped to that month's last day. AC 55.4–55.6.
 
 ## [1.2.0] — 2026-08-10
 

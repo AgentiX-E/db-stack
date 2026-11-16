@@ -223,6 +223,77 @@ await upgrade.run();
 The orchestrator refuses to proceed if it would lose quorum, gates each step on health, and
 aborts (rather than continuing) on the first unhealthy node.
 
+### 3.7 Maintenance windows
+
+```ts
+import { MaintenanceWindowScheduler } from "@agentix-e/db-operations-maintenance";
+
+const scheduler = new MaintenanceWindowScheduler();
+scheduler.registerWindow({
+  id: "nightly-vacuum",
+  name: "Nightly vacuum",
+  operationType: "VACUUM",
+  targets: ["orders"],
+  owner: "dba",
+  recurrence: "weekly",
+  startTime: "23:00", // UTC, always
+  daysOfWeek: ["sun", "wed"],
+  priority: 5,
+  maxDurationMin: 90,
+  requiresApproval: false,
+});
+
+const upcoming = scheduler.getUpcomingOccurrences(Date.now(), Date.now() + 7 * 86_400_000);
+```
+
+Two rules matter when you read `upcoming`:
+
+- **All times are UTC.** `startTime`, `daysOfWeek`, `daysOfMonth` and `cronExpression`
+  are interpreted in UTC, never in the host's local zone. A window described as `23:00`
+  fires at 23:00 UTC.
+- **An occurrence is reported by its start, in `[fromMs, toMs)`.** A window that began
+  before `fromMs` is not in the result even if its `maxDurationMin` has not elapsed yet;
+  use `getWindowInstances()` to see windows already in progress. Projection is idempotent,
+  so re-running it does not create duplicate instances.
+
+Supported recurrences are `once` (`at`), `daily` (`startTime`), `weekly` (`startTime` +
+`daysOfWeek`), `monthly` (`startTime` + `daysOfMonth`, clamped to the last day of short
+months) and `cron` (`cronExpression`). `detectConflicts(fromMs, toMs)` projects the same
+occurrences and reports overlaps, with a `split` / `defer` / `coexist` recommendation
+derived from the two windows' priorities.
+
+A schedule that cannot name a real time or a real day is **malformed, not reinterpreted**:
+`startTime` must be an integer hour `0..23` and an integer minute `0..59`, and
+`daysOfMonth` entries must be `1..31`. Anything else produces no occurrences and throws
+nothing — `'25:00'` will not quietly run at 01:00 the next day, and a `0` day-of-month
+will not fire on the previous month's last day. Registering is permissive so a
+configuration can be edited into shape; ask `getUpcomingOccurrences()` to see what it
+actually schedules.
+
+Pausing and resuming dependent resources both confirm through a callback, and both await
+it:
+
+```ts
+await scheduler.requestPause({
+  instanceId,
+  resources: ["orders"],
+  pauseAt: Date.now(),
+  resumeAt: Date.now() + 3_600_000,
+  onPaused: (resource) => drain(resource),
+  onResume: (resource) => warm(resource),
+});
+
+await scheduler.requestResume({
+  instanceId,
+  resources: ["orders"],
+  resumeAt: Date.now(),
+  onResume: (resource) => warm(resource),
+});
+```
+
+The first rejecting callback aborts the rest and rejects the call, so a resource that
+refuses to come back is reported rather than skipped.
+
 ---
 
 ## 4. Operational checklist

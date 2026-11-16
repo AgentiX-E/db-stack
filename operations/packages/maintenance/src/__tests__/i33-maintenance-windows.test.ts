@@ -692,7 +692,6 @@ describe('MWN11: Pause and resume', () => {
       onPaused: async (r) => {
         paused.push(r);
       },
-      onResume: async () => {},
     });
 
     expect(paused).toEqual(['db-1', 'db-2']);
@@ -710,7 +709,6 @@ describe('MWN11: Pause and resume', () => {
       onPaused: async (r) => {
         paused.push(r);
       },
-      onResume: async () => {},
     });
 
     expect(paused).toHaveLength(0);

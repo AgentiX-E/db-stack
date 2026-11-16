@@ -107,11 +107,11 @@ so it works with any engine that registers the providers it needs.
 | `backup`         | Full/incremental backup, verification, restore drills | U · I        |
 | `security`       | Key rotation, audit log, tamper-evident hash chain    | U · I        |
 | `audit`          | Append-only audit storage, query, verification        | U · I        |
-| `maintenance`    | Maintenance windows, occurrence generation            | U · I        |
+| `maintenance`    | Maintenance windows, occurrence projection            | U · I        |
 | `rollingupgrade` | Rolling upgrade orchestration, health gates           | U · I        |
 | `autoscaler`     | Predictive and reactive scaling                       | U · I        |
-| `config`         | Config watching, hot reload, validation               | U · I        |
-| `slo`            | Error budgets, burn rates                             | U · I        |
+| `configwatcher`  | Config watching, hot reload, validation               | U · I        |
+| `slacollector`   | SLA recording, compliance, violation log, uptime      | U · I        |
 | `observability`  | W3C trace context, OpenTelemetry export               | U · I        |
 | `circuitbreaker` | Per-dependency breakers                               | U · I · B    |
 | `memoryguard`    | Heap pressure, eviction, OOM avoidance                | U · I        |
@@ -130,9 +130,9 @@ because a harness bug produces confident, meaningless acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
-| `cluster`       | 98.4 % | 98.4 %     | 98.8 %    | 97.3 %   |
-| `federation`    | 99.3 % | 99.3 %     | 99.8 %    | 97.8 %   |
-| `operations`    | 98.2 % | 98.2 %     | 98.9 %    | 96.0 %   |
+| `cluster`       | 99.34% | 99.34%     | 99.68%    | 98.24%   |
+| `federation`    | 99.19% | 99.19%     | 99.76%    | 98.52%   |
+| `operations`    | 99.41% | 99.41%     | 99.86%    | 98.06%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
 The `e2e` row covers `e2e/harness/support.ts` — process supervision, IPC, port allocation,

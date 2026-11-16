@@ -15,6 +15,7 @@ export type {
   WindowConflict,
   MaintenanceSchedulerStats,
   PauseRequest,
+  ResumeRequest,
   RecurrenceMode,
   DayOfWeek,
 } from './interfaces/IMaintenanceScheduler.js';
