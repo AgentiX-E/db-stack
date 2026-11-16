@@ -375,6 +375,80 @@ A capped scan stops **reading** when the budget is spent, not merely stops colle
 paid for the history it did not return would be a grep that decompresses ninety archives to show
 ten lines.
 
+**An id is a promise about a power cut.** `write()` resolves only after three things have
+happened, in this order:
+
+1. **append** — the line is in the file (still in the page cache, which a crash does not lose but a
+   power cut does);
+2. **sync the file** — the data is on the medium;
+3. **sync the directory** — once per segment, after its first line, so that the *name* is on the
+   medium too. A name is a directory entry; step 2 does not touch it, so without step 3 a power cut
+   can leave the entries written and unreachable.
+
+If any step fails, `write()` rejects. That is the whole contract, and it is the reason the store no
+longer says `/* fsync best-effort */`: a write path whose failure mode is "pretend it worked" is the
+one component in the system that cannot be trusted about what happened. A caller can retry a
+rejection; it cannot retry a lie.
+
+```ts
+const id = await audit.write({ operation: "DROP TABLE", actor: "alice", resource: "orders", result: "success" });
+// When this resolves, the entry survives a power loss. When it rejects, it does not.
+```
+
+**One line, one append.** There is no temporary file and no `rename`: an append-only trail does not
+need whole-file replacement, and paying for it on every line meant rewriting the segment to add a
+line to it. Measured over 2 000 lines of 524 bytes, writing to a real filesystem:
+
+| | Bytes written | Wall time |
+|---|---:|---:|
+| Read the segment, rewrite it via a scratch file, rename it into place | **1 000 MiB** (1 000× the payload) | 22.3 s |
+| Append the line | **1.0 MiB** (1.0× the payload) | 20.0 s |
+
+The wall time is the `fsync`: 2 000 bare `append`+`fsync` pairs with no store at all take 20.8 s on
+the same runner, so the store now adds nothing measurable above the durability it provides — and
+about 96 acknowledged entries per second per writer is the price of that durability on a device with
+a 10 ms flush. Batching concurrent writers behind one flush (group commit) is the next step, and is
+tracked as such rather than assumed.
+
+**Two processes may append to one trail.** The append is an `O_APPEND` write, which the kernel
+places at the end of the file, so there is no window in which one writer's line can overwrite
+another's. The recipe this replaced read the segment, concatenated and renamed, so two writers lost
+each other's lines in proportion to how busy the trail was — and both were writing the same scratch
+path, so one of them could fail outright while the other renamed underneath it.
+
+**A crash leaves at most one unreadable line — and it cannot swallow the next one.** A process killed
+between the write and its newline leaves a fragment. Readers skip an unparsable line, so the fragment
+costs nothing on its own; what it must not do is fuse to the next append. The store asks the
+filesystem once per segment whether the segment ends mid-line and, if it does, starts the next line
+with a newline. The fragment stays a fragment, and the entry that follows it is readable.
+
+**The write side is a port too.** `fileSystem` takes `append`, `syncFile`, `syncDirectory` and
+`needsSeparator`; the default is the local POSIX recipe. Supplying one puts the trail on another
+medium without losing queries, and — the reason it is four named operations rather than a `fs` handle
+— makes the order assertable, which is the only part of "crash-safe" a test can see without a crash:
+
+```ts
+const audit = new FileAuditStore({
+  dataDir: "/var/lib/db/audit",
+  fileSystem: {
+    append: (path, data) => objectStore.append(path, data),
+    syncFile: (path) => objectStore.commit(path),        // must be durable on return
+    syncDirectory: () => {},                             // S3 has no directory entries
+    needsSeparator: (path) => objectStore.endsWithNewline(path),
+  },
+});
+```
+
+An implementation that returns without doing the work has moved the durability claim into its own
+documentation. Whatever is supplied must be durable when it returns; if it is not, the store's
+promise is only as good as the port.
+
+**What a crash can still take.** The kill a test can perform (`SIGKILL`) shows that an acknowledged
+line is in the file; it does not show that the line reached the medium, because the page cache
+outlives the process and only a power cut empties it. The `fsync` half is therefore asserted by
+order and by failure propagation (`AC80`), and the process half by killing writers (`AC81`). No
+runner provides a power cut.
+
 **Damage is scoped to the file.** A segment that cannot be read — a truncated archive, an
 unmounted volume, a port that throws — contributes no entries and does not stop the scan. There is
 no separate "unreadable" state: an unreadable segment is an empty one, which is why the store has

@@ -116,7 +116,7 @@ so it works with any engine that registers the providers it needs.
 | `monitor`        | Alert rules, thresholds, de-duplication               | U · I        |
 | `backup`         | Full/incremental backup, verification, restore drills | U · I        |
 | `security`       | Key rotation, envelope encryption, tamper-evident audit chain | U · I · M |
-| `audit`          | Append-only audit storage, query, verification, read port | U · I · M |
+| `audit`          | Append-only audit storage, query, verification, read and write ports | U · I · M · P |
 | `maintenance`    | Maintenance windows, occurrence projection            | U · I        |
 | `rollingupgrade` | Rolling upgrade orchestration, health gates           | U · I        |
 | `autoscaler`     | Predictive and reactive scaling                       | U · I        |
@@ -187,8 +187,8 @@ configuration file that looked like a gate and ran nowhere.
 | -------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
 | **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
-| **Operations process-level acceptance**                  | Not covered                | Operations packages are verified in-process; there is no run that kills a process mid-backup. The one place this bites is the durable-write recipe in `FileAuditStore.writeLine` (P2-19): `fsync` before `rename` is what survives a power loss, and no in-process assertion can observe a power loss.                                                                                                      |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 98.06 %, gates at 70, 70 and 86). In operations twelve of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
+| **Operations process-level acceptance**                  | Partially covered (iteration 34) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. No other operations package has an out-of-process case yet. |
+| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 98.34 %, gates at 70, 70 and 86). In operations thirteen of 21 *modules* are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
 | **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
 | **Cross-version upgrade path**                           | Not covered                | The wire and snapshot formats are versioned, but no test exercises an N-1 → N upgrade.                                                                                                             |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
@@ -253,7 +253,8 @@ invoked by a workflow.
 | operations | `RetentionPolicyEvaluator.ts` | 174 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
 | operations | `cron.ts` | 87 | 81 (+6 timeout) | 0 | **100 %** | break 86 |
 | operations | `MaintenanceWindowScheduler.ts` | 621 | 602 (+13 timeout) | 6 | **99.0 %** | break 86 |
-| operations | `FileAuditStore.ts` | 305 | 289 (+7 timeout) | 9 | **97.05 %** | break 86 |
+| operations | `FileAuditStore.ts` | 347 | 334 (+9 timeout) | 4 (+1 error) | **98.85 %** | break 86 |
+| operations | `DurableFileSystem.ts` | 73 | 73 | 0 | **100 %** | break 86 |
 | operations | `KeyRotationManager.ts` | 238 | 233 (+3 timeout) | 2 | **99.2 %** | break 86 |
 | operations | `RotationAuditor.ts` | 282 | 275 | 7 | **97.5 %** | break 86 |
 | operations | `AuditLogManager.ts` | 337 | 323 (+2 timeout) | 10 (+2 no coverage) | **96.44 %** | break 86 |
@@ -261,19 +262,22 @@ invoked by a workflow.
 | operations | `EnvelopeEncryptionProvider.ts` | 110 | 108 | 2 | **98.18 %** | break 86 |
 | operations | `AES256GCMEncryptionProvider.ts` | 81 | 79 | 2 | **97.53 %** | break 86 |
 
-Operations overall: 2 531 judged mutants, **98.06 %** — 2 435 killed, 47 timed out, 46 survived,
-3 with no coverage. The headline moved for two different reasons and both are worth separating: one
-module joined the list (`AES256GCMEncryptionProvider`, 97.53 % on its first measurement) and two of the
-weakest improved because their defects were fixed rather than excused — `EnvelopeEncryptionProvider`
-90.38 → 98.18 % and `KeyManager` 86.60 → 94.12 %. Every one of the fourteen mutants that changed verdict
+Operations overall: 2 647 judged mutants, **98.34 %** — 2 553 killed, 49 timed out, 41 survived,
+3 with no coverage and 1 that crashes the runner rather than failing a test. The headline moved for reasons that are worth separating: modules joined the list
+(`AES256GCMEncryptionProvider` at 97.53 %, `DurableFileSystem` at 100 % on its first measurement) and
+the weakest improved because their defects were fixed rather than excused —
+`EnvelopeEncryptionProvider` 90.38 → 98.18 %, `KeyManager` 86.60 → 94.12 %, and `FileAuditStore`
+97.05 → 98.85 % when its durable-write recipe stopped being unobservable. Every one of the fourteen mutants that changed verdict
 in those two files was a *behaviour* the suite did not constrain, and reading them produced the four
 concurrency defects recorded in the changelog: a version number that two mints could share, eight
 keys minted for eight concurrent first writes, a header naming a version the payload was not sealed
 with, and a wipe that an in-flight mint undid.
 
-The composition of what remains is now almost entirely three families: memory wipes (nine mutants),
-encoding and separator defaults (`'utf-8'` → `''`, `'|'` → `''`, `?? ''` → any text), and the
-durability recipe in `FileAuditStore.writeLine`, which needs a power loss to observe (P2-19). Two
+The composition of what remains is now almost entirely two families: memory wipes (nine mutants) and
+encoding and separator defaults (`'utf-8'` → `''`, `'|'` → `''`, `?? ''` → any text). The third family
+— the durability recipe in `FileAuditStore.writeLine`, five mutants that no test could reach — is
+gone: iteration 34 put the recipe behind a four-operation port, which made the *order* assertable, and
+the survivors it left are enumerated below. Two
 survivors are in none of those families and are recorded as equivalent with a proof rather than as
 gaps: the `err` branch of the PBKDF2 callback (Node throws synchronously for an unusable digest, so
 the branch is unreachable — proved by AC 75.21, which sees the throw from `generateKey`) and the
@@ -300,8 +304,8 @@ several mutants:
 | `KeyRotationManager` | `default:` arm of `_isDue` removed | the fall-through returns `undefined`, and the caller asks a yes/no question — `undefined` is not due, which is what `return false` says |
 | `FileAuditStore` | `name > newest` → `>=` | `readdir` cannot return the same name twice, so the two comparisons select the same name |
 | `FileAuditStore` | `?? ''` in `readSegment`, and the `return ''` in its `catch` → any text (two mutants) | the replacement text reaches a parser that accepts nothing but NDJSON, so every alternative contributes zero entries — which is the property that let the `null` sentinel be deleted this iteration |
-| `FileAuditStore` | `'.tmp'` appended to the temp path → `''` | writing the full content straight onto the segment produces the same bytes; only a crash *between* the write and the rename could tell the two apart, and a test process does not crash |
-| `FileAuditStore` | `open`/`fsync`/`close` in the durable-write block, and the `try` around them | these are the durability recipe: `fsync` before `rename` is what survives a power loss. No in-process assertion can observe a power loss, which is why the block is registered as P2-19 rather than claimed as covered |
+| `FileAuditStore` | `isUnlinkRefusal(error)` → `true` | no runner can make `unlink` fail for a reason outside the four listed codes — a process running as root is never refused — and the rule itself is asserted by `DW.12`, which is why it is a predicate rather than a list inside a `catch` |
+| `FileAuditStore` | `rmSync(gzPath, { force: false })` | detected as a **crash**, not as a failing test: without `force` the cleanup rejects inside a `catch` whose promise nothing awaits, and the runner dies with it — which is the unhandled rejection the flag prevents |
 | `RotationAuditor` | `hash: ''` placeholder → any string | the placeholder is overwritten by `_hashEntry` before the entry is stored, and `hash` is not part of the hashed content |
 | `RotationAuditor` | `firstCompletedAt !== null && lastCompletedAt !== null` → `\|\|`, or → `true` (three mutants) | both are derived from the same list, so they are null together and non-null together; with neither, `null - null` is `0`, which is what the ternary returns |
 | `RotationAuditor` | the `\|` separator in `_hashEntry` → `''` | the separator is a free choice: any fixed string produces the same chain. Only a deliberate concatenation collision could tell them apart, and `seq` is a number between two fixed-width fields |
