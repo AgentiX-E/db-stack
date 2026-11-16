@@ -126,12 +126,6 @@ describe('AC 56 — resource resume', () => {
     expect(paused).toEqual(['db-1', 'db-2']);
     // The resume half lives on `ResumeRequest`. A `PauseRequest` used to carry
     // an `onResume` that nothing ever called; the type is the guarantee now.
-    expect(Object.keys(pause).sort()).toEqual([
-      'instanceId',
-      'onPaused',
-      'pauseAt',
-      'resources',
-      'resumeAt',
-    ]);
+    expect(Object.keys(pause).sort()).toEqual(['instanceId', 'onPaused', 'pauseAt', 'resources', 'resumeAt']);
   });
 });
