@@ -145,6 +145,45 @@ if (!report.passed)
 Verify on creation **and** on a schedule — a backup that was never restored is a hypothesis,
 not a backup.
 
+#### Retention: floors are floors
+
+```ts
+import { RetentionPolicyEvaluator } from "@agentix-e/db-operations-backup";
+
+const retention = new RetentionPolicyEvaluator({
+  maxFullSnapshots: 7,
+  keepRecent: "P7D",     // never remove anything younger than a week
+  minAge: "PT1H",        // and never remove a snapshot during its first hour
+  maxTotalBytes: 500_000_000_000,
+});
+
+const { toDelete, unreclaimedBytes } = retention.evaluateWithOutcome(inventory);
+for (const snapshot of toDelete) await backups.delete(snapshot.snapshotId);
+if (unreclaimedBytes > 0) {
+  // The floors forbid getting under the ceiling. This is a fact about the
+  // deployment, not a bug in the evaluator: raise the limit, shorten a floor,
+  // or add storage.
+  logger.warn("retention could not meet maxTotalBytes", { unreclaimedBytes });
+}
+```
+
+Four rules apply, in this order: keep the newest `maxFullSnapshots` full snapshots (incremental
+snapshots are never promoted into a full's slot), remove nothing younger than `keepRecent`,
+remove only what is at least `minAge` old, then remove the oldest still-removable snapshots until
+the total fits under `maxTotalBytes`.
+
+`keepRecent` and `minAge` are **prohibitions, not preferences**. That matters when they conflict
+with the byte ceiling: the floors win, and the difference is reported as `unreclaimedBytes`. The
+alternative — deleting a one-hour-old backup to satisfy a size limit — is how a retention policy
+turns into data loss.
+
+Durations are read as ISO-8601 (`P7D`, `PT1H`, `PT30M`, `PT30S`, `P1DT2H3M4S`) or as a plain
+number of hours (`"48"`). Anything else throws where the policy is written, in the constructor or
+in `updateConfig`, because a floor that silently means zero protects nothing.
+
+`evaluate()` is the interface method and returns the delete list alone; `evaluateWithOutcome()`
+adds the report.
+
 ### 3.4 Encryption at rest with rotation
 
 ```ts

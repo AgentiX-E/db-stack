@@ -23,7 +23,13 @@
  *   5. every task `turbo run <task>` asks for is defined by at least one package
  *      (otherwise turbo exits 0 having run nothing — a green gate over no work);
  *   6. every `pnpm run <script>` and `pnpm --filter <pkg> run <script>` in the
- *      workflows names a script that exists, in the package it names.
+ *      workflows names a script that exists, in the package it names;
+ *   7. mutation testing is one instrument per package, and every instrument is
+ *      pulled: a `test:mutation` script must have a Stryker config whose `mutate`
+ *      list and test set both resolve to real files, must carry a `break`
+ *      threshold, and must be invoked by a workflow. The operations package
+ *      shipped three separate hand-rolled mutation engines, none of which any
+ *      workflow ran, while its README quoted the score of one of them.
  *
  * Usage: node scripts/check-gates.mjs [--verbose]
  */
@@ -286,6 +292,141 @@ function resolveFilter(filter, all, dirToName, byName) {
     `workflow filter "${filter}" does not name a workspace package`,
   );
   return [];
+}
+
+// ── 7. mutation testing: one instrument per package, and it is pulled ─
+
+/** Convert the small glob vocabulary the configs use to a RegExp. */
+function globToRegExp(pattern) {
+  let out = "";
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === "*" && pattern[i + 1] === "*") {
+      out += ".*";
+      i += 1;
+    } else if (ch === "*") out += "[^/]*";
+    else if (ch === "?") out += "[^/]";
+    else out += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/** Every file under `dir` whose path relative to it matches `pattern`. */
+function filesMatching(dir, pattern) {
+  if (!existsSync(dir)) return [];
+  const re = globToRegExp(pattern);
+  return walk(dir, () => true)
+    .map((file) => relative(dir, file).replaceAll("\\", "/"))
+    .filter((file) => re.test(file));
+}
+
+const rootGitignore = readText(resolve(root, ".gitignore"));
+const workflowText = existsSync(workflowDir)
+  ? readdirSync(workflowDir)
+      .filter((f) => /\.ya?ml$/.test(f))
+      .map((f) => readText(resolve(workflowDir, f)))
+      .join("\n")
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n")
+  : "";
+
+for (const pkg of packages) {
+  const configPath = resolve(pkg.dir, "stryker.config.json");
+  const hasConfig = existsSync(configPath);
+  const hasScript = "test:mutation" in pkg.scripts;
+
+  if (!hasConfig && !hasScript) continue;
+  if (hasConfig && !hasScript) {
+    failures.push(
+      `${pkg.name}: stryker.config.json exists but no "test:mutation" script runs it — an orphan configuration is not a gate`,
+    );
+    continue;
+  }
+  if (hasScript && !hasConfig) {
+    failures.push(
+      `${pkg.name}: "test:mutation" exists but stryker.config.json does not — the script cannot run`,
+    );
+    continue;
+  }
+
+  const config = readJson(configPath);
+
+  if (typeof config.thresholds?.break !== "number") {
+    failures.push(
+      `${pkg.name}: stryker.config.json has no numeric thresholds.break — a score nobody fails on is a report, not a gate`,
+    );
+  }
+
+  const mutate = Array.isArray(config.mutate) ? config.mutate : [];
+  if (mutate.length === 0) {
+    failures.push(`${pkg.name}: stryker.config.json mutates nothing`);
+  }
+  for (const pattern of mutate) {
+    const matches = filesMatching(pkg.dir, pattern);
+    if (matches.length === 0) {
+      failures.push(
+        `${pkg.name}: stryker.config.json mutates "${pattern}", which matches no file`,
+      );
+    } else if (verbose) {
+      notes.push(`${pkg.name}: mutates ${matches.length} file(s) for ${pattern}`);
+    }
+  }
+
+  const mutationVitest = config.vitest?.configFile ?? "vitest.mutation.config.ts";
+  const mutationVitestPath = resolve(pkg.dir, mutationVitest);
+  if (!existsSync(mutationVitestPath)) {
+    failures.push(
+      `${pkg.name}: stryker.config.json names ${mutationVitest}, which does not exist`,
+    );
+  } else {
+    const text = readText(mutationVitestPath);
+    const includeMatch = text.match(/include:\s*\[([\s\S]*?)\]/);
+    const patterns = includeMatch
+      ? [...includeMatch[1].matchAll(/'([^']+)'|"([^"]+)"/g)].map(
+          (m) => m[1] ?? m[2],
+        )
+      : [];
+    if (patterns.length === 0) {
+      failures.push(
+        `${pkg.name}: ${mutationVitest} declares no include list — the mutant verdict would come from the whole suite`,
+      );
+    }
+    for (const pattern of patterns) {
+      if (filesMatching(pkg.dir, pattern).length === 0) {
+        failures.push(
+          `${pkg.name}: ${mutationVitest} includes "${pattern}", which matches no test file`,
+        );
+      }
+    }
+  }
+
+  for (const ignored of ["reports/mutation/", ".stryker-tmp/"]) {
+    if (!rootGitignore.includes(ignored)) {
+      failures.push(`.gitignore does not ignore ${ignored} — a mutation run would stage its own output`);
+    }
+  }
+
+  const dirPath = relative(root, pkg.dir).replaceAll("\\", "/");
+  const targets = [
+    pkg.name,
+    `'${pkg.name}'`,
+    `"${pkg.name}"`,
+    dirPath,
+    `./${dirPath}`,
+    `'./${dirPath}'`,
+  ].map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const invoked = new RegExp(
+    `pnpm\\s+--filter\\s+(?:${targets.join("|")})\\s+run\\s+test:mutation`,
+  );
+  const viaRoot = /(?<!-)(?<![\w-])pnpm\s+run\s+test:mutation/.test(workflowText);
+  if (!invoked.test(workflowText) && !viaRoot) {
+    failures.push(
+      `${pkg.name}: nothing in .github/workflows runs its test:mutation — a gate no workflow executes is a claim nobody checks`,
+    );
+  } else if (verbose) {
+    notes.push(`${pkg.name}: mutation is invoked by a workflow`);
+  }
 }
 
 // ── Report ─────────────────────────────────────────────────────────

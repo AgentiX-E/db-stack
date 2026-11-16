@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "pnpm",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.mutation.config.ts",
+    "dir": "."
+  },
+  "mutate": [
+    "packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+    "packages/backup/src/impl/RetentionPolicyEvaluator.ts"
+  ],
+  "coverageAnalysis": "perTest",
+  "reporters": ["clear-text", "progress", "json"],
+  "jsonReporter": {
+    "fileName": "reports/mutation/operations.json"
+  },
+  "thresholds": {
+    "high": 92,
+    "low": 88,
+    "break": 86
+  },
+  "timeoutMS": 30000,
+  "timeoutFactor": 2,
+  "concurrency": 4,
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true,
+  "ignoreStatic": true,
+  "plugins": ["./node_modules/@stryker-mutator/vitest-runner/dist/src/index.js"]
+}

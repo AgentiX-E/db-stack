@@ -29,4 +29,4 @@ cluster/data/
 # tries to lint — the sandbox's own eslint.config.mjs imports a file one level
 # up, which does not exist inside it.
 .stryker-tmp/
-reports/mutation/
+**/reports/mutation/

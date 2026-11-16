@@ -1,14 +1,18 @@
 # db-operations — Unified Database Operations Framework
 
-**A production-grade, engine-agnostic operations abstraction layer — 20 packages, 866 tests.**
+**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 2 291 unit
+tests and 332 integration tests, every coverage dimension at or above 95 %.**
 
-**Mutation Score:** 85.2% weighted average across audited packages ([full report →](https://github.com/AgentiX-E/db-stack-docs/blob/main/archive/OPERATIONS-MUTATION-QUALITY-REPORT.md))
+**Mutation score:** 89.75 % across the two modules whose arithmetic decides what gets deleted
+and when a window runs — `RetentionPolicyEvaluator.ts` 93.33 %,
+`MaintenanceWindowScheduler.ts` 89.08 %, gate at 86. Run it yourself with
+`pnpm --filter @agentix-e/db-operations run test:mutation`.
 
 Replace ad-hoc `ops/` directories with a canonical interface suite that every database
 engine implements via adapters.
 
 Package: `@agentix-e/db-operations`  
-Version: 0.1.0  
+Version: 1.1.0  
 License: MIT
 
 ---
@@ -109,7 +113,9 @@ architecture that 20 packages deliver as a cohesive whole.
 | [`rollingupgrade`](./packages/rollingupgrade/) | ✅ | 16 | Zero-downtime rolling upgrades |
 | [`slacollector`](./packages/slacollector/) | ✅ | 13 | SLA metric collection and violation detection |
 
-**Total: 866 tests, 29 test files, 0 failures.** (as of v0.1.0; growing with each release)
+**Total: `pnpm test` reports 113 files and 2 623 tests, 0 failures** (`test:unit`: 94 files /
+2 291; `test:integration`: 19 files / 331). The per-package counts above are the units each
+package contributes.
 
 ---
 
@@ -186,7 +192,8 @@ packages/monitor/src/
 ## Testing
 
 ```bash
-npm test              # 866 tests, 29 test files
+npm test              # 113 files, 2 623 tests
+npm run test:mutation # Stryker over the two modules whose arithmetic decides deletions
 npm run bench         # Performance benchmarks
 npm run bench:ycsb    # YCSB-style benchmarks
 npm run typecheck     # TypeScript strict type checking

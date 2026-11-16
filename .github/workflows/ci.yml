@@ -383,7 +383,7 @@ jobs:
   # package, and `vitest.setup.ts` imports a helper from the repository root, which
   # the copy does not contain. In-place restores the sources when it finishes.
   mutation:
-    name: Mutation (cluster + federation)
+    name: Mutation (cluster + federation + operations)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -398,6 +398,8 @@ jobs:
         run: pnpm --filter @agentix-e/db-cluster run test:mutation
       - name: Mutation score — federation
         run: pnpm --filter @agentix-e/db-federation run test:mutation
+      - name: Mutation score — operations
+        run: pnpm --filter @agentix-e/db-operations run test:mutation
       - name: Sources restored
         run: |
           set -euo pipefail
@@ -406,6 +408,14 @@ jobs:
             git status --porcelain -- '*/src'
             exit 1
           fi
+      - name: Upload mutation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-reports
+          path: '*/reports/mutation/*.json'
+          if-no-files-found: warn
+          retention-days: 14
 
   # ── Supply chain ──────────────────────────────────────────────────
   security:

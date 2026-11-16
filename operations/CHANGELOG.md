@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`RetentionPolicyEvaluator.evaluateWithOutcome()`** — returns what the pass decided
+  *and* what it could not do: `{ toDelete, unreclaimedBytes }`. A policy can ask for two
+  things that cannot both hold ("stay under this many bytes" and "never remove anything
+  younger than a week"); when the floors win, the bytes that stayed are reported instead of
+  being forgotten. `evaluate()` keeps its signature and returns the delete list. AC 57.3.
+- **`pnpm --filter @agentix-e/db-operations run test:mutation`** — Stryker, the same
+  instrument cluster and federation use, over the two modules whose arithmetic decides what
+  gets deleted and when a window runs. Measured 89.75 % overall, 93.33 % on
+  `RetentionPolicyEvaluator.ts` and 89.08 % on `MaintenanceWindowScheduler.ts`; `break` is 86.
 - **`FileAuditStore.close()`** — awaits every rotation compression still in flight.
   Background gzip is off the write path by design, but it was not awaitable, so a
   caller that shut the store down raced a compressor that still held a path.
@@ -31,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `parseDurationToMs` throws on input that names no duration, instead of
+  returning `0`. See the Fixed entry below.
+- **Breaking:** `RetentionPolicy.maxTotalBytes` no longer overrides `keepRecent`/`minAge`.
+  A policy that cannot meet the ceiling while honouring its age floors now reports the
+  excess rather than deleting backups the floors protect.
 - **`KeyManagerConfig.keyLength` / `hashAlgorithm` are optional**, and defaults are resolved
   explicitly instead of by spreading an object that let an explicit `undefined` clobber them.
 - **`EnvelopeEncryptionConfig.autoGenerateKey` is optional** (the implementation already
@@ -45,6 +59,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `resources: string[]`. See the Fixed entry below for why the old signature could not work.
 
 ### Fixed
+
+- **The byte ceiling deleted backups the age floors promised to keep.** `RetentionPolicy`
+  states four rules: keep the newest `maxFullSnapshots` full snapshots, skip anything younger
+  than `keepRecent`, delete only what is at least `minAge` old, and stay under
+  `maxTotalBytes`. The byte loop implemented the fourth against every snapshot the first rule
+  had not already marked, so a policy of `keepRecent: 'P7D'` removed a one-hour-old backup the
+  moment the ceiling was exceeded, and returned it in the delete list — the caller had no way
+  to tell that the floor had been ignored. The old suite tested each rule alone: every
+  `keepRecent` test set `maxTotalBytes: 0`, and every `maxTotalBytes` test left the floors
+  unset, so the interaction was never exercised. Found by mutation testing, which showed the
+  byte loop's guards surviving every mutant. AC 57.1–57.2.
+- **An unreadable retention duration meant "keep nothing".** `parseDurationToMs('seven days')`
+  returned `0`, so the floor it was meant to express vanished and the next pass deleted every
+  backup it had promised to protect. The parser now accepts only the documented forms
+  (`P7D`, `PT1H`, `PT30M`, `PT30S`, `P1DT2H3M4S`, and a plain number of hours) and throws on
+  anything else; the constructor and `updateConfig` validate the policy where it is written,
+  naming the field. AC 57.11–57.13.
 
 - **`S3StorageBackend` uploaded 5-byte parts.** `DEFAULT_PART_SIZE` was
   `(5 / 1024) * 1024`, which is 5, not 5 MiB. Every backup larger than the 10 MB
@@ -127,6 +158,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iteration under a per-iteration de-duplication set (`[0, 15]` produced the 30th of
   November twice). Entries outside `1..31` are now dropped rather than interpreted;
   `31` in a short month is still clamped to that month's last day. AC 55.4–55.6.
+
+### Removed
+
+- **Three hand-rolled mutation engines** (2 023 lines): `packages/core/src/__tests__/mutation/`
+  and `scripts/mutation-run.ts`. No workflow ran any of them, each scored mutants by its own
+  rules, and the README quoted the 85.2 % that one of them produced. They are replaced by
+  Stryker under the same shape of threshold as the other two packages — one instrument per
+  measurement — and `check:gates` now fails if a `test:mutation` script is not invoked by a
+  workflow.
 
 ## [1.2.0] — 2026-08-10
 

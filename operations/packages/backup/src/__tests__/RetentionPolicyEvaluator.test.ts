@@ -276,8 +276,10 @@ describe('RET: parseDurationToMs exact arithmetic', () => {
     expect(parseDurationToMs('48')).toBe(48 * 3_600_000);
   });
 
-  it('returns 0 for an unparseable duration string', () => {
-    expect(parseDurationToMs('not-a-duration')).toBe(0);
+  it('rejects an unparseable duration string instead of reading it as zero', () => {
+    // Reading it as zero silently turned "keep a week" into "keep nothing",
+    // which deletes every backup the next time the byte ceiling is hit (AC 57.11).
+    expect(() => parseDurationToMs('not-a-duration')).toThrow(/not an ISO-8601 duration/);
   });
 });
 
