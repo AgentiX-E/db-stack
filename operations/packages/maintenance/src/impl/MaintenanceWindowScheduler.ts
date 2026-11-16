@@ -9,7 +9,9 @@
  *   - Emergency force-override (bypasses approval + scheduling)
  *   - Graceful pause/resume of dependent resources
  *   - Upcoming occurrence projection within time windows
- *   - CRON expression parsing (standard 5-field syntax)
+ *
+ * The cron grammar it schedules from lives in `cron.ts`: it is a pure function of
+ * a string, it has its own tests, and it is mutated as its own module.
  *
  * @module @agentix-e/db-operations-maintenance/impl
  */
@@ -27,6 +29,7 @@ import type {
   RecurrenceMode,
   DayOfWeek,
 } from '../interfaces/IMaintenanceScheduler.js';
+import { parseCron } from './cron.js';
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -43,72 +46,6 @@ const DAY_INDEX: Record<DayOfWeek, number> = {
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
-
-// ── CRON Parser ─────────────────────────────────────────────
-
-interface CronSchedule {
-  minutes: Set<number>;
-  hours: Set<number>;
-  daysOfMonth: Set<number>;
-  months: Set<number>;
-  daysOfWeek: Set<number>;
-}
-
-function parseCronField(field: string, min: number, max: number): Set<number> {
-  const result = new Set<number>();
-  const parts = field.split(',');
-  for (const part of parts) {
-    if (part === '*') {
-      for (let i = min; i <= max; i++) result.add(i);
-    } else if (part.includes('/')) {
-      const [range, stepStr] = part.split('/');
-      // Malformed step expressions ("/5", "*/", "1-5/x") are skipped rather
-      // than throwing inside the cron parser.
-      if (range === undefined || stepStr === undefined) continue;
-      const step = parseInt(stepStr, 10);
-      if (!Number.isFinite(step) || step <= 0) continue;
-      let rangeMin = min;
-      let rangeMax = max;
-      if (range !== '*') {
-        if (range.includes('-')) {
-          const [rMin, rMax] = range.split('-');
-          if (rMin === undefined || rMax === undefined) continue;
-          rangeMin = parseInt(rMin, 10);
-          rangeMax = parseInt(rMax, 10);
-        } else {
-          rangeMin = parseInt(range, 10);
-        }
-      }
-      if (!Number.isFinite(rangeMin) || !Number.isFinite(rangeMax)) continue;
-      for (let i = rangeMin; i <= rangeMax; i += step) {
-        if (i >= min && i <= max) result.add(i);
-      }
-    } else if (part.includes('-')) {
-      const [start, end] = part.split('-');
-      for (let i = Math.max(parseInt(start!, 10), min); i <= Math.min(parseInt(end!, 10), max); i++) {
-        result.add(i);
-      }
-    } else {
-      const val = parseInt(part, 10);
-      if (val >= min && val <= max) result.add(val);
-    }
-  }
-  return result;
-}
-
-function parseCron(expr: string): CronSchedule {
-  const fields = expr.trim().split(/\s+/);
-  if (fields.length < 5) {
-    throw new Error(`Invalid cron expression: "${expr}" — expected 5 fields`);
-  }
-  return {
-    minutes: parseCronField(fields[0]!, 0, 59),
-    hours: parseCronField(fields[1]!, 0, 23),
-    daysOfMonth: parseCronField(fields[2]!, 1, 31),
-    months: parseCronField(fields[3]!, 1, 12),
-    daysOfWeek: parseCronField(fields[4]!, 0, 6),
-  };
-}
 
 /**
  * Parse a `HH:MM` start time, or `null` when the value cannot name a time of day.
@@ -184,6 +121,31 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     inst.state = 'cancelled';
     inst.error = reason;
     inst.actualEnd = Date.now();
+  }
+
+  /**
+   * Move an approved or scheduled instance into `in_progress`.
+   *
+   * `WindowState` has declared `in_progress` since the scheduler was written and
+   * `getStats().activeWindows` counts it, but no code path could produce it: a
+   * running maintenance window and one still waiting to start were both reported
+   * as `scheduled`. The executor calls this when it begins a run, so the
+   * difference between "queued" and "running" is visible to `getStats()` and to
+   * anything reading `getInstanceState()`.
+   *
+   * A `pending` instance is refused. `requiresApproval` exists so that a human
+   * decides before the database is taken offline; starting the run without that
+   * decision would make the flag advisory.
+   */
+  startWindow(instanceId: string): WindowInstance {
+    const inst = this._getInstance(instanceId);
+    const isStartable = inst.state === 'scheduled' || inst.state === 'approved';
+    if (!isStartable) {
+      throw new Error(`Cannot start instance in state "${inst.state}"`);
+    }
+    inst.state = 'in_progress';
+    inst.actualStart = Date.now();
+    return { ...inst };
   }
 
   /**
@@ -326,12 +288,14 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     const occs = this.getUpcomingOccurrences(fromMs, toMs);
     const conflicts: WindowConflict[] = [];
 
-    for (let i = 0; i < occs.length; i++) {
-      for (let j = i + 1; j < occs.length; j++) {
-        const c = this.checkConflict(occs[i]!, occs[j]!);
-        if (c.hasConflict) conflicts.push(c);
+    // Each pair is examined once: an occurrence only needs the ones after it,
+    // because `checkConflict` is symmetric in its overlap test.
+    occs.forEach((left, index) => {
+      for (const right of occs.slice(index + 1)) {
+        const conflict = this.checkConflict(left, right);
+        if (conflict.hasConflict) conflicts.push(conflict);
       }
-    }
+    });
 
     this.conflictsDetected += conflicts.length;
     return conflicts;
@@ -353,8 +317,11 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       // A side whose window is no longer registered has no priority to compare;
       // it cannot be shown to be the lower one, so it is left alone.
       const known = priorities.filter((p): p is number => p !== undefined);
+      // `every` on an empty list is true, so "no side has a comparable priority"
+      // needs no separate test: either way there is no lowest, and the conflict
+      // stands for a human.
       const everyKnownIsEqual = known.every((p) => p === known[0]);
-      if (known.length === 0 || everyKnownIsEqual) return;
+      if (everyKnownIsEqual) return;
 
       const lowest = Math.min(...known);
       sides.forEach((side, index) => {
@@ -468,7 +435,10 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
 
   private _projectOnce(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
     const start = new Date(win.at!).getTime();
-    if (isNaN(start)) return;
+    // An `at` that cannot be read is not a date, and NaN fails every comparison
+    // below — so it projects no occurrence without needing a guard of its own.
+    // The guard that used to be here (`isNaN(start)`) was masked by exactly that
+    // interval test, which is why no test could tell whether it was there.
     // Extract interval condition: start is inside [fromMs, toMs)
     const afterFrom = start >= fromMs;
     const beforeTo = start < toMs;
@@ -536,10 +506,10 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     const start = parseStartTime(win.startTime!);
     if (start === null) return;
 
+    // Entries that name no calendar day are dropped, not clamped. An empty set
+    // then makes every month below contribute nothing, which is the answer a
+    // window with no valid day should give.
     const targetDays = validDaysOfMonth(win.daysOfMonth!);
-    // No entry names a calendar day, so no month can match. Returning here also
-    // avoids the loop below, which would otherwise iterate the range to no end.
-    if (targetDays.size === 0) return;
 
     let cursor = new Date(fromMs);
     cursor.setUTCHours(start.hour, start.minute, 0, 0);

@@ -1,12 +1,13 @@
 # db-operations — Unified Database Operations Framework
 
-**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 2 360 unit
+**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 2 429 unit
 tests and 331 integration tests, every coverage dimension at or above 95 %.**
 
-**Mutation score:** 94.81 % across the four modules that decide what gets deleted, whether a
+**Mutation score:** 99.33 % across the five modules that decide what gets deleted, whether a
 backup can be restored, and when a maintenance window runs — `backupChain.ts` 100 %,
-`InMemoryBackupManager.ts` 98.94 %, `RetentionPolicyEvaluator.ts` 91.28 %,
-`MaintenanceWindowScheduler.ts` 94.75 %; gate at 86. Run it yourself with
+`cron.ts` 100 %, `RetentionPolicyEvaluator.ts` 100 %, `InMemoryBackupManager.ts` 98.94 %,
+`MaintenanceWindowScheduler.ts` 99.03 %; gate at 86, seven survivors and all seven equivalent.
+Run it yourself with
 `pnpm --filter @agentix-e/db-operations run test:mutation`.
 
 Replace ad-hoc `ops/` directories with a canonical interface suite that every database
@@ -114,8 +115,8 @@ architecture that 20 packages deliver as a cohesive whole.
 | [`rollingupgrade`](./packages/rollingupgrade/) | ✅ | 16 | Zero-downtime rolling upgrades |
 | [`slacollector`](./packages/slacollector/) | ✅ | 13 | SLA metric collection and violation detection |
 
-**Total: `pnpm coverage` reports 117 files and 2 691 tests, 0 failures** (`test:unit`: 98 files /
-2 360; `test:integration`: 19 files / 331). The per-package counts above are the units each
+**Total: `pnpm coverage` reports 120 files and 2 760 tests, 0 failures** (`test:unit`: 101 files /
+2 429; `test:integration`: 19 files / 331). The per-package counts above are the units each
 package contributes.
 
 ---
@@ -193,7 +194,7 @@ packages/monitor/src/
 ## Testing
 
 ```bash
-npm test              # 117 files, 2 691 tests
+npm test              # 120 files, 2 760 tests
 npm run test:mutation # Stryker over the four modules that decide deletion, restorability and timing
 npm run bench         # Performance benchmarks
 npm run bench:ycsb    # YCSB-style benchmarks

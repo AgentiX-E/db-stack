@@ -5,6 +5,63 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-11-16
+
+### Breaking
+
+- **`IMaintenanceScheduler` declares the lifecycle transitions it documents.** `startWindow`,
+  `completeWindow` and `failWindow` are now part of the interface, not only of
+  `MaintenanceWindowScheduler`. Any other implementation must add them; the reference
+  implementation is unchanged in signature. The break is the point: the executor — the
+  component that knows a run began or ended — is typed against the interface, and it could not
+  drive a run at all.
+
+### Added
+
+- **`startWindow(instanceId)`** — the missing `scheduled | approved → in_progress` transition.
+  `WindowState` has declared `in_progress` since the scheduler was written, `actualStart` is
+  documented as "set when in_progress" and `getStats().activeWindows` counts it, but nothing
+  could put an instance there: a window that was running and one still queued both reported
+  `scheduled`, and `completed` was only reachable by never having started. A `pending` instance
+  is refused, because approval is the step that authorises taking the database offline. AC 64.
+- **`parseCron`, `parseCronField` and `CronSchedule`** exported from
+  `@agentix-e/db-operations-maintenance`. The five-field grammar is now a module with its own
+  tests rather than an inner function of the scheduler, so an expression can be checked before a
+  window is registered, and every rule of the grammar has an assertion of its own. AC 63.
+- **Mutation covers five modules instead of four.** `maintenance/cron.ts` joins the list under the
+  published selection rule — it decides when work runs — and scores 100 %. Operations overall:
+  **99.33 %** over 1 042 mutants at `break: 86`.
+
+### Fixed
+
+- **`getStats().activeWindows` could not report a running window** — `in_progress` was
+  unreachable, so the number only ever counted `scheduled` and `force_override` runs.
+- **`in_progress` is refused by nothing and produced by nothing** in `_finishInstance`: a run can
+  now start, complete or fail as three separate calls, and `completeWindow` leaves no `error` key
+  behind on a run that did not fail.
+- **`resolveConflict(..., 'defer_newer')` on a conflict with no `conflictingSides`** is asserted to
+  be a no-op rather than the `TypeError` a reduction over an empty list would throw. The guard was
+  there; nothing tested it.
+
+### Changed
+
+- **The cron parser moved to `impl/cron.ts`.** Behaviour is unchanged: a field that names nothing
+  still yields an empty set and a window that never fires, and only a field count below five is an
+  error. `MaintenanceWindowScheduler.ts` loses 90 lines and one responsibility.
+- **Dead branches removed, each one a mutant no test could kill:**
+
+  | Removed                                        | Why it could not be observed                                                    |
+  | ---------------------------------------------- | ------------------------------------------------------------------------------- |
+  | `if (isNaN(start)) return` in the once-projection | NaN fails the interval test that follows, so the guard never changed the answer |
+  | `known.length === 0 \|\|` in `defer_lower`     | `[].every(...)` is vacuously true, so the other half of the condition covered it |
+  | `if (targetDays.size === 0) return` in the monthly projection | an empty day set makes every month contribute nothing anyway    |
+  | `members.sort(...)` in `buildBackupSets`        | nothing read the order: the policy sums bytes and the result is sorted on return |
+  | `if (snapshots.length === 0)` fast path         | the general path already returns an empty result for an empty inventory          |
+  | `removedSets.add(set)` in the byte rule         | `removedSets` is not read after that loop                                        |
+
+  The retention module now scores **100 %** with no survivors; the scheduler keeps six, all
+  equivalent (documented in `docs/maturity.md`).
+
 ## [1.3.0] — 2026-11-16
 
 ### Breaking

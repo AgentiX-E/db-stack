@@ -6,7 +6,7 @@ import baseConfig from './vitest.config';
  *
  * Stryker judges one mutant at a time, so the test set behind it has to be
  * narrow enough that a verdict costs seconds rather than minutes: the whole
- * operations suite is 2 599 cases across 21 packages, and a dry run of that
+ * operations suite is over 2 700 cases across 21 packages, and a dry run of that
  * would spend minutes before the first mutant was generated. This config names
  * exactly the suites that exercise the files in `stryker.config.json`'s
  * `mutate` list. When one grows, the other grows with it — `check:gates`
@@ -32,6 +32,7 @@ export default defineConfig({
       'packages/backup/src/__tests__/AC59-retention-chains.test.ts',
       'packages/backup/src/__tests__/InMemoryBackup.test.ts',
       'packages/backup/src/__tests__/AC62-backup-store-surface.test.ts',
+      'packages/backup/src/__tests__/AC65-retention-order-independence.test.ts',
     ],
     exclude: [],
     pool: 'forks',

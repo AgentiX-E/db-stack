@@ -399,6 +399,68 @@ no lower window, which is what the `split` recommendation is asking a human to d
 run is never cancelled by a strategy: it is waiting for an approver, and a resolution is not that
 approver.
 
+#### Cron: five fields, and what a malformed one means
+
+`cronExpression` takes the standard five fields — `minute hour day-of-month month day-of-week` —
+in UTC. The grammar is its own module (`parseCron` / `parseCronField` are exported), so you can
+check an expression before you register a window:
+
+```ts
+import { parseCron } from "@agentix-e/db-operations-maintenance";
+
+parseCron("*/15 0-6 * * 1-5").minutes; // Set { 0, 15, 30, 45 }
+parseCron("0 3 * *").length; // throws: expected 5 fields
+```
+
+| Form        | Meaning                                              | Malformed becomes                       |
+| ----------- | ---------------------------------------------------- | --------------------------------------- |
+| `*`         | every value in the field                             | —                                       |
+| `a`         | one value                                            | outside `min..max` → names nothing      |
+| `a-b`       | inclusive, clamped to the field's real range         | `b < a`, or a missing bound → nothing   |
+| `*/n`, `a/n`, `a-b/n` | the range walked by `n`, clamped per value | `n` ≤ 0 or not a number → nothing       |
+| `a,b,c`     | union of any of the above                            | —                                       |
+
+A field that names nothing produces a window that never fires; it does not throw. That is
+deliberate: `"0 3 30 2 *"` is 30 February — the expression is well-formed and the date never
+exists — and a scheduler that raised on it would fail at registration for a reason only the
+calendar knows. A field *count* below five is the one error, because `"0 3 * *"` is not a
+schedule. A sixth field is ignored rather than misread (dialects that have a year put it last).
+
+The stride stays anchored where the expression puts it: `0-5/2` in `daysOfMonth` walks 0, 2, 4
+and then drops 0, because day zero does not exist — it does not quietly start at 1.
+
+> **Operational bound.** A cron projection scans minute by minute and stops after 100 000
+> minutes (~69 days). Ask for a range wider than that and you get the occurrences inside the
+> first 100 000 minutes, not an error. Every other recurrence computes its occurrences
+> directly and has no such limit.
+
+#### The lifecycle of a run
+
+```ts
+const [run] = scheduler.getUpcomingOccurrences(Date.now(), Date.now() + 3_600_000);
+scheduler.startWindow(run.instanceId); // scheduled|approved -> in_progress
+scheduler.completeWindow(run.instanceId); // -> completed, actualEnd stamped
+// or: scheduler.failWindow(run.instanceId, "lock timeout");
+```
+
+| State           | Entered by                                  | Counted as active by `getStats()` |
+| --------------- | ------------------------------------------- | --------------------------------- |
+| `pending`       | projection of a window with `requiresApproval` | no (it is in `pendingApprovals`) |
+| `scheduled`     | projection of a window without approval      | yes                               |
+| `approved`      | `approveWindow(id, who)`                     | no                                |
+| `in_progress`   | `startWindow(id)`                            | yes                               |
+| `force_override`| `forceStart(windowId)`                        | yes                               |
+| `completed`     | `completeWindow(id)`                         | no                                |
+| `failed`        | `failWindow(id, reason)`                      | no                                |
+| `cancelled`     | `cancelWindow(id, reason)` or a resolution      | no                                |
+
+`startWindow` refuses a `pending` run: `requiresApproval` exists so that a person decides before
+the database is taken offline, and starting without that decision would make the flag advisory.
+`startWindow`, `completeWindow` and `failWindow` are on `IMaintenanceScheduler`, not just on the
+implementation, because the executor — the component that knows a run began or ended — is typed
+against the interface.
+
+
 Resolving a conflict at 03:00 does not touch the same window's run next month. `getStats()` reports
 `conflictsDetected` and `conflictsResolved`; both were hardcoded to `0` before 1.3.0, so a
 dashboard built on them showed a quiet cluster during a conflict storm.

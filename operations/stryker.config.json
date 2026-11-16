@@ -10,7 +10,8 @@
     "packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
     "packages/backup/src/impl/RetentionPolicyEvaluator.ts",
     "packages/backup/src/impl/InMemoryBackupManager.ts",
-    "packages/backup/src/impl/backupChain.ts"
+    "packages/backup/src/impl/backupChain.ts",
+    "packages/maintenance/src/impl/cron.ts"
   ],
   "coverageAnalysis": "perTest",
   "reporters": [

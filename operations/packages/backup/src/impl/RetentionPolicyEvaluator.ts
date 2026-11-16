@@ -60,7 +60,13 @@ export interface RetentionOutcome {
 interface BackupSet {
   /** The snapshot no other snapshot in the set depends on: its base. */
   base: BackupMetadata;
-  /** Every snapshot in the set, oldest first. */
+  /**
+   * Every snapshot reachable from the base, in traversal order.
+   *
+   * Deliberately unordered: nothing decides anything from this array's order
+   * (the policy sums bytes and asks `some`), and `evaluateWithOutcome` sorts the
+   * union it returns. Sorting it here sorted a value nobody read.
+   */
   members: BackupMetadata[];
 }
 
@@ -91,15 +97,23 @@ function hasReadableTimestamp(snapshot: BackupMetadata): boolean {
  * unreclaimable and no traversal loops.
  */
 function buildBackupSets(snapshots: BackupMetadata[]): BackupSet[] {
-  const byId = new Map(snapshots.map((snapshot) => [snapshot.snapshotId, snapshot]));
-  const children = new Map<string, BackupMetadata[]>();
+  // Keyed by `string | undefined` so that "this snapshot names no parent" is a
+  // lookup that finds nothing rather than a branch: a base is a snapshot whose
+  // parent id is not a key in the inventory, and both forms of that - absent
+  // id, id of a snapshot the caller did not pass - reach the same code path.
+  const byId = new Map<string | undefined, BackupMetadata>(
+    snapshots.map((snapshot) => [snapshot.snapshotId, snapshot]),
+  );
+  const children = new Map<string | undefined, BackupMetadata[]>();
   const bases: BackupMetadata[] = [];
 
   for (const snapshot of snapshots) {
     const parentId = snapshot.parentSnapshotId;
-    const parent = parentId === undefined ? undefined : byId.get(parentId);
-    const hasBaseInInventory =
-      parentId !== undefined && parent !== undefined && parent.snapshotId !== snapshot.snapshotId;
+    const parent = byId.get(parentId);
+    // A snapshot that names itself as parent is a base. Following that edge
+    // would put it in its own child list, where the traversal below would walk
+    // it once and give up - the same set, by a longer route.
+    const hasBaseInInventory = parent !== undefined && parent.snapshotId !== snapshot.snapshotId;
     if (hasBaseInInventory) {
       const siblings = children.get(parentId) ?? [];
       siblings.push(snapshot);
@@ -121,7 +135,6 @@ function buildBackupSets(snapshots: BackupMetadata[]): BackupSet[] {
       const descendants = children.get(current.snapshotId) ?? [];
       for (const descendant of descendants) queue.push(descendant);
     }
-    members.sort((a, b) => createdMs(a) - createdMs(b));
     return { base, members };
   };
 
@@ -181,9 +194,6 @@ export class RetentionPolicyEvaluator implements IBackupRetentionPolicy {
    */
   evaluateWithOutcome(snapshots: BackupMetadata[]): RetentionOutcome {
     const toDelete: BackupMetadata[] = [];
-    if (snapshots.length === 0) {
-      return { toDelete, unreclaimedBytes: 0 };
-    }
 
     const now = Date.now();
     const keepRecentMs = this.policy.keepRecent ? parseDurationToMs(this.policy.keepRecent) : null;
@@ -230,23 +240,21 @@ export class RetentionPolicyEvaluator implements IBackupRetentionPolicy {
     if (this.policy.maxTotalBytes > 0) {
       const surviving = sets.filter((set) => !removedSets.has(set));
       const setBytes = (set: BackupSet): number => set.members.reduce((sum, s) => sum + s.sizeBytes, 0);
-      const totalBytes = surviving.reduce((sum, set) => sum + setBytes(set), 0);
+      const oldestBaseFirst = [...surviving].sort((a, b) => createdMs(a.base) - createdMs(b.base));
+      let excess = surviving.reduce((sum, set) => sum + setBytes(set), 0) - this.policy.maxTotalBytes;
 
-      if (totalBytes > this.policy.maxTotalBytes) {
-        const oldestBaseFirst = [...surviving].sort((a, b) => createdMs(a.base) - createdMs(b.base));
-        let excess = totalBytes - this.policy.maxTotalBytes;
-
-        for (const set of oldestBaseFirst) {
-          if (excess <= 0) break;
-          if (isSetProtected(set)) continue;
-          removedSets.add(set);
-          toDelete.push(...set.members);
-          excess -= setBytes(set);
-        }
-
-        // Anything still over the ceiling stayed because a floor said so.
-        unreclaimedBytes = Math.max(excess, 0);
+      // A pass that removes nothing leaves `excess` at or below zero and reports
+      // nothing unreclaimed - so "we are under the ceiling" needs no branch of
+      // its own: the loop breaks before it touches a set.
+      for (const set of oldestBaseFirst) {
+        if (excess <= 0) break;
+        if (isSetProtected(set)) continue;
+        toDelete.push(...set.members);
+        excess -= setBytes(set);
       }
+
+      // Anything still over the ceiling stayed because a floor said so.
+      unreclaimedBytes = Math.max(excess, 0);
     }
 
     // One order for the caller, whichever rule produced the entry: oldest first.

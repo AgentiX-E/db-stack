@@ -22,3 +22,5 @@ export type {
 export { NoopMaintenanceExecutor } from './impl/NoopMaintenanceExecutor.js';
 export { InMemoryMaintenanceExecutor } from './impl/InMemoryMaintenanceExecutor.js';
 export { MaintenanceWindowScheduler } from './impl/MaintenanceWindowScheduler.js';
+export { parseCron, parseCronField } from './impl/cron.js';
+export type { CronSchedule } from './impl/cron.js';

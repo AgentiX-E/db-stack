@@ -224,6 +224,35 @@ export interface IMaintenanceScheduler {
   /** Cancel a window instance. */
   cancelWindow(instanceId: string, reason: string): void;
 
+  /**
+   * Move an approved or scheduled instance into `in_progress`.
+   *
+   * The transition was missing: `WindowState` defines `in_progress`,
+   * `WindowInstance.actualStart` is documented as "set when in_progress", and
+   * `activeWindows` counts it, but nothing in the package could ever put an
+   * instance there. A window that actually started was indistinguishable from
+   * one still waiting to, and `completed` could only be reached by skipping the
+   * run entirely.
+   *
+   * A `pending` instance is refused: approval is the step that authorises the
+   * run, and starting without it would make `requiresApproval` advisory.
+   *
+   * @throws When the instance is pending, or already in a terminal state.
+   */
+  startWindow(instanceId: string): WindowInstance;
+
+  /**
+   * Move a running instance to `completed` and stamp `actualEnd`.
+   *
+   * Part of the interface rather than a method only the implementation knows:
+   * the executor is the component that knows a run finished, and it is typed
+   * against this interface.
+   */
+  completeWindow(instanceId: string): WindowInstance;
+
+  /** Move a running instance to `failed`, recording why. */
+  failWindow(instanceId: string, reason: string): WindowInstance;
+
   /** Force start a window immediately (emergency override). */
   forceStart(windowId: string): WindowInstance;
 

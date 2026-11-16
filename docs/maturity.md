@@ -175,7 +175,7 @@ configuration file that looked like a gate and ran nowhere.
 | **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
 | **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
 | **Operations process-level acceptance**                  | Not covered                | Operations packages are verified in-process; there is no run that kills a process mid-backup.                                                                                                      |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 94.81 %, gates at 70, 70 and 86). In operations four of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 17 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
+| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 99.33 %, gates at 70, 70 and 86). In operations five of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 16 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
 | **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
 | **Cross-version upgrade path**                           | Not covered                | The wire and snapshot formats are versioned, but no test exercises an N-1 → N upgrade.                                                                                                             |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
@@ -210,12 +210,13 @@ are attached to each run so a regression is visible next to the change that caus
 same suite runs on every pull request as the `benchmark` job in `ci.yml`, because a benchmark
 nobody calls is a benchmark that stays broken.
 
-**How the mutation score is produced.** Six modules are under mutation testing, chosen by one
+**How the mutation score is produced.** Seven modules are under mutation testing, chosen by one
 rule — *mutate what decides deletion, durability, or when work runs*: durable state
 (`cluster/.../SqliteStorage.ts`), the wire (`federation/.../TcpSecureTransport.ts`), what gets
 deleted (`operations/.../RetentionPolicyEvaluator.ts`), whether a backup can be replayed at all
-(`operations/.../backupChain.ts`, `operations/.../InMemoryBackupManager.ts`) and when a window
-runs (`operations/.../MaintenanceWindowScheduler.ts`). Stryker alters the source one change at a
+(`operations/.../backupChain.ts`, `operations/.../InMemoryBackupManager.ts`), when a window runs
+(`operations/.../MaintenanceWindowScheduler.ts`) and what time it runs at
+(`operations/.../cron.ts`). Stryker alters the source one change at a
 time and runs the tests that cover the change; a change no test notices is a behaviour nothing
 constrains. There is one instrument: the three hand-rolled engines the operations package carried
 until iteration 26 are gone, and `check:gates` now fails if a `test:mutation` script is not
@@ -227,31 +228,41 @@ invoked by a workflow.
 | federation | `TcpSecureTransport.ts` | 260 | 208 (+1 timeout) | 56 (+6 no coverage) | **77.1 %** | break 70 |
 | operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
 | operations | `InMemoryBackupManager.ts` | 94 | 92 (+1 timeout) | 1 | **98.9 %** | break 86 |
-| operations | `RetentionPolicyEvaluator.ts` | 195 | 176 (+2 timeout) | 17 | **91.3 %** | break 86 |
-| operations | `MaintenanceWindowScheduler.ts` | 724 | 667 (+19 timeout) | 38 | **94.8 %** | break 86 |
+| operations | `RetentionPolicyEvaluator.ts` | 174 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
+| operations | `cron.ts` | 87 | 80 (+7 timeout) | 0 | **100 %** | break 86 |
+| operations | `MaintenanceWindowScheduler.ts` | 621 | 602 (+13 timeout) | 6 | **99.0 %** | break 86 |
+
+Operations overall: 1 042 mutants, 99.33 %.
 
 The operations floor is higher than the other two because the mutated surface is pure decision
 logic with no sockets and no clock of its own: a surviving mutant there is almost always a missing
 assertion rather than a verdict that depends on the machine.
 
-The 18 survivors in the two backup modules were read one by one and every one is equivalent:
-short-circuit masking (`parentId !== undefined && parent !== undefined` — the second test cannot be
-reached), a fallback that reconstructs the same sets (`buildBackupSets` gives every snapshot with no
-base in the inventory a set of its own, so removing the "is a base" branch changes nothing), a final
-sort that makes member order unobservable, an `if (snapshots.length === 0)` whose removal produces
-the same empty answer, a `totalBytes > limit` weakened to `>=` that still meets `excess <= 0` on the
-first iteration, and a `state: 'in-progress'` that no caller can observe because the same method
-sets it to `completed` before returning.
+The survivors were read one by one, and every one of the seven is equivalent:
 
-The 38 in the scheduler are not yet classified; 17 of them sit in the cron parser's range guards,
-where the next guard happens to mask the change, and the rest are branches this class cannot reach
-through its own API (`in_progress` is set by the executor, not the scheduler). Classifying them is
-**P2-15** in the roadmap — a survivor is evidence of a gap until someone reads it, and "probably
-equivalent" is not a reading.
+| Module | Surviving mutant | Why no test can distinguish it |
+| --- | --- | --- |
+| `InMemoryBackupManager` | `state: 'in-progress'` → `state: ''` | the same method sets `completed` before it returns, so the interim value is never observable |
+| `MaintenanceWindowScheduler` | `cursor.setUTCHours(...)` → `setUTCMinutes(...)` | the cursor's *month* is what drives the loop; every candidate is built from explicit year/month/day and `startTime`, and the ones the moved cursor would skip have already failed `candidateMs >= fromMs` |
+| `MaintenanceWindowScheduler` | `cursor.setUTCDate(1)` → `cursor.setTime(1)` | the cursor jumps to 1970 and walks every month to the range; all those candidates are before `fromMs`, so the answer is the same and only the walking is wasted |
+| `MaintenanceWindowScheduler` | `while (cursorMs < toMs)` → `<=` (monthly) | at equality no candidate is `< toMs`, so the extra month contributes nothing |
+| `MaintenanceWindowScheduler` | `day > lastDay` → `day >= lastDay` | at `day === lastDay` both branches produce `lastDay` |
+| `MaintenanceWindowScheduler` | `while (cursor.getTime() < toMs …)` → `<=` (cron) | as above, for the minute scan |
+| `MaintenanceWindowScheduler` | `iterations < maxIterations` → `<=` | one extra minute inside a 100 000-minute safety bound; only an expression that matches every minute for 69 days could see it, and that projection allocates 100 000 instances |
+
+Reading them was worth doing rather than assuming: the same exercise in iteration 27 turned 38
+survivors into 11 assertions and two defects, and this iteration turned 45 into three defects
+(`in_progress` was unreachable, `defer_lower` compared an empty list against a condition that was
+already true, and the once-projection carried a guard the interval test had made dead) plus six
+lines of code that measured nothing. What is left is quieter, and each row above says *why* the
+mutant cannot be seen rather than *that* it probably cannot.
 
 A green suite says the assertions pass. It does not say they would fail if the behaviour changed —
-that is what the score adds, and it is why the surviving mutants are listed in the roadmap as work
-rather than reported as a number.
+that is what the score adds. P2-15 ("read every survivor") is closed: the seven that remain are
+written out above with the reason each is invisible, rather than counted as a number and left
+unread. P2-17 in the roadmap asks the one remaining question — whether the monthly and cron
+projections can be restructured so their loop bounds are observable — and that is a design
+argument, not a missing assertion.
 
 The cluster score moves by about half a point between runs, which is why the break threshold sits
 three points below the observed value rather than one. The movement is not noise in the product: it
