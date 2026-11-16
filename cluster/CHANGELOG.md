@@ -102,6 +102,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1 000 (~0.6 KB per proposal), so the bound is now `8 MB + 2 KB per proposal` for every case:
   the same property at every volume, about four times the observed cost, and a case that leaks
   fails instead of a case that ran on a slower machine.
+- **The performance suite uses the same instrument, and stops skipping.** `P.3` asserted a
+  15 MB allocation delta for 1 000 proposals while its own title said 10 MB; measured retention is
+  1.2 MB, so what it was really testing was that the collector ran often enough. `AC 41.6` called
+  `globalThis.gc()` directly and skipped itself when the flag was missing — a bare `vitest` run
+  reported it as passed without measuring anything. Both go through
+  `retainedHeapMB()`/`collectNow()` now, and `AC 41.6`'s per-proposal bound is 8 KB rather than
+  32 KB against a measured median of 1.1 KB.
 - **`DEFAULT_SNAPSHOT_INTERVAL` is 200, and it is the threshold that reaches
   raft-core.** The adapter forwarded `this.config.snapshotInterval` and dropped the
   default on the floor, so an unset interval meant "raft-core's own number" — 200 —

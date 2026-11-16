@@ -19,6 +19,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { TestCluster } from '../integration/TestCluster';
+import { retainedGrowthBudgetMB, retainedHeapMB } from '../support/retainedHeap';
 
 const BENCH_TIMEOUT = 300_000;
 
@@ -110,10 +111,16 @@ describe('Performance Baseline (P)', () => {
   );
 
   //
-  // P.3 — Heap growth per 1K proposals
+  // P.3 — Retained heap growth per 1K proposals
+  //
+  // The bound is the same instrument the boundary suites use: `retainedHeapMB()`
+  // forces a collection, so the number is what the cluster keeps. Measured
+  // retention for 1 000 proposals is 1.2–1.8 MB; the allocation delta this case
+  // used to assert against 15 MB was mostly garbage awaiting the collector, which
+  // is why its own comment had to apologise for "GC variance".
   //
   it(
-    'P.3: heap growth — delta < 10MB per 1K proposals',
+    'P.3: retained heap growth — within budget for 1K proposals',
     async () => {
       const cluster = new TestCluster({
         nodeCount: 3,
@@ -128,22 +135,19 @@ describe('Performance Baseline (P)', () => {
         await cluster.start();
         const leader = await cluster.findLeader();
 
-        const heapBefore = process.memoryUsage().heapUsed;
+        const heapBefore = retainedHeapMB();
         for (let i = 0; i < 1_000; i++) {
           await leader.adapter.proposeAndWait(`heap-${i}`);
         }
-        const heapAfter = process.memoryUsage().heapUsed;
-        const heapDeltaMB = (heapAfter - heapBefore) / 1024 / 1024;
+        const heapAfter = retainedHeapMB();
+        const heapDeltaMB = heapAfter - heapBefore;
 
         console.log(
-          `\n  [P.3] 1K proposals: heap +${heapDeltaMB.toFixed(2)}MB ` +
-            `(${(heapBefore / 1024 / 1024).toFixed(0)}MB → ` +
-            `${(heapAfter / 1024 / 1024).toFixed(0)}MB)`,
+          `\n  [P.3] 1K proposals: retained +${heapDeltaMB.toFixed(2)}MB ` +
+            `(${heapBefore.toFixed(0)}MB → ${heapAfter.toFixed(0)}MB)`,
         );
 
-        // Actual observed: ~7-10MB for 1K entries on 3-node cluster
-        // GC variance can push this slightly; 15MB is a safe upper bound
-        expect(heapDeltaMB).toBeLessThan(15);
+        expect(heapDeltaMB).toBeLessThan(retainedGrowthBudgetMB(1_000));
       } finally {
         await cluster.stop();
       }

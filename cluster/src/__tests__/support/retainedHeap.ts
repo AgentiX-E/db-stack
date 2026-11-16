@@ -52,17 +52,31 @@ function collect(): () => void {
 /**
  * Heap in MB, with everything unreachable reclaimed.
  *
- * Collected twice before sampling: the first pass frees ordinary garbage and
- * makes a second class of objects unreachable (cleared weak references,
- * finaliser-reachable wrappers), which the second pass then reclaims. One pass
- * leaves enough behind that consecutive samples of the same workload can differ
- * by more than the workload itself.
+ * Collected twice before sampling — see `collectNow` — because one pass leaves
+ * enough behind that consecutive samples of the same workload can differ by more
+ * than the workload itself.
  */
 export function retainedHeapMB(): number {
+  collectNow();
+  return process.memoryUsage().heapUsed / 1024 / 1024;
+}
+
+/**
+ * Collect now, so that a sample taken from `process.memoryUsage()` afterwards
+ * means retention.
+ *
+ * Two passes: the first frees ordinary garbage and makes a second class of
+ * objects unreachable (cleared weak references, finaliser-reachable wrappers),
+ * the second reclaims those.
+ *
+ * Exported for the cases that compute their own derived number — bytes per
+ * proposal, say — from two samples and would otherwise call `globalThis.gc()`
+ * directly and skip themselves when the flag is missing.
+ */
+export function collectNow(): void {
   const gc = collect();
   gc();
   gc();
-  return process.memoryUsage().heapUsed / 1024 / 1024;
 }
 
 /** Retained growth allowed for a case regardless of how much it writes, in MB. */

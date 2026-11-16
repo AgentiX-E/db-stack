@@ -39,6 +39,7 @@ import { TestCluster } from '../integration/TestCluster';
 import { ReadIndexManager } from '../../consensus/extensions/ReadIndexManager.js';
 import { LeaseReadManager } from '../../consensus/extensions/LeaseReadManager.js';
 import { measureLatency, describeLatency, ms } from '../../testing/latency';
+import { collectNow } from '../support/retainedHeap';
 
 const BENCH_TIMEOUT = 300_000;
 /** Entries between snapshots: small enough that compaction runs inside this file. */
@@ -192,10 +193,12 @@ describe('Raft operations on a real cluster', () => {
     BENCH_TIMEOUT,
   );
 
-  // Heap attribution is only meaningful with a forced collection at both ends, so
-  // this case is skipped rather than silently passing when the flag is missing.
-  // `test:perf` sets `NODE_OPTIONS=--expose-gc`; a bare `vitest` run does not.
-  it.skipIf(typeof globalThis.gc !== 'function')(
+  // Heap attribution is only meaningful with a forced collection at both ends.
+  // `collectNow()` obtains the collector itself when the flag is missing, so this
+  // case no longer skips itself — a skipped assertion is not an assertion, and a
+  // bare `vitest` run used to report this one as passed without measuring
+  // anything.
+  it(
     'AC 41.6: retained heap cost per proposal',
     async () => {
       const iterations = 100;
@@ -205,12 +208,12 @@ describe('Raft operations on a real cluster', () => {
       // come out negative (the first collection frees more than the writes retain),
       // which would make the assertion meaningless.
       for (let window = 0; window < 3; window++) {
-        globalThis.gc!();
+        collectNow();
         const before = process.memoryUsage().heapUsed;
         for (let i = 0; i < iterations; i++) {
           await leader().adapter.proposeAndWait(`heap-${window}-${i}`);
         }
-        globalThis.gc!();
+        collectNow();
         windows.push((process.memoryUsage().heapUsed - before) / iterations);
       }
 
@@ -221,9 +224,14 @@ describe('Raft operations on a real cluster', () => {
           `(windows: ${windows.map((w) => (w / 1024).toFixed(1)).join(', ')} KB)\n`,
       );
 
-      // The entry, its log record and its apply are all retained by the cluster;
-      // 32 KB per proposal would be a leak of the order this case exists to catch.
-      expect(median).toBeLessThan(32 * 1024);
+      // The entry, its log record and its apply are all retained by the cluster,
+      // and that costs 1.1 KB per proposal at the median (windows 1.0, 1.8, 1.1
+      // KB). The bound was 32 KB, which is 29 times the cost and therefore could
+      // only catch a leak of an order the per-entry arithmetic rules out — a
+      // number large enough to be safe rather than a measurement. 8 KB is more
+      // than four times the worst window and still fails anything that retains a
+      // whole proposal's worth of state per proposal.
+      expect(median).toBeLessThan(8 * 1024);
     },
     BENCH_TIMEOUT,
   );
