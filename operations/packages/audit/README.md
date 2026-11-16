@@ -126,6 +126,82 @@ Full implementation of `IAuditStore`. Stores entries in a `Map<string, AuditEntr
 - **Pruning:** Synchronously filters in-memory data
 - **No memory limit** — entries accumulate until explicitly pruned
 
+### `FileAuditStore`
+
+The production store: NDJSON segments on disk, rotation by size or age, gzip
+archives, retention by segment age, and queries that read across the live segment
+and the archives. Reads and writes each have a port, so the trail can live
+somewhere other than the local filesystem without losing either.
+
+**A write is durable when it returns.** `write()` appends the line, syncs the file,
+and — once per segment, after its first line — syncs the directory that names it.
+A file's existence is a directory entry, and syncing the file does not sync the
+name, so without the third step a power cut can leave the entries on the medium
+and the segment unreachable. If any step fails, `write()` **rejects**: an id means
+"this survives a power loss", and a store that acknowledges an entry it could not
+make durable is a store that lies about the one thing it exists to record.
+
+There is no temporary file and no `rename`. An append-only trail does not need
+whole-file replacement, and it costs the segment's whole size to perform one per
+line — measured at 1 000× the payload before this was changed. Because the append
+is an `O_APPEND` write, two processes may append to the same trail without losing
+each other's lines.
+
+```typescript
+import { FileAuditStore } from '@agentix-e/db-operations-audit';
+
+const store = new FileAuditStore({
+  dataDir: '/var/lib/db/audit',
+  maxFileSize: 50 * 1024 * 1024, // rotate at 50 MB
+  retentionDays: 90,             // expire closed segments older than this
+});
+
+const id = await store.write({
+  operation: 'DROP_TABLE',
+  actor: 'alice',
+  resource: 'orders',
+  result: 'success',
+});
+
+await store.query({ actor: 'alice' });   // reads the newest segment first
+await store.count({ result: 'failure' }); // a fact, not a page
+await store.pruneOlderThan(new Date(Date.now() - 30 * 24 * 3600 * 1000));
+await store.close();                     // waits for background compression
+```
+
+| Config | Default | Meaning |
+|---|---|---|
+| `dataDir` | — | Directory the store owns; created if absent |
+| `maxFileSize` | 50 MB | Rotate when the live segment reaches this |
+| `maxAgeMs` | 24 h | Rotate when the live segment is this old |
+| `retentionDays` | 90 | Expire closed segments older than this; `0` disables the sweep |
+| `filePrefix` | `audit` | Segment name prefix (`<prefix>-YYYYMMDD-NNNN.ndjson[.gz]`) |
+| `maxScanLines` | 10 000 | Bound on what `query()` *reads and returns*; `get()`/`count()` are unbounded |
+| `segmentReader` | `readSegmentFromDisk` | Read port: `(path, compressed) => string \| null` |
+| `fileSystem` | `nodeDurableFileSystem` | Write port: `append`, `syncFile`, `syncDirectory`, `needsSeparator` |
+
+A custom write port must be durable when each method returns — that is the whole
+contract, and it is the caller's to keep:
+
+```typescript
+import { FileAuditStore, type DurableFileSystem } from '@agentix-e/db-operations-audit';
+
+const objectStore: DurableFileSystem = {
+  append: (path, data) => bucket.appendObject(path, data),
+  syncFile: (path) => bucket.commitObject(path),
+  syncDirectory: () => {},                        // object stores have no directory entries
+  needsSeparator: (path) => bucket.endsWithNewline(path),
+};
+
+new FileAuditStore({ dataDir: 'audit/', fileSystem: objectStore });
+```
+
+What no test can prove, and what the guarantee therefore does not claim: that a
+synced line survives a **power cut** — a killed process leaves the page cache
+behind, so `SIGKILL` shows the line is in the file and not that it reached the
+medium. Durability is also not free: one `fsync` per entry allows roughly a hundred
+acknowledged entries per second per writer on a device with a 10 ms flush.
+
 ### `JsonAuditExporter`
 
 Exports entries from an `IAuditStore` to pretty-printed JSON (json-array format). Supports both file and string output.
