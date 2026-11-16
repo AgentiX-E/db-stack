@@ -246,20 +246,22 @@ invoked by a workflow.
 | operations | `KeyManager.ts` | 97 | 81 (+3 timeout) | 12 (+1 no coverage) | **86.60 %** | break 86 |
 | operations | `EnvelopeEncryptionProvider.ts` | 104 | 94 | 10 | **90.38 %** | break 86 |
 
-Operations overall: 2 404 judged mutants, 97.55 % — 2301 killed, 44 timed out,
-56 survived, 3 with no coverage. Two more modules joined this iteration and both are
-below the package average, so the figure fell again for the third iteration running while the
-survivor count went up. The composition of that number is the interesting part: twelve of the survivors
+Operations overall: 2 404 judged mutants, 97.55 % — 2 301 killed, 44 timed out,
+56 survived, 3 with no coverage. Two more modules joined this iteration and both are below the
+package average, so the figure fell again — the second iteration running — while the survivor count
+went up. The composition of that number is the interesting part: twelve of the survivors
 are memory wipes and the durability recipe, which no in-process assertion can observe (P2-19), and
 most of the rest are encoding defaults (`'utf-8'` → `''` is the same encoding) or a fixed option
-object whose default is the value it was given. The three that are neither are named at the end of
-the table below.
+object whose default is the value it was given. Two of them are neither: both need a filesystem fault
+during a scan (P2-21).
 
 The operations floor is higher than the other two because the mutated surface is pure decision
 logic with no sockets and no clock of its own: a surviving mutant there is almost always a missing
 assertion rather than a verdict that depends on the machine.
 
-The survivors were read one by one, and every one of the seven is equivalent:
+The survivors were read one by one. Each family below names the property that makes it
+invisible to any in-process assertion — the reasons are grouped, because one property often explains
+several mutants:
 
 | Module | Surviving mutant | Why no test can distinguish it |
 | --- | --- | --- |
