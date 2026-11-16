@@ -5,6 +5,95 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-11-16
+
+### Breaking
+
+- **`FileAuditStoreConfig.segmentReader` is the only way segments are read.** The store no longer
+  calls `readFileSync` itself; the default value is `readSegmentFromDisk`, exported from
+  `@agentix-e/db-operations-audit`, so a wrapper keeps identical semantics. A store that cannot read
+  a segment contributes no entries from it — the port's contract is text or `null`, and throwing
+  means the same thing.
+- **`AuditLogManager` and `FileAuditStore` are unchanged in behaviour, but two documented promises
+  are now measured**: `maxScanLines` bounds *reads* as well as results, and a damaged segment is an
+  empty one rather than a skipped one.
+- **`AES256GCMEncryptionProvider.initialize()` no longer resets the provider.** A second call keeps
+  the key in use; a call naming a different `algorithm` throws, because the blobs on disk were sealed
+  with the first. It also gained `zeroize()`, which retires the key *and* its version number.
+
+### Added
+
+- **`KeyManager.keyDerivationCount` and `.kekCacheSize`** — the two numbers that make the cost of a
+  write observable. A write path whose derivation count grows with the number of writes is paying
+  PBKDF2 per blob.
+- **`MAX_DERIVATION_ITERATIONS`, `MIN_SALT_BYTES`, `MAX_SALT_BYTES`, `MAX_CACHED_KEKS`** exported —
+  the policy a wrapped key's header is checked against, as constants rather than as literals in a
+  message.
+- **`EnvelopeEncryptionProvider.keyDerivationCount`** — the same counter, one layer up where the
+  write path lives.
+- **`readSegmentFromDisk`** exported from the audit package: the default read port, public so a
+  deployment can wrap it instead of reimplementing gzip handling.
+- **`AES256GCMEncryptionProvider.zeroize()`** — a cipher that holds a master key forever with no way
+  to drop it cannot be shut down cleanly.
+
+### Fixed
+
+- **Two concurrent `generateKey()` calls minted one key and lost the other.** Both read
+  `highestVersion`, both awaited the wrap, both committed to the same version: the map kept the
+  second, and the first key survived only inside the wrapped form the caller was handed. Measured
+  before the fix — two keys, both named `v1`, `versionCount === 1`, and `unwrapKey(w1)` was not the
+  material `getKey(1)` returned. Version allocation is serialised now. AC 74.1–74.9.
+- **Eight concurrent first writes minted eight keys.** `_activeDek()` checked for a key, awaited a
+  mint, and installed the field at resume time, so every writer that arrived before the first mint
+  finished minted its own. Activation is single-flight. AC 74.10–74.12.
+- **A rotation between two reads produced an unopenable blob.** `encrypt()` read the key, sealed the
+  payload, then read `keyManager.version` *again* for the header — a `rotateKey()` in between named a
+  version the payload was not sealed with. The version travels with the key now. AC 74.15.
+- **A wipe that landed during a mint was undone by that mint.** `zeroize()` cleared the fields and
+  the in-flight `generateKey()` then installed its key as the active one, after the wipe. The mint is
+  discarded and the write fails with `zeroized while a data key was being minted`. AC 74.17–74.20.
+- **`EnvelopeEncryptionProvider.encrypt()` derived the KEK on every blob.** PBKDF2 at 600 000
+  iterations is ~100 ms; a database writing thousands of blobs paid minutes of CPU per thousand
+  writes for a key it had derived a moment earlier. Derivations are cached per `(salt, iterations)`,
+  bounded at `MAX_CACHED_KEKS` and wiped by `zeroize()`. Twenty writes now cost one derivation.
+  AC 75.1–75.7.
+- **A wrapped key chose the reader's work factor.** The header carries the salt and the iteration
+  count, so a one-line edit to a blob turned a 100 ms read into an unbounded one: `1e12` iterations
+  is roughly four hours. Out-of-range work factors and salts are refused before anything is derived.
+  AC 75.8–75.14.
+- **`AES256GCMEncryptionProvider.initialize()` minted a new key into `v1` on every call**, replacing
+  the key every existing blob named. Initialising is not a reset. AC 77.1–77.6.
+- **`rotateKey()` in `AES256GCMEncryptionProvider` forgot the version it issued** at the next
+  `zeroize()`, so the key minted after a wipe reused a retired name. AC 77.15.
+- **`EnvelopeEncryptionProvider.decrypt()` answered four kinds of damage with one unasserted
+  failure.** A damaged header, an edited payload, a foreign key and a mismatched context each have a
+  distinct message now, and each message is asserted. AC 78.1–78.9.
+- **`i29-audit-logging-edges` wrote `audit.jsonl` into the repository** when its default-path case ran
+  under the mutation runner (161 entries per run, and a dirty tree for every gate after it). The case
+  reads the default off a manager it never destroys and proves the path on one it cleans up. AC 77.4
+  of the previous iteration's report — recorded as P3-5 and now closed.
+
+### Removed
+
+- **`if (array === null) continue` and `if (content === null) continue` in `FileAuditStore`.** An
+  unreadable segment and an empty segment produce the same entries, so both guards were a second way
+  of saying what the parser already said — and the mutation run reported them as survivors no test
+  could kill. `readSegment()` returns text and the sentinel is gone.
+- **Three redundant statements that only ever offered equivalent mutants**: `authTagLength: 16` on
+  four `createCipheriv`/`createDecipheriv` calls (GCM's default), `Buffer.from(str, 'utf-8')` where
+  UTF-8 is the default, and a `then(() => {}, () => {})` tail on the version queue whose handlers the
+  queue itself already supplies.
+- **A dead `if (!this.currentKey) throw` after key activation** in the envelope provider: `rotateKey()`
+  installs the key before resolving, and every path that leaves it null rejects instead.
+
+### Changed
+
+- **`AES256GCMEncryptionProvider._ensureInitialized()` checks `enabled` only.** `!this.masterKey` was
+  dead (a `Buffer` is always truthy) and `length === 0` was only ever true together with
+  `enabled === false`.
+- **`KeyManager` keeps its monotonic cursors with `Math.max`** instead of `if (x > y) y = x`, whose
+  `>=` and `>` variants assign identically.
+
 ## [1.7.0] — 2026-11-16
 
 ### Breaking

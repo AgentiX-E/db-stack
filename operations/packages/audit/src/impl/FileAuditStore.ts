@@ -66,6 +66,20 @@ export interface FileAuditStoreConfig {
   filePrefix?: string;
   /** Maximum number of lines to scan when querying (default: 10000). */
   maxScanLines?: number;
+  /**
+   * Read port for segment content.
+   *
+   * The store reads every entry it reports through this hook; the default reads
+   * and, when the segment is archived, gunzips the local file. Supplying one lets
+   * a deployment keep segments on a different medium (an object store, a cold
+   * tier, a fixture) without giving up queries, and lets a caller account for the
+   * I/O a scan performs — which is the promise `maxScanLines` makes.
+   *
+   * Return the segment's text, or `null` when it has none. Throwing is allowed and
+   * means the same thing: a segment that cannot be read contributes no entries and
+   * does not stop the scan.
+   */
+  segmentReader?: (path: string, compressed: boolean) => string | null;
 }
 
 // ── Defaults ────────────────────────────────────────────────────
@@ -201,10 +215,30 @@ export function unlinkIfUnchanged(path: string, expected: FileIdentity): boolean
 }
 
 /**
+/**
+ * A segment's text, read from the local filesystem.
+ *
+ * This is the default value of `FileAuditStoreConfig.segmentReader`; it is a
+ * module-level function rather than a method so that a deployment can keep the
+ * same semantics while wrapping it (accounting, retries, a different medium).
+ * Returns `null` — not `''` — when the file is missing or its archive is damaged,
+ * because "there is no text" is the port's vocabulary and the store turns it into
+ * the empty segment.
+ */
+export function readSegmentFromDisk(path: string, compressed: boolean): string | null {
+  try {
+    const raw = readFileSync(path);
+    return compressed ? gunzipSync(raw).toString('utf-8') : raw.toString('utf-8');
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Whether an entry satisfies a filter.
  *
  * `query()` and `count()` share this so the two cannot drift: a filter that
- * selects in one and not the other makes a count disagree with the page it is
+ * selects in one and not in the other makes a count disagree with the page it is
  * counting, which is the shape of a broken audit report.
  */
 function matches(entry: AuditEntry, filter: AuditQueryFilter): boolean {
@@ -228,6 +262,9 @@ export class FileAuditStore implements IAuditStore {
   private readonly retentionDays: number;
   private readonly filePrefix: string;
   private readonly maxScanLines: number;
+
+  /** Where segment text comes from. See `FileAuditStoreConfig.segmentReader`. */
+  private readonly segmentReader: (path: string, compressed: boolean) => string | null;
 
   /** Current active file path. */
   private activeFilePath: string;
@@ -254,6 +291,7 @@ export class FileAuditStore implements IAuditStore {
     this.retentionDays = config.retentionDays ?? DEFAULT_RETENTION_DAYS;
     this.filePrefix = config.filePrefix ?? DEFAULT_FILE_PREFIX;
     this.maxScanLines = config.maxScanLines ?? DEFAULT_MAX_SCAN_LINES;
+    this.segmentReader = config.segmentReader ?? readSegmentFromDisk;
 
     // Inverted until now: the directory was created only if it already existed, so
     // a store pointed at a fresh path failed on its first write with ENOENT.
@@ -535,16 +573,22 @@ export class FileAuditStore implements IAuditStore {
   /**
    * Read a segment, decompressing it when rotation has archived it.
    *
-   * Returns `null` for a segment that cannot be read or decoded. One damaged
-   * archive must not hide the entries in the segments after it, so the failure is
-   * scoped to the file rather than to the scan.
+   * There is no `null` return any more, and no `continue` at the call sites. A
+   * sentinel meaning "this segment has no entries" was a second way of saying what
+   * the parser already says — `JSON.parse(null)` and `JSON.parse('')` both yield
+   * nothing to push — so it created two branches whose removal no run could
+   * observe, and two mutants that survived for exactly that reason. A segment that
+   * cannot be read is an empty segment: one damaged archive must not hide the
+   * entries in the segments after it, and saying so once is enough.
    */
-  private readSegment(path: string, compressed: boolean): string | null {
+  private readSegment(path: string, compressed: boolean): string {
     try {
-      const raw = readFileSync(path);
-      return compressed ? gunzipSync(raw).toString('utf-8') : raw.toString('utf-8');
+      return this.segmentReader(path, compressed) ?? '';
     } catch {
-      return null;
+      // A reader that throws is a reader that produced nothing. The policy lives
+      // here rather than in the port so that every port — including a future
+      // remote one — inherits the same containment.
+      return '';
     }
   }
 
@@ -603,7 +647,6 @@ export class FileAuditStore implements IAuditStore {
       if (f.endsWith('.json')) {
         // Single JSON array format.
         const array = this.readSegment(join(this.dataDir, f), false);
-        if (array === null) continue;
         try {
           for (const e of JSON.parse(array) as AuditEntry[]) {
             if (exhausted()) break;
@@ -621,7 +664,6 @@ export class FileAuditStore implements IAuditStore {
       // unreadable after the first rotation: the entries were on disk and `query()`,
       // `get()` and `count()` all reported that they were not.
       const content = this.readSegment(join(this.dataDir, f), f.endsWith('.gz'));
-      if (content === null) continue;
 
       for (const line of content.split('\n')) {
         if (exhausted()) break;

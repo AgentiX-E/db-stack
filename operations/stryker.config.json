@@ -17,7 +17,8 @@
     "packages/security/src/impl/RotationAuditor.ts",
     "packages/security/src/impl/AuditLogManager.ts",
     "packages/security/src/impl/KeyManager.ts",
-    "packages/security/src/impl/EnvelopeEncryptionProvider.ts"
+    "packages/security/src/impl/EnvelopeEncryptionProvider.ts",
+    "packages/security/src/impl/AES256GCMEncryptionProvider.ts"
   ],
   "coverageAnalysis": "perTest",
   "reporters": [

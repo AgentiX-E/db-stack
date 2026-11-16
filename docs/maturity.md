@@ -105,8 +105,8 @@ so it works with any engine that registers the providers it needs.
 | `metrics`        | Counters, gauges, histograms, sink fan-out            | U · I        |
 | `monitor`        | Alert rules, thresholds, de-duplication               | U · I        |
 | `backup`         | Full/incremental backup, verification, restore drills | U · I        |
-| `security`       | Key rotation, audit log, tamper-evident hash chain    | U · I        |
-| `audit`          | Append-only audit storage, query, verification        | U · I        |
+| `security`       | Key rotation, envelope encryption, tamper-evident audit chain | U · I · M |
+| `audit`          | Append-only audit storage, query, verification, read port | U · I · M |
 | `maintenance`    | Maintenance windows, occurrence projection            | U · I        |
 | `rollingupgrade` | Rolling upgrade orchestration, health gates           | U · I        |
 | `autoscaler`     | Predictive and reactive scaling                       | U · I        |
@@ -174,8 +174,8 @@ configuration file that looked like a gate and ran nowhere.
 | -------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
 | **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
-| **Operations process-level acceptance**                  | Not covered                | Operations packages are verified in-process; there is no run that kills a process mid-backup.                                                                                                      |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 97.55 %, gates at 70, 70 and 86). In operations eleven of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 10 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
+| **Operations process-level acceptance**                  | Not covered                | Operations packages are verified in-process; there is no run that kills a process mid-backup. The one place this bites is the durable-write recipe in `FileAuditStore.writeLine` (P2-19): `fsync` before `rename` is what survives a power loss, and no in-process assertion can observe a power loss.                                                                                                      |
+| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 98.06 %, gates at 70, 70 and 86). In operations twelve of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
 | **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
 | **Cross-version upgrade path**                           | Not covered                | The wire and snapshot formats are versioned, but no test exercises an N-1 → N upgrade.                                                                                                             |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
@@ -210,7 +210,7 @@ are attached to each run so a regression is visible next to the change that caus
 same suite runs on every pull request as the `benchmark` job in `ci.yml`, because a benchmark
 nobody calls is a benchmark that stays broken.
 
-**How the mutation score is produced.** Thirteen modules are under mutation testing, chosen by one
+**How the mutation score is produced.** Fourteen modules are under mutation testing, chosen by one
 rule — *mutate what decides deletion, durability, or when work runs*: durable state
 (`cluster/.../SqliteStorage.ts`), the wire (`federation/.../TcpSecureTransport.ts`), what gets
 deleted (`operations/.../RetentionPolicyEvaluator.ts`, `operations/.../FileAuditStore.ts`), whether
@@ -218,7 +218,8 @@ a backup can be replayed at all (`operations/.../backupChain.ts`,
 `operations/.../InMemoryBackupManager.ts`), which key material survives at all
 (`operations/.../KeyManager.ts`), which key material survives a rotation
 (`operations/.../KeyRotationManager.ts`), which key a blob was sealed with
-(`operations/.../EnvelopeEncryptionProvider.ts`), when a window runs
+(`operations/.../EnvelopeEncryptionProvider.ts`), what a cipher does when it is initialised twice
+(`operations/.../AES256GCMEncryptionProvider.ts`), when a window runs
 (`operations/.../MaintenanceWindowScheduler.ts`), what time it runs at
 (`operations/.../cron.ts`), whether a compliance window passed
 (`operations/.../RotationAuditor.ts`) and whether evidence is tamper-evident
@@ -237,23 +238,33 @@ invoked by a workflow.
 | operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
 | operations | `InMemoryBackupManager.ts` | 94 | 92 (+1 timeout) | 1 | **98.9 %** | break 86 |
 | operations | `RetentionPolicyEvaluator.ts` | 174 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
-| operations | `cron.ts` | 87 | 80 (+7 timeout) | 0 | **100 %** | break 86 |
+| operations | `cron.ts` | 87 | 81 (+6 timeout) | 0 | **100 %** | break 86 |
 | operations | `MaintenanceWindowScheduler.ts` | 621 | 602 (+13 timeout) | 6 | **99.0 %** | break 86 |
-| operations | `FileAuditStore.ts` | 304 | 288 (+8 timeout) | 8 | **97.4 %** | break 86 |
+| operations | `FileAuditStore.ts` | 305 | 289 (+7 timeout) | 9 | **97.05 %** | break 86 |
 | operations | `KeyRotationManager.ts` | 238 | 233 (+3 timeout) | 2 | **99.2 %** | break 86 |
 | operations | `RotationAuditor.ts` | 282 | 275 | 7 | **97.5 %** | break 86 |
-| operations | `AuditLogManager.ts` | 337 | 323 (+2 timeout) | 10 (+2 no coverage) | **96.4 %** | break 86 |
-| operations | `KeyManager.ts` | 97 | 81 (+3 timeout) | 12 (+1 no coverage) | **86.60 %** | break 86 |
-| operations | `EnvelopeEncryptionProvider.ts` | 104 | 94 | 10 | **90.38 %** | break 86 |
+| operations | `AuditLogManager.ts` | 337 | 323 (+2 timeout) | 10 (+2 no coverage) | **96.44 %** | break 86 |
+| operations | `KeyManager.ts` | 136 | 122 (+6 timeout) | 7 (+1 no coverage) | **94.12 %** | break 86 |
+| operations | `EnvelopeEncryptionProvider.ts` | 110 | 108 | 2 | **98.18 %** | break 86 |
+| operations | `AES256GCMEncryptionProvider.ts` | 81 | 79 | 2 | **97.53 %** | break 86 |
 
-Operations overall: 2 404 judged mutants, 97.55 % — 2 301 killed, 44 timed out,
-56 survived, 3 with no coverage. Two more modules joined this iteration and both are below the
-package average, so the figure fell again — the second iteration running — while the survivor count
-went up. The composition of that number is the interesting part: twelve of the survivors
-are memory wipes and the durability recipe, which no in-process assertion can observe (P2-19), and
-most of the rest are encoding defaults (`'utf-8'` → `''` is the same encoding) or a fixed option
-object whose default is the value it was given. Two of them are neither: both need a filesystem fault
-during a scan (P2-21).
+Operations overall: 2 531 judged mutants, **98.06 %** — 2 435 killed, 47 timed out, 46 survived,
+3 with no coverage. The headline moved for two different reasons and both are worth separating: one
+module joined the list (`AES256GCMEncryptionProvider`, 97.53 % on its first measurement) and two of the
+weakest improved because their defects were fixed rather than excused — `EnvelopeEncryptionProvider`
+90.38 → 98.18 % and `KeyManager` 86.60 → 94.12 %. Every one of the fourteen mutants that changed verdict
+in those two files was a *behaviour* the suite did not constrain, and reading them produced the four
+concurrency defects recorded in the changelog: a version number that two mints could share, eight
+keys minted for eight concurrent first writes, a header naming a version the payload was not sealed
+with, and a wipe that an in-flight mint undid.
+
+The composition of what remains is now almost entirely three families: memory wipes (nine mutants),
+encoding and separator defaults (`'utf-8'` → `''`, `'|'` → `''`, `?? ''` → any text), and the
+durability recipe in `FileAuditStore.writeLine`, which needs a power loss to observe (P2-19). Two
+survivors are in none of those families and are recorded as equivalent with a proof rather than as
+gaps: the `err` branch of the PBKDF2 callback (Node throws synchronously for an unusable digest, so
+the branch is unreachable — proved by AC 75.21, which sees the throw from `generateKey`) and the
+optional call on a `Map` entry read one statement earlier.
 
 The operations floor is higher than the other two because the mutated surface is pure decision
 logic with no sockets and no clock of its own: a surviving mutant there is almost always a missing
@@ -275,8 +286,7 @@ several mutants:
 | `KeyRotationManager` | `success: false` → `true` in the event template | every exit assigns it: the success path sets `true`, the `catch` sets `false`, and there is no third way out |
 | `KeyRotationManager` | `default:` arm of `_isDue` removed | the fall-through returns `undefined`, and the caller asks a yes/no question — `undefined` is not due, which is what `return false` says |
 | `FileAuditStore` | `name > newest` → `>=` | `readdir` cannot return the same name twice, so the two comparisons select the same name |
-| `FileAuditStore` | the outer `maxScanLines` break in the segment loop | leaving it out reads files it then refuses to take entries from: the answer is identical, only the I/O differs — and a read is not observable from inside the process |
-| `FileAuditStore` | `if (array === null) continue` for a legacy `.json` segment | without it, `JSON.parse(null)` yields `null`, `for … of null` throws, and the `catch` on the next line skips the file — the same outcome by a longer route |
+| `FileAuditStore` | `?? ''` in `readSegment`, and the `return ''` in its `catch` → any text (two mutants) | the replacement text reaches a parser that accepts nothing but NDJSON, so every alternative contributes zero entries — which is the property that let the `null` sentinel be deleted this iteration |
 | `FileAuditStore` | `'.tmp'` appended to the temp path → `''` | writing the full content straight onto the segment produces the same bytes; only a crash *between* the write and the rename could tell the two apart, and a test process does not crash |
 | `FileAuditStore` | `open`/`fsync`/`close` in the durable-write block, and the `try` around them | these are the durability recipe: `fsync` before `rename` is what survives a power loss. No in-process assertion can observe a power loss, which is why the block is registered as P2-19 rather than claimed as covered |
 | `RotationAuditor` | `hash: ''` placeholder → any string | the placeholder is overwritten by `_hashEntry` before the entry is stored, and `hash` is not part of the hashed content |
@@ -289,11 +299,9 @@ several mutants:
 | `AuditLogManager` | `events.length - drop > maxEvents` → `>=` | the assignment that follows sets `drop` to `events.length - maxEvents`, which at equality is the value it already has |
 | `AuditLogManager` | `if (this.flushTimer)` in `destroy()` → `true` | `clearInterval(null)` is a no-op and the field is nulled either way |
 | `KeyManager` | `existing.key.length === dek.length &&` → `true` | `Buffer.equals` compares lengths itself, so the test could not be told from its absence — the line was deleted rather than excused |
-| `KeyManager` | `if (err) reject(err)` → `if (false)` | the promise then resolves with `undefined`, and `crypto.createCipheriv` throws on the undefined key anyway: the same rejection, one frame later |
-| `KeyManager`, `EnvelopeEncryptionProvider`, `FileAuditStore` | every `fill(0)`, and the `try`/`finally` blocks that hold them (twelve mutants) | wiping a buffer cannot be observed by an assertion inside the same process (P2-19). This is the largest single family of survivors in the package and it is a *testability* limit, not a permission to stop wiping |
-| `KeyManager`, `EnvelopeEncryptionProvider` | `{ authTagLength: 16 }` → `{}` (four mutants) | 16 is the default tag length for both `createCipheriv` and `createDecipheriv` |
-| `KeyManager` | `if (version > highestVersion)` → `>=`, `if (version > currentVersion)` → `>=` | at equality the assignment stores the value it already holds |
-| `EnvelopeEncryptionProvider` | `this.config?.autoGenerateKey` → `this.config.autoGenerateKey` | the field is assigned in the constructor and never cleared |
+| `KeyManager` | `if (err) reject(err)` → `if (false)` (and the `reject` call itself, which no test covers) | the branch is **unreachable**: `crypto.pbkdf2` reports an unusable digest or work factor by throwing synchronously, and the promise executor turns that into the rejection. AC 75.21 observes the rejection from `generateKey` — with the branch present and with it disabled — so the two verdicts are the same rejection from different frames. Kept because the callback signature can report an error in principle, and resolving with `undefined` would fail one frame later with a message nobody could act on |
+| `KeyManager` | `this.kekCache.get(oldest)?.fill(0)` → `.fill(0)` | the entry was read from the same map one statement earlier and nothing between them can remove it |
+| `KeyManager`, `EnvelopeEncryptionProvider`, `AES256GCMEncryptionProvider` | every `fill(0)` on key material, and the `try`/`finally` blocks that hold them (nine mutants) | wiping a buffer cannot be observed by an assertion inside the same process (P2-19). Every one of these buffers has exactly one reference — the history, map or local being cleared on the next line — and the accessors (`getKey`, `getCurrentKey`) hand out copies, so no caller holds the buffer being wiped. It is a *testability* limit, not a permission to stop wiping |
 
 **P2-18 was withdrawn, and the way it was withdrawn is the useful part.** Iteration 30 reported
 five mutants as "killed by hand, survived according to the runner" and concluded the runner's
@@ -323,10 +331,16 @@ watching the named test fail:
 | `ciphertext.length <= HEADER_PREFIX_LENGTH` (two boundaries) | a blob that has a header was reported as short | AC 73.9, 73.10 |
 | `data.length <= 12 + 16` | the only empty ciphertext the provider can produce became undecryptable | AC 73.11 |
 
-Two survivors remain that are neither equivalent nor covered, and they are honest gaps rather than
-measurement noise: `FileAuditStore`'s per-segment budget break and its unreadable-segment skip both
-need a filesystem fault *during* a scan to observe, which the suite can only produce by making a
-file unreadable mid-run. Registered as **P2-21**.
+Iteration 32 closed the two `FileAuditStore` survivors that had been registered as P2-21, and it
+closed them in opposite ways because they turned out to be opposite things. The unreadable-segment
+skip was **not** an untested branch: `readSegment()` returned `null`, both call sites answered it with
+`continue`, and the parser said the same thing a second way — `JSON.parse(null)` yields nothing to
+push, and `''.split('\n')` yields one line no parser accepts. Two statements expressing one fact is
+how a mutant survives, so the sentinel was deleted rather than tested around. The per-segment budget
+break was a real gap, and the fix was the seam the roadmap asked for: `FileAuditStoreConfig.segmentReader`
+is the store's read port, its default is the exported `readSegmentFromDisk`, and a scan's I/O is
+therefore observable — which is what makes "`maxScanLines` keeps a page cheap" an assertion instead
+of a comment (AC 76.6–76.8).
 
 Reading them was worth doing rather than assuming: iteration 27 turned 38 survivors into 11
 assertions and two defects, iteration 29 turned 100 into eighteen defects and seventy-five

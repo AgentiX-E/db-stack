@@ -353,6 +353,33 @@ A count that inherited the default page reported at most one hundred matches for
 and an id lookup that inherited the budget answered "not found" for entries that existed.
 Both are the kind of wrong that is not recoverable in an audit report.
 
+**Reading through a port.** Every entry the store reports is read through
+`segmentReader`, so segments can live somewhere other than the local filesystem — and so the I/O a
+scan performs can be accounted for, which is the promise `maxScanLines` actually makes:
+
+```ts
+const audit = new FileAuditStore({
+  dataDir: "/var/lib/db/audit",
+  maxScanLines: 5_000,
+  // Same contract as the default: text, or null when the segment has none.
+  // Throwing means the same thing, so a port that fails is a segment with no
+  // entries rather than a failed query.
+  segmentReader: (path, compressed) => readText(path, compressed),
+});
+
+audit.query({ actor: "alice" });   // reads one segment, not the whole trail
+audit.count({ actor: "alice" });   // reads the trail: a count is a fact, not a page
+```
+
+A capped scan stops **reading** when the budget is spent, not merely stops collecting: a page that
+paid for the history it did not return would be a grep that decompresses ninety archives to show
+ten lines.
+
+**Damage is scoped to the file.** A segment that cannot be read — a truncated archive, an
+unmounted volume, a port that throws — contributes no entries and does not stop the scan. There is
+no separate "unreadable" state: an unreadable segment is an empty one, which is why the store has
+one rule here instead of two branches that say the same thing.
+
 **Retention.** `retentionDays` (default 90) is enforced when a segment closes: rotation sweeps
 closed segments whose last write is older than the window. `0` disables the sweep instead of
 meaning "keep nothing" — retention that deletes evidence on construction is a footgun, and a
@@ -392,6 +419,43 @@ Two configurations are refused at construction rather than at the first write, b
 programming errors and both used to surface as a `crypto` message: an empty `masterSecret` (PBKDF2
 will derive 256 bits from nothing and every instance would share them), and a `keyLength` that the
 configured `algorithm` cannot use (`aes-256-gcm` needs 32 bytes).
+
+#### What a write costs, and what a blob may ask for
+
+Envelope encryption wraps a data key per blob, and wrapping derives the key-encryption key with
+PBKDF2 — 600 000 iterations by default, roughly 100 ms of CPU. Doing that per write is a
+correctness-shaped bug with a cost-shaped symptom: the process re-derives a key it derived a
+moment earlier. The derivation is now cached per `(salt, iterations)` pair, and the counter is
+public:
+
+```ts
+const encryption = new EnvelopeEncryptionProvider({
+  keyManager: { masterSecret: secret },
+  encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+});
+await encryption.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+
+for (const row of rows) await encryption.encrypt(row);
+
+encryption.keyDerivationCount; // 1 — not rows.length
+```
+
+The cache holds the **derived key**, never the wrapped blob: reusing one wrapped key across many
+ciphertexts would put the same key and the same IV in every header. `zeroize()` empties it, because
+a cached wrapping key is key material by any reading of the word.
+
+The same header that carries the salt also carries the iteration count, so a blob chooses how much
+CPU the reader spends on it. That is a decision data does not get to make: `unwrapKey()` refuses a
+work factor above `MAX_DERIVATION_ITERATIONS` (10 000 000) or a salt outside 16–64 bytes, before
+deriving anything. The cache is bounded for the same reason (`MAX_CACHED_KEKS`, 64) — a header
+field that selects a cache entry is a header field that can fill memory.
+
+**Writers that arrive together.** Concurrent `encrypt()` calls share one key activation, so eight
+first writes mint one version, not eight. The version travels with the key it names, so a
+`rotateKey()` landing between two writes cannot produce a header that names the new version over a
+payload sealed with the old one. And a `zeroize()` that lands while a key is being minted discards
+the mint: the write fails with `zeroized while a data key was being minted` instead of being served
+by a key that was born after the wipe.
 
 ### 3.5 Audit trail: what retention is allowed to delete
 

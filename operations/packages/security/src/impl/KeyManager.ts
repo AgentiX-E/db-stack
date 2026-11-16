@@ -28,6 +28,31 @@ const KEK_BYTES = 32;
 /** Data-key lengths the AES variants behind this manager can actually use. */
 const DATA_KEY_BYTES = new Set([16, 24, 32]);
 
+/**
+ * Highest PBKDF2 work factor this manager will honour from a *wrapped key*.
+ *
+ * The salt and the iteration count travel inside the wrapped key, which travels
+ * inside the ciphertext. So the work the reader pays is chosen by the data it is
+ * reading, and a one-line edit to a header turned a 100 ms read into an unbounded
+ * one. This is the ceiling, and it is deliberately ~16× the OWASP 2024 default so
+ * a deployment can raise its own cost without hitting it.
+ */
+export const MAX_DERIVATION_ITERATIONS = 10_000_000;
+
+/** Bounds on the salt a wrapped key may carry. */
+export const MIN_SALT_BYTES = 16;
+export const MAX_SALT_BYTES = 64;
+
+/**
+ * How many derived key-encryption keys stay resident.
+ *
+ * The cache key contains a salt taken from a header, so it is sized: a caller who
+ * feeds the process blobs with 200 distinct salts should pay 200 derivations, not
+ * hold 200 wrapping keys. FIFO is enough — the working set of a real deployment is
+ * one salt per key generation, and eviction only costs a re-derivation.
+ */
+export const MAX_CACHED_KEKS = 64;
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface KeyManagerConfig {
@@ -91,6 +116,34 @@ export class KeyManager {
    */
   private highestVersion = 0;
 
+  /**
+   * Derived key-encryption keys, keyed by the parameters that produced them.
+   *
+   * A wrap used to cost a full PBKDF2 derivation — 600 000 iterations, ~100 ms —
+   * so every write paid it again for a key the process had derived a moment
+   * earlier. The cache removes that without changing a byte on disk: only the
+   * *derivation* is reused, never the wrapped blob, because reusing a wrapped key
+   * would put the same key and the same IV in every ciphertext header.
+   *
+   * Ownership: the cache owns these buffers. `_wrapKeyAt` and `unwrapKey` use them
+   * and must not wipe them; `zeroize()` is the only owner that clears them.
+   */
+  private readonly kekCache = new Map<string, Buffer>();
+
+  /** Number of PBKDF2 derivations performed. A write path that grows this is paying KDF cost per write. */
+  private derivations = 0;
+
+  /**
+   * Serialises operations that allocate or install a version number.
+   *
+   * `generateKey()` reads `highestVersion`, awaits the wrap, and then commits. Two
+   * concurrent calls both read the same value, both minted a key, and both
+   * committed to the same version — the map kept the second and the first key
+   * disappeared while the wrapped form the caller held still pointed at it. The
+   * queue is the smallest thing that makes the read and the commit one step.
+   */
+  private minting: Promise<unknown> = Promise.resolve();
+
   constructor(config: KeyManagerConfig) {
     // Resolve documented defaults explicitly: a spread would let an explicit
     // `undefined` overwrite the default it is supposed to select.
@@ -127,19 +180,21 @@ export class KeyManager {
    * and return a WrappedKey for persistent storage.
    */
   async generateKey(): Promise<WrappedKey> {
-    const version = this.highestVersion + 1;
-    const dek = crypto.randomBytes(this.config.keyLength);
-    // The wrap comes first: if the key-encryption key cannot be derived the
-    // version is not consumed, so a retry still produces v1 and the history has
-    // no hole where a key was supposed to be.
-    const createdAt = Date.now();
-    const wrapped = await this._wrapKeyAt(dek, version, createdAt);
+    return this._serial(async () => {
+      const version = this.highestVersion + 1;
+      const dek = crypto.randomBytes(this.config.keyLength);
+      // The wrap comes first: if the key-encryption key cannot be derived the
+      // version is not consumed, so a retry still produces v1 and the history has
+      // no hole where a key was supposed to be.
+      const createdAt = Date.now();
+      const wrapped = await this._wrapKeyAt(dek, version, createdAt);
 
-    this.highestVersion = version;
-    this.currentVersion = version;
-    this.keyHistory.set(version, { version, key: dek, createdAt });
+      this.highestVersion = version;
+      this.currentVersion = version;
+      this.keyHistory.set(version, { version, key: dek, createdAt });
 
-    return wrapped;
+      return wrapped;
+    });
   }
 
   /**
@@ -155,6 +210,13 @@ export class KeyManager {
    * already sealed under the first one undecryptable without an error.
    */
   async loadKey(wrapped: WrappedKey): Promise<number> {
+    // Through the same queue as `generateKey`: an import that lands between a
+    // mint's version read and its commit would otherwise be able to claim the
+    // name the mint is about to take.
+    return this._serial(() => this._loadKey(wrapped));
+  }
+
+  private async _loadKey(wrapped: WrappedKey): Promise<number> {
     const version = wrapped.version;
     const dek = await this.unwrapKey(wrapped);
     const existing = this.keyHistory.get(version);
@@ -172,8 +234,12 @@ export class KeyManager {
     }
 
     this.keyHistory.set(version, { version, key: dek, createdAt: wrapped.createdAt });
-    if (version > this.highestVersion) this.highestVersion = version;
-    if (version > this.currentVersion) this.currentVersion = version;
+    // Monotonic, expressed as such: `if (version > x) x = version` and the same
+    // line with `>=` assign identically, which is a mutant no test can tell from
+    // its replacement. `Math.max` says "the higher of the two" once, and its own
+    // mutants (`Math.min`) change the answer.
+    this.highestVersion = Math.max(this.highestVersion, version);
+    this.currentVersion = Math.max(this.currentVersion, version);
 
     return version;
   }
@@ -197,51 +263,65 @@ export class KeyManager {
     const kek = await this._deriveKEK();
     const iv = crypto.randomBytes(12);
 
-    try {
-      const cipher = crypto.createCipheriv('aes-256-gcm', kek, iv, {
-        authTagLength: 16,
-      });
+    // No `finally { kek.fill(0) }` here any more: `kek` is the cache's buffer, and
+    // wiping it on the way out of one wrap would leave the cache holding 32 zero
+    // bytes — a wrap that silently seals with a key derived from nothing. The
+    // cache's owner wipes it, and that owner is `zeroize()`.
+    // No `authTagLength`: 16 is GCM's default and the length the wire format
+    // carries, so naming it here only offered a mutant that said `{}`.
+    const cipher = crypto.createCipheriv('aes-256-gcm', kek, iv);
 
-      const encryptedKey = Buffer.concat([cipher.update(dek), cipher.final()]);
-      const authTag = cipher.getAuthTag();
+    const encryptedKey = Buffer.concat([cipher.update(dek), cipher.final()]);
+    const authTag = cipher.getAuthTag();
 
-      return {
-        version,
-        iv,
-        encryptedKey,
-        authTag,
-        salt: this.config.salt,
-        iterations: this.config.iterations,
-        createdAt,
-      };
-    } finally {
-      // One exit for the key-encryption key: the `try` covers `createCipheriv`
-      // as well, which throws before there is anything to return.
-      kek.fill(0);
-    }
+    return {
+      version,
+      iv,
+      encryptedKey,
+      authTag,
+      salt: this.config.salt,
+      iterations: this.config.iterations,
+      createdAt,
+    };
   }
 
   /**
    * Unwrap a DEK from a WrappedKey using the KEK.
+   *
+   * The salt and iteration count come out of the wrapped key, which comes out of
+   * the blob, so both are validated before they are used: the range is a policy,
+   * not a preference, because "how much CPU the reader spends" is not a decision
+   * the writer of a file gets to make.
    */
   async unwrapKey(wrapped: WrappedKey): Promise<Buffer> {
+    this._validateWrapParameters(wrapped);
     const kek = await this._deriveKEK(wrapped.salt, wrapped.iterations);
 
     try {
-      const decipher = crypto.createDecipheriv('aes-256-gcm', kek, wrapped.iv, {
-        authTagLength: 16,
-      });
+      const decipher = crypto.createDecipheriv('aes-256-gcm', kek, wrapped.iv);
 
       decipher.setAuthTag(wrapped.authTag);
-      const dek = Buffer.concat([decipher.update(wrapped.encryptedKey), decipher.final()]);
-
-      // Zeroize KEK
-      kek.fill(0);
-
-      return dek;
+      return Buffer.concat([decipher.update(wrapped.encryptedKey), decipher.final()]);
     } catch (error) {
-      kek.fill(0);
       throw new Error(`KeyManager: failed to unwrap key v${wrapped.version}: ${String(error)}`);
+    }
+  }
+
+  /** Refuse a wrapped key whose derivation parameters are outside the documented range. */
+  private _validateWrapParameters(wrapped: WrappedKey): void {
+    const iterations = wrapped.iterations;
+    if (!Number.isInteger(iterations) || iterations < 1 || iterations > MAX_DERIVATION_ITERATIONS) {
+      throw new Error(
+        `KeyManager: refusing a work factor of ${iterations} PBKDF2 iterations ` +
+          `(allowed 1–${MAX_DERIVATION_ITERATIONS})`,
+      );
+    }
+    const saltBytes = wrapped.salt?.length ?? 0;
+    if (saltBytes < MIN_SALT_BYTES || saltBytes > MAX_SALT_BYTES) {
+      throw new Error(
+        `KeyManager: refusing a ${saltBytes}-byte salt in a wrapped key ` +
+          `(allowed ${MIN_SALT_BYTES}–${MAX_SALT_BYTES})`,
+      );
     }
   }
 
@@ -311,17 +391,57 @@ export class KeyManager {
       pair.key.fill(0);
     }
     this.keyHistory.clear();
+    // The cached wrapping keys are key material by any reading of the word: a
+    // `zeroize()` that left them resident would mean the wipe could be undone by
+    // the next `unwrapKey` without ever touching the master secret.
+    for (const kek of this.kekCache.values()) {
+      kek.fill(0);
+    }
+    this.kekCache.clear();
     this.currentVersion = 0;
     // `highestVersion` deliberately survives: see its declaration.
   }
 
+  /** How many PBKDF2 derivations this manager has performed. */
+  get keyDerivationCount(): number {
+    return this.derivations;
+  }
+
+  /** How many derived key-encryption keys are resident. */
+  get kekCacheSize(): number {
+    return this.kekCache.size;
+  }
+
   // ── Internal ─────────────────────────────────────────────
+
+  /**
+   * Run `op` after every previously queued operation has settled.
+   *
+   * A rejected operation does not poison the queue: the tail is built from a
+   * promise that cannot reject, while the caller still sees the real outcome.
+   */
+  private _serial<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.minting.then(op, op);
+    // The tail is `run` itself. `then(op, op)` installs the next operation as
+    // *both* handlers, so a rejected tail still runs it — the chain never has to
+    // be "repaired", and an extra `then(() => {}, () => {})` here was two
+    // statements whose removal no run could observe.
+    this.minting = run;
+    return run;
+  }
 
   private async _deriveKEK(salt?: Buffer, iterations?: number): Promise<Buffer> {
     const effectiveSalt = salt ?? this.config.salt;
     const effectiveIterations = iterations ?? this.config.iterations;
 
-    return new Promise<Buffer>((resolve, reject) => {
+    // Both inputs are fixed by configuration on the wrap path and come from a
+    // header on the unwrap path, which is why the stored buffer is bounded in
+    // number and never handed out for wiping.
+    const cacheKey = `${effectiveSalt.toString('hex')}:${effectiveIterations}`;
+    const cached = this.kekCache.get(cacheKey);
+    if (cached) return cached;
+
+    const derived = await new Promise<Buffer>((resolve, reject) => {
       crypto.pbkdf2(
         this.config.masterSecret,
         effectiveSalt,
@@ -337,5 +457,17 @@ export class KeyManager {
         },
       );
     });
+
+    this.derivations++;
+    this.kekCache.set(cacheKey, derived);
+    // FIFO: `Map` iterates in insertion order, and the oldest entry is the one a
+    // working set is least likely to ask for again.
+    while (this.kekCache.size > MAX_CACHED_KEKS) {
+      const oldest = this.kekCache.keys().next().value as string;
+      this.kekCache.get(oldest)?.fill(0);
+      this.kekCache.delete(oldest);
+    }
+
+    return derived;
   }
 }

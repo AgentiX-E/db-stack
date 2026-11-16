@@ -53,8 +53,40 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
   private keyManager: KeyManager;
   private encProvider: AES256GCMEncryptionProvider;
   private enabled = false;
-  private config: EnvelopeEncryptionConfig | null = null;
-  private currentDek: Buffer | null = null;
+  private readonly config: EnvelopeEncryptionConfig;
+
+  /**
+   * The key a write uses, carried with the version number it is filed under.
+   *
+   * These were two fields — `currentDek` and `keyManager.version` — read at two
+   * different moments, and a `rotateKey()` landing between the reads produced a
+   * header naming the new version over a payload sealed with the old key. The
+   * version is not a property of the provider's present, it is a property of this
+   * key, so it travels with it.
+   */
+  private currentKey: { dek: Buffer; version: number } | null = null;
+
+  /**
+   * The activation in progress, shared by every writer that arrived while there
+   * was no key. Without it eight concurrent first writes minted eight keys and
+   * whichever PBKDF2 callback finished last became the one in use.
+   *
+   * It carries the key, so there is nothing to re-read and no "was there a key
+   * after all" branch at the call site.
+   */
+  private activation: Promise<{ dek: Buffer; version: number }> | null = null;
+
+  /**
+   * Replaced by `zeroize()` with a fresh token. A mint captures the token it
+   * started under and compares before installing its key: a wipe that landed
+   * mid-mint must not be followed by a freshly minted key becoming the active
+   * one, or `zeroize()` would be a field assignment rather than a wipe.
+   *
+   * A token rather than a counter on purpose — `counter++` and `counter--` both
+   * change the value, so the direction of a counter is nothing a test can
+   * distinguish, and the "wrong" direction would look like a guarded field.
+   */
+  private wipeToken = Symbol('envelope-epoch');
 
   /** Bytes of data key the configured cipher requires. */
   private static readonly KEY_BYTES_BY_ALGORITHM: Record<EncryptionConfig['algorithm'], number> = {
@@ -98,15 +130,16 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
 
   async encrypt(plaintext: Buffer, context?: string): Promise<Buffer> {
     // No `_ensureInitialized()` call here: the only way to get a data key is
-    // through `rotateKey()`/`_activeDek()`, which refuse on an uninitialized
+    // through `rotateKey()`/`_activeKey()`, which refuse on an uninitialized
     // provider, so a second guard in front of them was a statement no run could
     // distinguish from its absence.
-    // Encrypt with current DEK
-    const dek = await this._activeDek();
+    const { dek, version } = await this._activeKey();
     const encrypted = await this._encryptWithDEK(dek, plaintext, context);
 
-    // Get the wrapped form of the current DEK
-    const wrappedKey = await this.keyManager.wrapKey(dek, this.keyManager.version);
+    // Get the wrapped form of the key that sealed this blob — the same key, named
+    // by the same version, rather than whatever the provider happens to be using
+    // by the time the wrap is ready.
+    const wrappedKey = await this.keyManager.wrapKey(dek, version);
 
     // Serialize wrapped key (convert Buffers to arrays for JSON)
     const serializableWrappedKey = {
@@ -117,7 +150,7 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
       salt: Array.from(wrappedKey.salt),
     };
     const wrappedKeyJson = JSON.stringify(serializableWrappedKey);
-    const wrappedKeyBuf = Buffer.from(wrappedKeyJson, 'utf-8');
+    const wrappedKeyBuf = Buffer.from(wrappedKeyJson);
     const lenBuf = Buffer.alloc(HEADER_PREFIX_LENGTH);
     lenBuf.writeUInt32BE(wrappedKeyBuf.length, 0);
 
@@ -180,15 +213,30 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
   async rotateKey(): Promise<void> {
     this._ensureInitialized();
 
-    // Generate new DEK
-    const wrapped = await this.keyManager.generateKey();
-    this.currentDek = this.keyManager.getCurrentKey();
+    const token = this.wipeToken;
+    await this.keyManager.generateKey();
+
+    if (token !== this.wipeToken) {
+      // A wipe landed while the key was being minted. Installing it would mean
+      // `zeroize()` had not zeroized: the key would be alive, active, and born
+      // after the wipe that was supposed to remove it.
+      this.keyManager.zeroize();
+      this.currentKey = null;
+      throw new Error('EnvelopeEncryption: zeroized while a data key was being minted; the mint was discarded');
+    }
+
+    this.currentKey = { dek: this.keyManager.getCurrentKey()!, version: this.keyManager.version };
   }
 
   // ── Status ───────────────────────────────────────────────
 
   isEnabled(): boolean {
     return this.enabled;
+  }
+
+  /** How many PBKDF2 derivations the key manager has performed. */
+  get keyDerivationCount(): number {
+    return this.keyManager.keyDerivationCount;
   }
 
   getCurrentKeyVersion(): number {
@@ -228,8 +276,10 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
    * Zeroize all key material. Irreversible.
    */
   zeroize(): void {
+    this.wipeToken = Symbol('envelope-epoch');
     this.keyManager.zeroize();
-    this.currentDek = null;
+    this.currentKey = null;
+    this.activation = null;
     this.enabled = false;
   }
 
@@ -237,7 +287,9 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
 
   private async _encryptWithDEK(dek: Buffer, data: Buffer, context?: string, decrypt = false): Promise<Buffer> {
     const iv = crypto.randomBytes(12);
-    const aad = context ? Buffer.from(context, 'utf-8') : undefined;
+    // No encoding argument: `Buffer.from(string)` is UTF-8, and a mutant that
+    // empties the string argument is a mutant of the default.
+    const aad = context ? Buffer.from(context) : undefined;
 
     if (decrypt) {
       // Parsing: [IV(12B)] [ciphertext] [tag(16B)]
@@ -250,9 +302,7 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
       const encrypted = data.subarray(12, data.length - 16);
 
       try {
-        const decipher = crypto.createDecipheriv('aes-256-gcm', dek, msgIV, {
-          authTagLength: 16,
-        });
+        const decipher = crypto.createDecipheriv('aes-256-gcm', dek, msgIV);
         decipher.setAuthTag(tag);
         if (aad) decipher.setAAD(aad);
         return Buffer.concat([decipher.update(encrypted), decipher.final()]);
@@ -260,9 +310,7 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
         throw new Error(`EnvelopeEncryption: AES-GCM decryption failed: ${String(error)}`);
       }
     } else {
-      const cipher = crypto.createCipheriv('aes-256-gcm', dek, iv, {
-        authTagLength: 16,
-      });
+      const cipher = crypto.createCipheriv('aes-256-gcm', dek, iv);
       if (aad) cipher.setAAD(aad);
       const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
       const tag = cipher.getAuthTag();
@@ -274,16 +322,35 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
   /**
    * The key to encrypt with: the current one, minted on first use when the
    * configuration allows it.
+   *
+   * Single-flight: every caller that arrives while a key is being minted waits on
+   * the same mint and is handed the same key. Arriving together used to mean
+   * minting together.
    */
-  private async _activeDek(): Promise<Buffer> {
-    if (this.currentDek) return this.currentDek;
+  private _activeKey(): Promise<{ dek: Buffer; version: number }> {
+    if (this.currentKey) return Promise.resolve(this.currentKey);
 
-    if (this.config?.autoGenerateKey === false) {
-      throw new Error('EnvelopeEncryption: no DEK available. Call initialize() first.');
+    if (this.config.autoGenerateKey === false) {
+      return Promise.reject(new Error('EnvelopeEncryption: no DEK available. Call initialize() first.'));
     }
 
-    await this.rotateKey();
-    return this.currentDek!;
+    // One activation, however many callers. `??=` installs it before the first
+    // await, so a writer that arrives during the PBKDF2 derivation shares it.
+    //
+    // Only the rejection path has to clear the field: a successful activation
+    // leaves a resolved promise carrying the key it installed, and `currentKey`
+    // answers every later call without touching it. A wipe clears the field too,
+    // because that is the one event that makes a resolved activation describe a
+    // key that no longer exists.
+    this.activation ??= this.rotateKey().then(
+      () => this.currentKey as { dek: Buffer; version: number },
+      (error: unknown) => {
+        this.activation = null;
+        throw error;
+      },
+    );
+
+    return this.activation;
   }
 
   private _ensureInitialized(): void {

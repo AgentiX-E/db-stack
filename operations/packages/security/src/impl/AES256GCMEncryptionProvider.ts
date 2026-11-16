@@ -37,17 +37,61 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
   private enabled = false;
   private config: EncryptionConfig | null = null;
 
+  /**
+   * Highest version ever issued. Survives `zeroize()` for the same reason it does
+   * in `KeyManager`: a version number names one key, and reissuing a retired name
+   * makes a new key share it with material that may still be in a blob header.
+   */
+  private highestVersion = 0;
+
   // Key version history for rotation
   private keyHistory = new Map<number, Buffer>();
 
   // ── Lifecycle ─────────────────────────────────────────────
 
+  /**
+   * Start the cipher, or confirm the running one.
+   *
+   * A second call used to mint a fresh key into version 1, which overwrote the v1
+   * every blob written so far named: the data became unreadable while the header
+   * still claimed to record how it was sealed. Initialising is not a reset. Once
+   * the cipher runs, the same configuration is a no-op and a different algorithm
+   * is refused, because re-sealing what is on disk is not something this class can
+   * do from here.
+   */
   async initialize(config: EncryptionConfig): Promise<void> {
+    if (this.enabled) {
+      if (this.config && this.config.algorithm !== config.algorithm) {
+        throw new Error(
+          `AES256GCM: cannot switch algorithm from ${this.config.algorithm} to ${config.algorithm} ` +
+            'while keys are in use — existing blobs were sealed with the first',
+        );
+      }
+      return;
+    }
+
     this.config = config;
     this.masterKey = crypto.randomBytes(AES_KEY_LENGTH);
-    this.keyVersion = 1;
-    this.keyHistory.set(1, this.masterKey);
+    this.keyVersion = this.highestVersion + 1;
+    this.highestVersion = this.keyVersion;
+    this.keyHistory.set(this.keyVersion, this.masterKey);
     this.enabled = true;
+  }
+
+  /**
+   * Wipe the key material and stop the provider.
+   *
+   * Not part of `IEncryptionManager` — the interface stops at rotation — but a
+   * class that holds a master key forever with no way to drop it is a class that
+   * cannot be shut down cleanly.
+   */
+  zeroize(): void {
+    for (const key of this.keyHistory.values()) key.fill(0);
+    this.keyHistory.clear();
+    this.masterKey.fill(0);
+    this.masterKey = Buffer.alloc(0);
+    this.keyVersion = 0;
+    this.enabled = false;
   }
 
   // ── Encrypt ──────────────────────────────────────────────
@@ -58,9 +102,10 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
     const iv = crypto.randomBytes(IV_LENGTH);
     const aad = this._buildAAD(context);
 
-    const cipher = crypto.createCipheriv('aes-256-gcm', this.masterKey, iv, {
-      authTagLength: TAG_LENGTH,
-    });
+    // No `authTagLength` option: 16 bytes is GCM's own default and the length the
+    // wire format slices, so naming it two ways only created a mutant that said
+    // `{}` and meant the same thing.
+    const cipher = crypto.createCipheriv('aes-256-gcm', this.masterKey, iv);
 
     if (aad) {
       cipher.setAAD(aad);
@@ -113,9 +158,7 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
     const aad = this._buildAAD(context);
 
     try {
-      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, {
-        authTagLength: TAG_LENGTH,
-      });
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
 
       decipher.setAuthTag(tag);
       if (aad) {
@@ -135,7 +178,11 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
 
     // Preserve old key in history (needed for decrypting old blobs)
     const newKey = crypto.randomBytes(AES_KEY_LENGTH);
-    this.keyVersion++;
+    this.keyVersion = this.highestVersion + 1;
+    // `highestVersion` until now was only advanced by `initialize()`, so a
+    // rotation that came before a wipe was forgotten: the next `initialize()`
+    // issued the name a retired key still answers to.
+    this.highestVersion = this.keyVersion;
     this.keyHistory.set(this.keyVersion, newKey);
     this.masterKey = newKey;
   }
@@ -163,11 +210,13 @@ export class AES256GCMEncryptionProvider implements IEncryptionManager {
 
   private _buildAAD(context?: string): Buffer | undefined {
     if (!context) return undefined;
-    return Buffer.from(context, 'utf-8');
+    return Buffer.from(context);
   }
 
   private _ensureInitialized(): void {
-    if (!this.enabled || !this.masterKey || this.masterKey.length === 0) {
+    // `enabled` is the whole state: it is false before the first `initialize()`,
+    // false after `zeroize()`, and the only path that clears the key sets it.
+    if (!this.enabled) {
       throw new Error('AES256GCM: not initialized. Call initialize() first.');
     }
   }

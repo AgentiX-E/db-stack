@@ -57,17 +57,37 @@ afterEach(() => {
 });
 
 describe('AuditLogManager — defaults a deployment gets with no configuration', () => {
-  it('writes to audit.jsonl in the working directory and retains 90 days', () => {
+  it('writes to audit.jsonl in the working directory and retains 90 days', async () => {
+    // Two rules, and P3-5 was the cost of learning the second one.
+    //
+    // `destroy()` flushes, so a default-path manager writes `audit.jsonl` into
+    // whatever directory the process is in — under the mutation run that was this
+    // repository (161 entries from one worker, and a dirty working tree for every
+    // gate that followed). `process.chdir()` is not available in a worker, so the
+    // test does not move the working directory either: it reads the default off a
+    // manager it never destroys, and then proves that this exact path is the one a
+    // flush writes to — on a second manager that is destroyed and cleaned up.
     const manager = new AuditLogManager();
+    const derived = path.join(process.cwd(), 'audit.jsonl');
 
-    expect(Reflect.get(manager, 'logFilePath')).toBe(path.join(process.cwd(), 'audit.jsonl'));
+    expect(Reflect.get(manager, 'logFilePath')).toBe(derived);
     expect(retentionOf(manager)).toEqual({
       maxEvents: 1_000_000,
       maxAgeMs: 90 * 24 * 3600 * 1000,
       minRetain: 1_000,
     });
 
-    manager.destroy();
+    const writer = new AuditLogManager({ logFilePath: derived });
+    try {
+      await writer.log(makePartial({ action: 'DEFAULT_PATH' }));
+      writer.destroy();
+
+      const lines = fs.readFileSync(derived, 'utf-8').trim().split('\n');
+      expect(JSON.parse(lines[0]!).action).toBe('DEFAULT_PATH');
+    } finally {
+      writer.destroy();
+      if (fs.existsSync(derived)) fs.unlinkSync(derived);
+    }
   });
 
   it('does not create the log file merely by being constructed', () => {
