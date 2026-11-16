@@ -66,7 +66,7 @@ its public surface in [`cluster/docs/api-reference.md`](../cluster/docs/api-refe
 
 | Package | Version | Node | Module format |
 |---|---|---|---|
-| `@agentix-e/db-cluster` | 1.1.0 | ≥ 20.11 | ESM (NodeNext) |
+| `@agentix-e/db-cluster` | 1.2.0 | ≥ 20.11 | ESM (NodeNext) |
 | `@agentix-e/db-federation` | 1.1.0 | ≥ 20.11 | ESM (NodeNext) |
 | `@agentix-e/db-operations` (+ 21 sub-packages) | 1.8.0 | ≥ 20.11 | ESM (NodeNext) |
 

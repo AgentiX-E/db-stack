@@ -19,6 +19,16 @@ Legend for the coverage column — test types actually executed against the feat
 | **R** | Recovery: crash, restart, snapshot install, log truncation                    |
 | **M** | Mutation: the source is altered on purpose and the suite must notice          |
 
+**What "resource limits" means in a B row.** Heap assertions here sample *after a forced collection*,
+so the number is what the workload still holds rather than what the collector had not got to yet.
+Each case is bounded by `8 MB + 2 KB per proposal` — about four times the measured cost — and every
+case reports its own number: 5.7 MB over 10 000 proposals, 2.9 over 5 000, 1.2 over 1 000, 9.8 over
+30 000, and 0.0 for 1 000 peer registrations that must overwrite rather than accumulate. Until
+iteration 33 these were allocation deltas against four constants that were also in the wrong order
+(the tightest bound on the heaviest case), and one of them failed CI at 111.6 MB with nothing wrong in
+the product. The rule we now hold to: a bound that no regression can fail is not evidence, so the
+number and the instrument that produced it are stated together.
+
 ---
 
 ## 1. Cluster (`@agentix-e/db-cluster`)
