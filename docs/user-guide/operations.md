@@ -445,9 +445,9 @@ promise is only as good as the port.
 
 **What a crash can still take.** The kill a test can perform (`SIGKILL`) shows that an acknowledged
 line is in the file; it does not show that the line reached the medium, because the page cache
-outlives the process and only a power cut empties it. The `fsync` half is therefore asserted by
-order and by failure propagation (`AC80`), and the process half by killing writers (`AC81`). No
-runner provides a power cut.
+outlives the process and only a power cut empties it. The `fsync` half is therefore asserted by order
+and by failure propagation inside the process, and the process half by killing real writers. No
+runner provides a power cut, so the last sentence of the guarantee is documented rather than tested.
 
 **Damage is scoped to the file.** A segment that cannot be read — a truncated archive, an
 unmounted volume, a port that throws — contributes no entries and does not stop the scan. There is
