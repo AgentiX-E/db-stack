@@ -107,6 +107,10 @@ export interface RestoreOptions {
 export interface IBackupManager {
   /**
    * Create a backup snapshot.
+   *
+   * An `incremental` must record the snapshot it extends in
+   * `parentSnapshotId`; the link is what lets retention keep a chain whole and
+   * what lets a restore verify that the bytes it needs are still there.
    */
   createBackup(options: CreateBackupOptions): Promise<BackupResult>;
 
@@ -121,12 +125,24 @@ export interface IBackupManager {
   getBackup(snapshotId: string): Promise<BackupMetadata | null>;
 
   /**
-   * Delete a backup snapshot.
+   * Delete a backup snapshot, and every snapshot that cannot be restored
+   * without it.
+   *
+   * Deleting a base and leaving its incrementals behind produces bytes that are
+   * listed, billed and impossible to replay, so an implementation must cascade
+   * to the descendants named by `parentSnapshotId`.
+   *
+   * @returns `false` when no such snapshot exists.
    */
   deleteBackup(snapshotId: string): Promise<boolean>;
 
   /**
    * Restore from a backup snapshot.
+   *
+   * An incremental can be replayed only on top of its whole chain, so an
+   * implementation must report `success: false` and name the missing link when
+   * the base is gone — reporting success for an unrestorable chain is the
+   * failure mode a backup product cannot afford.
    */
   restoreFromSnapshot(snapshotId: string, options?: RestoreOptions): Promise<RestoreResult>;
 

@@ -5,9 +5,35 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] — 2026-11-16
+
+### Breaking
+
+- **`WindowConflict.conflictingSides` is required, and a conflict now names occurrences instead of
+  windows.** `checkConflict` fills it with the two overlapping runs (window id, instance id,
+  start, end), earliest first; `detectConflicts` returns the same. A resolution acts on those
+  instances and nothing else. Code that only read `conflictingWindowIds`, `description` or
+  `recommendation` is unaffected; code that built a `WindowConflict` literal must add the field
+  (an empty array is a valid answer). See "Changed" for the behaviour this replaced.
+- **`resolveConflict(..., 'defer_lower')` with equal priorities is a no-op.** There is no lower
+  window, `checkConflict` recommends `split` for that case, and the old behaviour cancelled
+  whichever window happened to be second.
 
 ### Added
+
+- **`dependentsOf`, `unrestorableReason`, `newestCompletedSnapshot`** — the chain primitives, exported
+  from `@agentix-e/db-operations-backup`. `dependentsOf(inventory, id)` answers "what would I lose if
+  I deleted this"; `unrestorableReason(inventory, snapshot)` answers "can this be replayed, and if
+  not, which link is missing". Both are pure functions over `BackupMetadata[]`, so an adapter for a
+  non-JS or non-in-memory store can use them without adopting the manager.
+- **`RetentionPolicyEvaluator` groups snapshots into restorable sets.** AC 59.
+- **`InMemoryBackupManager` records the chain it creates**: an incremental stores its base in
+  `parentSnapshotId`, `deleteBackup` cascades to the snapshots that cannot be replayed without the
+  one named, and `restoreFromSnapshot` refuses a broken chain instead of reporting success. AC 59.
+- **`getStats()` reports `conflictsDetected` and `conflictsResolved`** for real. Both were hardcoded
+  to `0`, so a dashboard built on them showed a quiet cluster during a conflict storm. AC 60.
+- **Mutation covers four modules instead of two**, and `backup/backupChain.ts` scores 100 %.
+  `pnpm --filter @agentix-e/db-operations run test:mutation`.
 
 - **`RetentionPolicyEvaluator.evaluateWithOutcome()`** — returns what the pass decided
   *and* what it could not do: `{ toDelete, unreclaimedBytes }`. A policy can ask for two
@@ -15,9 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   younger than a week"); when the floors win, the bytes that stayed are reported instead of
   being forgotten. `evaluate()` keeps its signature and returns the delete list. AC 57.3.
 - **`pnpm --filter @agentix-e/db-operations run test:mutation`** — Stryker, the same
-  instrument cluster and federation use, over the two modules whose arithmetic decides what
-  gets deleted and when a window runs. Measured 89.75 % overall, 93.33 % on
-  `RetentionPolicyEvaluator.ts` and 89.08 % on `MaintenanceWindowScheduler.ts`; `break` is 86.
+  instrument cluster and federation use, over the modules that decide what gets deleted, whether a
+  backup can be replayed and when a window runs. Final measurement: 94.81 % overall — 
+  `backupChain.ts` 100 %, `InMemoryBackupManager.ts` 98.94 %, `RetentionPolicyEvaluator.ts` 91.28 %,
+  `MaintenanceWindowScheduler.ts` 94.75 %; `break` is 86.
 - **`FileAuditStore.close()`** — awaits every rotation compression still in flight.
   Background gzip is off the write path by design, but it was not awaitable, so a
   caller that shut the store down raced a compressor that still held a path.
@@ -39,6 +66,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sitting under it.
 
 ### Changed
+
+- **Retention operates on backup sets, not snapshots.** A set is a base plus every incremental
+  chained to it; a set is kept or removed whole, and `maxFullSnapshots` counts sets. Treating
+  snapshots one at a time deleted a base and left its incrementals behind — bytes that were listed,
+  billed and impossible to restore — and let the count rule keep an incremental whose base it had
+  just removed. AC 59.1, AC 59.2.
+- **A snapshot whose `createdAt` cannot be parsed is never removed**, and the bytes it holds are
+  reported in `unreclaimedBytes`. Retention may not delete what it cannot date. AC 59.10.
+- **`toDelete` is ordered oldest first**, so deleting the list as it comes never removes a base
+  before the snapshots that depend on it. AC 59.23.
+- **`defer_lower` / `defer_newer` cancel one run, not a window's schedule.** `defer_lower` cancelled
+  every future run of the losing window — a conflict at 03:00 today also removed next month's run —
+  and `defer_newer` cancelled the newest run of *both* windows, so the winner lost one too. AC 60.5,
+  AC 60.6.
+- **Two overlapping runs of the same window are reported as a conflict.** The check compared window
+  ids, so a window whose duration exceeds its recurrence period — two maintenances at once on the
+  same targets — was reported as `coexist`/no conflict. Identity is now the instance. AC 60.1.
+- **`activeWindows` counts a `force_override` run**, which it did not: a cluster in the middle of an
+  emergency maintenance window reported itself idle. AC 61.12.
+- **`defer_newer` resolves equal starts by the later side**, matching the order `checkConflict`
+  reports. AC 60.15.
+
 
 - **Breaking:** `parseDurationToMs` throws on input that names no duration, instead of
   returning `0`. See the Fixed entry below.

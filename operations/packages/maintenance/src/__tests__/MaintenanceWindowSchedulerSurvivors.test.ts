@@ -125,13 +125,18 @@ describe('MWS-S: resolveConflict defer_lower full matrix', () => {
     expect(aStates).not.toContain('cancelled');
   });
 
-  it('defer_lower with equal priorities cancels B (the later window)', () => {
+  it('defer_lower with equal priorities is a no-op — there is no lower window', () => {
     const { s, conflicts } = twoOverlapping(5, 5);
     expect(conflicts.length).toBe(1);
+    // Equal priorities are what `split` is recommended for; picking one of them
+    // arbitrarily used to cancel the second window (AC 60.4).
+    expect(conflicts[0]!.recommendation).toBe('split');
     s.resolveConflict(conflicts[0]!, 'defer_lower');
-    // equal priority -> lowerAlone=false -> deferWin = winB (the second id)
+    const aStates = s.getWindowInstances('a').map((i) => i.state);
     const bStates = s.getWindowInstances('b').map((i) => i.state);
-    expect(bStates).toContain('cancelled');
+    expect(aStates).not.toContain('cancelled');
+    expect(bStates).not.toContain('cancelled');
+    expect(s.getStats().conflictsResolved).toBe(0);
   });
 
   it('defer_lower leaves approved instances untouched unless scheduled/approved', () => {
@@ -202,10 +207,18 @@ describe('MWS-S: resolveConflict defer_newer', () => {
     const conflict = {
       hasConflict: true,
       conflictingWindowIds: ['past', 'now'],
+      conflictingSides: [
+        { windowId: 'past', instanceId: 'gone', start: NOW, end: NOW + H_MS },
+        { windowId: 'now', instanceId: 'here', start: NOW + M_MS, end: NOW + H_MS },
+      ],
       description: 'x',
       recommendation: 'defer' as const,
     };
     expect(() => s.resolveConflict(conflict, 'defer_newer')).not.toThrow();
+    // The side that has no live instance cannot be deferred; the one that does
+    // is the earlier side, so nothing is cancelled.
+    expect(s.getWindowInstances('now').every((i) => i.state === 'scheduled')).toBe(true);
+    expect(s.getStats().conflictsResolved).toBe(0);
   });
 });
 
@@ -239,6 +252,7 @@ describe('MWS-S: resolveConflict allow_both / no-conflict guards', () => {
     const noConflict = {
       hasConflict: false,
       conflictingWindowIds: ['a', 'b'],
+      conflictingSides: [],
       description: 'x',
       recommendation: 'defer' as const,
     };
@@ -483,14 +497,39 @@ describe('MWS-S: resolveConflict with undefined windows', () => {
         at: new Date(NOW + H_MS).toISOString(),
       }),
     );
-    s.getUpcomingOccurrences(NOW, NOW + 2 * H_MS);
+    const occs = s.getUpcomingOccurrences(NOW, NOW + 2 * H_MS);
     const conflict = {
       hasConflict: true,
       conflictingWindowIds: ['real', 'ghost'],
+      conflictingSides: [
+        { windowId: 'real', instanceId: occs[0]!.instanceId, start: NOW + H_MS, end: NOW + 2 * H_MS },
+        { windowId: 'ghost', instanceId: 'never-created', start: NOW + H_MS, end: NOW + 2 * H_MS },
+      ],
       description: 'x',
       recommendation: 'defer' as const,
     };
     expect(() => s.resolveConflict(conflict, 'defer_lower')).not.toThrow();
+    // A window that is not registered has no priority to compare, so the one
+    // side that does exist is not shown to be the lower one. Nothing is
+    // cancelled, and the counter does not claim otherwise.
+    expect(s.getWindowInstances('real').every((i) => i.state === 'scheduled')).toBe(true);
+    expect(s.getStats().conflictsResolved).toBe(0);
+  });
+
+  it('defer_lower with no registered side at all is a no-op', () => {
+    const s = new MaintenanceWindowScheduler();
+    const conflict = {
+      hasConflict: true,
+      conflictingWindowIds: ['ghost-1', 'ghost-2'],
+      conflictingSides: [
+        { windowId: 'ghost-1', instanceId: 'g1', start: NOW, end: NOW + H_MS },
+        { windowId: 'ghost-2', instanceId: 'g2', start: NOW, end: NOW + H_MS },
+      ],
+      description: 'x',
+      recommendation: 'defer' as const,
+    };
+    expect(() => s.resolveConflict(conflict, 'defer_lower')).not.toThrow();
+    expect(s.getStats().conflictsResolved).toBe(0);
   });
 });
 
@@ -621,23 +660,21 @@ describe('MWS-S: weekly/monthly empty days guard', () => {
 });
 
 describe('MWS-S: defer_newer approved + newest selection', () => {
-  it('defer_newer cancels only the newest among scheduled AND approved', () => {
+  it('defer_newer cancels only the newer side of the conflict it was given', () => {
     const s = new MaintenanceWindowScheduler();
-    // daily window -> multiple instances across days; approve the very first
-    s.registerWindow(win({ id: 'dn', recurrence: 'daily', startTime: '03:00' }));
-    const occs = s.getUpcomingOccurrences(NOW, NOW + 3 * D_MS);
-    expect(occs.length).toBeGreaterThanOrEqual(2);
-    // approve the first instance (pending -> approved requires requiresApproval, so use scheduled)
-    // Instead: create a conflict and ensure defer_newer cancels the newest scheduled instance
-    const conflict = {
-      hasConflict: true,
-      conflictingWindowIds: ['dn'],
-      description: 'x',
-      recommendation: 'defer' as const,
-    };
-    s.resolveConflict(conflict, 'defer_newer');
-    const states = s.getWindowInstances('dn').map((i) => i.state);
-    expect(states).toContain('cancelled');
+    s.registerWindow(win({ id: 'dn', recurrence: 'daily', startTime: '03:00', maxDurationMin: 60 }));
+    s.registerWindow(win({ id: 'dn2', recurrence: 'daily', startTime: '03:30', maxDurationMin: 60 }));
+    s.getUpcomingOccurrences(NOW, NOW + 3 * D_MS);
+    const conflicts = s.detectConflicts(NOW, NOW + 3 * D_MS);
+    expect(conflicts.length).toBeGreaterThanOrEqual(2);
+
+    s.resolveConflict(conflicts[0]!, 'defer_newer');
+
+    const later = s.getWindowInstances('dn2').filter((i) => i.state === 'cancelled');
+    const earlier = s.getWindowInstances('dn').filter((i) => i.state === 'cancelled');
+    expect(later).toHaveLength(1);
+    expect(earlier).toHaveLength(0);
+    expect(s.getStats().conflictsResolved).toBe(1);
   });
 });
 
@@ -670,25 +707,21 @@ describe('MWS-S: monthly day range boundary', () => {
 describe('MWS-S: defer_newer newest-selection precision', () => {
   it('cancels ONLY the newest scheduled instance, leaving earlier ones scheduled', () => {
     const s = new MaintenanceWindowScheduler();
-    s.registerWindow(win({ id: 'sel', recurrence: 'daily', startTime: '03:00' }));
+    s.registerWindow(win({ id: 'sel', recurrence: 'daily', startTime: '03:00', maxDurationMin: 60 }));
+    s.registerWindow(win({ id: 'sel2', recurrence: 'daily', startTime: '03:30', maxDurationMin: 60 }));
     s.getUpcomingOccurrences(NOW, NOW + 3 * D_MS);
-    const conflict = {
-      hasConflict: true,
-      conflictingWindowIds: ['sel'],
-      description: 'x',
-      recommendation: 'defer' as const,
-    };
-    s.resolveConflict(conflict, 'defer_newer');
+    const conflicts = s.detectConflicts(NOW, NOW + 3 * D_MS);
 
-    const insts = s.getWindowInstances('sel');
-    const cancelled = insts.filter((i) => i.state === 'cancelled');
-    const scheduled = insts.filter((i) => i.state === 'scheduled');
-    // exactly one cancelled, and it is the newest (largest scheduledStart)
+    s.resolveConflict(conflicts[0]!, 'defer_newer');
+
+    const later = s.getWindowInstances('sel2');
+    const cancelled = later.filter((i) => i.state === 'cancelled');
+    // Exactly one: the run that overlapped. Next week's does not overlap
+    // anything today, and `defer_newer` used to cancel it anyway (AC 60.3).
     expect(cancelled).toHaveLength(1);
-    const newestStart = Math.max(...insts.map((i) => i.scheduledStart ?? 0));
-    expect(cancelled[0]!.scheduledStart).toBe(newestStart);
-    // remaining instances stay scheduled
-    expect(scheduled).toHaveLength(insts.length - 1);
+    const newestStart = Math.max(...later.map((i) => i.scheduledStart ?? 0));
+    expect(cancelled[0]!.scheduledStart).toBeLessThan(newestStart);
+    expect(later.filter((i) => i.state === 'scheduled')).toHaveLength(later.length - 1);
   });
 
   it('selects among approved instances too (approved participates in newest)', () => {
@@ -698,31 +731,40 @@ describe('MWS-S: defer_newer newest-selection precision', () => {
         id: 'appr',
         recurrence: 'daily',
         startTime: '03:00',
+        maxDurationMin: 60,
+        requiresApproval: true,
+      }),
+    );
+    s.registerWindow(
+      win({
+        id: 'appr2',
+        recurrence: 'daily',
+        startTime: '03:30',
+        maxDurationMin: 60,
         requiresApproval: true,
       }),
     );
     const occs = s.getUpcomingOccurrences(NOW, NOW + 3 * D_MS);
-    expect(occs.length).toBeGreaterThanOrEqual(2);
-    // approve ALL pending instances so every instance is "approved" (not pending)
-    for (const inst of s.getWindowInstances('appr')) {
-      s.approveWindow(inst.id, 'dba');
+    expect(occs.length).toBeGreaterThanOrEqual(4);
+    // approve every pending instance so all of them are "approved" (not pending)
+    for (const id of ['appr', 'appr2']) {
+      for (const inst of s.getWindowInstances(id)) {
+        s.approveWindow(inst.id, 'dba');
+      }
     }
-    const conflict = {
-      hasConflict: true,
-      conflictingWindowIds: ['appr'],
-      description: 'x',
-      recommendation: 'defer' as const,
-    };
-    s.resolveConflict(conflict, 'defer_newer');
+    const conflicts = s.detectConflicts(NOW, NOW + 3 * D_MS);
 
-    const insts = s.getWindowInstances('appr');
-    const cancelled = insts.filter((i) => i.state === 'cancelled');
-    const approved = insts.filter((i) => i.state === 'approved');
+    s.resolveConflict(conflicts[0]!, 'defer_newer');
+
+    const later = s.getWindowInstances('appr2');
+    const cancelled = later.filter((i) => i.state === 'cancelled');
     expect(cancelled).toHaveLength(1);
-    // newest approved instance got cancelled
-    const newestStart = Math.max(...insts.map((i) => i.scheduledStart ?? 0));
-    expect(cancelled[0]!.scheduledStart).toBe(newestStart);
-    expect(approved).toHaveLength(insts.length - 1);
+    // The remaining runs of the losing window are still approved: deferring one
+    // occurrence must not un-approve the window.
+    expect(s.getWindowInstances('appr2').filter((i) => i.state === 'approved')).toHaveLength(later.length - 1);
+    expect(s.getWindowInstances('appr').filter((i) => i.state === 'approved')).toHaveLength(
+      s.getWindowInstances('appr').length,
+    );
   });
 });
 

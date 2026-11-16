@@ -95,13 +95,43 @@ export interface WindowInstance {
 
 // ── Conflict ────────────────────────────────────────────────
 
+/**
+ * One side of an overlap: the exact instance that would run at the same time.
+ *
+ * A conflict is a fact about two *occurrences*, not about two window
+ * definitions. `defer_lower` used to resolve it by cancelling every future
+ * instance of the losing window — including the ones that did not overlap
+ * anything — because the conflict carried no instance identity. These are the
+ * instances a resolution is allowed to touch, and nothing else.
+ */
+export interface ConflictSide {
+  /** Window definition the instance belongs to. */
+  windowId: string;
+  /** Instance that overlaps. */
+  instanceId: string;
+  /** Start time (ms since epoch). */
+  start: number;
+  /** End time (ms since epoch). */
+  end: number;
+}
+
 /** Result of an overlap/conflict check. */
 export interface WindowConflict {
   /** Does the conflict exist? */
   hasConflict: boolean;
-  /** Conflicting window IDs. */
+  /** Conflicting window IDs, in occurrence order. */
   conflictingWindowIds: string[];
-  /** Overlap description. */
+  /**
+   * The overlapping occurrences, earliest start first, and empty when
+   * `hasConflict` is false.
+   *
+   * Two occurrences of the *same* window can appear here: a window whose
+   * duration exceeds its recurrence period schedules its next run before the
+   * previous one has finished, which is the overlap the scheduler exists to
+   * report. Only an occurrence is exempt from conflicting with itself.
+   */
+  conflictingSides: ConflictSide[];
+  /** Overlap description, with both intervals in ISO-8601. */
   description: string;
   /** Resolution recommendation. */
   recommendation: 'defer' | 'override' | 'split' | 'coexist';
@@ -128,12 +158,22 @@ export interface WindowOccurrence {
 /** Statistics for the maintenance scheduler. */
 export interface MaintenanceSchedulerStats {
   totalWindows: number;
+  /** Instances that are `scheduled`, `in_progress` or running under a `force_override`. */
   activeWindows: number;
   completedInstances: number;
   failedInstances: number;
   cancelledInstances: number;
   pendingApprovals: number;
+  /**
+   * Overlapping pairs reported by `detectConflicts`, cumulative over calls.
+   *
+   * Repeated projections of the same pair count again: this is a measure of how
+   * often the scheduler was told to look, not a deduplicated registry. Both
+   * counters were hardcoded to `0` before iteration 27, so a dashboard built on
+   * them showed a quiet cluster during a conflict storm.
+   */
   conflictsDetected: number;
+  /** Conflicts whose resolution actually cancelled at least one instance. */
   conflictsResolved: number;
 }
 
@@ -204,7 +244,26 @@ export interface IMaintenanceScheduler {
   /** Get all conflicts among upcoming windows. */
   detectConflicts(fromMs: number, toMs: number): WindowConflict[];
 
-  /** Resolve a conflict by deferring the lower-priority window. */
+  /**
+   * Resolve a conflict by deferring the occurrence that should give way.
+   *
+   * Only the instances named in `conflict.conflictingSides` are touched. The
+   * other runs of both windows are untouched: a conflict at 03:00 says nothing
+   * about the same window's run next week, and cancelling those too — which is
+   * what this did before iteration 27 — silently removed maintenance an
+   * operator had scheduled and never asked to move.
+   *
+   * - `defer_lower` cancels the conflicting occurrence of the lower-priority
+   *   window. When every side has the same priority there is no lower one, so
+   *   the call is a no-op and the conflict stands for a human to split.
+   * - `defer_newer` cancels the later-starting conflicting occurrence, leaving
+   *   the earlier one in place.
+   * - `allow_both` changes nothing.
+   *
+   * Only `scheduled` and `approved` instances are deferred; a pending instance
+   * is waiting for an approver, and cancelling it here would hide an approval
+   * decision from the person who has to make it.
+   */
   resolveConflict(conflict: WindowConflict, strategy: 'defer_lower' | 'defer_newer' | 'allow_both'): void;
 
   /** Get the lifecycle state of an instance. */

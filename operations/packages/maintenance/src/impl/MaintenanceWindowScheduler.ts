@@ -154,6 +154,8 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
   private instances = new Map<string, WindowInstance>();
   private nextInstanceId = 1;
   private nextWindowIdCounter = 1;
+  private conflictsDetected = 0;
+  private conflictsResolved = 0;
 
   // ── Window Registration ─────────────────────────────────
 
@@ -257,12 +259,18 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
   // ── Conflict Detection ───────────────────────────────────
 
   checkConflict(a: WindowOccurrence, b: WindowOccurrence): WindowConflict {
-    const sameWindow = a.windowId === b.windowId;
-    if (sameWindow) {
+    // An occurrence cannot overlap itself. Identity is the instance, not the
+    // window: two different instances of one window are two runs of the same
+    // maintenance on the same targets, and a window whose duration exceeds its
+    // period produces exactly that. Reporting "coexist" for them — which is
+    // what comparing window ids did before iteration 27 — hid the one overlap
+    // the scheduler can still prevent.
+    if (a.instanceId === b.instanceId) {
       return {
         hasConflict: false,
         conflictingWindowIds: [],
-        description: 'Same window',
+        conflictingSides: [],
+        description: 'Same instance',
         recommendation: 'coexist',
       };
     }
@@ -274,6 +282,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       return {
         hasConflict: false,
         conflictingWindowIds: [],
+        conflictingSides: [],
         description: 'No overlap',
         recommendation: 'coexist',
       };
@@ -290,10 +299,25 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       recommendation = 'defer';
     }
 
+    // Earliest start first, so `defer_newer` reads as "the second side".
+    const sides =
+      a.start <= b.start
+        ? [
+            { windowId: a.windowId, instanceId: a.instanceId, start: a.start, end: a.end },
+            { windowId: b.windowId, instanceId: b.instanceId, start: b.start, end: b.end },
+          ]
+        : [
+            { windowId: b.windowId, instanceId: b.instanceId, start: b.start, end: b.end },
+            { windowId: a.windowId, instanceId: a.instanceId, start: a.start, end: a.end },
+          ];
+
     return {
       hasConflict: true,
       conflictingWindowIds: [a.windowId, b.windowId],
-      description: `Overlap ${a.windowId}[${a.start}-${a.end}] with ${b.windowId}[${b.start}-${b.end}]`,
+      conflictingSides: sides,
+      description:
+        `Overlap: ${a.windowId} ${new Date(a.start).toISOString()}..${new Date(a.end).toISOString()} ` +
+        `overlaps ${b.windowId} ${new Date(b.start).toISOString()}..${new Date(b.end).toISOString()}`,
       recommendation,
     };
   }
@@ -309,6 +333,7 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       }
     }
 
+    this.conflictsDetected += conflicts.length;
     return conflicts;
   }
 
@@ -316,53 +341,37 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     if (!conflict.hasConflict) return;
     if (strategy === 'allow_both') return;
 
-    const isLowerStrategy = strategy === 'defer_lower';
-    const isNewerStrategy = strategy === 'defer_newer';
+    // A conflict that names no instance names nothing to defer. Returning here
+    // is deliberate: the previous code fell back to "cancel everything this
+    // window has scheduled", which is the over-broad behaviour being retired.
+    const sides = conflict.conflictingSides;
+    if (sides.length === 0) return;
 
-    if (isLowerStrategy) {
-      const winA = this.windows.get(conflict.conflictingWindowIds[0]!);
-      const winB = this.windows.get(conflict.conflictingWindowIds[1]!);
-      if (winA !== undefined && winB !== undefined) {
-        // Decide which window has lower priority and cancel its instances
-        const lowerAlone = winA.priority < winB.priority;
-        const deferWin = lowerAlone ? winA : winB;
-        for (const inst of this._getMutableInstances(deferWin.id)) {
-          const isSched = inst.state === 'scheduled';
-          const isApproved = inst.state === 'approved';
-          if (isSched || isApproved) {
-            inst.state = 'cancelled';
-            inst.error = 'Deferred due to conflict with higher-priority window';
-          }
+    let deferred = 0;
+    if (strategy === 'defer_lower') {
+      const priorities = sides.map((side) => this.windows.get(side.windowId)?.priority);
+      // A side whose window is no longer registered has no priority to compare;
+      // it cannot be shown to be the lower one, so it is left alone.
+      const known = priorities.filter((p): p is number => p !== undefined);
+      const everyKnownIsEqual = known.every((p) => p === known[0]);
+      if (known.length === 0 || everyKnownIsEqual) return;
+
+      const lowest = Math.min(...known);
+      sides.forEach((side, index) => {
+        if (priorities[index] !== lowest) return;
+        if (this._deferInstance(side.instanceId, 'Deferred due to conflict with higher-priority window')) {
+          deferred++;
         }
-      }
-      return;
+      });
+    } else {
+      // defer_newer — the later start gives way, and only it. On identical
+      // starts the second side is the later one, which is the same rule
+      // `checkConflict` used to order the pair.
+      const newest = sides.reduce((later, side) => (side.start >= later.start ? side : later));
+      if (this._deferInstance(newest.instanceId, 'Deferred due to newer window conflict')) deferred++;
     }
 
-    if (isNewerStrategy) {
-      for (const wid of conflict.conflictingWindowIds) {
-        const instances = this._getMutableInstances(wid);
-        if (instances.length === 0) continue;
-
-        // Find the newest scheduled/approved instance via explicit loop
-        let newest: WindowInstance | null = null;
-        let newestStart: number | null = null;
-        for (const i of instances) {
-          const sched = i.state === 'scheduled';
-          const approved = i.state === 'approved';
-          if (sched || approved) {
-            const startVal = i.scheduledStart ?? 0;
-            if (newestStart === null || startVal > newestStart) {
-              newestStart = startVal;
-              newest = i;
-            }
-          }
-        }
-        if (newest !== null) {
-          newest.state = 'cancelled';
-          newest.error = 'Deferred due to newer window conflict';
-        }
-      }
-    }
+    if (deferred > 0) this.conflictsResolved++;
   }
 
   // ── Instance Queries ─────────────────────────────────────
@@ -408,7 +417,12 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       pendingApprovals: 0,
     };
     for (const i of allInstances) {
-      if (i.state === 'in_progress' || i.state === 'scheduled') counts.active++;
+      // `force_override` is an emergency run that is executing right now. It was
+      // left out of the active count, so a cluster in the middle of a forced
+      // maintenance window reported itself idle (AC 61.12).
+      const isRunning = i.state === 'in_progress' || i.state === 'force_override';
+      const isAhead = i.state === 'scheduled';
+      if (isRunning || isAhead) counts.active++;
       if (i.state === 'completed') counts.completed++;
       if (i.state === 'failed') counts.failed++;
       if (i.state === 'cancelled') counts.cancelled++;
@@ -421,8 +435,8 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       failedInstances: counts.failed,
       cancelledInstances: counts.cancelled,
       pendingApprovals: counts.pendingApprovals,
-      conflictsDetected: 0,
-      conflictsResolved: 0,
+      conflictsDetected: this.conflictsDetected,
+      conflictsResolved: this.conflictsResolved,
     };
   }
 
@@ -717,8 +731,22 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     return null;
   }
 
-  /** Internal read-write access to live instances (used by resolveConflict). */
-  private _getMutableInstances(windowId: string): WindowInstance[] {
-    return Array.from(this.instances.values()).filter((i) => i.windowId === windowId);
+  /**
+   * Cancel one occurrence as deferred, and report whether it changed anything.
+   *
+   * `pending` is left alone: the instance is waiting for an approver, and a
+   * conflict resolution is not that approver. Terminal states are already out
+   * of the schedule, so they are skipped rather than re-cancelled.
+   */
+  private _deferInstance(instanceId: string, reason: string): boolean {
+    const inst = this.instances.get(instanceId);
+    if (inst === undefined) return false;
+    const isScheduled = inst.state === 'scheduled';
+    const isApproved = inst.state === 'approved';
+    if (!isScheduled && !isApproved) return false;
+    inst.state = 'cancelled';
+    inst.error = reason;
+    inst.actualEnd = Date.now();
+    return true;
   }
 }

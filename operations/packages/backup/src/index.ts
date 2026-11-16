@@ -13,4 +13,5 @@ export { InMemoryPITRManager } from './impl/InMemoryPITRManager.js';
 export { InMemoryStorageBackend } from './impl/InMemoryStorageBackend.js';
 export { S3StorageBackend } from './impl/S3StorageBackend.js';
 export { RetentionPolicyEvaluator, parseDurationToMs } from './impl/RetentionPolicyEvaluator.js';
+export { dependentsOf, newestCompletedSnapshot, unrestorableReason } from './impl/backupChain.js';
 export { BackupVerifier } from './impl/BackupVerifier.js';

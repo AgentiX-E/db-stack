@@ -8,10 +8,16 @@
   },
   "mutate": [
     "packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
-    "packages/backup/src/impl/RetentionPolicyEvaluator.ts"
+    "packages/backup/src/impl/RetentionPolicyEvaluator.ts",
+    "packages/backup/src/impl/InMemoryBackupManager.ts",
+    "packages/backup/src/impl/backupChain.ts"
   ],
   "coverageAnalysis": "perTest",
-  "reporters": ["clear-text", "progress", "json"],
+  "reporters": [
+    "clear-text",
+    "progress",
+    "json"
+  ],
   "jsonReporter": {
     "fileName": "reports/mutation/operations.json"
   },
@@ -26,5 +32,7 @@
   "tempDirName": ".stryker-tmp",
   "cleanTempDir": true,
   "ignoreStatic": true,
-  "plugins": ["./node_modules/@stryker-mutator/vitest-runner/dist/src/index.js"]
+  "plugins": [
+    "./node_modules/@stryker-mutator/vitest-runner/dist/src/index.js"
+  ]
 }

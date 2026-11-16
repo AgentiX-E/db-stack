@@ -167,10 +167,54 @@ if (unreclaimedBytes > 0) {
 }
 ```
 
-Four rules apply, in this order: keep the newest `maxFullSnapshots` full snapshots (incremental
-snapshots are never promoted into a full's slot), remove nothing younger than `keepRecent`,
-remove only what is at least `minAge` old, then remove the oldest still-removable snapshots until
-the total fits under `maxTotalBytes`.
+Four rules apply, in this order: keep the newest `maxFullSnapshots` **sets**, remove no set
+containing anything younger than `keepRecent`, remove only sets whose every member is at least
+`minAge` old, then remove whole sets, oldest base first, until the total fits under
+`maxTotalBytes`.
+
+#### Retention: a chain is the unit, not a snapshot
+
+Incrementals are chained through `parentSnapshotId`: an incremental holds only what changed since
+its parent, so it can be replayed only on top of its whole chain. Retention therefore groups the
+inventory into **sets** — a base plus every incremental that reaches it — and keeps or removes a
+set whole.
+
+That is not a detail of the implementation, it is the difference between a delete list and a data
+loss plan. Pruning snapshots one at a time does two things, both wrong:
+
+- it deletes a base and leaves its incrementals behind: bytes that are listed, counted against
+  the quota, and impossible to restore;
+- it stops as soon as the ceiling is met, so "reclaimed 250 GB" can mean "250 GB gone and 50 GB of
+  it was the only copy that could still be read".
+
+```ts
+// Set A: base (3 days old) + incremental (1 hour old). Set B: base (2 hours old).
+// 250 bytes on disk, 130 allowed.
+const { toDelete } = new RetentionPolicyEvaluator({
+  maxFullSnapshots: 7,
+  maxTotalBytes: 130,
+}).evaluateWithOutcome(inventory);
+// toDelete = [base-a, inc-a] — set A leaves as a unit, set B stays restorable.
+```
+
+Three consequences worth knowing:
+
+- **`maxFullSnapshots` counts sets.** The name is kept for compatibility; the meaning is "how many
+  restorable backups to keep". A set's age is the age of its base, because a delta is only as new
+  as the chain it can be replayed on.
+- **A floor on one member protects the whole set.** If a set contains anything younger than
+  `keepRecent`, the set stays — keeping the incremental and deleting its base would be the same
+  bug as above.
+- **An unreadable timestamp is not an expiry date.** A snapshot whose `createdAt` cannot be parsed
+  is skipped by every removal rule, and the bytes it holds are reported in `unreclaimedBytes`.
+  Retention may not delete what it cannot date.
+
+Pass the **complete** inventory. A snapshot whose `parent` is absent from the list it was given is
+treated as a set of its own rather than as an orphan to delete, so filtering the list cannot turn
+into a delete order — but a filtered list also cannot tell a chain from three unrelated snapshots.
+
+`evaluate()` is the interface method and returns the delete list alone; `evaluateWithOutcome()`
+adds the report.
 
 `keepRecent` and `minAge` are **prohibitions, not preferences**. That matters when they conflict
 with the byte ceiling: the floors win, and the difference is reported as `unreclaimedBytes`. The
@@ -180,6 +224,41 @@ turns into data loss.
 Durations are read as ISO-8601 (`P7D`, `PT1H`, `PT30M`, `PT30S`, `P1DT2H3M4S`) or as a plain
 number of hours (`"48"`). Anything else throws where the policy is written, in the constructor or
 in `updateConfig`, because a floor that silently means zero protects nothing.
+
+The store keeps the same invariant from its side. `createBackup({ type: "incremental" })` records
+the completed snapshot it extends in `parentSnapshotId`; `deleteBackup(id)` cascades to every
+snapshot that cannot be replayed without `id`; and `restoreFromSnapshot(id)` refuses a chain whose
+base is gone, naming the missing link instead of reporting success. That last check matters even
+with a chain-aware policy, because `IBackupRetentionPolicy` is an injection point — a caller's own
+policy can still return a base.
+
+The chain primitives are exported, so an adapter for a store that is not this manager can answer the
+same questions:
+
+```ts
+import { dependentsOf, unrestorableReason } from "@agentix-e/db-operations-backup";
+
+// What would I lose if I deleted this snapshot?
+const dependents = dependentsOf(inventory, snapshotId);
+
+// Can this snapshot be replayed, and if not, which link is missing?
+const reason = unrestorableReason(new Map(inventory.map((s) => [s.snapshotId, s])), snapshot);
+if (reason !== null) logger.error("snapshot is unrestorable", { snapshotId, reason });
+```
+
+The chain primitives are exported, so an adapter for a store that is not this manager can answer the
+same questions:
+
+```ts
+import { dependentsOf, unrestorableReason } from "@agentix-e/db-operations-backup";
+
+// What would I lose if I deleted this snapshot?
+const dependents = dependentsOf(inventory, snapshotId);
+
+// Can this snapshot be replayed, and if not, which link is missing?
+const reason = unrestorableReason(new Map(inventory.map((s) => [s.snapshotId, s])), snapshot);
+if (reason !== null) logger.error("snapshot is unrestorable", { snapshotId, reason });
+```
 
 `evaluate()` is the interface method and returns the delete list alone; `evaluateWithOutcome()`
 adds the report.
@@ -300,6 +379,29 @@ Supported recurrences are `once` (`at`), `daily` (`startTime`), `weekly` (`start
 months) and `cron` (`cronExpression`). `detectConflicts(fromMs, toMs)` projects the same
 occurrences and reports overlaps, with a `split` / `defer` / `coexist` recommendation
 derived from the two windows' priorities.
+
+#### Conflicts are about runs, not windows
+
+A conflict names the two **occurrences** that would overlap, in `conflictingSides`, together with
+their instances and intervals; `conflictingWindowIds` and `description` (both intervals in
+ISO-8601) are there for the operator. `resolveConflict()` touches exactly those instances:
+
+| Strategy      | Effect                                                                       |
+| ------------- | ---------------------------------------------------------------------------- |
+| `defer_lower` | cancels the conflicting run of the lower-priority window                     |
+| `defer_newer` | cancels the later-starting conflicting run                                   |
+| `allow_both`  | changes nothing                                                              |
+
+Two runs of the **same** window can conflict: a window whose `maxDurationMin` exceeds its
+recurrence period starts its next run before the previous one finished, and that is the one
+overlap a scheduler can still prevent. Equal priorities under `defer_lower` are a no-op — there is
+no lower window, which is what the `split` recommendation is asking a human to do. A `pending`
+run is never cancelled by a strategy: it is waiting for an approver, and a resolution is not that
+approver.
+
+Resolving a conflict at 03:00 does not touch the same window's run next month. `getStats()` reports
+`conflictsDetected` and `conflictsResolved`; both were hardcoded to `0` before 1.3.0, so a
+dashboard built on them showed a quiet cluster during a conflict storm.
 
 A schedule that cannot name a real time or a real day is **malformed, not reinterpreted**:
 `startTime` must be an integer hour `0..23` and an integer minute `0..59`, and

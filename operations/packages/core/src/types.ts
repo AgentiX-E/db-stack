@@ -155,7 +155,14 @@ export interface PITRTarget {
 
 /** Retention policy for backup pruning. */
 export interface RetentionPolicy {
-  /** Maximum number of full snapshots to retain. */
+  /**
+   * Maximum number of backup sets to retain.
+   *
+   * A set is a base snapshot plus every incremental chained to it through
+   * `parentSnapshotId`; retention keeps or removes a set whole, because an
+   * incremental without its base cannot be restored. The field keeps its name
+   * for compatibility.
+   */
   maxFullSnapshots: number;
   /** Maximum total size of all snapshots (bytes). */
   maxTotalBytes: number;

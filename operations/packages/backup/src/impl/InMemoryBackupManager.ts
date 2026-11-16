@@ -13,6 +13,7 @@ import type {
   RestoreOptions,
 } from '../interfaces/index.js';
 import type { BackupMetadata, BackupResult, RestoreResult, PITRTarget } from '@agentix-e/db-operations-core/types';
+import { dependentsOf, newestCompletedSnapshot, unrestorableReason } from './backupChain.js';
 
 /** Simple counter for generating unique IDs. */
 let idCounter = 0;
@@ -37,6 +38,15 @@ const simulateWork = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r,
  *
  * Stores all snapshot metadata in a Map and delegates storage/retention
  * to injected IStorageBackend and IBackupRetentionPolicy instances.
+ *
+ * Incrementals are chained: `createBackup({ type: 'incremental' })` records the
+ * completed snapshot it extends in `parentSnapshotId`. Without that link the
+ * inventory says nothing about what an incremental needs, so no retention pass
+ * can keep a chain intact and no restore can tell whether the bytes it is about
+ * to replay have a base. The three methods below therefore maintain one
+ * invariant between them — **a stored incremental always has its whole chain
+ * behind it** — and `restoreFromSnapshot` checks it, because a caller-supplied
+ * `IBackupRetentionPolicy` can still break it.
  */
 export class InMemoryBackupManager implements IBackupManager {
   private readonly snapshots: Map<string, BackupMetadata> = new Map();
@@ -50,6 +60,13 @@ export class InMemoryBackupManager implements IBackupManager {
   async createBackup(options: CreateBackupOptions): Promise<BackupResult> {
     const id = generateSnapshotId();
     const now = new Date().toISOString();
+    // An incremental extends the newest snapshot that finished. A chain that
+    // leads back to a base is the only shape a restore can replay; chaining to
+    // an in-progress or failed snapshot would name a base that no restore can
+    // use. With no completed snapshot at all the incremental is stored
+    // unchained and `restoreFromSnapshot` reports it as unrestorable rather
+    // than pretending otherwise.
+    const base = options.type === 'incremental' ? newestCompletedSnapshot(Array.from(this.snapshots.values())) : null;
 
     const snapshot: BackupMetadata = {
       snapshotId: id,
@@ -59,6 +76,7 @@ export class InMemoryBackupManager implements IBackupManager {
       sizeBytes: 1024,
       fileCount: 1,
       location: `/backups/${id}`,
+      ...(base === null ? {} : { parentSnapshotId: base.snapshotId }),
     };
 
     this.snapshots.set(id, snapshot);
@@ -93,31 +111,24 @@ export class InMemoryBackupManager implements IBackupManager {
       filteredByType = allEntries;
     }
 
-    // Phase 2: newerThan filter (kills L80 >→<=, L81 <→>=, L82 +→-)
+    // Phase 2: newerThan filter. Strictly newer: a snapshot taken at exactly the
+    // boundary instant is not newer than it.
     let timeFiltered: BackupMetadata[];
     if (options?.newerThan) {
       const newerThanMs = new Date(options.newerThan).getTime();
-      timeFiltered = [];
-      for (const s of filteredByType) {
-        const createdAtMs = new Date(s.createdAt).getTime();
-        if (createdAtMs > newerThanMs) {
-          timeFiltered.push(s);
-        }
-      }
+      timeFiltered = filteredByType.filter((s) => new Date(s.createdAt).getTime() > newerThanMs);
     } else {
       timeFiltered = filteredByType;
     }
 
-    // Phase 3: sort by createdAt descending, newest first (kills L63 -→+)
-    timeFiltered.sort((a, b) => {
-      const timeA = new Date(a.createdAt).getTime();
-      const timeB = new Date(b.createdAt).getTime();
-      if (timeB > timeA) return 1;
-      if (timeB < timeA) return -1;
-      return 0;
-    });
+    // Phase 3: newest first. The subtraction is the whole rule — remove the `b -`
+    // and the list comes back oldest first, which is what a single mutant of this
+    // line does — and `Array.prototype.sort` is stable, so snapshots sharing a
+    // timestamp keep the order they were taken in.
+    timeFiltered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-    // Phase 4: limit
+    // Phase 4: limit. Zero is not "return nothing": it means no limit, which is
+    // how every other list API in this package reads an unset count.
     if (options?.limit !== undefined && options.limit > 0) {
       return timeFiltered.slice(0, options.limit);
     }
@@ -130,15 +141,43 @@ export class InMemoryBackupManager implements IBackupManager {
     return this.snapshots.get(snapshotId) ?? null;
   }
 
-  /** @inheritdoc */
+  /**
+   * Delete a snapshot and everything that cannot be restored without it.
+   *
+   * Deleting a base while its incrementals stay behind creates the one state a
+   * backup store must never be in: bytes that are listed, counted against the
+   * quota, and impossible to replay. The cascade is reported through the return
+   * value only as "the snapshot existed"; `getBackup` after the call shows what
+   * went with it.
+   *
+   * @returns `false` when no such snapshot exists — nothing to cascade from.
+   */
   async deleteBackup(snapshotId: string): Promise<boolean> {
-    return this.snapshots.delete(snapshotId);
+    if (!this.snapshots.has(snapshotId)) return false;
+    for (const dependentId of dependentsOf(Array.from(this.snapshots.values()), snapshotId)) {
+      this.snapshots.delete(dependentId);
+    }
+    this.snapshots.delete(snapshotId);
+    return true;
   }
 
-  /** @inheritdoc */
+  /**
+   * Restore from a snapshot, refusing chains that cannot be replayed.
+   *
+   * `{ success: true }` for an incremental whose base is gone is the most
+   * expensive lie a backup system can tell: the operator learns the restore
+   * failed only when the data is needed. The chain is walked here and the
+   * missing link is named.
+   */
   async restoreFromSnapshot(snapshotId: string, _options?: RestoreOptions): Promise<RestoreResult> {
-    if (!this.snapshots.has(snapshotId)) {
+    const snapshot = this.snapshots.get(snapshotId);
+    if (snapshot === undefined) {
       return { success: false, error: 'not found', durationMs: 0 };
+    }
+
+    const unrestorable = unrestorableReason(this.snapshots, snapshot);
+    if (unrestorable !== null) {
+      return { success: false, error: unrestorable, durationMs: 0 };
     }
 
     return { success: true, durationMs: 10, recoveryPoint: snapshotId };

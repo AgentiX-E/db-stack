@@ -116,7 +116,7 @@ describe('AC 57 — retention floors survive the byte ceiling', () => {
     expect(ids(evaluator.evaluate(snapshots))).toEqual(['third']);
   });
 
-  it('AC 57.5: incremental snapshots are not count candidates', () => {
+  it('AC 57.5: a parentless incremental counts as a set of its own', () => {
     const evaluator = new RetentionPolicyEvaluator({ maxFullSnapshots: 1, maxTotalBytes: 0 });
 
     const snapshots = [
@@ -125,9 +125,17 @@ describe('AC 57 — retention floors survive the byte ceiling', () => {
       snapshot('inc-3', 3 * DAY_MS, 100, 'incremental'),
     ];
 
-    // maxFullSnapshots counts full snapshots only: the single full is kept, and
-    // incrementals are not silently promoted into its place.
-    expect(evaluator.evaluate(snapshots)).toEqual([]);
+    // None of these names a base, so each is a set of one. The newest set is
+    // kept and the two older ones are removed. Iteration 26 kept every
+    // incremental forever — the semantics P2-12 asked to settle — which left
+    // unrestorable snapshots accumulating until the byte ceiling caught them
+    // (AC 59).
+    expect(
+      evaluator
+        .evaluate(snapshots)
+        .map((s) => s.snapshotId)
+        .sort(),
+    ).toEqual(['inc-2', 'inc-3']);
   });
 
   it('AC 57.6: a snapshot is never listed twice, and bytes already scheduled for deletion are not counted again', () => {
@@ -235,6 +243,22 @@ describe('AC 57 — a duration that cannot be understood is an error', () => {
     for (const bad of ['', 'seven days', 'P1W', 'PT', '1D', 'P-1D', 'P1.5D']) {
       expect(() => parseDurationToMs(bad), bad).toThrow();
     }
+  });
+
+  it('AC 57.12b: the rejection says which field is wrong and what it was given', () => {
+    // A validation error is read by whoever wrote the policy, at deploy time.
+    // Naming the field and quoting the value is the difference between a fix and
+    // a search.
+    expect(
+      () => new RetentionPolicyEvaluator({ maxFullSnapshots: 1, keepRecent: 'seven days', maxTotalBytes: 0 }),
+    ).toThrow(
+      'RetentionPolicy.keepRecent is "seven days", which is not a duration: ' +
+        '"seven days" is not an ISO-8601 duration (P7D, PT1H, P1DT2H) or a plain number of hours',
+    );
+
+    // `PT` looks like a duration and has no component in it; the message says so
+    // rather than repeating the generic grammar complaint.
+    expect(() => parseDurationToMs('PT')).toThrow('"PT" has no duration component');
   });
 
   it('AC 57.13: updateConfig validates the floors it is given', () => {

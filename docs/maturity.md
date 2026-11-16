@@ -132,7 +132,7 @@ because a harness bug produces confident, meaningless acceptance passes.
 | --------------- | ------ | ---------- | --------- | -------- |
 | `cluster`       | 99.34% | 99.34%     | 99.68%    | 98.24%   |
 | `federation`    | 99.19% | 99.19%     | 99.76%    | 98.52%   |
-| `operations`    | 99.42% | 99.42%     | 99.86%    | 98.05%   |
+| `operations`    | 99.42% | 99.42%     | 99.86%    | 98.13%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
 The `e2e` row covers `e2e/harness/support.ts` — process supervision, IPC, port allocation,
@@ -175,7 +175,7 @@ configuration file that looked like a gate and ran nowhere.
 | **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
 | **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
 | **Operations process-level acceptance**                  | Not covered                | Operations packages are verified in-process; there is no run that kills a process mid-backup.                                                                                                      |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 89.75 %, gates at 70, 70 and 86). In operations only two of 21 packages are mutated, because mutation cost grows with the module count and a package-wide run does not fit a runner. The other 19 packages have unit, integration and coverage gates but no mutant measures their assertions. |
+| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 94.81 %, gates at 70, 70 and 86). In operations four of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 17 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
 | **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
 | **Cross-version upgrade path**                           | Not covered                | The wire and snapshot formats are versioned, but no test exercises an N-1 → N upgrade.                                                                                                             |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
@@ -210,12 +210,13 @@ are attached to each run so a regression is visible next to the change that caus
 same suite runs on every pull request as the `benchmark` job in `ci.yml`, because a benchmark
 nobody calls is a benchmark that stays broken.
 
-**How the mutation score is produced.** Four modules are under mutation testing, chosen because
-each decides something expensive to get wrong: durable state
+**How the mutation score is produced.** Six modules are under mutation testing, chosen by one
+rule — *mutate what decides deletion, durability, or when work runs*: durable state
 (`cluster/.../SqliteStorage.ts`), the wire (`federation/.../TcpSecureTransport.ts`), what gets
-deleted (`operations/.../RetentionPolicyEvaluator.ts`) and when a window runs
-(`operations/.../MaintenanceWindowScheduler.ts`). Stryker alters the source one change at a time
-and runs the tests that cover the change; a change no test notices is a behaviour nothing
+deleted (`operations/.../RetentionPolicyEvaluator.ts`), whether a backup can be replayed at all
+(`operations/.../backupChain.ts`, `operations/.../InMemoryBackupManager.ts`) and when a window
+runs (`operations/.../MaintenanceWindowScheduler.ts`). Stryker alters the source one change at a
+time and runs the tests that cover the change; a change no test notices is a behaviour nothing
 constrains. There is one instrument: the three hand-rolled engines the operations package carried
 until iteration 26 are gone, and `check:gates` now fails if a `test:mutation` script is not
 invoked by a workflow.
@@ -224,16 +225,29 @@ invoked by a workflow.
 |---|---|---:|---:|---:|---:|---:|
 | cluster | `SqliteStorage.ts` | 510 | 356–359 (+19 timeout) | 130–133 | **73.8–74.4 %** | break 70 |
 | federation | `TcpSecureTransport.ts` | 260 | 208 (+1 timeout) | 56 (+6 no coverage) | **77.1 %** | break 70 |
-| operations | `RetentionPolicyEvaluator.ts` | 135 | 126 | 9 | **93.3 %** | break 86 |
-| operations | `MaintenanceWindowScheduler.ts` | 714 | 617 (+19 timeout) | 78 | **89.1 %** | break 86 |
+| operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
+| operations | `InMemoryBackupManager.ts` | 94 | 92 (+1 timeout) | 1 | **98.9 %** | break 86 |
+| operations | `RetentionPolicyEvaluator.ts` | 195 | 176 (+2 timeout) | 17 | **91.3 %** | break 86 |
+| operations | `MaintenanceWindowScheduler.ts` | 724 | 667 (+19 timeout) | 38 | **94.8 %** | break 86 |
 
 The operations floor is higher than the other two because the mutated surface is pure decision
 logic with no sockets and no clock of its own: a surviving mutant there is almost always a missing
-assertion rather than a verdict that depends on the machine. The nine survivors left in
-`RetentionPolicyEvaluator.ts` were read one by one and are equivalent or unreachable — an
-`if (snapshots.length === 0)` that changes nothing when removed, a `totalBytes > limit` weakened to
-`>=` that still meets `excess <= 0` on the first iteration, a `toDelete.includes(snap)` that cannot
-be true because the list it checks was built by excluding it.
+assertion rather than a verdict that depends on the machine.
+
+The 18 survivors in the two backup modules were read one by one and every one is equivalent:
+short-circuit masking (`parentId !== undefined && parent !== undefined` — the second test cannot be
+reached), a fallback that reconstructs the same sets (`buildBackupSets` gives every snapshot with no
+base in the inventory a set of its own, so removing the "is a base" branch changes nothing), a final
+sort that makes member order unobservable, an `if (snapshots.length === 0)` whose removal produces
+the same empty answer, a `totalBytes > limit` weakened to `>=` that still meets `excess <= 0` on the
+first iteration, and a `state: 'in-progress'` that no caller can observe because the same method
+sets it to `completed` before returning.
+
+The 38 in the scheduler are not yet classified; 17 of them sit in the cron parser's range guards,
+where the next guard happens to mask the change, and the rest are branches this class cannot reach
+through its own API (`in_progress` is set by the executor, not the scheduler). Classifying them is
+**P2-15** in the roadmap — a survivor is evidence of a gap until someone reads it, and "probably
+equivalent" is not a reading.
 
 A green suite says the assertions pass. It does not say they would fail if the behaviour changed —
 that is what the score adds, and it is why the surviving mutants are listed in the roadmap as work

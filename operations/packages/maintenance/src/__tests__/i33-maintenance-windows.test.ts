@@ -668,6 +668,7 @@ describe('MWN10: Conflict resolution', () => {
         {
           hasConflict: false,
           conflictingWindowIds: [],
+          conflictingSides: [],
           description: '',
           recommendation: 'coexist',
         },

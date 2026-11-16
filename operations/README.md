@@ -1,18 +1,19 @@
 # db-operations — Unified Database Operations Framework
 
-**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 2 291 unit
-tests and 332 integration tests, every coverage dimension at or above 95 %.**
+**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 2 360 unit
+tests and 331 integration tests, every coverage dimension at or above 95 %.**
 
-**Mutation score:** 89.75 % across the two modules whose arithmetic decides what gets deleted
-and when a window runs — `RetentionPolicyEvaluator.ts` 93.33 %,
-`MaintenanceWindowScheduler.ts` 89.08 %, gate at 86. Run it yourself with
+**Mutation score:** 94.81 % across the four modules that decide what gets deleted, whether a
+backup can be restored, and when a maintenance window runs — `backupChain.ts` 100 %,
+`InMemoryBackupManager.ts` 98.94 %, `RetentionPolicyEvaluator.ts` 91.28 %,
+`MaintenanceWindowScheduler.ts` 94.75 %; gate at 86. Run it yourself with
 `pnpm --filter @agentix-e/db-operations run test:mutation`.
 
 Replace ad-hoc `ops/` directories with a canonical interface suite that every database
 engine implements via adapters.
 
 Package: `@agentix-e/db-operations`  
-Version: 1.1.0  
+Version: 1.3.0  
 License: MIT
 
 ---
@@ -113,8 +114,8 @@ architecture that 20 packages deliver as a cohesive whole.
 | [`rollingupgrade`](./packages/rollingupgrade/) | ✅ | 16 | Zero-downtime rolling upgrades |
 | [`slacollector`](./packages/slacollector/) | ✅ | 13 | SLA metric collection and violation detection |
 
-**Total: `pnpm test` reports 113 files and 2 623 tests, 0 failures** (`test:unit`: 94 files /
-2 291; `test:integration`: 19 files / 331). The per-package counts above are the units each
+**Total: `pnpm coverage` reports 117 files and 2 691 tests, 0 failures** (`test:unit`: 98 files /
+2 360; `test:integration`: 19 files / 331). The per-package counts above are the units each
 package contributes.
 
 ---
@@ -192,8 +193,8 @@ packages/monitor/src/
 ## Testing
 
 ```bash
-npm test              # 113 files, 2 623 tests
-npm run test:mutation # Stryker over the two modules whose arithmetic decides deletions
+npm test              # 117 files, 2 691 tests
+npm run test:mutation # Stryker over the four modules that decide deletion, restorability and timing
 npm run bench         # Performance benchmarks
 npm run bench:ycsb    # YCSB-style benchmarks
 npm run typecheck     # TypeScript strict type checking
