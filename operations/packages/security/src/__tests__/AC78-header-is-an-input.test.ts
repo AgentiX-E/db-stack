@@ -94,7 +94,8 @@ describe('AC78.6–78.9: damage after the header is reported as what it is', () 
     const blob = await p.encrypt(Buffer.from('transfer 100'));
 
     const edited = Buffer.from(blob);
-    edited[edited.length - 20] ^= 0xff;
+    const at = edited.length - 20;
+    edited[at] = (edited[at] ?? 0) ^ 0xff;
 
     await expect(p.decrypt(edited)).rejects.toThrow(/^EnvelopeEncryption: AES-GCM decryption failed: /);
   });

@@ -9,6 +9,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "paths": {
+      "@agentix-e/db-operations": ["./src/index.ts"],
       "@agentix-e/db-operations-core": ["./packages/core/src/index.ts"],
       "@agentix-e/db-operations-core/*": ["./packages/core/src/*"],
       "@agentix-e/db-operations-audit": ["./packages/audit/src/index.ts"],

@@ -146,7 +146,10 @@ explicit goal of each iteration (see the audit reports in the companion reposito
 
 ### 4.1 The suite is compiled too
 
-Vitest strips types with esbuild; it does not check them. For a long time that meant the
+Vitest strips types with esbuild; it does not check them. Iteration 32 re-learned why the separate
+`typecheck:tests` job exists: a case written after the last local run of it compiled under vitest and
+failed under `tsc` (`noUncheckedIndexedAccess` on a `Buffer` index). CI's `Typecheck (operations)` job
+was the only gate that saw it, and it saw it on the first push. For a long time that meant the
 test trees were the only unverified code in the repository — and they drifted. When
 `pnpm typecheck:tests` was finally wired up it reported **1 192 errors in three test trees**
 (cluster 297, federation 317, operations 578), and a large share of them were not cosmetic:

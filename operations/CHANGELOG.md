@@ -35,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deployment can wrap it instead of reimplementing gzip handling.
 - **`AES256GCMEncryptionProvider.zeroize()`** — a cipher that holds a master key forever with no way
   to drop it cannot be shut down cleanly.
+- **The production implementations are now on the package surface.** `KeyManager`,
+  `AES256GCMEncryptionProvider`, `EnvelopeEncryptionProvider`, `KeyRotationManager`, `RotationAuditor`,
+  `AuditLogManager` and `RBACEngine` — plus the four bound constants and their configuration types —
+  are exported from `@agentix-e/db-operations-security`, and the audit package also exports
+  `FileAuditStoreConfig`, `FileIdentity`, `segmentPattern`, `readableSegmentsNewestFirst` and
+  `newestOpenSegment`.
+- **`tsconfig.json` maps `@agentix-e/db-operations`** to the umbrella barrel, so a test can import the
+  package a consumer is told to depend on.
 
 ### Fixed
 
@@ -68,6 +76,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`EnvelopeEncryptionProvider.decrypt()` answered four kinds of damage with one unasserted
   failure.** A damaged header, an edited payload, a foreign key and a mismatched context each have a
   distinct message now, and each message is asserted. AC 78.1–78.9.
+- **The security package exported its fixtures and not its implementations.** `index.ts` listed the
+  seven in-memory providers and nothing else, so every import in the guide's "Encryption at rest" and
+  "Audit trail" sections — `KeyManager`, `EnvelopeEncryptionProvider`, `KeyRotationManager`,
+  `AuditLogManager`, `RotationAuditor` — resolved to `undefined` for a real consumer. The suites never
+  noticed because they import `../impl/KeyManager.js` directly, which is the right way to test a
+  module and the wrong way to find out whether a package has a surface. AC 79.1–79.7 imports by the
+  documented package names and fails if any name is missing.
+- **A test file typed as CI-only.** AC 78's tamper case indexed a `Buffer` under
+  `noUncheckedIndexedAccess`, which the local `typecheck:tests` run had not seen because it happened
+  before that file existed: CI's `Typecheck (operations)` job found it (run 43906849171). Fixed in the
+  follow-up commit rather than by relaxing the option.
 - **`i29-audit-logging-edges` wrote `audit.jsonl` into the repository** when its default-path case ran
   under the mutation runner (161 entries per run, and a dirty tree for every gate after it). The case
   reads the default off a manager it never destroys and proves the path on one it cleans up. AC 77.4
