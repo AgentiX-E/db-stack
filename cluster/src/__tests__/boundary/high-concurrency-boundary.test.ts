@@ -12,30 +12,30 @@
  *
  * Acceptance:
  *   - All proposals eventually commit (failures < 5%)
- *   - No resource exhaustion (heap growth < 350MB over the run)
+ *   - Retained heap growth stays within `retainedGrowthBudgetMB(proposals)`
  *   - All peers reachable at end
  *
  * On the heap budget
  * ------------------
- * `process.memoryUsage().heapUsed` reports what V8 has allocated and not yet
- * collected, so the delta across a run depends on when the collector happened to
- * run rather than only on what the cluster retains. The three bounds that used to
- * be here — 100 MB for the heaviest case, 200 for the two middle ones, 300 for the
- * lightest — were guesses in the wrong order, and the tightest one was attached to
- * 10 000 proposals; it failed on a runner at 111.6 MB (run 43909923898) with
- * nothing wrong in the product. There is now one budget, taken from this file's
- * own acceptance criterion, and it is the same for every case. Measuring *retained*
- * heap needs a forced collection (`--expose-gc` in the worker), which is registered
- * as P3-6 rather than imitated with a tighter number.
+ * The cases measure `retainedHeapMB()` — `heapUsed` after a forced collection —
+ * so a growth number is what the cluster still holds, not what the collector had
+ * not got to yet. Before that, the bounds here were 100, 200, 300 and 200 MB in
+ * the order 10 000, 5 000, 2 000 and 1 000 proposals: four guesses about GC
+ * timing, the tightest attached to the heaviest case, and it failed on a runner
+ * at 111.6 MB (CI run 43909923898) with nothing wrong in the product.
+ *
+ * Retention at these volumes is small and scales with the work: 5.7 MB over
+ * 10 000 proposals, 2.9 over 5 000, 0.9 over 800, 1.2 over 1 000 — about 0.6 KB
+ * per proposal. The budget is therefore not a constant but the same property
+ * applied to each case's own volume, `8 MB + 2 KB per proposal`, which leaves
+ * roughly four times the observed cost and still fails a case that leaks.
  */
 
 import { describe, it, expect } from 'vitest';
 import { TestCluster } from '../../__tests__/integration/TestCluster';
+import { retainedGrowthBudgetMB, retainedHeapMB } from '../support/retainedHeap';
 
 const HC_TIMEOUT = 600_000; // 10 min per test
-
-/** Heap growth budget for one case, in MB. See "On the heap budget" above. */
-const HEAP_BUDGET_MB = 350;
 
 describe(
   'Boundary: High Concurrency',
@@ -91,10 +91,10 @@ describe(
       'HC.1: 10 concurrent proposers, 1,000 entries each',
       async () => {
         await withCluster(async (cluster) => {
-          const startHeap = process.memoryUsage().heapUsed;
+          const startHeap = retainedHeapMB();
           const result = await concurrentPropose(cluster, 10, 1_000, 'hc1');
-          const endHeap = process.memoryUsage().heapUsed;
-          const heapGrowthMB = (endHeap - startHeap) / 1024 / 1024;
+          const endHeap = retainedHeapMB();
+          const heapGrowthMB = endHeap - startHeap;
 
           console.log(
             `[HC.1] ${result.totalOps} ops (${result.failures} fail) in ${result.elapsedMs}ms ` +
@@ -106,7 +106,7 @@ describe(
           // due to leader re-election — allow < 5% failure rate
           const failRate = result.failures / Math.max(result.totalOps, 1);
           expect(failRate).toBeLessThan(0.05);
-          expect(heapGrowthMB).toBeLessThan(HEAP_BUDGET_MB);
+          expect(heapGrowthMB).toBeLessThan(retainedGrowthBudgetMB(10_000));
         });
       },
       HC_TIMEOUT,
@@ -118,7 +118,7 @@ describe(
         await withCluster(async (cluster) => {
           const leader = await cluster.findLeader();
           const start = Date.now();
-          const startHeap = process.memoryUsage().heapUsed;
+          const startHeap = retainedHeapMB();
           const TOTAL = 5_000;
           const BATCH = 16;
           let successes = 0;
@@ -143,8 +143,8 @@ describe(
           }
 
           const elapsed = Date.now() - start;
-          const endHeap = process.memoryUsage().heapUsed;
-          const heapGrowthMB = (endHeap - startHeap) / 1024 / 1024;
+          const endHeap = retainedHeapMB();
+          const heapGrowthMB = endHeap - startHeap;
           const totalOps = successes + failures;
 
           console.log(
@@ -157,7 +157,7 @@ describe(
           // 5K proposals batched 16-way — constrained by AppendEntries RPC
           // timeout (1s in @maboke123/raft-core). Expect > 90% success.
           expect(successes).toBeGreaterThan(4_500);
-          expect(heapGrowthMB).toBeLessThan(HEAP_BUDGET_MB);
+          expect(heapGrowthMB).toBeLessThan(retainedGrowthBudgetMB(TOTAL));
           // Must finish within 5 minutes
           expect(elapsed).toBeLessThan(300_000);
         });
@@ -169,10 +169,10 @@ describe(
       'HC.3: 16 concurrent proposers, 50 entries each',
       async () => {
         await withCluster(async (cluster) => {
-          const startHeap = process.memoryUsage().heapUsed;
+          const startHeap = retainedHeapMB();
           const result = await concurrentPropose(cluster, 16, 50, 'hc3');
-          const endHeap = process.memoryUsage().heapUsed;
-          const heapGrowthMB = (endHeap - startHeap) / 1024 / 1024;
+          const endHeap = retainedHeapMB();
+          const heapGrowthMB = endHeap - startHeap;
 
           console.log(
             `[HC.3] ${result.totalOps} ops (${result.failures} fail) in ${result.elapsedMs}ms ` +
@@ -186,7 +186,7 @@ describe(
           // follower RPCs. 16 concurrent strikes balance.
           // Expect > 90% proposal success.
           expect(result.failures).toBeLessThan(80);
-          expect(heapGrowthMB).toBeLessThan(HEAP_BUDGET_MB);
+          expect(heapGrowthMB).toBeLessThan(retainedGrowthBudgetMB(800));
           // Must finish within 5 minutes
           expect(result.elapsedMs).toBeLessThan(300_000);
         });
@@ -203,7 +203,7 @@ describe(
         // practical max before AppendEntries RPCs (1s default timeout in
         // @maboke123/raft-core) start failing to followers.
         const start = Date.now();
-        const startHeap = process.memoryUsage().heapUsed;
+        const startHeap = retainedHeapMB();
         const BATCH_SIZE = 16;
         let successes = 0;
         let failures = 0;
@@ -227,8 +227,8 @@ describe(
         }
 
         const elapsed = Date.now() - start;
-        const endHeap = process.memoryUsage().heapUsed;
-        const heapGrowthMB = (endHeap - startHeap) / 1024 / 1024;
+        const endHeap = retainedHeapMB();
+        const heapGrowthMB = endHeap - startHeap;
 
         console.log(
           `[HC.4] 1,000 burst proposals (16-way): ${successes} ok / ${failures} fail ` +
@@ -236,7 +236,7 @@ describe(
         );
         // 16 concurrent hits the sweet spot below RPC timeout ceiling
         expect(successes).toBeGreaterThan(900);
-        expect(heapGrowthMB).toBeLessThan(HEAP_BUDGET_MB);
+        expect(heapGrowthMB).toBeLessThan(retainedGrowthBudgetMB(1_000));
       });
     });
   },

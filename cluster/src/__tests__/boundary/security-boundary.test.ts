@@ -19,6 +19,8 @@
 
 import { describe, it, expect } from 'vitest';
 
+import { retainedHeapMB } from '../support/retainedHeap';
+
 const SEC_TIMEOUT = 120_000;
 
 describe('Boundary: Security (SEC)', () => {
@@ -102,7 +104,7 @@ describe('Boundary: Security (SEC)', () => {
       };
 
       // 1,000 register cycles (same peer, no net growth)
-      const startHeap = process.memoryUsage().heapUsed;
+      const startHeap = retainedHeapMB();
       for (let i = 0; i < 1_000; i++) {
         transport.register({
           id: 99902,
@@ -110,8 +112,8 @@ describe('Boundary: Security (SEC)', () => {
           port: 29990,
         });
       }
-      const endHeap = process.memoryUsage().heapUsed;
-      const heapDeltaMB = (endHeap - startHeap) / 1024 / 1024;
+      const endHeap = retainedHeapMB();
+      const heapDeltaMB = endHeap - startHeap;
       const pendingSize = priv._pendingMessages?.size ?? 0;
       const reconSize = priv._outstandingReconnects?.size ?? 0;
 
@@ -121,7 +123,10 @@ describe('Boundary: Security (SEC)', () => {
       );
 
       // Registering the same peer 1,000 times should NOT grow memory
-      // (it overwrites, not duplicates)
+      // (it overwrites, not duplicates). The bound is absolute rather than
+      // scaled to the case because the case writes nothing: 1,000 registers of
+      // one peer must retain the maps' own bookkeeping and no more, so a leak
+      // of one entry per cycle shows up here as megabytes.
       expect(heapDeltaMB).toBeLessThan(5);
     },
     SEC_TIMEOUT,

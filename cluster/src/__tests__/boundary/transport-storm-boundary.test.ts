@@ -16,12 +16,15 @@
  * Acceptance:
  *   - No unhandled TypeError (null-deref on pool/tryGetConnection)
  *   - No infinite _pendingMessages growth
+ *   - Retained heap growth over 1,000 proposals within
+ *     `retainedGrowthBudgetMB(1_000)` (10 MB; the case retains 1.8 MB)
  *   - All proposals eventually either commit or return a non-null error
  *   - Transport stop() completes within 5s
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { TestCluster } from '../../__tests__/integration/TestCluster';
+import { retainedGrowthBudgetMB, retainedHeapMB } from '../support/retainedHeap';
 
 const TS_TIMEOUT = 300_000;
 const BATCH_SIZE = 16;
@@ -44,7 +47,7 @@ describe('Boundary: Transport Storm (A1)', () => {
       await withCluster(async (cluster) => {
         const leader = await cluster.findLeader();
         const start = Date.now();
-        const startHeap = process.memoryUsage().heapUsed;
+        const startHeap = retainedHeapMB();
         let successes = 0;
         let failures = 0;
         const TOTAL = 1_000;
@@ -69,8 +72,8 @@ describe('Boundary: Transport Storm (A1)', () => {
         }
 
         const elapsed = Date.now() - start;
-        const endHeap = process.memoryUsage().heapUsed;
-        const heapGrowthMB = (endHeap - startHeap) / 1024 / 1024;
+        const endHeap = retainedHeapMB();
+        const heapGrowthMB = endHeap - startHeap;
 
         console.log(
           `[TS.1] 1,000 proposals: ${successes} ok / ${failures} fail ` +
@@ -78,7 +81,7 @@ describe('Boundary: Transport Storm (A1)', () => {
         );
 
         expect(successes).toBeGreaterThan(900);
-        expect(heapGrowthMB).toBeLessThan(200);
+        expect(heapGrowthMB).toBeLessThan(retainedGrowthBudgetMB(TOTAL));
         expect(elapsed).toBeLessThan(120_000);
       });
     },

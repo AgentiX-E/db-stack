@@ -82,9 +82,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test that removes a path at or above the shared scratch root broke `mkdtempSync` for every
   later test on the same worker, reported as an ENOENT in an unrelated file. The setups
   re-assert the root before each test; a healthy root costs one `existsSync`.
+- **`src/__tests__/support/retainedHeap.ts`** — `retainedHeapMB()`, heap after a
+  forced collection, and `retainedGrowthBudgetMB(proposals)`, a growth budget scaled to the
+  work a case asks for. A `heapUsed` delta is a statement about GC timing, not about what a
+  workload keeps: `--expose-gc` cannot be passed to a worker thread
+  (`ERR_WORKER_INVALID_EXEC_ARGV`) and the boundary suites run in vitest's `threads` pool, so
+  the flag is set on the isolate at runtime and the collector taken from a fresh context. The
+  same 96 MB of dropped allocation that a `heapUsed` delta reports as **117.7 MB** is **under
+  8 MB** through this function, which is the difference between "the cluster is filling the
+  heap" and "the collector had not run yet".
 
 ### Changed
 
+- **The boundary suites assert retention, not allocation, and each case carries a budget
+  derived from its own volume.** The heap bounds were 100, 200, 300 and 200 MB against cases of
+  10 000, 5 000, 2 000 and 1 000 proposals — the tightest attached to the heaviest, and it
+  failed on a runner at 111.6 MB (CI run 43909923898) with nothing wrong in the product.
+  Measured retention is 5.7 MB over 10 000 proposals, 2.9 over 5 000, 0.9 over 800 and 1.2 over
+  1 000 (~0.6 KB per proposal), so the bound is now `8 MB + 2 KB per proposal` for every case:
+  the same property at every volume, about four times the observed cost, and a case that leaks
+  fails instead of a case that ran on a slower machine.
 - **`DEFAULT_SNAPSHOT_INTERVAL` is 200, and it is the threshold that reaches
   raft-core.** The adapter forwarded `this.config.snapshotInterval` and dropped the
   default on the floor, so an unset interval meant "raft-core's own number" — 200 —

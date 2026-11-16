@@ -21,11 +21,13 @@
  *   - Snapshot files exist and are non-empty
  *   - Log file size is bounded (not growing unbounded with each cycle)
  *   - No crashes, no split-brain, no leader election flapping
- *   - Heap growth < 50MB per test
+ *   - Retained heap growth within `retainedGrowthBudgetMB(entries written)`
+ *     (66 MB at BC.2's 30 000 entries; the case retains 9.8 MB)
  */
 
 import { describe, it, expect } from 'vitest';
 import { TestCluster } from '../../__tests__/integration/TestCluster';
+import { retainedGrowthBudgetMB, retainedHeapMB } from '../support/retainedHeap';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -93,20 +95,20 @@ describe('Boundary: Raft Log Compaction', () => {
     async () => {
       await withCluster(async (cluster) => {
         const leader = await cluster.findLeader();
-        const startHeap = process.memoryUsage().heapUsed;
+        const startHeap = retainedHeapMB();
 
         for (let i = 0; i < 30_000; i++) {
           await leader.adapter.proposeAndWait(`bc2-${i}`);
           if (i % 5_000 === 0) {
-            const heap = process.memoryUsage().heapUsed / 1024 / 1024;
+            const heap = retainedHeapMB();
             console.log(`[BC.2] ${i}/30000 — heap: ${heap.toFixed(1)}MB`);
           }
         }
 
-        const endHeap = process.memoryUsage().heapUsed;
-        const heapGrowth = (endHeap - startHeap) / 1024 / 1024;
+        const endHeap = retainedHeapMB();
+        const heapGrowth = endHeap - startHeap;
         console.log(`[BC.2] Heap growth over 30k entries: ${heapGrowth.toFixed(1)}MB`);
-        expect(heapGrowth).toBeLessThan(100);
+        expect(heapGrowth).toBeLessThan(retainedGrowthBudgetMB(30_000));
       });
     },
     CYCLE_TIMEOUT * 2,
