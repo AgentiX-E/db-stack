@@ -54,6 +54,37 @@ export interface ComplianceReport {
 
 const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
+/** One year in ms — the PCI-DSS 3.6 rotation window. */
+const YEAR_MS = 365 * 24 * 3600 * 1000;
+
+/**
+ * Copy an event so the trail owns its content.
+ *
+ * Through JSON on purpose: entry hashes cover `JSON.stringify(event)`, so the
+ * object that is hashed has to serialise exactly like the original, including key
+ * order. A structural clone would be a different shape of the same fact.
+ */
+function cloneEvent(event: RotationEvent): RotationEvent {
+  return JSON.parse(JSON.stringify(event)) as RotationEvent;
+}
+
+/**
+ * Why an event cannot be evidence, or `null` when it can.
+ *
+ * These are the invariants the rotation manager itself holds (see
+ * `IKeyRotationManager`): `success` and `error` are complements, a successful
+ * rotation has finished, and it moved the version it claims to have moved.
+ */
+function contradictionIn(event: RotationEvent): string | null {
+  if (event.success && event.error !== null) return `success with error "${event.error}"`;
+  if (!event.success && event.error === null) return 'failure with no error';
+  if (event.success && event.completedAt === null) return 'success with no completion time';
+  if (event.success && event.toVersion <= event.fromVersion) {
+    return `success from v${event.fromVersion} to v${event.toVersion}`;
+  }
+  return null;
+}
+
 // ── RotationAuditor ────────────────────────────────────────
 
 export class RotationAuditor {
@@ -65,14 +96,30 @@ export class RotationAuditor {
   /**
    * Record a rotation event in the audit trail.
    * Each entry is chained to the previous via SHA-256 hash.
+   *
+   * The event is **copied**, not referenced: an auditor that stored the caller's
+   * object could be rewritten after the fact by the caller, and `verify()` would
+   * then report tampering on a trail nobody had touched. The copy is made through
+   * JSON because the hash covers `JSON.stringify(event)` — the bytes hashed here
+   * have to be the bytes an export writes.
+   *
+   * A rotation event that describes two outcomes at once is refused, and refusing
+   * consumes no sequence number: an event with `success: true` and an `error` is a
+   * producer bug, not evidence, and admitting it would put a contradiction into
+   * the compliance report as a success.
    */
   record(event: RotationEvent): AuditEntry {
+    const contradiction = contradictionIn(event);
+    if (contradiction !== null) {
+      throw new Error(`rotation event ${event.id} contradicts itself: ${contradiction}`);
+    }
+
     this.seqCounter++;
     const prevHash = this.entries.length > 0 ? this.entries[this.entries.length - 1]!.hash : GENESIS_HASH;
 
     const entry: AuditEntry = {
       seq: this.seqCounter,
-      event,
+      event: cloneEvent(event),
       prevHash,
       hash: '', // Computed below
       recordedAt: Date.now(),
@@ -96,8 +143,14 @@ export class RotationAuditor {
     return this.entries.filter((e) => e.event.policyId === policyId);
   }
 
-  /** Get the last N entries. */
+  /**
+   * Get the last N entries.
+   *
+   * `0` and negative counts return nothing. `slice(-0)` is `slice(0)`, so the
+   * guard is what stops "the last zero entries" from returning every entry.
+   */
   recent(n: number): AuditEntry[] {
+    if (n <= 0) return [];
     return this.entries.slice(-n);
   }
 
@@ -140,10 +193,12 @@ export class RotationAuditor {
     for (let i = 0; i < this.entries.length; i++) {
       const entry = this.entries[i]!;
 
-      // Check sequence continuity
+      // Check sequence continuity. No `chainBroken = true` here on purpose: `seq`
+      // is part of the hashed content, so a gap cannot occur without that entry's
+      // hash check failing too — and that check is what marks the chain broken. The
+      // assignment used to sit here and could not change the result.
       if (entry.seq !== i + 1) {
         errors.push(`seq gap at index ${i}: expected ${i + 1}, got ${entry.seq}`);
-        chainBroken = true;
       }
 
       // Check chain hash
@@ -183,6 +238,10 @@ export class RotationAuditor {
 
   /**
    * Generate a compliance report for a given framework.
+   *
+   * A framework with no checks behind it cannot pass. The `switch` used to end at
+   * HIPAA, so `generateReport('SOX')` returned `pass: true` with no findings —
+   * the caller read assurance where nothing had run.
    */
   generateReport(framework: string): ComplianceReport {
     const events = this.entries.map((e) => e.event);
@@ -192,13 +251,15 @@ export class RotationAuditor {
     const timeBased = events.filter((e) => e.trigger.kind === 'time' || e.trigger.kind === 'schedule');
     const countBased = events.filter((e) => e.trigger.kind === 'count');
 
-    // Average interval between rotations
-    let averageIntervalMs = 0;
-    const sorted = [...successful].sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
-    if (sorted.length >= 2) {
-      const totalInterval = (sorted[sorted.length - 1]!.completedAt ?? 0) - (sorted[0]!.completedAt ?? 0);
-      averageIntervalMs = totalInterval / (sorted.length - 1);
-    }
+    // Every successful rotation carries a completion time: `record()` and
+    // `importJSONL()` both refuse one that does not. So the oldest key still in
+    // service is the earliest completion, and the interval arithmetic needs no
+    // placeholder — a `?? 0` here would have reported a 1970 key as the oldest.
+    const completed = [...successful].sort((a, b) => a.completedAt! - b.completedAt!);
+    const firstCompletedAt = completed.length > 0 ? completed[0]!.completedAt! : null;
+    const lastCompletedAt = completed.length > 0 ? completed[completed.length - 1]!.completedAt! : null;
+    const spanMs = firstCompletedAt !== null && lastCompletedAt !== null ? lastCompletedAt - firstCompletedAt : 0;
+    const averageIntervalMs = completed.length >= 2 ? spanMs / (completed.length - 1) : 0;
 
     const findings: string[] = [];
     let pass = true;
@@ -207,17 +268,13 @@ export class RotationAuditor {
     switch (framework.toUpperCase()) {
       case 'PCI-DSS': {
         // PCI-DSS 3.6: keys retired at least annually
-        if (sorted.length > 0) {
-          const firstRot = sorted[0]!.completedAt ?? sorted[0]!.startedAt;
-          const lastRot = sorted[sorted.length - 1]!.completedAt ?? sorted[sorted.length - 1]!.startedAt;
-          const spanMs = lastRot - firstRot;
-          if (spanMs > 365 * 24 * 3600 * 1000) {
-            findings.push('PCI-DSS 3.6.4: key rotation interval may exceed 1 year');
-            pass = false;
-          }
-        }
-        if (sorted.length === 0) {
+        if (completed.length === 0) {
           findings.push('PCI-DSS 3.6: no key rotations recorded — keys must be rotated at least annually');
+          pass = false;
+          break;
+        }
+        if (spanMs > YEAR_MS) {
+          findings.push('PCI-DSS 3.6.4: key rotation interval may exceed 1 year');
           pass = false;
         }
         break;
@@ -241,6 +298,10 @@ export class RotationAuditor {
         }
         break;
       }
+      default: {
+        findings.push(`compliance framework "${framework}" is not supported: no checks were applied`);
+        pass = false;
+      }
     }
 
     return {
@@ -253,7 +314,9 @@ export class RotationAuditor {
       timeBasedRotations: timeBased.length,
       countBasedRotations: countBased.length,
       averageIntervalMs,
-      oldestActiveKeyCreatedAt: events.length > 0 ? events[0]!.startedAt : null,
+      // The oldest key still in service: the completion of the earliest successful
+      // rotation. A failed rotation created no key, so it cannot date one.
+      oldestActiveKeyCreatedAt: firstCompletedAt,
       findings,
       pass,
     };
@@ -268,17 +331,62 @@ export class RotationAuditor {
 
   /**
    * Import audit trail from JSONL.
+   *
+   * This is a **verification**, not a copy. Every line is checked against the line
+   * before it — sequence number, `prevHash` linkage, the entry's own hash, and the
+   * coherence of the event it carries — before any of it becomes this auditor's
+   * trail. The old implementation pushed entries while parsing, so a malformed line
+   * left the trail half imported, and a forged line was accepted outright and then
+   * used as the parent of the next real rotation.
+   *
+   * A chain has one genesis: importing into a non-empty trail would splice two
+   * chains together with duplicate sequence numbers, so it is refused.
    */
   importJSONL(jsonl: string): number {
-    const lines = jsonl.split('\n').filter((line) => line.trim());
-    for (const line of lines) {
-      const entry = JSON.parse(line) as AuditEntry;
-      this.entries.push(entry);
-      if (entry.seq > this.seqCounter) {
-        this.seqCounter = entry.seq;
-      }
+    if (this.entries.length > 0) {
+      throw new Error(`audit import requires an empty trail: ${this.entries.length} entries already recorded`);
     }
-    return lines.length;
+
+    const lines = jsonl.split('\n').filter((line) => line.trim());
+    const imported: AuditEntry[] = [];
+    let prevHash = GENESIS_HASH;
+
+    for (let i = 0; i < lines.length; i++) {
+      const lineNumber = i + 1;
+      let entry: AuditEntry;
+      try {
+        entry = JSON.parse(lines[i]!) as AuditEntry;
+      } catch {
+        throw new Error(`audit import rejected at line ${lineNumber}: not JSON`);
+      }
+
+      const expectedSeq = imported.length + 1;
+      if (entry.seq !== expectedSeq) {
+        throw new Error(`audit import rejected at line ${lineNumber}: expected seq ${expectedSeq}, got ${entry.seq}`);
+      }
+      if (entry.prevHash !== prevHash) {
+        throw new Error(
+          `audit import rejected at line ${lineNumber}: prevHash does not chain onto seq ${expectedSeq - 1}`,
+        );
+      }
+      const contradiction = contradictionIn(entry.event);
+      if (contradiction !== null) {
+        throw new Error(`audit import rejected at line ${lineNumber}: event contradicts itself: ${contradiction}`);
+      }
+      if (this._hashEntry(entry) !== entry.hash) {
+        throw new Error(
+          `audit import rejected at line ${lineNumber}: hash mismatch — the line changed after it was hashed`,
+        );
+      }
+
+      const verified: AuditEntry = { ...entry, event: cloneEvent(entry.event) };
+      imported.push(verified);
+      prevHash = verified.hash;
+    }
+
+    this.entries = imported;
+    this.seqCounter = imported.length;
+    return imported.length;
   }
 
   /**

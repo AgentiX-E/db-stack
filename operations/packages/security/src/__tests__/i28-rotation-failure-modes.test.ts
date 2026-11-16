@@ -427,16 +427,16 @@ describe('RotationAuditor — compliance windows', () => {
     expect(report.pass).toBe(true);
   });
 
-  it('treats a successful rotation without a completion time as a zero-length interval', () => {
+  it('refuses a successful rotation that never reported a completion time', () => {
+    // This case used to assert the opposite — that such an event was recorded and
+    // its interval counted as zero. It was the defect written down as a contract:
+    // `completedAt ?? 0` dated the rotation to 1970, so two rotations that never
+    // finished produced a "0 ms interval" and a passing compliance window built on
+    // an event that said it succeeded and never said it ended.
     const auditor = new RotationAuditor();
     const startedAt = Date.UTC(2026, 0, 1);
-    auditor.record(makeEvent({ success: true, startedAt, completedAt: null }));
-    auditor.record(makeEvent({ success: true, startedAt, completedAt: null }));
 
-    const report = auditor.generateReport('PCI-DSS');
-
-    expect(report.averageIntervalMs).toBe(0);
-    expect(report.pass).toBe(true);
-    expect(report.findings).toEqual([]);
+    expect(() => auditor.record(makeEvent({ success: true, startedAt, completedAt: null }))).toThrow(/contradicts/);
+    expect(auditor.count).toBe(0);
   });
 });

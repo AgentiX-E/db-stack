@@ -175,7 +175,7 @@ configuration file that looked like a gate and ran nowhere.
 | **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
 | **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
 | **Operations process-level acceptance**                  | Not covered                | Operations packages are verified in-process; there is no run that kills a process mid-backup.                                                                                                      |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 98.86 %, gates at 70, 70 and 86). In operations seven of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 14 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
+| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 98.18 %, gates at 70, 70 and 86). In operations nine of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 12 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
 | **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
 | **Cross-version upgrade path**                           | Not covered                | The wire and snapshot formats are versioned, but no test exercises an N-1 → N upgrade.                                                                                                             |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
@@ -210,15 +210,17 @@ are attached to each run so a regression is visible next to the change that caus
 same suite runs on every pull request as the `benchmark` job in `ci.yml`, because a benchmark
 nobody calls is a benchmark that stays broken.
 
-**How the mutation score is produced.** Nine modules are under mutation testing, chosen by one
+**How the mutation score is produced.** Eleven modules are under mutation testing, chosen by one
 rule — *mutate what decides deletion, durability, or when work runs*: durable state
 (`cluster/.../SqliteStorage.ts`), the wire (`federation/.../TcpSecureTransport.ts`), what gets
 deleted (`operations/.../RetentionPolicyEvaluator.ts`, `operations/.../FileAuditStore.ts`), whether
 a backup can be replayed at all (`operations/.../backupChain.ts`,
 `operations/.../InMemoryBackupManager.ts`), which key material survives a rotation
 (`operations/.../KeyRotationManager.ts`), when a window runs
-(`operations/.../MaintenanceWindowScheduler.ts`) and what time it runs at
-(`operations/.../cron.ts`). Stryker alters the source one change at a
+(`operations/.../MaintenanceWindowScheduler.ts`), what time it runs at
+(`operations/.../cron.ts`), whether a compliance window passed
+(`operations/.../RotationAuditor.ts`) and whether evidence is tamper-evident
+(`operations/.../AuditLogManager.ts`). Stryker alters the source one change at a
 time and runs the tests that cover the change; a change no test notices is a behaviour nothing
 constrains. There is one instrument: the three hand-rolled engines the operations package carried
 until iteration 26 are gone, and `check:gates` now fails if a `test:mutation` script is not
@@ -235,11 +237,14 @@ invoked by a workflow.
 | operations | `MaintenanceWindowScheduler.ts` | 621 | 602 (+13 timeout) | 6 | **99.0 %** | break 86 |
 | operations | `FileAuditStore.ts` | 304 | 288 (+7 timeout) | 9 | **97.0 %** | break 86 |
 | operations | `KeyRotationManager.ts` | 238 | 233 (+3 timeout) | 2 | **99.2 %** | break 86 |
+| operations | `RotationAuditor.ts` | 282 | 275 | 7 | **97.5 %** | break 86 |
+| operations | `AuditLogManager.ts` | 337 | 320 (+2 timeout) | 13 (+2 no coverage) | **95.6 %** | break 86 |
 
-Operations overall: 1 584 mutants, 98.86 %. The score is 0.5 points below iteration 28's 99.33 %
-because two harder modules joined: a file store whose behaviour depends on a filesystem, and a
-rotation manager whose failure modes are a KMS deciding not to answer. The number to compare is
-the survivor count, which doubled only because the surface doubled.
+Operations overall: 2 203 judged mutants, 98.18 %. The score is 0.68 points below iteration 29's
+98.86 % because the two hardest modules in the package joined: one behaves differently depending on
+what the filesystem says, the other is a hash chain whose interesting failures are the ones an
+attacker causes. The number to compare is the survivor count — 38, of which 24 are equivalent for a
+stated reason and 4 are killed by the suite when the mutation is applied by hand.
 
 The operations floor is higher than the other two because the mutated surface is pure decision
 logic with no sockets and no clock of its own: a surviving mutant there is almost always a missing
@@ -263,20 +268,41 @@ The survivors were read one by one, and every one of the seven is equivalent:
 | `FileAuditStore` | `if (array === null) continue` for a legacy `.json` segment | without it, `JSON.parse(null)` yields `null`, `for … of null` throws, and the `catch` on the next line skips the file — the same outcome by a longer route |
 | `FileAuditStore` | `'.tmp'` appended to the temp path → `''` | writing the full content straight onto the segment produces the same bytes; only a crash *between* the write and the rename could tell the two apart, and a test process does not crash |
 | `FileAuditStore` | `open`/`fsync`/`close` in the durable-write block, and the `try` around them | these are the durability recipe: `fsync` before `rename` is what survives a power loss. No in-process assertion can observe a power loss, which is why the block is registered as P2-19 rather than claimed as covered |
+| `RotationAuditor` | `hash: ''` placeholder → any string | the placeholder is overwritten by `_hashEntry` before the entry is stored, and `hash` is not part of the hashed content |
+| `RotationAuditor` | `firstCompletedAt !== null && lastCompletedAt !== null` → `\|\|`, or → `true` (three mutants) | both are derived from the same list, so they are null together and non-null together; with neither, `null - null` is `0`, which is what the ternary returns |
+| `RotationAuditor` | the `\|` separator in `_hashEntry` → `''` | the separator is a free choice: any fixed string produces the same chain. Only a deliberate concatenation collision could tell them apart, and `seq` is a number between two fixed-width fields |
+| `AuditLogManager` | `'utf-8'` in `createHash().update()` and in `appendFileSync` → `''` (two mutants) | `''` is falsy, so Node falls back to the same default encoding |
+| `AuditLogManager` | `sortBy ?? 'timestamp'` → `''`, `sortDir ?? 'asc'` → `''` | the default only matters when the field is absent, and `''` matches none of the other branches, so it takes the same `timestamp` / `cmp` path |
+| `AuditLogManager` | `a.seq - b.seq` → `a.seq + b.seq` | the event log is append-only, so it is always already in sequence order; a comparator that returns a consistent positive sign cannot reorder it, in either direction |
+| `AuditLogManager` | `if (limit <= 0) return []` → `limit < 0` | for `limit === 0` the `slice` below returns the same empty array |
+| `AuditLogManager` | `events.length - drop > maxEvents` → `>=` | the assignment that follows sets `drop` to `events.length - maxEvents`, which at equality is the value it already has |
+| `AuditLogManager` | `if (this.flushTimer)` in `destroy()` → `true` | `clearInterval(null)` is a no-op and the field is nulled either way |
 
-One survivor is **not** equivalent and is not a missing assertion either: the
-`unlinkIfUnchanged` identity comparison is reported as surviving by the runner, while the same
-mutation makes two tests fail when the four audit suites are run against it directly (`AC 52.13`
-and `AC 67.31`). One of the two is wrong, and the runner is the suspect — it attributes the mutant
-to tests whose coverage of the line it under-counts. Registered as **P2-18**; until it is
-understood, the score above is the conservative one.
+**Five survivors are not equivalent and are not missing assertions either.** They are mutants the
+suite kills when the change is applied by hand, which the runner reports as surviving because it
+judges a mutant with only the tests it attributes to that statement. The first was found in
+iteration 29 (`unlinkIfUnchanged`, AC 52.13 and AC 67.31); iteration 30 found four more in
+`AuditLogManager`, each by applying the change and running the 843-case mutation suite:
 
-Reading them was worth doing rather than assuming: the same exercise in iteration 27 turned 38
-survivors into 11 assertions and two defects, and this iteration turned 45 into three defects
-(`in_progress` was unreachable, `defer_lower` compared an empty list against a condition that was
-already true, and the once-projection carried a guard the interval test had made dead) plus six
-lines of code that measured nothing. What is left is quieter, and each row above says *why* the
-mutant cannot be seen rather than *that* it probably cannot.
+| Mutant | Killed by hand | Attributed tests |
+| --- | --- | --- |
+| `if (!event.success) stats.failedEvents++` → `if (false)` | 2 tests fail (`AC 70.6`, `AUD4: Statistics`) | 2 |
+| `expectedSeq + i` → `expectedSeq - i` | 10 tests fail | 3 |
+| `if (maxAgeMs > 0)` → `if (false)` | 4 tests fail (`AC 68.6`, `AC 68.8`, `AC 70.11`) | 79 |
+| `if (maxEvents > 0 && …)` → `if (true)` | 6 tests fail | 72 |
+
+The common shape is a condition whose *false* branch is what a test would assert: the killing test
+takes the branch the mutant removes, and the statement the runner attributes to the mutant is the
+one inside the branch, which that test never executes. `AC 70.11` is the clearest case — it asserts
+that an event sitting exactly on the age limit survives, which is precisely the branch `maxAgeMs > 0`
+guards, and the runner had already stopped counting it. Registered as **P2-18** with five data
+points; until the attribution is understood, the score above is the conservative one.
+
+Reading them was worth doing rather than assuming: iteration 27 turned 38 survivors into 11
+assertions and two defects, iteration 29 turned 100 into eighteen defects and seventy-five
+assertions, and iteration 30 turned 81 into four defects and thirty-two assertions. What is left is
+quieter, and each row above says *why* the mutant cannot be seen rather than *that* it probably
+cannot.
 
 A green suite says the assertions pass. It does not say they would fail if the behaviour changed —
 that is what the score adds. P2-15 ("read every survivor") is closed: the seven that remain are

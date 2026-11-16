@@ -115,6 +115,43 @@ export interface AuditStats {
   newestEventAt: number | null;
 }
 
+// ── Audit Integrity ─────────────────────────────────────────
+
+/**
+ * What retention has removed from the head of the chain.
+ *
+ * A hash chain cannot lose its first event and remain a chain: the survivor that
+ * followed it has a `prevHash` pointing at a hash nothing in the trail computes.
+ * Retention is allowed to delete, so the deletion has to be *recorded* — this is
+ * the record. It lets `verifyIntegrity()` answer "the trail starts at seq N, and
+ * the entry before it hashed to H" instead of reporting the retention policy as
+ * tampering.
+ *
+ * It is memory state, not a file: it attests to what this manager removed, not to
+ * what an attacker with access to the process removed. A hole punched behind the
+ * manager's back still shows up as a `seq gap`.
+ */
+export interface AuditRetentionAnchor {
+  /** Total number of events removed from the head of the chain. */
+  removedEvents: number;
+  /** Sequence number of the newest removed event. */
+  lastRemovedSeq: number;
+  /** Hash of the newest removed event — the parent the retained chain hangs from. */
+  lastRemovedHash: string;
+  /** When the most recent removal happened (epoch ms). */
+  at: number;
+}
+
+/** Result of {@link IAuditLogger.verifyIntegrity}. */
+export interface AuditIntegrityResult {
+  /** True when every retained event chains correctly onto its parent. */
+  valid: boolean;
+  /** One message per finding, in chain order. */
+  errors: string[];
+  /** Null until retention removes something; then what it removed. */
+  truncated: AuditRetentionAnchor | null;
+}
+
 // ── Audit Logger Interface ──────────────────────────────────
 
 export interface IAuditLogger {
@@ -130,13 +167,27 @@ export interface IAuditLogger {
   /** Get audit statistics. */
   getStats(): Promise<AuditStats>;
 
-  /** Verify audit chain integrity. */
-  verifyIntegrity(): Promise<{ valid: boolean; errors: string[] }>;
+  /**
+   * Verify audit chain integrity.
+   *
+   * `valid` means every retained event hashes to its recorded hash and chains
+   * onto its predecessor. When retention has removed the head of the chain, the
+   * removal is reported in `truncated` and does **not** make the result invalid —
+   * but a gap inside the retained window does.
+   */
+  verifyIntegrity(): Promise<AuditIntegrityResult>;
 
   /** Export audit trail as JSONL for compliance. */
   exportJSONL(query?: AuditQuery): Promise<string>;
 
-  /** Prune events older than the given timestamp. */
+  /**
+   * Drop events older than `olderThanMs`, keeping at least
+   * {@link AuditRetentionPolicy.minRetain} events.
+   *
+   * Only a *prefix* is ever removed: an event inside the window is never deleted,
+   * because that would leave a hole in the chain that no anchor can describe.
+   * Returns the number of events removed.
+   */
   prune(olderThanMs: number): Promise<number>;
 
   /** Flush any buffered events to persistent storage. */
@@ -146,9 +197,18 @@ export interface IAuditLogger {
 // ── Audit Retention Policy ──────────────────────────────────
 
 export interface AuditRetentionPolicy {
-  /** Maximum number of events to keep. */
+  /**
+   * Maximum number of events to keep. `0` means no ceiling.
+   *
+   * This bounds the in-memory window, not the file: the JSONL trail is
+   * append-only evidence and is never rewritten, because rewriting a hash-chained
+   * file invalidates the hashes it contains.
+   */
   maxEvents?: number;
-  /** Maximum age of events (ms). */
+  /**
+   * Maximum age of an event in the in-memory window, in ms. `0` means no age
+   * limit. Applied when the buffer is flushed, after the events are written.
+   */
   maxAgeMs?: number;
   /** Minimum events to keep regardless of age. */
   minRetain?: number;

@@ -18,6 +18,8 @@ import {
   type AuditSeverity,
   type AuditCategory,
   type AuditRetentionPolicy,
+  type AuditIntegrityResult,
+  type AuditRetentionAnchor,
 } from '../interfaces/IAuditLogger.js';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -40,6 +42,8 @@ export class AuditLogManager implements IAuditLogger {
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private logFilePath: string;
   private retention: Required<AuditRetentionPolicy>;
+  /** What retention has removed from the head of the chain, if anything. */
+  private anchor: AuditRetentionAnchor | null = null;
 
   constructor(options?: { logFilePath?: string; retention?: AuditRetentionPolicy; autoStart?: boolean }) {
     this.logFilePath = options?.logFilePath ?? path.join(process.cwd(), 'audit.jsonl');
@@ -69,12 +73,8 @@ export class AuditLogManager implements IAuditLogger {
     for (const partial of partials) {
       const event = this._buildEvent(partial);
       results.push(event);
-      // Push immediately so subsequent events chain correctly
-      this.events.push(event);
-      this.buffer.push(event);
-    }
-    if (this.buffer.length >= MAX_BUFFER_SIZE) {
-      void this.flush();
+      // Append immediately so subsequent events in the batch chain onto this one.
+      this._append(event);
     }
     return results;
   }
@@ -139,9 +139,13 @@ export class AuditLogManager implements IAuditLogger {
       return sortDir === 'desc' ? -cmp : cmp;
     });
 
-    // Pagination
-    const offset = q.offset ?? 0;
+    // Pagination. A negative limit cannot mean "everything" — it means the caller
+    // computed a count that went wrong — and `slice(0, -1)` would silently return
+    // all but the last row, so the only safe reading of a non-positive limit is
+    // "no results". A negative offset is clamped to the start of the result.
+    const offset = Math.max(0, q.offset ?? 0);
     const limit = q.limit ?? results.length;
+    if (limit <= 0) return [];
     return results.slice(offset, offset + limit);
   }
 
@@ -170,16 +174,20 @@ export class AuditLogManager implements IAuditLogger {
 
   // ── Integrity Verification ────────────────────────────────
 
-  async verifyIntegrity(): Promise<{ valid: boolean; errors: string[] }> {
+  async verifyIntegrity(): Promise<AuditIntegrityResult> {
     const errors: string[] = [];
-    let prevHash = GENESIS_HASH;
+    // A chain that lost its head still continues from a known hash: the anchor the
+    // retention policy recorded when it removed those events. Without this, every
+    // prune would report the manager's own policy as tampering.
+    let prevHash = this.anchor?.lastRemovedHash ?? GENESIS_HASH;
+    const expectedSeq = (this.anchor?.lastRemovedSeq ?? 0) + 1;
 
     for (let i = 0; i < this.events.length; i++) {
       const event = this.events[i]!;
 
       // Sequence check
-      if (event.seq !== i + 1) {
-        errors.push(`seq gap at index ${i}: expected ${i + 1}, got ${event.seq}`);
+      if (event.seq !== expectedSeq + i) {
+        errors.push(`seq gap at index ${i}: expected ${expectedSeq + i}, got ${event.seq}`);
       }
 
       // Chain check
@@ -193,10 +201,17 @@ export class AuditLogManager implements IAuditLogger {
         errors.push(`hash mismatch at seq ${event.seq}: event may be tampered`);
       }
 
+      // Keep walking from the computed hash when the stored one is gone, so a
+      // single damaged record costs one error instead of breaking every successor
+      // after it. The damage is reported once, where it happened.
       prevHash = event.hash ?? computed;
     }
 
-    return { valid: errors.length === 0, errors };
+    return {
+      valid: errors.length === 0,
+      errors,
+      truncated: this.anchor === null ? null : { ...this.anchor },
+    };
   }
 
   // ── Export ────────────────────────────────────────────────
@@ -209,21 +224,7 @@ export class AuditLogManager implements IAuditLogger {
   // ── Pruning ───────────────────────────────────────────────
 
   async prune(olderThanMs: number): Promise<number> {
-    const cutoff = Date.now() - olderThanMs;
-    const before = this.events.length;
-
-    // Keep minRetain events regardless of age
-    const minRetain = this.retention.minRetain;
-    const eligible = this.events.filter((e) => e.timestamp < cutoff);
-
-    if (eligible.length <= minRetain) return 0;
-
-    // Remove the oldest eligible events, but keep minRetain
-    const toRemove = eligible.slice(0, eligible.length - minRetain);
-    const idsToRemove = new Set(toRemove.map((e) => e.id));
-
-    this.events = this.events.filter((e) => !idsToRemove.has(e.id));
-    return before - this.events.length;
+    return this._pruneOlderThan(Date.now() - olderThanMs);
   }
 
   // ── Flush ─────────────────────────────────────────────────
@@ -240,15 +241,76 @@ export class AuditLogManager implements IAuditLogger {
     fs.appendFileSync(this.logFilePath, lines, 'utf-8');
     this.buffer = [];
 
-    // Auto-prune after flush
-    if (this.retention.maxEvents && this.events.length > this.retention.maxEvents) {
-      const excess = this.events.length - this.retention.maxEvents;
-      const minRetain = this.retention.minRetain;
-      const toRemove = Math.min(excess, this.events.length - minRetain);
-      if (toRemove > 0) {
-        this.events = this.events.slice(toRemove);
+    // Retention is applied after the write, never before it: an event that is too
+    // old for the window is still evidence, and the file keeps it.
+    this._applyRetention();
+  }
+
+  // ── Retention ─────────────────────────────────────────────
+
+  /**
+   * Remove the leading events older than `cutoff`, keeping `minRetain` events.
+   *
+   * Only a prefix is removed. Retention on a hash chain cannot delete an event in
+   * the middle: the entry after it hashes a parent that would then be missing from
+   * the trail, and no anchor can express "one gap, in the middle". A non-monotonic
+   * timestamp therefore stops the scan — it never causes a hole.
+   */
+  private _pruneOlderThan(cutoff: number): number {
+    let leading = 0;
+    while (leading < this.events.length && this.events[leading]!.timestamp < cutoff) {
+      leading += 1;
+    }
+    return this._dropLeading(leading);
+  }
+
+  /** Everything the retention policy says about the current window. */
+  private _applyRetention(): void {
+    const { maxAgeMs, maxEvents, minRetain } = this.retention;
+    const now = Date.now();
+
+    let drop = 0;
+    if (maxAgeMs > 0) {
+      const cutoff = now - maxAgeMs;
+      while (drop < this.events.length && this.events[drop]!.timestamp < cutoff) {
+        drop += 1;
       }
     }
+    // The count ceiling can force a bigger prefix than the age rule did, but it can
+    // never remove events the age rule would have kept inside the window: the
+    // surplus is by definition at the head.
+    if (maxEvents > 0 && this.events.length - drop > maxEvents) {
+      drop = this.events.length - maxEvents;
+    }
+
+    this._dropLeading(drop);
+  }
+
+  /**
+   * Remove `count` events from the head and record that it happened.
+   *
+   * The anchor is what keeps the retained chain verifiable: the first survivor's
+   * `prevHash` points at the newest removed event, so verification starts there
+   * rather than at genesis.
+   */
+  private _dropLeading(count: number): number {
+    // `minRetain` is a floor for every caller: an explicit `prune()` and the policy
+    // applied on flush both go through here, so the floor cannot be honoured by one
+    // path and forgotten by the other.
+    const allowed = Math.min(count, this.events.length - this.retention.minRetain);
+    if (allowed <= 0) return 0;
+
+    const removed = this.events.slice(0, allowed);
+    const newest = removed[removed.length - 1]!;
+    this.anchor = {
+      removedEvents: (this.anchor?.removedEvents ?? 0) + removed.length,
+      lastRemovedSeq: newest.seq,
+      lastRemovedHash: newest.hash ?? '',
+      at: Date.now(),
+    };
+    this.events = this.events.slice(allowed);
+
+    return removed.length;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────
@@ -279,7 +341,11 @@ export class AuditLogManager implements IAuditLogger {
     const prevHash: string = this.events.length > 0 ? (this.events[this.events.length - 1]!.hash ?? '') : GENESIS_HASH;
 
     const event: Omit<AuditEvent, 'hash'> = {
-      ...partial,
+      // A copy, not the caller's object: an audit record that shares structure with
+      // its producer can be rewritten after the fact — `partial.actor.id = 'x'` would
+      // change a stored event and the next `verifyIntegrity()` would blame tampering
+      // on a document nobody had touched.
+      ...structuredClone(partial),
       id: crypto.randomUUID(),
       seq: this.seqCounter,
       timestamp: Date.now(),
@@ -319,9 +385,15 @@ export class AuditLogManager implements IAuditLogger {
 
   private _startAutoFlush(): void {
     if (this.flushTimer) return;
-    this.flushTimer = setInterval(() => {
+    const timer = setInterval(() => {
       void this.flush();
     }, AUTO_FLUSH_INTERVAL_MS);
+    // A referenced interval keeps the event loop alive, so a service that enabled
+    // auto-flush could never exit — and neither could a test process. `destroy()`
+    // still clears it; this only stops the timer from being the reason a process
+    // stays up.
+    timer.unref();
+    this.flushTimer = timer;
   }
 }
 

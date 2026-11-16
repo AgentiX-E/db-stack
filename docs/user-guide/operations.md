@@ -372,6 +372,108 @@ stays.
 file-backed store should be closed before the directory it owns is moved or deleted: it waits
 for the background compression of the last rotated segment.
 
+### 3.5 Audit trail: what retention is allowed to delete
+
+```ts
+import { AuditLogManager } from "@agentix-e/db-operations-security";
+
+const audit = new AuditLogManager({
+  logFilePath: "/var/lib/db/audit.jsonl",
+  retention: { maxEvents: 100_000, maxAgeMs: 90 * 24 * 3600 * 1000, minRetain: 1_000 },
+  autoStart: true, // flush every 10 s; the interval is unref'd
+});
+
+await audit.log({
+  category: "data_access",
+  severity: "info",
+  action: "SELECT",
+  message: "read 12 rows from public.orders",
+  actor: { id: "alice", ip: "10.0.0.7" },
+  resource: { type: "table", id: "public.orders" },
+  success: true,
+});
+
+const integrity = await audit.verifyIntegrity();
+// { valid: true, errors: [], truncated: null }
+```
+
+An audit trail has two jobs that pull in opposite directions: keep the window bounded, and
+prove nobody touched it. A hash chain cannot lose its first event and stay a chain — the
+survivor that followed it hashes a parent nothing in the trail computes. Retention is allowed
+to delete, so the deletion is **recorded**:
+
+```ts
+await audit.prune(30 * 24 * 3600 * 1000); // keep 30 days
+
+const after = await audit.verifyIntegrity();
+// {
+//   valid: true,
+//   errors: [],
+//   truncated: { removedEvents: 41_000, lastRemovedSeq: 41_000, lastRemovedHash: "9f2c…", at: … },
+// }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `valid` | Every retained event hashes to its recorded hash and chains onto its predecessor. |
+| `truncated` | `null` until retention removes something; then how many events went, the sequence number and hash of the newest removed one, and when. The retained chain verifies **from that hash**, so the policy that deleted them is not reported as an attacker. |
+| `errors` | One message per finding, in chain order: `seq gap at index N`, `chain broken at seq N`, `hash mismatch at seq N`. A gap *inside* the retained window is tampering and stays reported as one. |
+
+**Retention removes a prefix, never a hole.** `prune(olderThanMs)` walks from the oldest event
+and stops at the first one that is not older than the cutoff; the ceiling in `maxEvents`
+removes from the front. Deleting an event in the middle would leave a gap no anchor can
+describe, so a clock that jumped backwards stops the sweep instead of punching through it.
+"Older than" is strict: an event whose timestamp equals the cutoff stays.
+
+| Option | Default | `0` means | Applies |
+| --- | --- | --- | --- |
+| `maxEvents` | `1_000_000` | no ceiling | on `flush()`, from the head |
+| `maxAgeMs` | 90 days | no age limit | on `flush()`, from the head |
+| `minRetain` | `1_000` | — | floor for both rules and for `prune()` |
+
+**The file is evidence, the window is memory.** `flush()` appends to the JSONL trail and only
+then applies retention to the in-memory window. The file is never rewritten, because rewriting
+a hash-chained file invalidates the hashes it contains — so an event that is too old for the
+window is still on disk and still chainable. Trim the file with your own retention if your
+regulator requires it, and keep the `truncated` records with it.
+
+Two more answers that are easy to get wrong: a **negative `limit` returns no rows** (not "all
+but the last"), a **negative `offset`** is read from the start, and both are clamped rather
+than silently reinterpreted.
+
+`destroy()` clears the auto-flush interval and flushes what is buffered. The interval is
+`unref`'d, so enabling `autoStart` never keeps your process alive.
+
+#### Compliance reports that can only pass on checks that ran
+
+```ts
+import { RotationAuditor } from "@agentix-e/db-operations-security";
+
+const auditor = new RotationAuditor();
+rotation.on("rotation", (event) => auditor.record(event));
+
+const report = auditor.generateReport("PCI-DSS");
+// { pass: false, findings: ["PCI-DSS 3.6.4: key rotation interval may exceed 1 year"], … }
+```
+
+- **A framework with no checks fails.** `PCI-DSS`, `SOC2` and `HIPAA` have checks;
+  anything else returns `pass: false` with a finding naming it. A report that passes because
+  nothing was verified is worse than no report.
+- **`record()` refuses an event that describes two outcomes at once** — `success` with an
+  `error`, failure without one, success with no completion time, or success that moved no
+  version. Refusing consumes no sequence number, so the trail stays contiguous.
+- **`oldestActiveKeyCreatedAt`** is the completion of the earliest *successful* rotation, and
+  `null` when nothing succeeded. A failed rotation created no key, so it cannot date one.
+- **`importJSONL()` verifies before it adopts.** Each line is checked for sequence number,
+  `prevHash` linkage, self-contradiction and its own hash, and *nothing* is imported until
+  every line passes — a half-imported chain is a chain that lies about what it contains. It
+  also refuses to splice a second chain onto a live one: a chain has one genesis.
+- **`verify()` separates two kinds of wrong.** `chainBroken` means the hashes or the numbering
+  are broken; `valid: false` with `chainBroken: false` is a clock that went backwards, which is
+  a finding about the producer, not about the storage.
+- `recent(0)` returns nothing — `slice(-0)` is `slice(0)`, so "the last zero entries" used to
+  return every entry.
+
 ### 3.6 Rolling upgrade
 
 ```ts

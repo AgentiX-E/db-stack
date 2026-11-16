@@ -5,6 +5,86 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-11-16
+
+### Breaking
+
+- **`verifyIntegrity()` returns `AuditIntegrityResult`** — `{ valid, errors, truncated }` — instead
+  of `{ valid, errors }`. `truncated` is `null` until retention removes something, then the count,
+  sequence number and hash of the newest removed event. Code that destructures the two old fields
+  still compiles; code that compares the whole object must allow the new field.
+- **`AuditRetentionPolicy.maxAgeMs` is enforced.** It was stored, defaulted, asserted and read by
+  no branch, so a deployment that configured a 30-day window kept everything. `0` means *no age
+  limit*, the same reading `maxEvents: 0` already had — a caller who configured `0` expecting
+  "keep nothing" will now keep everything.
+- **`RotationAuditor.record()` throws on an event that contradicts itself** — `success` with an
+  `error`, failure with no error, success with no completion time, or success that moved no
+  version. Refusing consumes no sequence number.
+- **`RotationAuditor.importJSONL()` validates and is atomic.** It refuses a non-empty trail, a
+  malformed line, a broken `prevHash` link, a mismatched hash, a contradictory event — and imports
+  nothing in any of those cases. A JSONL export from this class still round-trips.
+- **A negative `limit` returns no rows.** `query({ limit: -1 })` used to return everything but the
+  last row; a negative `offset` is now read from the start.
+
+### Added
+
+- **`AuditRetentionAnchor` and `AuditIntegrityResult`** exported from the security package.
+- **`truncated` in the verification result** — what retention removed, and the hash the retained
+  chain hangs from, so a pruned trail verifies instead of accusing itself.
+
+### Fixed
+
+- **Retention made the audit trail unverifiable.** `prune()` and the `maxEvents` ceiling both
+  removed events from the head of a hash chain, so the first call to `verifyIntegrity()` after a
+  prune reported `seq gap at index 0` and `chain broken at seq N` — the manager's own policy,
+  indistinguishable from an attacker deleting evidence. Removals are recorded now and the retained
+  chain verifies from the newest removed hash. AC 68.1–68.5.
+- **Retention deleted events it could not chain past.** `prune` filtered *every* event older than
+  the cutoff instead of the leading run, so a non-monotonic timestamp punched a hole in the middle
+  of the chain — a hole no anchor can express. It stops at the first event inside the window.
+  AC 68.9–68.11.
+- **`RotationAuditor` stored the caller's event object**, so a caller that kept its draft could
+  rewrite history and `verify()` would report tampering on a document nobody had touched. Both
+  audit classes copy what they are given. AC 69.1, AC 68.13.
+- **`generateReport('SOX')` returned `pass: true` with no findings.** The `switch` ended at HIPAA,
+  so a framework with no checks behind it scored better than one that is checked. An unsupported
+  framework now fails and names itself. AC 69.13.
+- **`oldestActiveKeyCreatedAt` was `events[0].startedAt`** — a *failed* first rotation reported the
+  birth of a key that was never created, and the value never moved however often the key rotated.
+  It is the completion of the earliest successful rotation. AC 69.11–69.12.
+- **`recent(0)` returned every entry.** `slice(-0)` is `slice(0)`, so "the last zero entries" was
+  the whole trail; a negative count returned everything but the first. AC 69.9.
+- **`importJSONL()` pushed entries while parsing.** A malformed line at index 5 left four entries
+  imported and a sequence counter to match; a forged line was adopted and the next real rotation
+  was chained onto it; importing into a live trail spliced two chains together. AC 69.4–69.8.
+- **`averageIntervalMs` dated an unfinished rotation to 1970** through `completedAt ?? 0`, so two
+  rotations that never completed produced a "0 ms interval" and a passing compliance window built
+  on events that claimed to succeed and never claimed to end. AC 70.31.
+- **The auto-flush interval was not `unref`'d**, so a service with `autoStart: true` could not
+  exit. `destroy()` also had no test that it left no interval behind. AC 68.17, AC 70.32.
+- **`logBatch` carried its own copy of the flush threshold**, so the batch path and the single-log
+  path could drift apart. One `_append` decides now.
+
+### Changed
+
+- **`logBatch`'s documented "atomic" is gone.** It said atomic and nothing could fail in it; the
+  word described a property no code enforced. What it does guarantee — chained in call order — is
+  asserted (AC 68.14).
+- **Dead statements removed, each one a mutant no test could kill:**
+
+  | Removed | Why it could not be observed |
+  | --- | --- |
+  | `chainBroken = true` at the sequence-gap site | `seq` is part of the hashed content, so a gap cannot occur without the hash check failing just below and marking the chain broken |
+
+Mutation: **9 modules** behind the published rule — `backupChain.ts` 100 %, `cron.ts` 100 %,
+`RetentionPolicyEvaluator.ts` 100 %, `KeyRotationManager.ts` 99.16 %,
+`MaintenanceWindowScheduler.ts` 99.03 %, `InMemoryBackupManager.ts` 98.94 %, `RotationAuditor.ts`
+97.52 %, `FileAuditStore.ts` 97.04 %, `AuditLogManager.ts` 95.55 %. Operations overall **98.18 %**
+over 2 203 judged mutants (2 124 killed, 39 timed out, 38 survived, 2 no coverage). The overall
+figure is 0.7 points below 1.5.0 because the two new modules are the two hardest in the package:
+one behaves differently depending on what the filesystem says, the other is a hash chain whose
+interesting failures are the ones an attacker causes.
+
 ## [1.5.0] — 2026-11-16
 
 ### Breaking

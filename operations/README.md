@@ -1,14 +1,17 @@
 # db-operations — Unified Database Operations Framework
 
-**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 2 505 unit
+**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 2 579 unit
 tests and 331 integration tests, every coverage dimension at or above 95 %.**
 
-**Mutation score:** 98.86 % across the seven modules that decide what gets deleted, whether a
-backup can be restored, which key survives a rotation, and when a maintenance window runs —
+**Mutation score:** 98.18 % across the nine modules that decide what gets deleted, whether a
+backup can be restored, which key survives a rotation, whether a compliance window passed, whether
+evidence is tamper-evident, and when a maintenance window runs —
 `backupChain.ts` 100 %, `cron.ts` 100 %, `RetentionPolicyEvaluator.ts` 100 %,
 `KeyRotationManager.ts` 99.16 %, `MaintenanceWindowScheduler.ts` 99.03 %,
-`InMemoryBackupManager.ts` 98.94 %, `FileAuditStore.ts` 97.04 %; gate at 86, eighteen survivors,
-seventeen of them equivalent and one registered as a runner discrepancy (P2-18).
+`InMemoryBackupManager.ts` 98.94 %, `RotationAuditor.ts` 97.52 %, `FileAuditStore.ts` 97.04 %,
+`AuditLogManager.ts` 95.55 %; gate at 86. Of 2 203 judged mutants, 40 were not killed: 35 cannot be
+killed by any test (each reason is in `docs/maturity.md`) and five are killed by the suite when the
+change is applied by hand — a per-test attribution gap registered as P2-18.
 Run it yourself with
 `pnpm --filter @agentix-e/db-operations run test:mutation`.
 
@@ -117,8 +120,8 @@ architecture that 20 packages deliver as a cohesive whole.
 | [`rollingupgrade`](./packages/rollingupgrade/) | ✅ | 16 | Zero-downtime rolling upgrades |
 | [`slacollector`](./packages/slacollector/) | ✅ | 13 | SLA metric collection and violation detection |
 
-**Total: `pnpm coverage` reports 122 files and 2 836 tests, 0 failures** (`test:unit`: 103 files /
-2 505; `test:integration`: 19 files / 331). The per-package counts above are the units each
+**Total: `pnpm coverage` reports 125 files and 2 910 tests, 0 failures** (`test:unit`: 106 files /
+2 579; `test:integration`: 19 files / 331). The per-package counts above are the units each
 package contributes.
 
 ---
@@ -196,8 +199,8 @@ packages/monitor/src/
 ## Testing
 
 ```bash
-npm test              # 122 files, 2 836 tests
-npm run test:mutation # Stryker over the four modules that decide deletion, restorability and timing
+npm test              # 125 files, 2 910 tests
+npm run test:mutation # Stryker over the nine modules that decide deletion, durability and timing
 npm run bench         # Performance benchmarks
 npm run bench:ycsb    # YCSB-style benchmarks
 npm run typecheck     # TypeScript strict type checking

@@ -13,7 +13,9 @@
     "packages/backup/src/impl/backupChain.ts",
     "packages/maintenance/src/impl/cron.ts",
     "packages/security/src/impl/KeyRotationManager.ts",
-    "packages/audit/src/impl/FileAuditStore.ts"
+    "packages/audit/src/impl/FileAuditStore.ts",
+    "packages/security/src/impl/RotationAuditor.ts",
+    "packages/security/src/impl/AuditLogManager.ts"
   ],
   "coverageAnalysis": "perTest",
   "reporters": [

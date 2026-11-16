@@ -68,7 +68,7 @@ its public surface in [`cluster/docs/api-reference.md`](../cluster/docs/api-refe
 |---|---|---|---|
 | `@agentix-e/db-cluster` | 1.1.0 | ≥ 20.11 | ESM (NodeNext) |
 | `@agentix-e/db-federation` | 1.1.0 | ≥ 20.11 | ESM (NodeNext) |
-| `@agentix-e/db-operations` (+ 21 sub-packages) | 1.5.0 | ≥ 20.11 | ESM (NodeNext) |
+| `@agentix-e/db-operations` (+ 21 sub-packages) | 1.6.0 | ≥ 20.11 | ESM (NodeNext) |
 
 The cluster package publishes a **conformance suite** in its `/testing` entry point
 (`runEngineConformance`). It is the executable form of the storage-engine contract: an engine
