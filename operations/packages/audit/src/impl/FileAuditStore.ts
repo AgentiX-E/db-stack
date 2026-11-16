@@ -8,7 +8,20 @@
  *   - Compression (gzip) of rotated files
  *   - Query support via a bounded scan across active and compressed segments
  *     (`maxScanLines`), so rotation does not make the trail unreadable
- *   - Pruning deletes rotated files older than retention period
+ *   - Expiry by segment age (`retentionDays`, swept on rotation) and by explicit
+ *     `pruneOlderThan()`
+ *
+ * Two rules keep the numbers in this file true:
+ *
+ *   1. `maxScanLines` bounds what `query()` *returns*, because the budget exists
+ *      to keep a grep-shaped read cheap. It does not bound what `get()` or
+ *      `count()` *look up*: an audit store that cannot find an entry it holds, or
+ *      that reports 100 matches because the page size defaults to 100, is wrong
+ *      in the one place wrongness is not recoverable.
+ *   2. Expiry never deletes the segment being appended to. The live segment is
+ *      not a rotated file; deleting it would remove entries the retention window
+ *      still covers, and the store would keep appending to a path it had just
+ *      removed.
  *
  * @module @agentix-e/db-operations-audit/impl
  */
@@ -63,6 +76,91 @@ export const DEFAULT_RETENTION_DAYS = 90;
 export const DEFAULT_FILE_PREFIX = 'audit';
 export const DEFAULT_MAX_SCAN_LINES = 10000;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// ── Segment naming ──────────────────────────────────────────────
+
+/**
+ * Escape a prefix for use inside a `RegExp`.
+ *
+ * `filePrefix` is caller input. Interpolating it raw means a prefix containing a
+ * metacharacter — `billing.v2`, `audit(prod)` — changes which files the store
+ * considers its own, and `billing.v2` would match `billingXv2` too. A configuration
+ * value is a name, so it is quoted before it is used as a pattern.
+ */
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * A segment of this store: `<prefix>-<YYYYMMDD>-<NNNN>.ndjson`, optionally
+ * archived as `.gz`.
+ *
+ * Archived names are matched too: a compressed segment still occupies its
+ * sequence number, and reusing it would write new entries into a segment whose
+ * archive already exists — where every read prefers the archive, so the new
+ * entries would be invisible.
+ */
+export function segmentPattern(prefix: string): RegExp {
+  return new RegExp(`^${escapeRegExp(prefix)}-\\d{8}-\\d{4}\\.ndjson(\\.gz)?$`);
+}
+
+/**
+ * Order names for reading: newest first, one name per segment.
+ *
+ * Exported and pure because this is the one place ordering is decided, and the
+ * filesystem is the wrong place to find out whether it works: `readdir` returns
+ * names in an order it does not promise, so a test that relied on it would be
+ * testing the filesystem.
+ *
+ * Newest first, because `maxScanLines` is a budget and a budget spent on old
+ * segments hides the entries a caller is most likely asking about.
+ *
+ * A name with an archive beats the plain file of the same segment. Rotation writes
+ * `X.ndjson.gz` and only then unlinks `X.ndjson`; between the two, both hold the
+ * same entries, and a scan that reads both reports every one of them twice — a
+ * duplicate in an audit report is a wrong number in a compliance statement. The
+ * archive wins because it is written last and completely.
+ */
+export function readableSegmentsNewestFirst(names: readonly string[]): string[] {
+  // Membership, not a set of stripped names: `<name>.gz` is the archive of
+  // `<name>`, and asking the list directly says so without building a second
+  // collection that has to be kept in step with the first. Quadratic in the
+  // number of segments in one directory, which is dozens, not millions.
+  return [...names]
+    .sort()
+    .filter((name) => !names.includes(`${name}.gz`))
+    .reverse();
+}
+
+/**
+ * The segment new entries are appended to: the newest one that is not archived.
+ *
+ * Ordering is by the whole name, not by the sequence field. A name is
+ * `<prefix>-<YYYYMMDD>-<NNNN>`, both parts zero-padded, so lexicographic order is
+ * chronological order — and the sequence alone is not: it restarts at 0001 when
+ * the date changes, so comparing sequences alone picks yesterday's `-0003` over
+ * today's `-0001` and a restarted process keeps appending to yesterday's file.
+ *
+ * A segment with an archive is skipped for a sharper reason: reads prefer the
+ * archive, so anything appended to the plain file after it was archived is
+ * written and never read.
+ *
+ * Returned as a name, not a path, so the rule can be asserted on arrays instead of
+ * on whatever `readdir` happens to hand back.
+ */
+export function newestOpenSegment(names: readonly string[], prefix: string): string {
+  const segment = segmentPattern(prefix);
+  let newest = '';
+  for (const name of names) {
+    if (!segment.test(name)) continue;
+    if (name.endsWith('.gz')) continue;
+    if (names.includes(`${name}.gz`)) continue;
+    if (name > newest) newest = name;
+  }
+  return newest;
+}
+
 // ── File identity helpers ───────────────────────────────────────
 
 /** What identifies a specific file, so a later step can tell it from a namesake. */
@@ -100,6 +198,23 @@ export function unlinkIfUnchanged(path: string, expected: FileIdentity): boolean
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether an entry satisfies a filter.
+ *
+ * `query()` and `count()` share this so the two cannot drift: a filter that
+ * selects in one and not the other makes a count disagree with the page it is
+ * counting, which is the shape of a broken audit report.
+ */
+function matches(entry: AuditEntry, filter: AuditQueryFilter): boolean {
+  if (filter.startTime && new Date(entry.timestamp) < filter.startTime) return false;
+  if (filter.endTime && new Date(entry.timestamp) > filter.endTime) return false;
+  if (filter.operation !== undefined && entry.operation !== filter.operation) return false;
+  if (filter.actor !== undefined && entry.actor !== filter.actor) return false;
+  if (filter.result !== undefined && entry.result !== filter.result) return false;
+  if (filter.severity !== undefined && entry.severity !== filter.severity) return false;
+  return true;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -145,9 +260,10 @@ export class FileAuditStore implements IAuditStore {
     // A path that exists but is not a directory now fails here, at construction:
     // `resolveActiveFile` reads the directory without a fallback, because a store
     // that cannot list its own segments cannot safely choose one to append to.
-    if (!existsSync(this.dataDir)) {
-      mkdirSync(this.dataDir, { recursive: true });
-    }
+    // Unconditional: `recursive: true` does nothing to a directory that exists, and
+    // a path that is not a directory fails with ENOTDIR here — at construction,
+    // where a store that cannot list its own segments should fail.
+    mkdirSync(this.dataDir, { recursive: true });
 
     this.activeFilePath = this.resolveActiveFile();
     this.currentSize = existsSync(this.activeFilePath) ? statSync(this.activeFilePath).size : 0;
@@ -167,38 +283,33 @@ export class FileAuditStore implements IAuditStore {
 
   /** Get the next sequence number for a given date prefix. */
   private getNextSequence(datePrefix: string): number {
-    let maxSeq = 0;
+    const taken = new RegExp(`^${escapeRegExp(this.filePrefix)}-${datePrefix}-(\\d{4})\\.ndjson(\\.gz)?$`);
+    let files: string[];
     try {
-      const files = readdirSync(this.dataDir);
-      for (const f of files) {
-        const match = f.match(new RegExp(`^${this.filePrefix}-${datePrefix}-(\\d{4})\\.ndjson`));
-        if (match) {
-          maxSeq = Math.max(maxSeq, parseInt(match[1]!, 10));
-        }
-      }
+      files = readdirSync(this.dataDir);
     } catch {
-      /* ignore */
+      // A directory that cannot be listed holds no names to avoid.
+      return 1;
+    }
+
+    // Outside the `try`: a parse bug in this loop used to be caught by the same
+    // handler as a missing directory, so the sequence restarted at 0001 and the
+    // next rotation overwrote a segment instead of failing.
+    let maxSeq = 0;
+    for (const f of files) {
+      const match = f.match(taken);
+      if (match) maxSeq = Math.max(maxSeq, Number.parseInt(match[1]!, 10));
     }
     return maxSeq + 1;
   }
 
   /** Find or create the active (current write) file. */
   private resolveActiveFile(): string {
-    const files = readdirSync(this.dataDir);
-    // Find the highest sequence .ndjson that is not compressed
-    let active = '';
-    let maxSeq = -1;
-    for (const f of files) {
-      const match = f.match(new RegExp(`^${this.filePrefix}-(\\d{8})-(\\d{4})\\.ndjson$`));
-      if (match) {
-        const seq = parseInt(match[2]!, 10);
-        if (seq > maxSeq) {
-          maxSeq = seq;
-          active = join(this.dataDir, f);
-        }
-      }
-    }
-    return active || this.generateFilePath();
+    const active = newestOpenSegment(readdirSync(this.dataDir), this.filePrefix);
+    // No segment yet, or every one is archived: start the next one. Falling back
+    // to `generateFilePath` rather than constructing a name here keeps the
+    // sequence collision rule in one place.
+    return active === '' ? this.generateFilePath() : join(this.dataDir, active);
   }
 
   /** Check if rotation is needed. */
@@ -234,11 +345,60 @@ export class FileAuditStore implements IAuditStore {
             // Compression failed: keep the original, drop the partial archive.
             rmSync(gzPath, { force: true });
           })
-          .finally(resolve);
+          .finally(() => {
+            // After the archive is in place, so the sweep sees the segment under
+            // the name it will keep.
+            this.sweepExpiredSegments();
+            resolve();
+          });
       });
     });
     this.pendingCompressions.add(job);
     void job.finally(() => this.pendingCompressions.delete(job));
+  }
+
+  /**
+   * Delete segments whose last write is older than `retentionDays`.
+   *
+   * Retention was a documented configuration value that nothing read: a store
+   * configured to keep ninety days kept everything, and the only way to expire a
+   * segment was to call `pruneOlderThan` yourself. It runs here because rotation
+   * is the moment a segment stops being the live one — expiry is a property of
+   * closed segments, so a store that never rotates never expires anything, and an
+   * idle store never expires the file it is still appending to.
+   *
+   * `retentionDays: 0` disables automatic expiry rather than meaning "keep
+   * nothing": retention that deletes evidence on construction is a footgun, and a
+   * caller who wants to prune decides when.
+   */
+  private sweepExpiredSegments(): void {
+    if (this.retentionDays <= 0) return;
+    const cutoff = Date.now() - this.retentionDays * DAY_MS;
+    const segment = segmentPattern(this.filePrefix);
+
+    let files: string[];
+    try {
+      files = readdirSync(this.dataDir);
+    } catch {
+      return;
+    }
+
+    for (const f of files) {
+      if (!segment.test(f)) continue;
+      // No skip for the live segment: this runs after rotation moved
+      // `activeFilePath` to the segment that was just opened, so the file being
+      // expired is by definition a closed one. The guard that used to be here could
+      // never be true for an expired path, which is why no test could see it.
+      const path = join(this.dataDir, f);
+      try {
+        if (statSync(path).mtime.getTime() >= cutoff) continue;
+        rmSync(path);
+      } catch {
+        // A segment that cannot be examined is not one to delete: reporting an
+        // expiry that did not happen is worse than leaving the file for the next
+        // sweep, which is what the next rotation is.
+      }
+    }
   }
 
   /**
@@ -303,47 +463,69 @@ export class FileAuditStore implements IAuditStore {
   }
 
   async query(filter: AuditQueryFilter): Promise<AuditEntry[]> {
-    const allEntries = this.scanEntries();
-    const filtered = allEntries.filter((entry) => {
-      if (filter.startTime && new Date(entry.timestamp) < filter.startTime) return false;
-      if (filter.endTime && new Date(entry.timestamp) > filter.endTime) return false;
-      if (filter.operation !== undefined && entry.operation !== filter.operation) return false;
-      if (filter.actor !== undefined && entry.actor !== filter.actor) return false;
-      if (filter.result !== undefined && entry.result !== filter.result) return false;
-      if (filter.severity !== undefined && entry.severity !== filter.severity) return false;
-      return true;
-    });
-
+    const filtered = this.scanEntries(this.maxScanLines).filter((entry) => matches(entry, filter));
     const offset = filter.offset ?? 0;
     const limit = filter.limit ?? 100;
     return filtered.slice(offset, offset + limit);
   }
 
+  /**
+   * Look an entry up by id across the whole trail.
+   *
+   * Unbounded on purpose. `maxScanLines` keeps a *page* cheap; an id lookup is a
+   * question with one answer, and answering "not found" because the entry sits
+   * beyond a ten-thousand-line budget turns a lookup into a lie.
+   */
   async get(id: string): Promise<AuditEntry | null> {
-    const scan = this.scanEntries();
-    return scan.find((e) => e.id === id) ?? null;
+    return this.scanEntries(null).find((e) => e.id === id) ?? null;
   }
 
+  /**
+   * Count the entries matching `filter`, ignoring paging.
+   *
+   * `offset` and `limit` are paging, not selection: a count that inherited
+   * `limit: 100` from `query()`'s default reported at most one hundred matches
+   * for any filter, and an `offset` shortened it further. A number that is wrong
+   * exactly when the trail is large is the wrong number to be wrong about.
+   */
   async count(filter?: AuditQueryFilter): Promise<number> {
-    return filter ? (await this.query(filter)).length : this.lineCount();
+    const entries = this.scanEntries(null);
+    return filter ? entries.filter((entry) => matches(entry, filter)).length : entries.length;
   }
 
+  /**
+   * Delete closed segments last written before `timestamp`; returns how many went.
+   *
+   * Two boundaries are deliberate. Only names this store could have produced are
+   * touched (`segmentPattern`), because a prune is a delete and a delete should
+   * not need a directory of its own; and the live segment is skipped even when it
+   * is old, because removing the file the store is appending to would drop the
+   * entries a resumed store is about to write. Each file is removed in isolation:
+   * one unreadable segment used to abandon the whole sweep through the outer
+   * `catch`, leaving evidence past its retention date and reporting a partial
+   * number as the result.
+   */
   async pruneOlderThan(timestamp: Date): Promise<number> {
-    let removed = 0;
+    const segment = segmentPattern(this.filePrefix);
+    let files: string[];
     try {
-      const files = readdirSync(this.dataDir);
-      for (const f of files) {
-        if (f.endsWith('.gz') || f.endsWith('.ndjson')) {
-          const filePath = join(this.dataDir, f);
-          const stats = statSync(filePath);
-          if (stats.mtime < timestamp) {
-            rmSync(filePath);
-            removed++;
-          }
-        }
-      }
+      files = readdirSync(this.dataDir);
     } catch {
-      /* ignore */
+      return 0;
+    }
+
+    let removed = 0;
+    for (const f of files) {
+      if (!segment.test(f)) continue;
+      const path = join(this.dataDir, f);
+      if (path === this.activeFilePath) continue;
+      try {
+        if (statSync(path).mtime >= timestamp) continue;
+        rmSync(path);
+        removed++;
+      } catch {
+        /* leave it for the next sweep rather than claiming it went */
+      }
     }
     return removed;
   }
@@ -367,102 +549,95 @@ export class FileAuditStore implements IAuditStore {
   }
 
   /**
-   * The files worth reading, newest first, with an archived segment winning over
-   * a namesake that is being removed.
+   * The files worth reading, newest first; `null` when the directory is gone.
    *
-   * Rotation writes `X.ndjson.gz` and only then unlinks `X.ndjson`. Between the
-   * two, both exist with the same entries in them, so a scan that reads both
-   * reports every one of them twice — and a duplicate in an audit report is a
-   * wrong number in a compliance statement. The archive is authoritative because
-   * it is written last and completely.
-   *
-   * Newest first, because `maxScanLines` is a budget and a budget spent on old
-   * segments hides the entries a caller is most likely asking about: once a store
-   * held more than the budget, `query()` could not see anything written after it.
-   *
-   * Returns `null` when the directory cannot be listed.
+   * The directory is gone (unmounted, pruned) far more often than a caller expects:
+   * an audit read over a missing store returns what exists — nothing — rather than
+   * throwing at the person who is already investigating an incident.
    */
   private listReadableFiles(): string[] | null {
-    let files: string[];
     try {
-      files = readdirSync(this.dataDir).sort();
+      // This store's own names — `<prefix>-…ndjson`, archived or not — plus the
+      // single-array `.json` files it documents reading. A directory can hold an
+      // export, a second store's segments, or the `.tmp` of an in-flight write;
+      // reading them puts entries from another trail into this one's audit report,
+      // and the pruner (which only deletes names it could have produced) would
+      // never agree to remove them. The match is on the prefix rather than on the
+      // full segment shape, so a hand-planted `audit-timed.ndjson` is still read
+      // while `auditXv2-…` — another store's file — is not.
+      const owned = `${this.filePrefix}-`;
+      // `.json` is the legacy single-array format, which was written before
+      // segments had a prefix, so it is matched by extension alone.
+      const mine = (f: string): boolean =>
+        f.endsWith('.json') || (f.startsWith(owned) && (f.endsWith('.ndjson') || f.endsWith('.ndjson.gz')));
+      return readableSegmentsNewestFirst(readdirSync(this.dataDir).filter(mine));
     } catch {
-      // The directory is gone (unmounted, pruned). An audit read over a missing
-      // store returns what exists — nothing — rather than throwing at the caller
-      // who is already investigating an incident.
       return null;
     }
-
-    const archived = new Set(files.filter((f) => f.endsWith('.ndjson.gz')).map((f) => f.slice(0, -3)));
-    return files.filter((f) => !(f.endsWith('.ndjson') && archived.has(f))).reverse();
   }
 
-  /** Scan all `.ndjson`, `.ndjson.gz` and `.json` files, returning parsed entries. */
-  private scanEntries(): AuditEntry[] {
+  /**
+   * Scan the readable segments, returning parsed entries in chronological order.
+   *
+   * `budget` caps how many entries are collected (`null` for no cap); it is
+   * applied while scanning newest-first, so a capped scan keeps the most recent
+   * history rather than the oldest.
+   */
+  private scanEntries(budget: number | null): AuditEntry[] {
     // One block per file, in the order the lines appear inside it. Files are
     // visited newest-first so the budget protects recent history; the blocks are
     // put back in chronological order at the end. Reversing the flat list instead
     // would also reverse the entries *within* a segment, which is backwards.
     const blocks: AuditEntry[][] = [];
     let scanned = 0;
+    const exhausted = (): boolean => budget !== null && scanned >= budget;
 
     const files = this.listReadableFiles();
     if (files === null) return [];
 
     for (const f of files) {
-      if (scanned >= this.maxScanLines) break;
+      if (exhausted()) break;
       const block: AuditEntry[] = [];
       blocks.push(block);
 
       if (f.endsWith('.json')) {
-        // Single JSON array format
+        // Single JSON array format.
+        const array = this.readSegment(join(this.dataDir, f), false);
+        if (array === null) continue;
         try {
-          const content = readFileSync(join(this.dataDir, f), 'utf-8');
-          const entries = JSON.parse(content) as AuditEntry[];
-          for (const e of entries) {
-            if (scanned >= this.maxScanLines) break;
+          for (const e of JSON.parse(array) as AuditEntry[]) {
+            if (exhausted()) break;
             block.push(e);
             scanned++;
           }
         } catch {
-          /* ignore parse errors */
+          /* ignore parse errors: a damaged export must not fail the query */
         }
-      } else if (f.endsWith('.ndjson') || f.endsWith('.ndjson.gz')) {
-        // NDJSON, compressed once rotation has archived the segment. Dropping the
-        // compressed ones made the trail unreadable after the first rotation: the
-        // entries were on disk and `query()`, `get()` and `count()` all reported
-        // that they were not.
-        const content = this.readSegment(join(this.dataDir, f), f.endsWith('.gz'));
-        if (content === null) continue;
+        continue;
+      }
 
-        for (const line of content.split('\n')) {
-          if (scanned >= this.maxScanLines) break;
-          if (line.trim().length === 0) continue;
-          try {
-            block.push(JSON.parse(line) as AuditEntry);
-            scanned++;
-          } catch {
-            /* skip malformed lines, including a torn final line */
-          }
+      // Everything else in this list is one of this store's segments, compressed
+      // once rotation archived them. Skipping the compressed ones made the trail
+      // unreadable after the first rotation: the entries were on disk and `query()`,
+      // `get()` and `count()` all reported that they were not.
+      const content = this.readSegment(join(this.dataDir, f), f.endsWith('.gz'));
+      if (content === null) continue;
+
+      for (const line of content.split('\n')) {
+        if (exhausted()) break;
+        // A blank line — the one after the final newline, or a whitespace-only
+        // line — is not JSON, so the parser rejects it and the `catch` below skips
+        // it. The guard that checked for one was a second way of saying that, and
+        // no test could tell which of the two was doing the work.
+        try {
+          block.push(JSON.parse(line) as AuditEntry);
+          scanned++;
+        } catch {
+          /* skip malformed lines, including a torn final line */
         }
       }
     }
 
     return blocks.reverse().flat();
-  }
-
-  /** Count total lines across all NDJSON segments, compressed or not. */
-  private lineCount(): number {
-    const files = this.listReadableFiles();
-    if (files === null) return 0;
-
-    let count = 0;
-    for (const f of files) {
-      if (!f.endsWith('.ndjson') && !f.endsWith('.ndjson.gz')) continue;
-      const content = this.readSegment(join(this.dataDir, f), f.endsWith('.gz'));
-      if (content === null) continue;
-      count += content.split('\n').filter((l) => l.trim().length > 0).length;
-    }
-    return count;
   }
 }

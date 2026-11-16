@@ -223,8 +223,8 @@ describe('FileAuditStore — AC 52.x: File-based Audit Store', () => {
     expect(removed2).toBe(0);
   });
 
-  // AC 52.5b: prune removes both .ndjson and .gz files
-  it('AC 52.5b: prune removes compressed .gz files too', async () => {
+  // AC 52.5b: prune removes closed segments, compressed or not
+  it('AC 52.5b: prune removes compressed segments and leaves the live one', async () => {
     store = new FileAuditStore({ ...config, maxFileSize: 100 });
     for (let i = 0; i < 20; i++) {
       await store.write({
@@ -234,17 +234,28 @@ describe('FileAuditStore — AC 52.x: File-based Audit Store', () => {
         result: 'success',
       });
     }
-    await new Promise((r) => setTimeout(r, 100));
+    await store.close();
 
-    const before = readdirSync(TEST_DIR).filter((f) => f.endsWith('.gz') || f.endsWith('.ndjson'));
-    expect(before.length).toBeGreaterThan(0);
+    const segments = (): string[] => readdirSync(TEST_DIR).filter((f) => f.endsWith('.gz') || f.endsWith('.ndjson'));
+    const before = segments().length;
+    expect(before).toBeGreaterThan(1);
 
-    // Prune everything with a far-future timestamp.
+    // Prune everything with a far-future timestamp: every closed segment goes,
+    // and the segment the store is still appending to stays. Deleting that one
+    // would drop the entries a resumed store is about to write, and the count
+    // returned has to be the number of files that actually went.
     const removed = await store.pruneOlderThan(new Date(Date.now() + 86400_000));
-    expect(removed).toBeGreaterThanOrEqual(before.length);
+    const remaining = segments();
+    expect(removed).toBe(before - 1);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.endsWith('.ndjson')).toBe(true);
 
-    const after = readdirSync(TEST_DIR).filter((f) => f.endsWith('.gz') || f.endsWith('.ndjson'));
-    expect(after.length).toBe(0);
+    // And the store still owns that segment: a write lands in it, on top of the
+    // entries it already held. The prune removed segments, not the entries in the
+    // segment that is still open.
+    const openSegmentEntries = await store.count();
+    await store.write({ operation: 'AFTER', actor: 'a', resource: 'r', result: 'success' });
+    expect(await store.count()).toBe(openSegmentEntries + 1);
   });
 
   // AC 52.11: query respects maxScanLines bound

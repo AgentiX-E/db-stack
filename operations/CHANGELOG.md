@@ -5,6 +5,99 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-11-16
+
+### Breaking
+
+- **`reEncrypt(policyId, blobs)` accepts `AsyncIterable<Buffer | null>`.** A `null` is the
+  source saying "this blob is already under the current key" — the only component that can
+  know a blob's key version is the one holding the version metadata. An existing iterable of
+  `Buffer` still type-checks; what changed is who is allowed to answer the question.
+- **`RotationEvent.reEncryption` is required.** Four states: `not-requested`, `completed`,
+  `deferred`, `failed`. Code that constructs a `RotationEvent` by hand (tests, audit
+  importers) must set it. `deferred` is a rotation that succeeded and left data on the old
+  key, and it exists because the alternative was reporting that as a clean success.
+
+### Added
+
+- **`ReEncryptSource` and `KeyRotationOptions.reEncryptSource`** — the seam that makes
+  `reEncrypt: true` mean something. `rotate()` asks it for blobs after the key has rotated and
+  records what happened. Without a source the event says `deferred` rather than claiming a
+  migration that did not happen (P3-1, AC 66.12–66.17).
+- **`recordEncryption(policyId, bytes)` on `IKeyRotationManager`.** `RotationTrigger` has
+  declared `count` and `volume` since the manager was written, and no code holding the
+  interface could ever make them fire: the only method that fed the counters was on the class.
+  AC 66.1–66.3.
+- **`retentionDays` is enforced.** Rotation sweeps closed segments older than the window; `0`
+  disables the sweep. AC 67.12–67.14.
+- **`readableSegmentsNewestFirst`, `newestOpenSegment`, `segmentPattern`, `escapeRegExp`,
+  `fileIdentity`, `unlinkIfUnchanged`** exported from the audit package. The two ordering rules
+  — newest first, and the active segment by name — are pure functions of a list of names, so
+  they are asserted on arrays instead of on whatever `readdir` returns.
+
+### Fixed
+
+- **`count(filter)` returned at most 100.** It routed through `query()`, whose default page is
+  100, so any filter with more matches reported exactly one hundred and an `offset` shortened
+  it further. Paging is not selection. AC 67.1–67.4.
+- **`get(id)` and `count()` were capped by `maxScanLines`.** An entry past the budget was
+  reported as absent. The budget bounds a page, not a lookup. AC 67.5–67.6.
+- **`resolveActiveFile` compared sequence numbers across dates.** The sequence restarts at
+  `0001` each day, so a restarted store picked yesterday's `-0003` over today's `-0001` and
+  appended today's entries to a file named for yesterday. AC 67.7, AC 67.30.
+- **A segment that already had an archive could be chosen as the active one.** Reads prefer the
+  archive, so anything appended after that point was written and never read. AC 67.8.
+- **`filePrefix` was interpolated into a `RegExp` unescaped.** A prefix containing a
+  metacharacter — `billing.v2` — matched other stores' files and would have had them pruned.
+  AC 67.10–67.11, AC 67.26–67.27.
+- **`pruneOlderThan` could delete the segment it was appending to**, and one unremovable file
+  abandoned the whole sweep through the outer `catch`, leaving evidence past its retention date
+  and reporting a partial number as the result. It now skips the live segment, isolates each
+  file, and only deletes names it could have produced. AC 67.15–67.18.
+- **`reEncrypt` reported an undecryptable blob as `skipped`**, whose documentation says
+  "already using new key". A blob that cannot be rewritten is data still on the old key; it is
+  `failed` now. AC 66.19c.
+- **`reEncrypt` left the plaintext in the heap on both failure paths** — a verification
+  mismatch returned early and a cipher error unwound without wiping. AC 66.19–66.19b.
+- **A failed rotation reported a key version it never created** (`toVersion = fromVersion + 1`)
+  in the audit trail. AC 66.7.
+- **A `compromise` policy was due forever**, so the scheduler rotated the cluster's key every
+  tick for the life of the process. It is due until it has been rotated once. AC 66.8.
+- **`checkPolicies` returned registration order**, although `RotationPriority` documents itself
+  as "the order when multiple rotations are pending" and nothing read it. AC 66.5.
+- **`startScheduler` never `unref`'d its interval**, so a service that forgot `stopScheduler`
+  could not exit. AC 66.10.
+- **Re-registering a policy kept the old deadline**, which had been computed from a trigger that
+  no longer existed. AC 66.6.
+- **`maxKeyVersions: 0` could report the brand-new key as retired** once the `> 0` guard was
+  read as `>= 0`; the guard is gone and `hasKeyVersion` answers the only question there is.
+  AC 66.25.
+- **The store read every `.ndjson` in its directory**, including another store's segments and
+  its own half-written `.tmp` files, while the pruner only deleted names it could have produced:
+  two components disagreeing about what "this trail" means. Reads are prefix-scoped now.
+  AC 67.26–67.28.
+
+### Changed
+
+- **`validate` of the audit scan is one dispatch on `.json`.** The `else if (.ndjson || .ndjson.gz)`
+  could not be false once the file list was prefix-scoped, and its mutants were unkillable
+  because they changed nothing.
+- **Dead statements removed, each one a mutant no test could kill:**
+
+  | Removed | Why it could not be observed |
+  | --- | --- |
+  | the empty-line guard in the NDJSON scan | `JSON.parse("")` throws, and the `catch` below already skips it |
+  | `retireVersion > 0 &&` in the retirement rule | version 0 never exists, so `hasKeyVersion(0)` answered the same |
+  | the `case 'manual'` arm of `_isDue` | `default: return false` is the same answer |
+  | the history rewrite in `emergencyRotate` | it wrote the event back to the slot it already occupied |
+  | the live-segment guard in the retention sweep | the sweep runs after rotation moved the active path |
+  | the `readFileSync(..., 'utf-8')` encoding for legacy `.json` | `JSON.parse` coerces a Buffer anyway; one helper reads both formats now |
+
+Mutation: **7 modules** behind the published rule — `backupChain.ts` 100 %, `cron.ts` 100 %,
+`RetentionPolicyEvaluator.ts` 100 %, `InMemoryBackupManager.ts` 98.9 %,
+`MaintenanceWindowScheduler.ts` 99.0 %, `KeyRotationManager.ts` 99.16 %,
+`FileAuditStore.ts` 97.04 %. Operations overall **98.86 %** over 1 584 mutants.
+
 ## [1.4.0] — 2026-11-16
 
 ### Breaking

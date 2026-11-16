@@ -9,7 +9,8 @@ import baseConfig from './vitest.config';
  * operations suite is over 2 700 cases across 21 packages, and a dry run of that
  * would spend minutes before the first mutant was generated. This config names
  * exactly the suites that exercise the files in `stryker.config.json`'s
- * `mutate` list. When one grows, the other grows with it — `check:gates`
+ * `mutate` list. A suite listed here that does not import a mutated file is not
+ * free: `perTest` has to run it in the dry run and attribute nothing to it. When one grows, the other grows with it — `check:gates`
  * compares the two and fails if a mutated file has no suite behind it.
  *
  * The base config pins a single thread to keep heap flat across 21 packages;
@@ -33,6 +34,14 @@ export default defineConfig({
       'packages/backup/src/__tests__/InMemoryBackup.test.ts',
       'packages/backup/src/__tests__/AC62-backup-store-surface.test.ts',
       'packages/backup/src/__tests__/AC65-retention-order-independence.test.ts',
+      'packages/security/src/__tests__/i28-key-rotation.test.ts',
+      'packages/security/src/__tests__/i28-rotation-failure-modes.test.ts',
+      'packages/security/src/__tests__/InMemoryImpls.test.ts',
+      'packages/audit/src/__tests__/FileAuditStore.test.ts',
+      'packages/audit/src/__tests__/FileAuditStore.chaos.test.ts',
+      'packages/audit/src/__tests__/FileAuditStore.degradation.test.ts',
+      'packages/audit/src/__tests__/AC67-audit-facts-not-pages.test.ts',
+      'packages/security/src/__tests__/AC66-rotation-policy-contract.test.ts',
     ],
     exclude: [],
     pool: 'forks',

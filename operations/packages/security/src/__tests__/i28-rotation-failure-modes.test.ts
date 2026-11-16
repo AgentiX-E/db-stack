@@ -108,7 +108,7 @@ function makePolicy(id: string, overrides: Partial<KeyRotationPolicy> = {}): Key
   };
 }
 
-async function* blobs(data: Buffer[]): AsyncIterable<Buffer> {
+async function* blobs(data: (Buffer | null)[]): AsyncIterable<Buffer | null> {
   for (const blob of data) yield blob;
 }
 
@@ -130,6 +130,7 @@ function makeEvent(overrides: Partial<RotationEvent> = {}): RotationEvent {
     success: true,
     error: null,
     reEncryptedCount: 0,
+    reEncryption: 'not-requested',
     retiredVersion: null,
     ...overrides,
   };
@@ -168,7 +169,10 @@ describe('KeyRotationManager — concurrent and failed rotations', () => {
 
     kms.releaseRotation();
     expect((await inFlight).success).toBe(true);
-    expect(await manager.checkPolicies()).toHaveLength(1);
+    // One compromise, one rotation: once the emergency rotation happened the
+    // policy is no longer due. Reporting it as due again is how the scheduler came
+    // to rotate the key on every tick, forever.
+    expect(await manager.checkPolicies()).toEqual([]);
   });
 
   it('records a failed rotation without advancing the key version', async () => {
@@ -282,16 +286,32 @@ describe('KeyRotationManager — re-encryption outcomes', () => {
     expect(result.skipped).toBe(0);
   });
 
-  it('counts a blob as skipped when it cannot be re-encrypted', async () => {
+  it('counts a blob as failed when the cipher refuses to re-encrypt it', async () => {
     const manager = new KeyRotationManager(new FailingEncryptKms());
     manager.registerPolicy(makePolicy('unavailable'));
 
     const result = await manager.reEncrypt('unavailable', blobs([Buffer.from('blob')]));
 
+    // `failed`, not `skipped`. `skipped` means "the source said this blob is
+    // already under the current key"; a blob that could not be rewritten is data
+    // still on the old key, and reporting it as a job well skipped is how a
+    // migration looks complete while it is not.
     expect(result.totalBlobs).toBe(1);
     expect(result.reEncrypted).toBe(0);
-    expect(result.failed).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.skipped).toBe(0);
+  });
+
+  it('counts a blob as skipped when the source says it is already current', async () => {
+    const manager = new KeyRotationManager(new CapturingKms());
+    manager.registerPolicy(makePolicy('current'));
+
+    const result = await manager.reEncrypt('current', blobs([null, Buffer.from('old')]));
+
+    expect(result.totalBlobs).toBe(2);
     expect(result.skipped).toBe(1);
+    expect(result.reEncrypted).toBe(1);
+    expect(result.failed).toBe(0);
   });
 
   it('zeroizes the decrypted plaintext after re-encrypting it', async () => {

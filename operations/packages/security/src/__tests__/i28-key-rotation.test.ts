@@ -171,7 +171,7 @@ describe('ROT2: Rotation triggers', () => {
     expect((await manager.checkPolicies()).length).toBe(1);
   });
 
-  it('compromise trigger: always due', async () => {
+  it('compromise trigger: due until the key has been rotated', async () => {
     const enc = new AES256GCMEncryptionProvider();
     await enc.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
     const manager = new KeyRotationManager(enc);
@@ -185,6 +185,12 @@ describe('ROT2: Rotation triggers', () => {
 
     const due = await manager.checkPolicies();
     expect(due.length).toBe(1);
+
+    // The compromise is addressed by rotating, not by being due forever. AC 66
+    // pins the second half; it is asserted here too because this is the case that
+    // used to call the permanent rotation a feature.
+    await manager.rotate('compromise-policy');
+    expect(await manager.checkPolicies()).toEqual([]);
   });
 });
 
@@ -679,6 +685,7 @@ function makeTestEvent(
     success,
     error: success ? null : 'test error',
     reEncryptedCount: 0,
+    reEncryption: 'not-requested',
     retiredVersion: null,
   };
 }

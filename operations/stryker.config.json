@@ -11,7 +11,9 @@
     "packages/backup/src/impl/RetentionPolicyEvaluator.ts",
     "packages/backup/src/impl/InMemoryBackupManager.ts",
     "packages/backup/src/impl/backupChain.ts",
-    "packages/maintenance/src/impl/cron.ts"
+    "packages/maintenance/src/impl/cron.ts",
+    "packages/security/src/impl/KeyRotationManager.ts",
+    "packages/audit/src/impl/FileAuditStore.ts"
   ],
   "coverageAnalysis": "perTest",
   "reporters": [

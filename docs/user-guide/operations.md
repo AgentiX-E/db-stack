@@ -272,58 +272,105 @@ import {
   KeyRotationManager,
 } from "@agentix-e/db-operations-security";
 
-const keys = new KeyManager({ provider: "file", path: "/etc/db/keys" });
-const encryption = new EnvelopeEncryptionProvider({ keyManager: keys });
-const rotation = new KeyRotationManager({ keyManager: keys, maxAgeDays: 90 });
-await rotation.rotateIfDue();
+const keys = new KeyManager({ masterSecret: process.env.DB_MASTER_SECRET! });
+const encryption = new EnvelopeEncryptionProvider({
+  keyManager: { masterSecret: process.env.DB_MASTER_SECRET! },
+  encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
+});
+
+const rotation = new KeyRotationManager(encryption, keys, {
+  // The one thing the manager cannot supply: where the blobs are. A callback, so
+  // the manager stays engine-agnostic — it drives policy and crypto, not storage.
+  reEncryptSource: async (policyId, newVersion) => rowsNotYetOn(newVersion),
+});
+
+rotation.registerPolicy({
+  id: "dek-90d",
+  name: "Data key, ninety days",
+  trigger: { kind: "time", maxAgeMs: 90 * 24 * 60 * 60 * 1000 },
+  reEncrypt: true,
+  reEncryptBatchSize: 256,
+  maxKeyVersions: 5,
+  priority: "normal",
+  enabled: true,
+});
+
+rotation.startScheduler();          // checks every five minutes
+// ...
+await rotation.emergencyRotate("dek-90d", "key found in a log");
 ```
 
-Envelope encryption keeps the data key separate from the master key, so rotation rewraps
-data keys instead of rewriting the database.
+`startScheduler()` owns an interval, and the interval is `unref`'d: a running
+scheduler never keeps your process alive. `stopScheduler()` clears it.
 
-### 3.5 Audit trail
+**What a rotation promises, and what it records.** `checkPolicies()` returns the policies
+that are due, ordered by `priority` — `critical` first — because a tick that can rotate one
+key should rotate the one that leaked. `rotate()` then reports exactly what happened:
+
+| Field | Meaning |
+| --- | --- |
+| `fromVersion` / `toVersion` | The key versions either side of the rotation. A **failed** rotation reports `toVersion === fromVersion`: it creates no key, so it names none. |
+| `success` / `error` | Whether the KMS rotated the key. A re-encryption that fails afterwards does not un-rotate it. |
+| `reEncryption` | `not-requested` (the policy does not ask), `completed`, `deferred` (**the key rotated and the data did not**) or `failed` (the source was there and broke). |
+| `reEncryptedCount` | Blobs rewritten and verified to round-trip. |
+| `retiredVersion` | The version that fell out of the `maxKeyVersions` window, when the `KeyManager` still holds it. Keys are not deleted — decryption still needs them — so this is a report, not an action. |
+
+`deferred` is the state worth knowing about: it is a rotation that succeeded and left data
+on the old key. `reEncrypt(policyId, blobs)` drives it manually, and
+`pendingReEncryptions` says whether another pass is owed (`1`) or the source was exhausted
+(`0`). `reEncryptBatchSize` bounds one pass, so a rotation can migrate a slice instead of
+the whole database.
+
+The source yields `Buffer` for a blob to migrate and `null` for a blob it already knows is
+on the current key — it is the only component that knows the per-blob key version.
+`reEncrypt` wipes the plaintext it decrypted on every exit, including the failure paths.
+
+**Triggers.** `time`, `count`, `volume`, `schedule`, `manual` and `compromise`. `count` and
+`volume` are fed by `recordEncryption(policyId, bytes)`; calling it for a policy that is not
+registered yet is a no-op, so startup order does not matter. A `compromise` policy is due
+**until it has been rotated once**: an emergency rotation that stayed "always due" made the
+scheduler rotate the key on every tick for the life of the process.
+
+`query()`, `get()` and `count()` read archived (`.ndjson.gz`) segments as well as the active
+one, so rotation does not make history disappear from the API — the entries stay on disk and
+stay readable. A segment that cannot be decoded is skipped rather than aborting the query: a
+damaged archive costs you those entries, not the whole trail. A segment being archived is
+counted once — the archive wins over the original that is about to be removed.
+
+**A page is not a fact.** `maxScanLines` (default 10 000) bounds what `query()` returns,
+because the budget exists to keep a grep-shaped read cheap. It does not bound what `get()` or
+`count()` *look up*:
 
 ```ts
-import { FileAuditStore } from "@agentix-e/db-operations-audit";
-
-// `dataDir` is the directory, not a file: the store rotates within it
-// (audit-YYYYMMDD-0001.ndjson, then .ndjson.gz) and creates it if absent.
-const audit = new FileAuditStore({
-  dataDir: "/var/log/db",
-  maxAgeMs: 24 * 60 * 60 * 1000,
-});
-
-await audit.write({
-  operation: "config.update",
-  actor: "alice",
-  resource: "replica-set",
-  result: "success",
-  severity: "info",
-  details: { setting: "max_connections", from: 100, to: 200 },
-});
-
-const recent = await audit.query({ actor: "alice", limit: 50 });
-
-// Rotation compresses the previous segment in the background. `close()` waits for
-// it, so a shutdown never leaves a half-written archive behind.
-await audit.close();
+await audit.query({ actor: "alice" });            // at most 100 (default limit), oldest first
+await audit.query({ actor: "alice", limit: 500 }); // at most 500
+await audit.count({ actor: "alice" });            // every match, whatever the page size
+await audit.count({ actor: "alice", offset: 900 }); // still every match: paging is not selection
+await audit.get(entryId);                         // found, even if it is past the budget
 ```
 
-`query()`, `get()` and `count()` read archived (`.ndjson.gz`) segments as well as the
-active one, so rotation does not make history disappear from the API — the entries stay
-on disk and stay readable. The scan is bounded by `maxScanLines` (default 10 000) across
-all segments in filename order, which is chronological; raise it if you query a long
-retention window, and use `pruneOlderThan()` to bound the directory instead of letting
-the scan bound your history.
+A count that inherited the default page reported at most one hundred matches for any filter,
+and an id lookup that inherited the budget answered "not found" for entries that existed.
+Both are the kind of wrong that is not recoverable in an audit report.
 
-A segment that cannot be decoded is skipped rather than aborting the query: a damaged
-archive costs you those entries, not the whole trail. A segment being archived is counted
-once — the archive wins over the original that is about to be removed.
+**Retention.** `retentionDays` (default 90) is enforced when a segment closes: rotation sweeps
+closed segments whose last write is older than the window. `0` disables the sweep instead of
+meaning "keep nothing" — retention that deletes evidence on construction is a footgun, and a
+caller who wants to prune chooses when:
 
-Audit entries are hash-chained; tampering with an earlier record breaks verification of
-everything after it. `close()` is optional on `IAuditStore` — in-memory stores have
-nothing to drain — but a file-backed store should be closed before the directory it owns
-is moved or deleted.
+```ts
+await audit.pruneOlderThan(new Date(Date.now() - 30 * 24 * 3600 * 1000));
+```
+
+`pruneOlderThan` deletes only names this store could have produced (`<prefix>-YYYYMMDD-NNNN.ndjson`
+and its `.gz`), never the segment it is appending to, and it reports the number of files that
+actually went: each file is removed in isolation, so one unreadable segment does not abandon
+the rest of the sweep. "Older than" is strict — a file last written exactly at the cutoff
+stays.
+
+`close()` is optional on `IAuditStore` — in-memory stores have nothing to drain — but a
+file-backed store should be closed before the directory it owns is moved or deleted: it waits
+for the background compression of the last rotated segment.
 
 ### 3.6 Rolling upgrade
 
