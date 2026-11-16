@@ -5,6 +5,92 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-11-16
+
+### Breaking
+
+- **`KeyManager.loadKey()` takes one argument.** The second parameter was `unwrapNow`, and both of
+  its branches were the same three lines — the "lazy" one carried the comment *"Not implemented
+  here — for now always unwrap immediately"*. A parameter that promises a behaviour nobody
+  implemented is worse than a missing feature: callers passed `false` and believed it.
+- **`KeyManager.zeroize()` no longer resets the version counter.** Versions continue from the highest
+  ever issued, so the key minted after a wipe is `v(n+1)`, not `v1`. `version` still reports `0`
+  when there is no active key.
+- **`KeyManager` validates its configuration at construction.** An empty `masterSecret`, a
+  `keyLength` outside `{16, 24, 32}` and a non-positive `iterations` now throw immediately instead of
+  surfacing as a `crypto` error on the first write — or, for the empty secret, not at all.
+- **`EnvelopeEncryptionProvider.canDecryptVersion(v)` answers `keyManager.hasKeyVersion(v)`.** It was
+  `hasKeyVersion(v) || encProvider.isEnabled()`, and the cipher is enabled for the whole life of the
+  provider, so **every** number — including versions that never existed — was reported decryptable.
+- **`EnvelopeEncryptionProvider` mints its first data key on the first `encrypt()`**, not in
+  `initialize()`. `getCurrentKeyVersion()` therefore returns `0` until something is written. Without
+  this, restoring a backup into a fresh process is impossible: the process already holds `v1`, and
+  the backup's `v1` is a different key.
+- **`EnvelopeEncryptionProvider` refuses a `keyLength` its configured algorithm cannot use** —
+  `aes-256-gcm` needs 32 bytes. Named at construction, not on the first write.
+
+### Added
+
+- **`scripts/replay-mutant.mjs`** — applies a mutant from a Stryker report by its recorded range and
+  replacement text. The report is the only place that says *which* edit was judged; a line number is
+  not enough, and iteration 30's "the runner disagrees with the suite" conclusion came from exactly
+  that mistake (see *Corrected* below).
+- **`unlinkIfUnchanged` and `fileIdentity` exported from `@agentix-e/db-operations-audit`** — the
+  measure-then-delete pair is useful to any caller doing the same dance, and it is now part of the
+  package's surface rather than an internal detail reached through a test.
+
+### Fixed
+
+- **`keyLength` sized the key-encryption key as well as the data key.** A manager configured for
+  128-bit data keys derived a 16-byte KEK, and every `generateKey()`/`wrapKey()` threw
+  `Invalid key length` — the configuration was documented and unusable. The KEK is now always 32
+  bytes, because the wrapping cipher is fixed. AC 71.1–71.3.
+- **`getKey()` and `getCurrentKey()` returned the stored buffer.** A caller following the module's own
+  zeroization advice (`key.fill(0)` when done) destroyed the key the process was still using. They
+  return copies now. AC 71.6–71.7.
+- **`loadKey()` silently replaced an existing version.** Loading a version already in the history
+  overwrote its material, so `v1` could name two different keys — and every blob sealed under the
+  first one became undecryptable with no error at load time. Same material is a no-op, different
+  material throws. AC 71.8–71.9.
+- **`zeroize()` reset the counter, so the next key was `v1` again.** Old keys are still in ciphertext
+  headers, exports and backups; reissuing their version number is how two keys end up sharing a name.
+  AC 71.11.
+- **`exportWrappedKeys()` returned map insertion order**, so an export replayed in order could be
+  `[3, 1, 2]`. It is sorted ascending now, and each key is re-wrapped with a fresh nonce. AC 71.13,
+  AC 71.15.
+- **`generateKey()` spent a version before the wrap could fail.** A KEK that could not be derived left
+  the numbering advanced with no key behind it. The wrap comes first. AC 71.19.
+- **`initialize()` spending `v1`** made restore impossible (see *Breaking*). AC 72.1–72.3.
+- **`importKey()` passed the removed second argument** — `loadKey(wrapped, true)`.
+- **A dead half of the identity check in `loadKey`** — `existing.key.length === dek.length &&` is
+  implied by `Buffer.equals`, so no test could tell it from its absence.
+- **`encrypt()`'s `_ensureInitialized()`** — every path to a data key already refuses on an
+  uninitialized provider, so the guard was a statement no run could distinguish.
+
+### Corrected
+
+- **P2-18 is withdrawn.** Iteration 30 reported five mutants as "killed by hand, survived according to
+  the runner" and concluded the runner's per-test attribution was wrong. It was not. The report
+  recorded a survivor at `AuditLogManager.ts:167` whose replacement was `false`; that statement is
+  `stats.eventsBySeverity[s] = (stats.eventsBySeverity[s] || 0) + 1`, and the change applied by hand
+  was `if (false) stats.failedEvents++` — the statement three lines below it, which the runner had
+  killed all along. The measurement was never wrong; the comparison was. What the five cases actually
+  were: five missing assertions, now written (AC 73.1–73.13), each verified by replaying the recorded
+  edit instead of retyping it.
+
+### Changed
+
+- **The mutation list covers eleven modules** (was nine): `security/KeyManager.ts` and
+  `security/EnvelopeEncryptionProvider.ts` join behind the published rule — a version number decides
+  which key material survives.
+
+Mutation: **11 modules** — `backupChain.ts` 100 %, `cron.ts` 100 %, `RetentionPolicyEvaluator.ts`
+100 %, `KeyRotationManager.ts` 99.16 %, `MaintenanceWindowScheduler.ts` 99.03 %,
+`InMemoryBackupManager.ts` 98.94 %, **`FileAuditStore.ts` 97.37 %**, **`RotationAuditor.ts` 97.52 %**,
+**`AuditLogManager.ts` 96.44 %**, **`KeyManager.ts` 86.60 %** (81.37 % → 86.60 %),
+**`EnvelopeEncryptionProvider.ts` 90.38 %** (84.76 % → 90.38 %). Operations overall **97.55 %** over
+2 404 judged mutants.
+
 ## [1.6.0] — 2026-11-16
 
 ### Breaking

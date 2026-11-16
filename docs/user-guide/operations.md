@@ -372,6 +372,27 @@ stays.
 file-backed store should be closed before the directory it owns is moved or deleted: it waits
 for the background compression of the last rotated segment.
 
+#### What the key material itself guarantees
+
+A key manager is judged by the questions it can answer when something has already gone wrong,
+so the rules below are contracts rather than conveniences:
+
+| Question | Answer |
+| --- | --- |
+| What does `keyLength` size? | The **data** key: 16, 24 or 32 bytes. The key-encryption key that wraps it is always 32 bytes, because the wrapping cipher is fixed. `keyLength: 16` used to size both, and every wrap then failed with `Invalid key length`. |
+| Can one version number mean two keys? | No. `loadKey()` of a version already held with the same material is a no-op; with different material it throws. A silent replacement made v1 name the restored key *and* the local one, and blobs written under the first became unreadable with no error at load time. |
+| Does `zeroize()` reset the numbering? | No. Versions continue from the highest ever issued, because the old keys are still in ciphertext headers, exports and backups. Reissuing v1 after a wipe is how two different keys end up sharing a name. |
+| Who owns the bytes `getKey()` returns? | The caller — they are a copy. Zeroizing what you were handed is hygiene; it must not zeroize the key the process is using. |
+| When is a version spent? | Only when a key exists. `generateKey()` wraps first and increments after, so a KEK that cannot be derived leaves the numbering untouched instead of skipping a number. |
+| What order does `exportWrappedKeys()` return? | Ascending version, whatever order the keys were loaded in, each one re-wrapped with a fresh nonce. Export is a replayable transfer format, not a dump. |
+| What does `initialize()` do to versions? | Nothing. `EnvelopeEncryptionProvider` mints its first version on the first `encrypt()`, so a backup can be imported into a fresh process *before* anything is written — which is the only order that works. |
+| What does `canDecryptVersion(v)` answer? | Whether the manager holds `v`. Not whether the cipher is initialized: `hasKeyVersion(v) || isEnabled()` answered "yes" for every number, including versions that never existed. |
+
+Two configurations are refused at construction rather than at the first write, because both are
+programming errors and both used to surface as a `crypto` message: an empty `masterSecret` (PBKDF2
+will derive 256 bits from nothing and every instance would share them), and a `keyLength` that the
+configured `algorithm` cannot use (`aes-256-gcm` needs 32 bytes).
+
 ### 3.5 Audit trail: what retention is allowed to delete
 
 ```ts

@@ -383,7 +383,7 @@ describe('ENC7: KeyManager — export and import', () => {
     });
 
     for (const wk of exported) {
-      await km2.loadKey(wk, true);
+      await km2.loadKey(wk);
     }
 
     // Keys should match
@@ -408,7 +408,7 @@ describe('ENC7: KeyManager — export and import', () => {
       iterations: 100000,
     });
 
-    await km2.loadKey(wrapped, true);
+    await km2.loadKey(wrapped);
     const key2 = km2.getKey(1)!;
 
     expect(key1.equals(key2)).toBe(true);
@@ -627,6 +627,9 @@ describe('ENC11: Envelope — key export and import', () => {
       algorithm: 'aes-256-gcm',
       keyDerivation: 'pbkdf2',
     });
+    // A key exists only once something was sealed: `initialize()` mints nothing,
+    // so exporting a fresh provider exports nothing.
+    await provider1.encrypt(Buffer.from('something to key'));
 
     const exported = await provider1.exportKeys();
 

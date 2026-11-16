@@ -56,8 +56,28 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
   private config: EnvelopeEncryptionConfig | null = null;
   private currentDek: Buffer | null = null;
 
+  /** Bytes of data key the configured cipher requires. */
+  private static readonly KEY_BYTES_BY_ALGORITHM: Record<EncryptionConfig['algorithm'], number> = {
+    'aes-256-gcm': 32,
+    'chacha20-poly1305': 32,
+  };
+
   constructor(config: EnvelopeEncryptionConfig) {
     this.config = config;
+
+    // The cipher is fixed by configuration, so the data key length is not a
+    // preference: the key manager allows 16/24/32 because wrapping does not care,
+    // while the payload cipher does. Naming the mismatch here beats
+    // `Invalid key length` thrown from `crypto` on the first write.
+    const required = EnvelopeEncryptionProvider.KEY_BYTES_BY_ALGORITHM[config.encryption.algorithm];
+    const configured = config.keyManager.keyLength ?? 32;
+    if (configured !== required) {
+      throw new Error(
+        `EnvelopeEncryption: encryption.algorithm is ${config.encryption.algorithm}, which needs a ` +
+          `${required}-byte data key; keyManager.keyLength is ${configured}`,
+      );
+    }
+
     this.keyManager = new KeyManager(config.keyManager);
     this.encProvider = new AES256GCMEncryptionProvider();
   }
@@ -67,29 +87,26 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
   async initialize(encConfig: EncryptionConfig): Promise<void> {
     await this.encProvider.initialize(encConfig);
 
-    if (this.config?.autoGenerateKey !== false) {
-      // Generate a DEK and store wrapped version
-      const wrapped = await this.keyManager.generateKey();
-      this.currentDek = this.keyManager.getCurrentKey();
-    }
-
+    // No key is minted here. Initializing is not writing: a provider that spends
+    // v1 on startup cannot then accept a restored v1, because a version number
+    // names one key and the backup's key is the one the archived blobs were
+    // sealed with. The first `encrypt()` mints the version instead.
     this.enabled = true;
   }
 
   // ── Encrypt ──────────────────────────────────────────────
 
   async encrypt(plaintext: Buffer, context?: string): Promise<Buffer> {
-    this._ensureInitialized();
-
-    if (!this.currentDek) {
-      throw new Error('EnvelopeEncryption: no DEK available. Call initialize() first.');
-    }
-
+    // No `_ensureInitialized()` call here: the only way to get a data key is
+    // through `rotateKey()`/`_activeDek()`, which refuse on an uninitialized
+    // provider, so a second guard in front of them was a statement no run could
+    // distinguish from its absence.
     // Encrypt with current DEK
-    const encrypted = await this._encryptWithDEK(this.currentDek, plaintext, context);
+    const dek = await this._activeDek();
+    const encrypted = await this._encryptWithDEK(dek, plaintext, context);
 
     // Get the wrapped form of the current DEK
-    const wrappedKey = await this.keyManager.wrapKey(this.currentDek, this.keyManager.version);
+    const wrappedKey = await this.keyManager.wrapKey(dek, this.keyManager.version);
 
     // Serialize wrapped key (convert Buffers to arrays for JSON)
     const serializableWrappedKey = {
@@ -186,7 +203,11 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
    * Test whether a blobs encrypted with a specific key version can be decrypted.
    */
   canDecryptVersion(version: number): boolean {
-    return this.keyManager.hasKeyVersion(version) || this.encProvider.isEnabled();
+    // Only the key history answers this. It used to be
+    // `hasKeyVersion(v) || encProvider.isEnabled()`, and since the cipher is
+    // enabled for the whole life of the provider, every version number — including
+    // ones that never existed — was reported decryptable.
+    return this.keyManager.hasKeyVersion(version);
   }
 
   /**
@@ -200,7 +221,7 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
    * Load a previously exported wrapped key.
    */
   async importKey(wrapped: WrappedKey): Promise<number> {
-    return this.keyManager.loadKey(wrapped, true);
+    return this.keyManager.loadKey(wrapped);
   }
 
   /**
@@ -248,6 +269,21 @@ export class EnvelopeEncryptionProvider implements IEncryptionManager {
 
       return Buffer.concat([iv, encrypted, tag]);
     }
+  }
+
+  /**
+   * The key to encrypt with: the current one, minted on first use when the
+   * configuration allows it.
+   */
+  private async _activeDek(): Promise<Buffer> {
+    if (this.currentDek) return this.currentDek;
+
+    if (this.config?.autoGenerateKey === false) {
+      throw new Error('EnvelopeEncryption: no DEK available. Call initialize() first.');
+    }
+
+    await this.rotateKey();
+    return this.currentDek!;
   }
 
   private _ensureInitialized(): void {

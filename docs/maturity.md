@@ -175,7 +175,7 @@ configuration file that looked like a gate and ran nowhere.
 | **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
 | **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
 | **Operations process-level acceptance**                  | Not covered                | Operations packages are verified in-process; there is no run that kills a process mid-backup.                                                                                                      |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 98.18 %, gates at 70, 70 and 86). In operations nine of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 12 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
+| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 97.55 %, gates at 70, 70 and 86). In operations eleven of 21 packages are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 10 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
 | **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
 | **Cross-version upgrade path**                           | Not covered                | The wire and snapshot formats are versioned, but no test exercises an N-1 → N upgrade.                                                                                                             |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
@@ -210,19 +210,23 @@ are attached to each run so a regression is visible next to the change that caus
 same suite runs on every pull request as the `benchmark` job in `ci.yml`, because a benchmark
 nobody calls is a benchmark that stays broken.
 
-**How the mutation score is produced.** Eleven modules are under mutation testing, chosen by one
+**How the mutation score is produced.** Thirteen modules are under mutation testing, chosen by one
 rule — *mutate what decides deletion, durability, or when work runs*: durable state
 (`cluster/.../SqliteStorage.ts`), the wire (`federation/.../TcpSecureTransport.ts`), what gets
 deleted (`operations/.../RetentionPolicyEvaluator.ts`, `operations/.../FileAuditStore.ts`), whether
 a backup can be replayed at all (`operations/.../backupChain.ts`,
-`operations/.../InMemoryBackupManager.ts`), which key material survives a rotation
-(`operations/.../KeyRotationManager.ts`), when a window runs
+`operations/.../InMemoryBackupManager.ts`), which key material survives at all
+(`operations/.../KeyManager.ts`), which key material survives a rotation
+(`operations/.../KeyRotationManager.ts`), which key a blob was sealed with
+(`operations/.../EnvelopeEncryptionProvider.ts`), when a window runs
 (`operations/.../MaintenanceWindowScheduler.ts`), what time it runs at
 (`operations/.../cron.ts`), whether a compliance window passed
 (`operations/.../RotationAuditor.ts`) and whether evidence is tamper-evident
 (`operations/.../AuditLogManager.ts`). Stryker alters the source one change at a
 time and runs the tests that cover the change; a change no test notices is a behaviour nothing
-constrains. There is one instrument: the three hand-rolled engines the operations package carried
+constrains. Which edit Stryker made is recorded in `reports/mutation/operations.json`, and
+`operations/scripts/replay-mutant.mjs` applies it by that record — a line number is not enough, and
+iteration 30 proved it the hard way. There is one instrument: the three hand-rolled engines the operations package carried
 until iteration 26 are gone, and `check:gates` now fails if a `test:mutation` script is not
 invoked by a workflow.
 
@@ -235,16 +239,21 @@ invoked by a workflow.
 | operations | `RetentionPolicyEvaluator.ts` | 174 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
 | operations | `cron.ts` | 87 | 80 (+7 timeout) | 0 | **100 %** | break 86 |
 | operations | `MaintenanceWindowScheduler.ts` | 621 | 602 (+13 timeout) | 6 | **99.0 %** | break 86 |
-| operations | `FileAuditStore.ts` | 304 | 288 (+7 timeout) | 9 | **97.0 %** | break 86 |
+| operations | `FileAuditStore.ts` | 304 | 288 (+8 timeout) | 8 | **97.4 %** | break 86 |
 | operations | `KeyRotationManager.ts` | 238 | 233 (+3 timeout) | 2 | **99.2 %** | break 86 |
 | operations | `RotationAuditor.ts` | 282 | 275 | 7 | **97.5 %** | break 86 |
-| operations | `AuditLogManager.ts` | 337 | 320 (+2 timeout) | 13 (+2 no coverage) | **95.6 %** | break 86 |
+| operations | `AuditLogManager.ts` | 337 | 323 (+2 timeout) | 10 (+2 no coverage) | **96.4 %** | break 86 |
+| operations | `KeyManager.ts` | 97 | 81 (+3 timeout) | 12 (+1 no coverage) | **86.60 %** | break 86 |
+| operations | `EnvelopeEncryptionProvider.ts` | 104 | 94 | 10 | **90.38 %** | break 86 |
 
-Operations overall: 2 203 judged mutants, 98.18 %. The score is 0.68 points below iteration 29's
-98.86 % because the two hardest modules in the package joined: one behaves differently depending on
-what the filesystem says, the other is a hash chain whose interesting failures are the ones an
-attacker causes. The number to compare is the survivor count — 38, of which 24 are equivalent for a
-stated reason and 4 are killed by the suite when the mutation is applied by hand.
+Operations overall: 2 404 judged mutants, 97.55 % — 2301 killed, 44 timed out,
+56 survived, 3 with no coverage. Two more modules joined this iteration and both are
+below the package average, so the figure fell again for the third iteration running while the
+survivor count went up. The composition of that number is the interesting part: twelve of the survivors
+are memory wipes and the durability recipe, which no in-process assertion can observe (P2-19), and
+most of the rest are encoding defaults (`'utf-8'` → `''` is the same encoding) or a fixed option
+object whose default is the value it was given. The three that are neither are named at the end of
+the table below.
 
 The operations floor is higher than the other two because the mutated surface is pure decision
 logic with no sockets and no clock of its own: a surviving mutant there is almost always a missing
@@ -277,26 +286,45 @@ The survivors were read one by one, and every one of the seven is equivalent:
 | `AuditLogManager` | `if (limit <= 0) return []` → `limit < 0` | for `limit === 0` the `slice` below returns the same empty array |
 | `AuditLogManager` | `events.length - drop > maxEvents` → `>=` | the assignment that follows sets `drop` to `events.length - maxEvents`, which at equality is the value it already has |
 | `AuditLogManager` | `if (this.flushTimer)` in `destroy()` → `true` | `clearInterval(null)` is a no-op and the field is nulled either way |
+| `KeyManager` | `existing.key.length === dek.length &&` → `true` | `Buffer.equals` compares lengths itself, so the test could not be told from its absence — the line was deleted rather than excused |
+| `KeyManager` | `if (err) reject(err)` → `if (false)` | the promise then resolves with `undefined`, and `crypto.createCipheriv` throws on the undefined key anyway: the same rejection, one frame later |
+| `KeyManager`, `EnvelopeEncryptionProvider`, `FileAuditStore` | every `fill(0)`, and the `try`/`finally` blocks that hold them (twelve mutants) | wiping a buffer cannot be observed by an assertion inside the same process (P2-19). This is the largest single family of survivors in the package and it is a *testability* limit, not a permission to stop wiping |
+| `KeyManager`, `EnvelopeEncryptionProvider` | `{ authTagLength: 16 }` → `{}` (four mutants) | 16 is the default tag length for both `createCipheriv` and `createDecipheriv` |
+| `KeyManager` | `if (version > highestVersion)` → `>=`, `if (version > currentVersion)` → `>=` | at equality the assignment stores the value it already holds |
+| `EnvelopeEncryptionProvider` | `this.config?.autoGenerateKey` → `this.config.autoGenerateKey` | the field is assigned in the constructor and never cleared |
 
-**Five survivors are not equivalent and are not missing assertions either.** They are mutants the
-suite kills when the change is applied by hand, which the runner reports as surviving because it
-judges a mutant with only the tests it attributes to that statement. The first was found in
-iteration 29 (`unlinkIfUnchanged`, AC 52.13 and AC 67.31); iteration 30 found four more in
-`AuditLogManager`, each by applying the change and running the 843-case mutation suite:
+**P2-18 was withdrawn, and the way it was withdrawn is the useful part.** Iteration 30 reported
+five mutants as "killed by hand, survived according to the runner" and concluded the runner's
+per-test attribution was wrong. The report had not been read carefully enough. It recorded a
+survivor at `AuditLogManager.ts:167` whose replacement text was `false`; the statement at that
+position is `stats.eventsBySeverity[s] = (stats.eventsBySeverity[s] || 0) + 1`, and the change that
+was applied by hand was `if (false) stats.failedEvents++`, the statement two lines below it, which
+the runner had killed all along. The same mistake accounts for the other four: a line number was
+used as the identity of a mutant, and line numbers move.
 
-| Mutant | Killed by hand | Attributed tests |
+The instrument that prevents a repeat is `operations/scripts/replay-mutant.mjs`. It reads the
+report, finds the mutant by status, and splices the recorded replacement into the recorded character
+range — the only description of the edit that is unambiguous. `apply <n>` prints what it removed and
+what it inserted, so the operator sees the change before running the tests. The five "discrepancies"
+are now five missing assertions (AC 73.1–73.13), each verified by replaying the recorded edit and
+watching the named test fail:
+
+| Recorded survivor | What a caller would have noticed | Killed by |
 | --- | --- | --- |
-| `if (!event.success) stats.failedEvents++` → `if (false)` | 2 tests fail (`AC 70.6`, `AUD4: Statistics`) | 2 |
-| `expectedSeq + i` → `expectedSeq - i` | 10 tests fail | 3 |
-| `if (maxAgeMs > 0)` → `if (false)` | 4 tests fail (`AC 68.6`, `AC 68.8`, `AC 70.11`) | 79 |
-| `if (maxEvents > 0 && …)` → `if (true)` | 6 tests fail | 72 |
+| `(stats.eventsBySeverity[s] \|\| 0)` → `false` | every severity bucket reported one event, whatever it held | AC 73.1 |
+| `${expectedSeq + i}` → `${expectedSeq - i}` in the gap message | the second and later gaps blamed the wrong number | AC 73.2 |
+| `flush()`'s empty-buffer guard → `false` | flushing an idle manager appended a blank line to an NDJSON trail | AC 73.3 |
+| `actual.ino !== expected.ino` → `false` | a different file of the same length was deleted as if it were the measured one | AC 73.12 |
+| `[...DATA_KEY_BYTES].join(', ')` (two mutants) | the error message lost the list it exists to state | AC 73.4 |
+| `iterations < 1` → `<= 1` | `iterations: 1` was refused | AC 73.5 |
+| `version > highestVersion` → `true` in `loadKey` | importing an old key lowered the next minted version | AC 73.6 |
+| `ciphertext.length <= HEADER_PREFIX_LENGTH` (two boundaries) | a blob that has a header was reported as short | AC 73.9, 73.10 |
+| `data.length <= 12 + 16` | the only empty ciphertext the provider can produce became undecryptable | AC 73.11 |
 
-The common shape is a condition whose *false* branch is what a test would assert: the killing test
-takes the branch the mutant removes, and the statement the runner attributes to the mutant is the
-one inside the branch, which that test never executes. `AC 70.11` is the clearest case — it asserts
-that an event sitting exactly on the age limit survives, which is precisely the branch `maxAgeMs > 0`
-guards, and the runner had already stopped counting it. Registered as **P2-18** with five data
-points; until the attribution is understood, the score above is the conservative one.
+Two survivors remain that are neither equivalent nor covered, and they are honest gaps rather than
+measurement noise: `FileAuditStore`'s per-segment budget break and its unreadable-segment skip both
+need a filesystem fault *during* a scan to observe, which the suite can only produce by making a
+file unreadable mid-run. Registered as **P2-21**.
 
 Reading them was worth doing rather than assuming: iteration 27 turned 38 survivors into 11
 assertions and two defects, iteration 29 turned 100 into eighteen defects and seventy-five

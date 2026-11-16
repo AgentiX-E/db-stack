@@ -44,12 +44,16 @@ describe('ENC-MK: envelope mutation killers', () => {
     await expect(p.decrypt(buf)).rejects.toThrow(/incomplete header/i);
   });
 
-  it('L196: canDecryptVersion is true when the enc provider is enabled (OR short-circuit)', async () => {
+  it('L196: canDecryptVersion asks the key history, not the cipher', async () => {
     const p = makeProvider(true);
     await p.initialize({ algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' });
-    // A version that the keyManager does not have (hasKeyVersion = false), but
-    // the enc provider is enabled. `||` returns true; `&&` returns false.
-    expect(p.canDecryptVersion(999999)).toBe(true);
+    await p.encrypt(Buffer.from('mint a version'));
+
+    // `hasKeyVersion(v) || encProvider.isEnabled()` answered true for every
+    // number, including versions that were never minted. The cipher being
+    // initialized is not evidence about a key.
+    expect(p.canDecryptVersion(999999)).toBe(false);
+    expect(p.canDecryptVersion(1)).toBe(true);
   });
 
   it('L235: decrypt rejects AES-GCM data shorter than IV(12)+tag(16)', async () => {

@@ -92,7 +92,7 @@ describe('KeyManager — configuration defaults and errors', () => {
     const exported = await source.exportWrappedKeys();
 
     const target = new KeyManager({ masterSecret: 'lazy-secret', iterations: 1_000 });
-    const version = await target.loadKey(exported[0]!, false);
+    const version = await target.loadKey(exported[0]!);
 
     expect(version).toBe(wrapped.version);
     expect(target.getKey(version)!.equals(source.getKey(wrapped.version)!)).toBe(true);
@@ -151,13 +151,15 @@ describe('EnvelopeEncryptionProvider — DEK lifecycle', () => {
   it('reports the number of retained key versions after rotations', async () => {
     const provider = makeEnvelope(true);
     await provider.initialize(ENCRYPTION_CONFIG);
-    expect(provider.getKeyVersionCount()).toBe(1);
+    // Initializing is not writing: the count starts at zero and the first
+    // version is minted by whoever needs a key (here, `rotateKey`).
+    expect(provider.getKeyVersionCount()).toBe(0);
 
     await provider.rotateKey();
     await provider.rotateKey();
 
-    expect(provider.getKeyVersionCount()).toBe(3);
-    expect(provider.getCurrentKeyVersion()).toBe(3);
+    expect(provider.getKeyVersionCount()).toBe(2);
+    expect(provider.getCurrentKeyVersion()).toBe(2);
   });
 
   it('keeps ciphertexts from a retired version decryptable through the header', async () => {

@@ -22,6 +22,12 @@
 
 import crypto from 'crypto';
 
+/** Length of the key-encryption key. AES-256-GCM accepts exactly 32 bytes. */
+const KEK_BYTES = 32;
+
+/** Data-key lengths the AES variants behind this manager can actually use. */
+const DATA_KEY_BYTES = new Set([16, 24, 32]);
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface KeyManagerConfig {
@@ -31,7 +37,11 @@ export interface KeyManagerConfig {
   salt?: Buffer;
   /** PBKDF2 iterations. Default: 600_000 (OWASP 2024 recommendation). */
   iterations?: number;
-  /** Key length in bytes. Default: 32 (256-bit). */
+  /**
+   * Length of the *data* key in bytes: 16, 24 or 32 (AES-128/192/256). Default: 32.
+   * It does not size the key-encryption key, which is always 32 bytes because the
+   * wrapping cipher is fixed.
+   */
   keyLength?: number;
   /** Hash algorithm for PBKDF2. Default: "sha256". */
   hashAlgorithm?: string;
@@ -71,18 +81,43 @@ const DEFAULT_CONFIG: Omit<Required<KeyManagerConfig>, 'masterSecret' | 'salt'> 
 export class KeyManager {
   private config: Required<KeyManagerConfig>;
   private keyHistory = new Map<number, KeyPair>();
+  /** Version of the key currently in use, or 0 when there is none. */
   private currentVersion = 0;
+  /**
+   * Highest version ever issued. Kept across `zeroize()` on purpose: a version
+   * number is a name for one key, and reissuing it after a wipe would make the
+   * new key share a name with material that may already be in ciphertext
+   * headers, exports or backups.
+   */
+  private highestVersion = 0;
 
   constructor(config: KeyManagerConfig) {
     // Resolve documented defaults explicitly: a spread would let an explicit
     // `undefined` overwrite the default it is supposed to select.
-    this.config = {
+    const resolved: Required<KeyManagerConfig> = {
       masterSecret: config.masterSecret,
       salt: config.salt ?? crypto.randomBytes(32),
       iterations: config.iterations ?? DEFAULT_CONFIG.iterations,
       keyLength: config.keyLength ?? DEFAULT_CONFIG.keyLength,
       hashAlgorithm: config.hashAlgorithm ?? DEFAULT_CONFIG.hashAlgorithm,
     };
+
+    // Refuse a configuration that cannot produce the key it promises, at
+    // construction: every one of these used to surface as a runtime error from
+    // `crypto` at the first `generateKey()` — or, worse, not at all.
+    if (resolved.masterSecret.trim().length === 0) {
+      throw new Error('KeyManager: masterSecret must not be empty — PBKDF2 will derive a key from nothing');
+    }
+    if (!DATA_KEY_BYTES.has(resolved.keyLength)) {
+      throw new Error(
+        `KeyManager: keyLength must be one of ${[...DATA_KEY_BYTES].join(', ')} (got ${resolved.keyLength})`,
+      );
+    }
+    if (!Number.isInteger(resolved.iterations) || resolved.iterations < 1) {
+      throw new Error(`KeyManager: iterations must be a positive integer (got ${resolved.iterations})`);
+    }
+
+    this.config = resolved;
   }
 
   // ── Key Generation ───────────────────────────────────────
@@ -92,48 +127,53 @@ export class KeyManager {
    * and return a WrappedKey for persistent storage.
    */
   async generateKey(): Promise<WrappedKey> {
-    this.currentVersion++;
+    const version = this.highestVersion + 1;
     const dek = crypto.randomBytes(this.config.keyLength);
-    const wrapped = await this.wrapKey(dek, this.currentVersion);
+    // The wrap comes first: if the key-encryption key cannot be derived the
+    // version is not consumed, so a retry still produces v1 and the history has
+    // no hole where a key was supposed to be.
+    const createdAt = Date.now();
+    const wrapped = await this._wrapKeyAt(dek, version, createdAt);
 
-    // Store in key history
-    this.keyHistory.set(this.currentVersion, {
-      version: this.currentVersion,
-      key: dek,
-      createdAt: Date.now(),
-    });
+    this.highestVersion = version;
+    this.currentVersion = version;
+    this.keyHistory.set(version, { version, key: dek, createdAt });
 
     return wrapped;
   }
 
   /**
    * Load a previously wrapped key into the key history.
-   * The DEK is unwrapped on demand (lazy) or immediately if `unwrapNow` is true.
+   *
+   * Loading always unwraps: there used to be an `unwrapNow` flag whose "lazy"
+   * branch was a copy of the eager one, so the flag did nothing but promise a
+   * behaviour that did not exist.
+   *
+   * A version identifies one key. Loading a version that is already present with
+   * the *same* material is a no-op; with different material it throws, because
+   * silently replacing it would make v1 mean two keys at once and every byte
+   * already sealed under the first one undecryptable without an error.
    */
-  async loadKey(wrapped: WrappedKey, unwrapNow = true): Promise<number> {
+  async loadKey(wrapped: WrappedKey): Promise<number> {
     const version = wrapped.version;
+    const dek = await this.unwrapKey(wrapped);
+    const existing = this.keyHistory.get(version);
 
-    if (unwrapNow) {
-      const dek = await this.unwrapKey(wrapped);
-      this.keyHistory.set(version, {
-        version,
-        key: dek,
-        createdAt: wrapped.createdAt,
-      });
-    } else {
-      // Lazy: store wrapped key for later unwrapping
-      // (Not implemented here — for now always unwrap immediately)
-      const dek = await this.unwrapKey(wrapped);
-      this.keyHistory.set(version, {
-        version,
-        key: dek,
-        createdAt: wrapped.createdAt,
-      });
+    if (existing) {
+      // `Buffer.equals` compares the length as well, so a separate length test
+      // here was a mutant no run could distinguish — and a reader could only
+      // wonder whether it was load-bearing.
+      const same = existing.key.equals(dek);
+      dek.fill(0);
+      if (!same) {
+        throw new Error(`KeyManager: version ${version} already holds different key material; refusing to replace it`);
+      }
+      return version;
     }
 
-    if (version > this.currentVersion) {
-      this.currentVersion = version;
-    }
+    this.keyHistory.set(version, { version, key: dek, createdAt: wrapped.createdAt });
+    if (version > this.highestVersion) this.highestVersion = version;
+    if (version > this.currentVersion) this.currentVersion = version;
 
     return version;
   }
@@ -144,28 +184,41 @@ export class KeyManager {
    * Wrap a DEK with the KEK using AES-256-GCM.
    */
   async wrapKey(dek: Buffer, version: number): Promise<WrappedKey> {
+    return this._wrapKeyAt(dek, version, Date.now());
+  }
+
+  /**
+   * `wrapKey` with the creation timestamp supplied by the caller, so that the
+   * wrapped key and the history entry it becomes are dated by one clock read
+   * rather than two. A millisecond of drift there is a key whose export reports
+   * a different birthday from the key it was exported from.
+   */
+  private async _wrapKeyAt(dek: Buffer, version: number, createdAt: number): Promise<WrappedKey> {
     const kek = await this._deriveKEK();
     const iv = crypto.randomBytes(12);
 
-    const cipher = crypto.createCipheriv('aes-256-gcm', kek, iv, {
-      authTagLength: 16,
-    });
+    try {
+      const cipher = crypto.createCipheriv('aes-256-gcm', kek, iv, {
+        authTagLength: 16,
+      });
 
-    const encryptedKey = Buffer.concat([cipher.update(dek), cipher.final()]);
-    const authTag = cipher.getAuthTag();
+      const encryptedKey = Buffer.concat([cipher.update(dek), cipher.final()]);
+      const authTag = cipher.getAuthTag();
 
-    // Zeroize KEK from memory
-    kek.fill(0);
-
-    return {
-      version,
-      iv,
-      encryptedKey,
-      authTag,
-      salt: this.config.salt,
-      iterations: this.config.iterations,
-      createdAt: Date.now(),
-    };
+      return {
+        version,
+        iv,
+        encryptedKey,
+        authTag,
+        salt: this.config.salt,
+        iterations: this.config.iterations,
+        createdAt,
+      };
+    } finally {
+      // One exit for the key-encryption key: the `try` covers `createCipheriv`
+      // as well, which throws before there is anything to return.
+      kek.fill(0);
+    }
   }
 
   /**
@@ -197,11 +250,12 @@ export class KeyManager {
    */
   async exportWrappedKeys(): Promise<WrappedKey[]> {
     const results: WrappedKey[] = [];
-    for (const pair of this.keyHistory.values()) {
-      const wrapped = await this.wrapKey(pair.key, pair.version);
-      // Restore original creation time
-      wrapped.createdAt = pair.createdAt;
-      results.push(wrapped);
+    // Ordered by version, not by the order keys happened to be loaded in: an
+    // export is consumed by a destination that replays it, and `[3, 1, 2]` is a
+    // sequence nobody expects to have to sort.
+    const pairs = [...this.keyHistory.values()].sort((a, b) => a.version - b.version);
+    for (const pair of pairs) {
+      results.push(await this._wrapKeyAt(pair.key, pair.version, pair.createdAt));
     }
     return results;
   }
@@ -212,14 +266,19 @@ export class KeyManager {
    * Get the currently active DEK.
    */
   getCurrentKey(): Buffer | null {
-    return this.keyHistory.get(this.currentVersion)?.key ?? null;
+    const key = this.keyHistory.get(this.currentVersion)?.key;
+    // A copy: the caller is expected to zeroize what it was given, and handing
+    // out the stored buffer means one caller's hygiene destroys the key for
+    // every other one.
+    return key ? Buffer.from(key) : null;
   }
 
   /**
    * Get a DEK by version.
    */
   getKey(version: number): Buffer | null {
-    return this.keyHistory.get(version)?.key ?? null;
+    const key = this.keyHistory.get(version)?.key;
+    return key ? Buffer.from(key) : null;
   }
 
   /**
@@ -253,6 +312,7 @@ export class KeyManager {
     }
     this.keyHistory.clear();
     this.currentVersion = 0;
+    // `highestVersion` deliberately survives: see its declaration.
   }
 
   // ── Internal ─────────────────────────────────────────────
@@ -266,7 +326,10 @@ export class KeyManager {
         this.config.masterSecret,
         effectiveSalt,
         effectiveIterations,
-        this.config.keyLength,
+        // Always 32 bytes: this derives the key *wrapping* key, and the wrapping
+        // cipher is fixed at AES-256-GCM. Deriving `keyLength` bytes here made
+        // `keyLength: 16` fail every wrap with "Invalid key length".
+        KEK_BYTES,
         this.config.hashAlgorithm,
         (err, derivedKey) => {
           if (err) reject(err);
