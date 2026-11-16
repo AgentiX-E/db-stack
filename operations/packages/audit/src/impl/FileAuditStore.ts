@@ -4,7 +4,8 @@
  * Features:
  *   - Writes audit entries as NDJSON lines (one JSON object per line)
  *   - Automatic log rotation by size or time
- *   - Crash-safe writes (write to .tmp, fsync, rename)
+ *   - Durable writes: append, sync the file, sync the directory that names it
+ *     (`DurableFileSystem`, injectable so the order is assertable)
  *   - Compression (gzip) of rotated files
  *   - Query support via a bounded scan across active and compressed segments
  *     (`maxScanLines`), so rotation does not make the trail unreadable
@@ -28,21 +29,15 @@
 
 import { randomUUID } from 'node:crypto';
 import {
-  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
-  writeFileSync,
   createWriteStream,
   createReadStream,
   unlinkSync,
-  openSync,
-  fsyncSync,
-  closeSync,
 } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
 import { join, extname } from 'node:path';
@@ -50,6 +45,8 @@ import { createGzip, gunzipSync } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import type { IAuditStore, WriteAuditEntryOptions, AuditQueryFilter } from '../interfaces/index.js';
 import type { AuditEntry } from '@agentix-e/db-operations-core/types';
+import { nodeDurableFileSystem } from './DurableFileSystem.js';
+import type { DurableFileSystem } from './DurableFileSystem.js';
 
 // ── Config ───────────────────────────────────────────────────────
 
@@ -80,6 +77,20 @@ export interface FileAuditStoreConfig {
    * does not stop the scan.
    */
   segmentReader?: (path: string, compressed: boolean) => string | null;
+  /**
+   * Write port: the three steps that make a line survive, plus the one question
+   * the recovery path asks.
+   *
+   * The default appends to the local filesystem with `O_APPEND` and syncs the
+   * file and, once per segment, its directory. Supplying one lets a deployment
+   * put the trail on a different medium, and lets a test state the order — which
+   * is the only part of "crash-safe" that a test can observe without a crash.
+   *
+   * Whatever is supplied must be durable when it returns: the store acknowledges
+   * an entry only after `syncFile` (and, for a new segment, `syncDirectory`)
+   * returned.
+   */
+  fileSystem?: DurableFileSystem;
 }
 
 // ── Defaults ────────────────────────────────────────────────────
@@ -194,6 +205,25 @@ export function fileIdentity(path: string): FileIdentity | null {
 }
 
 /**
+ * Whether an error means "the file is not there to delete", as opposed to
+ * "something went wrong".
+ *
+ * Narrow on purpose. The catch this replaced took everything, so a `ReferenceError`
+ * from a missing import — which is how it was found — reported itself as "the file
+ * could not be deleted" and left five uncompressed segments behind. A predicate
+ * rather than a list inside the `catch` for the same reason as
+ * `isDirectorySyncUnsupported`: two of these codes cannot be produced on a runner
+ * that deletes as root, so the decision is tested by being handed the errno.
+ */
+export function isUnlinkRefusal(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  // ENOENT: already gone. EISDIR/EPERM/EACCES: this process may not remove it —
+  // a directory, a read-only mount, a file owned by someone else.
+  return code === 'ENOENT' || code === 'EISDIR' || code === 'EPERM' || code === 'EACCES';
+}
+
+/**
  * Delete `path` only if it is still the file described by `expected`.
  *
  * Rotation reuses segment names (`audit-YYYYMMDD-0001.ndjson`), so a background
@@ -209,12 +239,12 @@ export function unlinkIfUnchanged(path: string, expected: FileIdentity): boolean
   try {
     unlinkSync(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isUnlinkRefusal(error)) return false;
+    throw error;
   }
 }
 
-/**
 /**
  * A segment's text, read from the local filesystem.
  *
@@ -266,12 +296,34 @@ export class FileAuditStore implements IAuditStore {
   /** Where segment text comes from. See `FileAuditStoreConfig.segmentReader`. */
   private readonly segmentReader: (path: string, compressed: boolean) => string | null;
 
+  /** Where written lines go, and what "durable" means there. */
+  private readonly fileSystem: DurableFileSystem;
+
   /** Current active file path. */
   private activeFilePath: string;
 
   /** Current file stats (track size). */
   private currentSize = 0;
   private currentCreatedAt: number;
+
+  /**
+   * The segment was created by this run and its name is not yet on the medium.
+   *
+   * A file's existence is a directory entry, and syncing the file does not sync
+   * the name that leads to it. The first line of a segment therefore pays for one
+   * `syncDirectory`, and no later line does.
+   */
+  private segmentNeedsDirectorySync: boolean;
+
+  /**
+   * The segment ends mid-line, so the next append must start with a newline.
+   *
+   * A torn tail is what a crash between two writes leaves behind. Readers skip
+   * an unparsable line, so the fragment costs nothing on its own; appending to it
+   * would fuse the next entry to the fragment and lose both, which is a quieter
+   * failure than the crash that caused it.
+   */
+  private separatorOwed: boolean;
 
   /**
    * Rotated segments still being compressed in the background.
@@ -292,6 +344,7 @@ export class FileAuditStore implements IAuditStore {
     this.filePrefix = config.filePrefix ?? DEFAULT_FILE_PREFIX;
     this.maxScanLines = config.maxScanLines ?? DEFAULT_MAX_SCAN_LINES;
     this.segmentReader = config.segmentReader ?? readSegmentFromDisk;
+    this.fileSystem = config.fileSystem ?? nodeDurableFileSystem;
 
     // Inverted until now: the directory was created only if it already existed, so
     // a store pointed at a fresh path failed on its first write with ENOENT.
@@ -306,6 +359,16 @@ export class FileAuditStore implements IAuditStore {
     this.activeFilePath = this.resolveActiveFile();
     this.currentSize = existsSync(this.activeFilePath) ? statSync(this.activeFilePath).size : 0;
     this.currentCreatedAt = Date.now();
+
+    // A store cannot know whether the process that created this segment synced its
+    // name — it may have died between the data and the directory entry — so it pays
+    // one directory sync per segment it opens. Asking `currentSize === 0` saved a
+    // single `fsync` per process start and turned "the name is durable" into "the
+    // name was probably durable", which is not the same claim.
+    this.segmentNeedsDirectorySync = true;
+    // The other thing the previous run may have left behind: a segment that does
+    // not end on a line boundary. Asked once, here.
+    this.separatorOwed = this.fileSystem.needsSeparator(this.activeFilePath);
   }
 
   // ── Private helpers ─────────────────────────────────────────
@@ -363,6 +426,11 @@ export class FileAuditStore implements IAuditStore {
     this.activeFilePath = this.generateFilePath();
     this.currentSize = 0;
     this.currentCreatedAt = Date.now();
+    // The new segment does not exist yet, so its name is not on the medium and
+    // its first append has to fix that. It is also the first thing written into
+    // it, so no separator can be owed.
+    this.segmentNeedsDirectorySync = true;
+    this.separatorOwed = false;
 
     // What is being compressed, captured now rather than trusted later: segment
     // names are reused after a directory is recreated, so "the file at oldPath" at
@@ -380,8 +448,12 @@ export class FileAuditStore implements IAuditStore {
             unlinkIfUnchanged(oldPath, source);
           })
           .catch(() => {
-            // Compression failed: keep the original, drop the partial archive.
-            rmSync(gzPath, { force: true });
+            // Compression failed: keep the original, drop whatever partial archive
+            // is there. `recursive` because the thing at that path may not be a
+            // file — and because a throw *here* has no handler above it: the job's
+            // promise is resolved by `finally`, so a rejected cleanup would surface
+            // as an unhandled rejection in a process that is otherwise fine.
+            rmSync(gzPath, { force: true, recursive: true });
           })
           .finally(() => {
             // After the archive is in place, so the sweep sees the segment under
@@ -452,32 +524,50 @@ export class FileAuditStore implements IAuditStore {
   }
 
   /**
-   * Write a line safely: write to .tmp, fsync, rename (crash-safe).
-   * Falls back to direct append if tmp/rename fails.
+   * Append one line so that it survives a power loss.
+   *
+   * The recipe is three steps and one order:
+   *
+   *   1. `append` — the bytes are in the file (probably still in the page cache).
+   *   2. `syncFile` — the file's data is on the medium.
+   *   3. `syncDirectory`, only for a segment created by this run — the *name* is
+   *      on the medium. The name is a directory entry; step 2 does not touch it,
+   *      so without step 3 a crash can leave the data written and unreachable.
+   *
+   * Every failure propagates. The previous revision caught the `fsync` and
+   * carried on — "best-effort" — which meant `write()` returned an id for an
+   * entry that could be gone after a power loss, and the one component whose job
+   * is to record what happened was the one component reporting a success it could
+   * not observe. A caller can retry a rejection; it cannot retry a lie.
+   *
+   * Nothing here reads the segment. The previous revision did — it read the whole
+   * file, concatenated the new line and renamed a replacement into place — so
+   * appending to a segment cost its entire size, a segment of 50 000 lines cost
+   * 50 000 rewrites, and the last line of a large segment rewrote 50 MB to add
+   * 400 bytes. It also made two writers to one trail lose each other's entries,
+   * because each one wrote what it had read a moment earlier.
    */
   private writeLine(line: string): void {
     if (this.shouldRotate()) {
       this.rotate();
     }
 
-    const tmpPath = this.activeFilePath + '.tmp';
+    const data = `${this.separatorOwed ? '\n' : ''}${line}\n`;
 
-    // Drain existing content + append new line
-    const existing = existsSync(this.activeFilePath) ? readFileSync(this.activeFilePath) : Buffer.alloc(0);
+    // The append is the step that can leave the file longer than `currentSize`
+    // says, so the accounting follows it rather than the whole recipe: a failed
+    // sync reports failure, but the bytes are there and the rotation threshold
+    // has to be measured against what is.
+    this.fileSystem.append(this.activeFilePath, data);
+    this.currentSize += Buffer.byteLength(data);
+    this.separatorOwed = false;
 
-    const fullContent = Buffer.concat([existing, Buffer.from(line + '\n')]);
-    writeFileSync(tmpPath, fullContent);
-    // fsync for crash-safety
-    try {
-      const fd = openSync(tmpPath, 'r');
-      fsyncSync(fd);
-      closeSync(fd);
-    } catch {
-      /* fsync best-effort */
+    this.fileSystem.syncFile(this.activeFilePath);
+
+    if (this.segmentNeedsDirectorySync) {
+      this.fileSystem.syncDirectory(this.dataDir);
+      this.segmentNeedsDirectorySync = false;
     }
-    renameSync(tmpPath, this.activeFilePath);
-
-    this.currentSize = fullContent.length;
   }
 
   // ── IAuditStore implementation ──────────────────────────────

@@ -14,6 +14,7 @@
     "packages/maintenance/src/impl/cron.ts",
     "packages/security/src/impl/KeyRotationManager.ts",
     "packages/audit/src/impl/FileAuditStore.ts",
+    "packages/audit/src/impl/DurableFileSystem.ts",
     "packages/security/src/impl/RotationAuditor.ts",
     "packages/security/src/impl/AuditLogManager.ts",
     "packages/security/src/impl/KeyManager.ts",

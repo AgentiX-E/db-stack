@@ -35,7 +35,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { gunzipSync } from 'node:zlib';
-import { FileAuditStore } from '../impl/FileAuditStore.js';
+import { FileAuditStore, readSegmentFromDisk } from '../impl/FileAuditStore.js';
 import type { AuditEntry } from '@agentix-e/db-operations-core/types';
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -292,6 +292,20 @@ describe('AC76.6–76.10: a capped scan stops reading', () => {
 
       expect(found.map((e) => e.id)).toEqual(['legacy-1']);
       expect(calls.map((c) => c.path.endsWith('audit-legacy.json'))).toContain(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('76.11 the default port answers null for a segment that is not there', () => {
+    // The port's contract is `string | null`, and the store turns `null` into an
+    // empty segment. A default that answered `undefined` instead would reach the
+    // same place through `?? ''` — which is why the distinction has to be asserted
+    // at the port, where a caller can see it, rather than inferred from a query.
+    const dir = tempDir();
+    try {
+      expect(readSegmentFromDisk(join(dir, 'absent.ndjson'), false)).toBeNull();
+      expect(readSegmentFromDisk(join(dir, 'absent.ndjson.gz'), true)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

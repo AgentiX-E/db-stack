@@ -20,7 +20,7 @@ import {
   DEFAULT_MAX_FILE_SIZE,
   DEFAULT_MAX_AGE_MS,
 } from '../impl/FileAuditStore.js';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -422,8 +422,8 @@ describe('FileAuditStore — AC 52.x: File-based Audit Store', () => {
     expect(content).not.toContain('A1');
   });
 
-  // AC 52.7: Crash-safe write (tmp + rename)
-  it('AC 52.7: should write through tmp + rename for crash safety', async () => {
+  // AC 52.7: the write is an append, and it leaves no scratch file behind
+  it('AC 52.7: appends in place and leaves no temporary file', async () => {
     await store.write({
       operation: 'SAFE',
       actor: 'test',
@@ -431,14 +431,21 @@ describe('FileAuditStore — AC 52.x: File-based Audit Store', () => {
       result: 'success',
     });
 
-    // No .tmp file should remain after successful write
     const files = readdirSync(TEST_DIR);
-    const tmpFiles = files.filter((f) => f.endsWith('.tmp'));
-    expect(tmpFiles).toHaveLength(0);
+    expect(files.filter((f) => f.endsWith('.tmp'))).toHaveLength(0);
 
-    // The .ndjson file should contain valid audit entry
     const ndjsonFiles = files.filter((f) => f.endsWith('.ndjson'));
     expect(ndjsonFiles).toHaveLength(1);
+
+    // The segment grew by the line rather than being replaced by a copy of itself:
+    // the recipe and its assertions live in AC80, this is the same fact stated
+    // where the store's own suite can see it.
+    const path = join(TEST_DIR, ndjsonFiles[0]!);
+    const before = statSync(path).size;
+    const id = await store.write({ operation: 'SAFE2', actor: 'test', resource: 'x', result: 'success' });
+    const after = statSync(path).size;
+    expect(after).toBeGreaterThan(before);
+    expect((await store.get(id))!.operation).toBe('SAFE2');
   });
 
   // AC 52.8: Query with limit and offset

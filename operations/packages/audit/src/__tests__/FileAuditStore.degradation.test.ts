@@ -149,6 +149,44 @@ describe('FileAuditStore — degraded directory', () => {
     expect(await store.count()).toBe(1);
   });
 
+  it('survives a compressor whose source disappeared before it ran', async () => {
+    // The rotation captures the segment's identity and schedules the compressor for
+    // the check phase. An operator — or an unmount — removing the directory in
+    // between leaves the compressor with nothing to read, and its cleanup with
+    // nothing to remove. Neither may escape as a rejection: the job's promise is
+    // resolved by `finally`, so an unhandled rejection here would fail a process
+    // whose writes all succeeded.
+    store = new FileAuditStore(makeConfig({ maxAgeMs: 0 }));
+    await store.write(ENTRY);
+    await store.write(ENTRY); // rotates 0001 and schedules its compressor
+    rmSync(TEST_DIR, { recursive: true, force: true });
+
+    await expect(store.close()).resolves.toBeUndefined();
+    store = undefined;
+    ensureDir();
+  });
+
+  it('keeps the segment when its archive cannot be written', async () => {
+    // The archive path is occupied by a directory, so `createWriteStream` fails.
+    // The segment must survive with its entries readable: an audit trail that
+    // drops a segment because compressing it failed deletes evidence to save
+    // space. The cleanup that removes the partial archive must also not be able
+    // to fail the job, because nothing above it handles the rejection.
+    store = new FileAuditStore(makeConfig({ maxAgeMs: 0 }));
+    await store.write(ENTRY);
+    await store.close();
+
+    const segment = readdirSync(TEST_DIR).find((f) => f.endsWith('.ndjson'))!;
+    mkdirSync(join(TEST_DIR, `${segment}.gz`));
+
+    // The next write rotates: the retired segment is handed to the compressor.
+    await store.write(ENTRY);
+    await store.close();
+
+    expect(existsSync(join(TEST_DIR, segment))).toBe(true);
+    expect(await store.count()).toBe(2);
+  });
+
   it('reports a write failure when the directory has been removed', async () => {
     // An operator (or an unmount) takes the directory away while the process runs.
     // The entry must not be silently dropped: the caller has to see the failure.

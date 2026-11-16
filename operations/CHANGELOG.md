@@ -5,6 +5,56 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-11-17
+
+### Breaking
+
+- **`FileAuditStore.write()` rejects when it cannot make the entry durable.** The write path caught
+  its own `fsync` (`/* fsync best-effort */`) and returned an id anyway, so a caller could record an
+  audit event that a power loss would erase — from the one component whose job is to say what
+  happened. A step that fails now fails the write. Callers that ignored the promise were already
+  ignoring the only signal the store has.
+- **The segment is appended to, not rewritten.** No temporary file, no `rename`: the store used to
+  read the whole segment, concatenate the new line and rename a replacement into place for every
+  line. See the measured cost below. A deployment that observed segment inodes (a file watcher, a
+  tail that follows the descriptor) now sees one stable file per segment instead of one per write.
+- **`FileAuditStoreConfig.fileSystem` is the write port**, defaulting to `nodeDurableFileSystem`.
+
+### Added
+
+- **`DurableFileSystem`** — `append`, `syncFile`, `syncDirectory`, `needsSeparator`: the recipe that
+  makes a line survive, as an interface, so the order is assertable and the medium is replaceable.
+- **`nodeDurableFileSystem`**, **`createNodeDurableFileSystem(calls)`**, **`nodeFileCalls`**,
+  **`isDirectorySyncUnsupported(error)`** — the POSIX implementation, a factory that takes syscalls
+  so the two "this platform cannot sync a directory" branches are testable on a platform where they
+  do not occur, and the predicate that decides whether an errno is a limitation or a failure.
+- **`FileAuditStore` syncs the directory once per segment**, after its first line. A name is a
+  directory entry; syncing the file does not sync the name, so without this a power cut could leave
+  the entries written and unreachable.
+- **A torn tail is separated, not fused.** The store asks once per segment whether the file ends
+  mid-line and, if it does, starts the next line with a newline. An append after a crash used to glue
+  the new entry to the fragment and lose both.
+
+### Fixed
+
+- **Two processes appending to one trail lost each other's entries.** The old recipe was
+  read-concatenate-rename, which is a lost update by construction, and both writers used the same
+  scratch path — so a second writer could fail outright (`ENOENT` from a rename that raced). An
+  `O_APPEND` write is placed by the kernel; `AC81` runs two processes and 300 entries through it.
+- **`unlinkIfUnchanged` caught everything**, so a `ReferenceError` from a missing import was reported
+  as "the file could not be deleted" and left five uncompressed segments behind. Only `ENOENT`,
+  `EISDIR`, `EPERM` and `EACCES` are answers about the file; anything else is a defect and propagates.
+- **Cost of a line was the size of the segment.** Measured on 2 000 lines of 524 bytes: **1 000 MiB
+  written to append 1 MiB**, now **1.0 MiB**. Wall time is the `fsync` (20.0 s against 20.8 s for a
+  bare append+`fsync` loop with no store at all), which is what a group commit would address next.
+
+### Notes
+
+- **`SIGKILL` proves the file, not the medium.** A killed process leaves the page cache behind, so
+  the out-of-process cases show that acknowledged lines are in the file; only a power cut empties the
+  cache, and no runner provides one. The `fsync` half is asserted by order and by failure propagation
+  in-process.
+
 ## [1.8.0] — 2026-11-16
 
 ### Breaking
