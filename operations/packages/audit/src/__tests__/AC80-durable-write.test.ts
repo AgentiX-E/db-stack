@@ -10,9 +10,10 @@
  * syncing the directory that carries it.
  *
  * The recipe is now an interface (`DurableFileSystem`: append, syncFile,
- * syncDirectory), which makes the order observable without a crash, and the store
- * holds no other write-path filesystem dependency — so "the segment is rewritten
- * to add a line to it" is not a thing the code can do quietly either.
+ * syncDirectory, needsSeparator), which makes the order observable without a
+ * crash, and the store holds no other write-path filesystem dependency — so "the
+ * segment is rewritten to add a line to it" is not a thing the code can do quietly
+ * either.
  *
  * What each case is for:
  *
@@ -25,6 +26,9 @@
  *   DW.7  rotation produces a new segment and a second directory sync
  *   DW.8  a torn tail is skipped and does not consume the next line
  *   DW.9  the write path never opens a temporary file
+ *   DW.10 the default port writes and syncs a real directory
+ *   DW.11 a segment left with a torn tail is appended to, not rewritten
+ *   DW.12 the delete-refusal list is a decision, asserted as one
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
