@@ -446,20 +446,43 @@ renamed, so two writers lost each other's lines in proportion to how busy the tr
 were writing the same scratch path, so one of them could fail outright while the other renamed
 underneath it.
 
-Two processes appending to one *trail* is supported; two processes appending to one *segment* is not,
-and the difference is worth knowing because it is what the file names mean:
+Two processes appending to one *trail* is supported. A *segment* is a unit of rotation, so what happens
+to one that two live processes share is worth knowing, because it is what the file names mean:
 
 | Situation | What happens |
 |---|---|
 | Two processes start together on an empty directory | Each claims a different segment name (`O_CREAT \| O_EXCL`, retried by re-scanning), so neither can write into the other's file. |
-| A process starts while another is writing | It continues the newest open segment rather than starting a new one — that is what makes a restart a continuation instead of a gap. The consequence is that two *live* processes share that segment until one of them rotates. |
-| One process rotates a segment the other is still appending to | The archive is **not published**: the segment grew while it was being compressed, and an archive of a prefix would hide every line after it, because a reader prefers an archive over the plain file of the same name. The plain segment stays as the only name, and every line in it stays readable. |
+| A process starts while another is writing | It continues the newest open segment rather than starting a new one — that is what makes a restart a continuation instead of a gap. Two *live* processes can therefore share that segment until one of them rotates. |
+| One process rotates a segment the other is still appending to | The archive is **not published** while the segment is growing: the compression checks the segment's identity and its length before the rename, so an archive of a prefix never exists. The plain segment stays as the only name, and every line in it stays readable. |
+| One process archives a segment another has adopted | The archive is published, and the adopting process's line is not hidden by it: after every append — before the caller is acknowledged — a store compares its file with the archive of its own name and repairs the disagreement. Nothing is lost and nothing is counted twice. |
 
-So the rule to deploy by: **one writer per trail**, unless the writers are starting together and
-rolling over continuously (a fan-in of short-lived processes works; two long-lived services pointing
-at one directory does not). A second live writer that *adopts* a segment which the first one later
-archives can still write lines that the archive then hides — that is a remaining gap, tracked rather
-than papered over, and it is the reason the sentence above is a rule and not a suggestion.
+**A name and its archive are two views of one segment, and the store keeps them agreeing.** Every
+reader prefers an archive over the plain file of the same name — correctly, because between the
+rename and the unlink both hold the same entries — so the two views have to be reconciled by what
+they *hold*, not by who owns them. The comparison is on the bytes, because bytes are the only
+evidence that survives a crash: a pid is meaningless on another host and racy on a shared mount, and
+a lease file would answer "who meant to own this name" when the question is "what does this name
+hold". Four answers, and each has one repair:
+
+| The two views | What the store does |
+|---|---|
+| The plain file starts with the archive and is longer | The archive is a prefix and adds nothing: it is removed, so the file stops being hidden. |
+| The archive starts with the plain file, or they are identical | The plain file carries nothing of its own: it is removed (at rest) or abandoned for a new segment (while writing). |
+| Neither contains the other | Both carry unique entries: the plain file is renamed to a segment name of its own, so a reader sees both. |
+| The archive exists but cannot be read | It hides a segment while contributing nothing: it is removed. |
+
+The repair runs in two places, and both are needed. Before a store adopts a name it sweeps the whole
+directory, because the process that could have repaired a crashed writer's segment is gone. And after
+every append, before the acknowledgement, so that an entry is acknowledged only once its name is a
+name a reader reads. What is left is a window of microseconds — an archive published between that
+check and the sync that acknowledges the line — which the next append or the next start repairs;
+closing it entirely would need a lock, and the entry is never lost, only briefly out of view.
+
+So the rule to deploy by is no longer "one writer per trail". A fan-in of short-lived processes works,
+two long-lived services on one directory work, and a crashed writer's segment is repaired by the store
+that comes after it. What does *not* change is the cost: a shared directory is a shared disk, and two
+services rotating the same trail also prune the same files.
+
 
 **A crash leaves at most one unreadable line — and it cannot swallow the next one.** A process killed
 between the write and its newline leaves a fragment. Readers skip an unparsable line, so the fragment

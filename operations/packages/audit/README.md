@@ -246,13 +246,20 @@ Two consequences worth knowing before you deploy it:
   `<segment>.ndjson.gz.part` and renames it, so a reader never sees an incomplete
   archive — and never has a complete segment suppressed by one. A `.part` left by a
   killed process is swept when the next store opens the directory.
-- **One writer per segment.** A trail may be shared by processes that start together;
-  a segment may not be shared by two live ones. A process that starts while another is
-  running continues the newest open segment (that is what makes a restart a
-  continuation), so two long-lived services pointed at one directory will share it
-  until one rotates — and a line the second one appends after the first one archives
-  that segment is on the disk and hidden by the archive. Fan-in of short-lived writers
-  is fine; two services on one directory is not.
+- **A name and its archive are two views of one segment.** Every reader prefers an
+  archive over the plain file of the same name, so the two have to agree about what
+  they hold. A process that starts while another is running continues the newest open
+  segment (that is what makes a restart a continuation), and when the first process
+  archives that segment the second one's next append recreates the plain name. That
+  used to hide the line: it was on the disk and invisible to every query. The store
+  now compares its file with the archive of its own name after every append and
+  before acknowledging the caller, and repairs the disagreement — an archive a longer
+  file supersedes is removed, a file that carries nothing its archive does not hold is
+  abandoned for a new segment, and two views with different entries are separated by
+  renaming the file. A store that starts sweeps the directory for the same condition,
+  which repairs the segment of a writer that died before it could. What is left is a
+  window of microseconds between that check and the sync; the entry is never lost, and
+  the next append or the next start repairs it.
 
 ### `JsonAuditExporter`
 

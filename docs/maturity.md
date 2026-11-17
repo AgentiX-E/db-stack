@@ -270,7 +270,7 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 | operations | `RetentionPolicyEvaluator.ts` | 196 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
 | operations | `cron.ts` | 87 | 80 (+7 timeout) | 0 | **100 %** | break 86 |
 | operations | `MaintenanceWindowScheduler.ts` | 622 | 603 (+12 timeout) | 6 | **99.03 %** | break 86 |
-| operations | `FileAuditStore.ts` | 543 | 497 (+21 timeout) | 14 (+1 error) | **97.37 %** | break 86 |
+| operations | `FileAuditStore.ts` | 704 | 653 (+19 timeout) | 21 (+1 error) | **96.97 %** | break 86 |
 | operations | `DurableFileSystem.ts` | 74 | 73 | 0 | **100 %** | break 86 |
 | operations | `KeyRotationManager.ts` | 239 | 233 (+3 timeout) | 2 | **99.16 %** | break 86 |
 | operations | `RotationAuditor.ts` | 286 | 275 | 7 | **97.52 %** | break 86 |
@@ -279,11 +279,19 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 | operations | `EnvelopeEncryptionProvider.ts` | 111 | 108 | 2 | **98.18 %** | break 86 |
 | operations | `AES256GCMEncryptionProvider.ts` | 81 | 79 | 2 | **97.53 %** | break 86 |
 
-Operations overall: **98.09 %** — 2 716 killed, 61 timed out, 51 survived, 3 with no coverage and one
-that crashes the runner rather than failing a test, out of the 2 832 mutants the instrument judges (it
-enumerates 2 882 and reports 50 as ignored, because a mutant that runs at import time executes before
+Operations overall: **97.96 %** — 2 871 killed, 60 timed out, 58 survived, 3 with no coverage and one
+that crashes the runner rather than failing a test, out of the 2 992 mutants the instrument judges (it
+enumerates 3 043 and reports 50 as ignored, because a mutant that runs at import time executes before
 any test can be blamed for it). The arithmetic is the gate's own:
 `(killed + timeout) / (killed + timeout + survived + no coverage)`.
+
+The overall figure is a share of a larger denominator than iteration 37's 98.09 %: `FileAuditStore.ts`
+gained 161 mutants with the segment/archive reconciliation, 156 of which are killed.
+
+**Iteration 39 gave that file 161 new mutants and killed 155 of them.** The six that remain are in the
+table above with their arguments, and the suite behind them — `AC 90`, 21 cases — fails 15 times when
+the two reconciliation calls are removed, which is what makes the argument about the other six worth
+reading.
 
 **The twenty-six survivors of `FileAuditStore.ts` were read one by one, and ten of them were real
 gaps.** Every one was applied *exactly as the report printed it* and run against the whole audit
@@ -465,6 +473,11 @@ several mutants:
 | `FileAuditStore` | `?? ''` in `readSegment`, and the `return ''` in its `catch` → any text (two mutants) | the replacement text reaches a parser that accepts nothing but NDJSON, so every alternative contributes zero entries — which is the property that let the `null` sentinel be deleted this iteration |
 | `FileAuditStore` | `isUnlinkRefusal(error)` → `true` | no runner can make `unlink` fail for a reason outside the four listed codes — a process running as root is never refused — and the rule itself is asserted by `DW.12`, which is why it is a predicate rather than a list inside a `catch` |
 | `FileAuditStore` | `rmSync(gzPath, { force: false })` | detected as a **crash**, not as a failing test: without `force` the cleanup rejects inside a `catch` whose promise nothing awaits, and the runner dies with it — which is the unhandled rejection the flag prevents |
+| `FileAuditStore` | `'at-rest'` → `''` on the reconciliation's call to `repairFor` | the function asks `when === 'live'`, so every value that is not `'live'` takes the at-rest path — the parameter is a union of two names for readability, and the distinction it encodes is one predicate |
+| `FileAuditStore` | `else if (repair === 'promote')` → `else if (true)` in the sweep | the only verdicts that reach that branch are `none`, `release` and `promote`, and on a runner that reads as root a name that exists and yields no text cannot be produced — the cell is asserted through `repairFor`'s table (`SH.21`) rather than through a directory |
+| `FileAuditStore` | `if (repair === 'promote')` → `if (true)` in the live path | as above: with an archive present, `none` and `plain-unreadable` are the only other verdicts, and the second one is unreachable without a file the runner cannot read |
+| `FileAuditStore` | `if (!isRegularFile(archivePath)) return` in the live path → `false` | `relateTwin` answers `no-twin` for an archive that is not there, so the guard changes only how many bytes are read — and the bytes it prevents reading are the *whole active segment*, which is why it stays |
+| `FileAuditStore` | `this.activeFilePath = ''` in `releaseActiveFile` and in `rotate` → any string | the name is re-derived by the claim that the next append makes before it uses one; both assignments exist to keep "an unclaimed store names nothing" true, and no reader observes the intermediate value |
 | `RotationAuditor` | `hash: ''` placeholder → any string | the placeholder is overwritten by `_hashEntry` before the entry is stored, and `hash` is not part of the hashed content |
 | `RotationAuditor` | `firstCompletedAt !== null && lastCompletedAt !== null` → `\|\|`, or → `true` (three mutants) | both are derived from the same list, so they are null together and non-null together; with neither, `null - null` is `0`, which is what the ternary returns |
 | `RotationAuditor` | the `\|` separator in `_hashEntry` → `''` | the separator is a free choice: any fixed string produces the same chain. Only a deliberate concatenation collision could tell them apart, and `seq` is a number between two fixed-width fields |
