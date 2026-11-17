@@ -5,6 +5,27 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.2] — 2026-11-17
+
+### Added
+
+- **`replay-mutant.mjs --status pending`** — the four statuses that mean "no test decided this"
+  (`Survived`, `Timeout`, `RuntimeError`, `NoCoverage`) are one concept, an unread verdict, and are
+  now selectable as one. `--status` also takes a comma-separated list, and `*` still selects
+  everything. The question the audit asks is never "which mutants survived" but "which mutants has
+  nobody read": a timeout and a runner error are both unanswered — the runner gave up, no test passed
+  — and reading only `Survived` skips them without saying so.
+- **The `list` command prints each mutant's status**, because a filter can now select several of them
+  and "which of these did the runner actually run" is the first thing a reader of a surviving verdict
+  needs.
+
+### Changed
+
+- **`list` and `apply` share one filter.** They always did through the same argument, but `apply`
+  resolves an index against the list it loads, so a `list` run with one status and an `apply` run with
+  another named different mutants at the same index. Both now accept the same `--status`, and the
+  usage text says the index is only valid for the filter that printed it.
+
 ## [1.11.1] — 2026-11-17
 
 ### Fixed

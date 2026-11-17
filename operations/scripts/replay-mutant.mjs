@@ -13,9 +13,17 @@
  * ("the runner disagrees with the suite") was wrong for exactly that reason.
  *
  * Usage:
- *   node scripts/replay-mutant.mjs list [--report <path>] [--status Survived]
- *   node scripts/replay-mutant.mjs apply <index> [--report <path>] [--allow-stale]
+ *   node scripts/replay-mutant.mjs list [--report <path>] [--status <filter>]
+ *   node scripts/replay-mutant.mjs apply <index> [--report <path>] [--status <filter>] [--allow-stale]
  *   node scripts/replay-mutant.mjs restore
+ *
+ * `--status` takes a comma-separated list, `*` for every mutant, or `pending`
+ * for the four statuses that no verdict has been given to yet. `pending` exists
+ * because the interesting question is never "which mutants survived" but "which
+ * mutants has nobody read": a time-out and a runtime error are both *unanswered*
+ * — the runner gave up, no test passed — and reading only `Survived` quietly
+ * skips them. The filter is the same for `list` and `apply`, so an index printed
+ * by one always names the mutant the other acts on.
  *
  * `apply` copies the file to `<file>.replay.bak` and splices the replacement into
  * the recorded range. Run the tests, then `restore`. Nothing here guesses: if the
@@ -43,6 +51,21 @@ const DEFAULT_REPORT = path.join(REPOSITORY_ROOT, 'reports/mutation/operations.j
 const BACKUP_SUFFIX = '.replay.bak';
 const META_SUFFIX = '.replay.json';
 
+/**
+ * Statuses that mean "no test decided this": the runner either let the mutant
+ * run and saw nothing, gave up on it, crashed on it, or never reached it.
+ * They are one concept — an unread verdict — and are named as one, because the
+ * audit this script exists for treats all four the same way.
+ */
+const PENDING_STATUSES = ['Survived', 'Timeout', 'RuntimeError', 'NoCoverage'];
+
+function statusFilter(spec) {
+  if (spec === '*') return () => true;
+  if (spec === 'pending') return (status) => PENDING_STATUSES.includes(status);
+  const wanted = new Set(spec.split(',').map((s) => s.trim()).filter(Boolean));
+  return (status) => wanted.has(status);
+}
+
 function parseArgs(argv) {
   const args = {
     command: argv[0] ?? 'list',
@@ -65,10 +88,11 @@ function parseArgs(argv) {
 
 function loadSurvivors(reportPath, status) {
   const report = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
+  const accepts = statusFilter(status);
   const rows = [];
   for (const [file, info] of Object.entries(report.files ?? {})) {
     for (const mutant of info.mutants ?? []) {
-      if (status !== '*' && mutant.status !== status) continue;
+      if (!accepts(mutant.status)) continue;
       rows.push({ file, mutant });
     }
   }
@@ -105,8 +129,12 @@ function printList(rows) {
   rows.forEach(({ file, mutant }, index) => {
     const { start, end } = mutant.location;
     const replacement = JSON.stringify(mutant.replacement ?? '').slice(0, 58);
+    // The status is printed because a filter can select several of them, and
+    // "which of these did the runner actually run" is the first thing the
+    // reader needs in order to decide what a surviving verdict means.
     console.log(
-      `${String(index).padStart(3)} ${file.split('/').slice(-1)[0]}:${start.line}:${start.column}-${end.line}:${end.column} ` +
+      `${String(index).padStart(3)} ${mutant.status.slice(0, 4).padEnd(4)} ` +
+        `${file.split('/').slice(-1)[0]}:${start.line}:${start.column}-${end.line}:${end.column} ` +
         `${mutant.mutatorName} → ${replacement}`,
     );
   });
