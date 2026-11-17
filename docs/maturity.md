@@ -263,8 +263,8 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 
 | Package | Module | Mutants | Killed | Survived | Score | Threshold |
 |---|---|---:|---:|---:|---:|---:|
-| cluster | `SqliteStorage.ts` | 510 | 356 (+19 timeout, +1 error) | 133 (+1 ignored) | **73.82 %** | break 70 |
-| federation | `TcpSecureTransport.ts` | 271 | 208 (+1 timeout) | 56 (+6 no coverage) | **77.12 %** | break 70 |
+| cluster | `SqliteStorage.ts` | 510 | 355 (+19 timeout, +1 error) | 134 (+1 ignored) | **73.62 %** | break 70 |
+| federation | `TcpSecureTransport.ts` | 271 | 209 | 56 (+6 no coverage) | **77.12 %** | break 70 |
 | operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
 | operations | `InMemoryBackupManager.ts` | 95 | 92 (+1 timeout) | 1 | **98.94 %** | break 86 |
 | operations | `RetentionPolicyEvaluator.ts` | 196 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
@@ -432,8 +432,10 @@ detector in this repository.
 The cluster score moves by about half a point between runs, which is why the break threshold sits
 three points below the observed value rather than one. The movement is not noise in the product: it
 comes from the 19 mutants that time out, whose verdict depends on how much of the runner the four
-test-runner processes get that minute. A threshold tight enough to catch that movement would fail on
-a busy CI machine and teach people to ignore it.
+test-runner processes get that minute. Two runs of the same commit measured **73.62 %** in CI (run
+44033693071, 355 killed / 134 survived) and **73.82 %** on the development machine (356 / 133) — the
+same nineteen timeouts, one verdict crossing the line. A threshold tight enough to catch that movement
+would fail on a busy CI machine and teach people to ignore it.
 
 **How the performance numbers are produced.** Every latency case goes through
 `src/testing/latency.ts`: an explicit warmup window that is discarded, then nearest-rank
