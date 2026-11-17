@@ -35,6 +35,13 @@ for (const name of PACKAGES) {
 aliases['@agentix-e/db-operations'] = path.resolve(root, 'src/index.ts');
 
 export default defineConfig({
+  // Pinned to this file's directory rather than taken from `process.cwd()`.
+  // Vitest resolves `include` and `setupFiles` against `root`, so a run started
+  // from anywhere else silently collects nothing — and the mutation gate starts
+  // its run from the repository root, inside a sandbox that is a copy of the
+  // whole repository. A suite that only works from one directory is a suite that
+  // cannot be mutated.
+  root: __dirname,
   test: {
     globals: true,
     environment: 'node',

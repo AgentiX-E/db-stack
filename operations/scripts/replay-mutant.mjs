@@ -14,28 +14,49 @@
  *
  * Usage:
  *   node scripts/replay-mutant.mjs list [--report <path>] [--status Survived]
- *   node scripts/replay-mutant.mjs apply <index> [--report <path>]
+ *   node scripts/replay-mutant.mjs apply <index> [--report <path>] [--allow-stale]
  *   node scripts/replay-mutant.mjs restore
  *
  * `apply` copies the file to `<file>.replay.bak` and splices the replacement into
  * the recorded range. Run the tests, then `restore`. Nothing here guesses: if the
  * recorded range does not hold the text the mutator claims to replace, it says so
  * and changes nothing.
+ *
+ * **Paths are anchored to the repository root, not to the working directory.**
+ * Until iteration 36 the default report was `reports/mutation/operations.json`,
+ * resolved against whatever directory the script was started in — which was
+ * `operations/`, because that is where this script lives. Since the mutation run
+ * moved to the root (P3-4) the report it produces is at `<root>/reports/…` and
+ * the paths inside it are root-relative, so from `operations/` the tool silently
+ * read a stale report left behind by the last in-place run and then verified
+ * mutants from a file that had changed since. A tool that answers the wrong
+ * question is worse than one that fails, so both the report and every path it
+ * contains are now resolved against the repository root, and `apply` refuses a
+ * report older than the file it describes.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-const DEFAULT_REPORT = 'reports/mutation/operations.json';
+const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '..', '..');
+const DEFAULT_REPORT = path.join(REPOSITORY_ROOT, 'reports/mutation/operations.json');
 const BACKUP_SUFFIX = '.replay.bak';
+const META_SUFFIX = '.replay.json';
 
 function parseArgs(argv) {
-  const args = { command: argv[0] ?? 'list', index: null, report: DEFAULT_REPORT, status: 'Survived' };
+  const args = {
+    command: argv[0] ?? 'list',
+    index: null,
+    report: DEFAULT_REPORT,
+    status: 'Survived',
+    allowStale: false,
+  };
   const rest = argv.slice(1);
   for (let i = 0; i < rest.length; i += 1) {
     const token = rest[i];
-    if (token === '--report') args.report = rest[++i];
+    if (token === '--report') args.report = path.resolve(REPOSITORY_ROOT, rest[++i]);
     else if (token === '--status') args.status = rest[++i];
+    else if (token === '--allow-stale') args.allowStale = true;
     else if (/^\d+$/.test(token)) args.index = Number(token);
     else throw new Error(`unknown argument: ${token}`);
   }
@@ -91,11 +112,33 @@ function printList(rows) {
   });
 }
 
-function apply(rows, index) {
+/** Milliseconds since the epoch for a path that must exist. */
+function mtimeOf(file) {
+  return fs.statSync(file).mtimeMs;
+}
+
+function apply(rows, index, options) {
   const row = rows[index];
   if (!row) throw new Error(`no mutant at index ${index}`);
 
-  const absPath = path.resolve(row.file);
+  const absPath = path.resolve(REPOSITORY_ROOT, row.file);
+  const stale = mtimeOf(options.report) < mtimeOf(absPath);
+  if (stale && !options.allowStale) {
+    throw new Error(
+      [
+        `${options.report} is older than ${row.file}.`,
+        '  Its line and column ranges describe a file that has changed since, so a',
+        '  splice at those offsets would verify a different edit than the one it names.',
+        '  Re-run the mutation target, or pass --allow-stale if the change was formatting.',
+      ].join('\n'),
+    );
+  }
+  if (stale) {
+    console.warn(
+      `warning: ${options.report} is older than ${row.file}; replaying anyway because --allow-stale was passed`,
+    );
+  }
+
   const text = fs.readFileSync(absPath, 'utf-8');
   const from = offsetOf(text, row.mutant.location.start);
   const to = offsetOf(text, row.mutant.location.end);
@@ -103,6 +146,11 @@ function apply(rows, index) {
   const replacement = row.mutant.replacement ?? '';
 
   fs.writeFileSync(absPath + BACKUP_SUFFIX, text);
+  // The mtime is part of what `restore` has to put back. Writing the file twice
+  // per replay moves it forward, and the guard above reads it — a tool that
+  // refuses its own second replay because *it* touched the file would be right
+  // about the rule and useless in practice.
+  fs.writeFileSync(absPath + META_SUFFIX, `${JSON.stringify({ mtimeMs: mtimeOf(absPath) })}\n`);
   fs.writeFileSync(absPath, text.slice(0, from) + replacement + text.slice(to));
 
   console.log(`${row.file}:${row.mutant.location.start.line}`);
@@ -121,12 +169,24 @@ function restore() {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.name.endsWith(BACKUP_SUFFIX)) {
-        fs.renameSync(full, full.slice(0, -BACKUP_SUFFIX.length));
+        const target = full.slice(0, -BACKUP_SUFFIX.length);
+        fs.renameSync(full, target);
+        const meta = target + META_SUFFIX;
+        if (fs.existsSync(meta)) {
+          const { mtimeMs } = JSON.parse(fs.readFileSync(meta, 'utf-8'));
+          fs.utimesSync(target, new Date(), new Date(mtimeMs));
+          fs.unlinkSync(meta);
+        }
         restored += 1;
+      } else if (entry.name.endsWith(META_SUFFIX) && fs.existsSync(full)) {
+        // An orphan from an interrupted replay. The check is not defensive
+        // noise: `readdirSync` snapshots the directory, so the companion of a
+        // `.replay.bak` is still listed here after its owner has removed it.
+        fs.unlinkSync(full);
       }
     }
   };
-  walk(process.cwd());
+  walk(REPOSITORY_ROOT);
   console.log(`restored ${restored} file(s)`);
 }
 
@@ -136,6 +196,6 @@ if (args.command === 'restore') {
 } else {
   const rows = loadSurvivors(args.report, args.status);
   if (args.command === 'list') printList(rows);
-  else if (args.command === 'apply') apply(rows, args.index);
+  else if (args.command === 'apply') apply(rows, args.index, args);
   else throw new Error(`unknown command: ${args.command}`);
 }

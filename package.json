@@ -2,7 +2,7 @@
   "name": "db-stack",
   "version": "1.1.0",
   "private": true,
-  "description": "AgentiX-E database stack \u2014 cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
+  "description": "AgentiX-E database stack — cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
   "license": "MIT",
   "packageManager": "pnpm@10.28.2",
   "engines": {
@@ -29,11 +29,16 @@
     "check:gates": "node scripts/check-gates.mjs",
     "test:soak": "pnpm --filter @agentix-e/db-cluster run test:soak",
     "test:load": "pnpm --filter @agentix-e/db-cluster run test:load && pnpm --filter @agentix-e/db-federation run test:perf",
-    "test:mutation": "pnpm --filter @agentix-e/db-cluster run test:mutation && pnpm --filter @agentix-e/db-federation run test:mutation && pnpm --filter @agentix-e/db-operations run test:mutation",
-    "test:perf": "pnpm --filter @agentix-e/db-cluster run test:perf && pnpm --filter @agentix-e/db-stack-e2e run bench"
+    "test:mutation": "node scripts/mutation.mjs all",
+    "test:perf": "pnpm --filter @agentix-e/db-cluster run test:perf && pnpm --filter @agentix-e/db-stack-e2e run bench",
+    "test:mutation:cluster": "node scripts/mutation.mjs cluster",
+    "test:mutation:federation": "node scripts/mutation.mjs federation",
+    "test:mutation:operations": "node scripts/mutation.mjs operations"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1",
     "@vitest/coverage-v8": "3.2.6",
     "eslint": "^10.15.0",
     "prettier": "^3.9.5",

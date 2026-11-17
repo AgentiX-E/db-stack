@@ -4,6 +4,11 @@ import path from 'path';
 const root = __dirname;
 
 export default defineConfig({
+  // Pinned to this file's directory: `include` and `setupFiles` resolve against
+  // `root`, which otherwise defaults to the working directory. The mutation gate
+  // runs from the repository root inside a sandboxed copy of it, and a suite that
+  // only collects files when started from its own directory cannot be mutated.
+  root,
   test: {
     globals: true,
     environment: 'node',

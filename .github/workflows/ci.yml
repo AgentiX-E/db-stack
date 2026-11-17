@@ -379,13 +379,20 @@ jobs:
   # product, and it immediately found 130 changes in SqliteStorage that no test
   # objected to — including an early return on an empty batch that is never reached.
   #
-  # It runs in place (`--inPlace`): the sandbox Stryker builds is a copy of the
-  # package, and `vitest.setup.ts` imports a helper from the repository root, which
-  # the copy does not contain. In-place restores the sources when it finishes.
+  # It runs in a sandbox, and the sandbox is a copy of the repository: Stryker copies
+  # the working directory, so the run starts at the root — where `tsconfig.base.json`
+  # (which every `operations` tsconfig extends) and `scripts/test-tmpdir.mjs` (which
+  # every `vitest.setup.ts` imports) both are. Running in place was how this job used to
+  # get past their absence, and it made the score a floor rather than a measurement:
+  # a worker's vitest could read a source another worker had already restored. The
+  # `--inPlace` flag is now refused by the config itself.
+  #
+  # One step per target, by name: an aggregate step would leave a failing package
+  # indistinguishable from a failing gate.
   mutation:
     name: Mutation (cluster + federation + operations)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -395,17 +402,20 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Mutation score — cluster
-        run: pnpm --filter @agentix-e/db-cluster run test:mutation
+        run: pnpm run test:mutation:cluster
       - name: Mutation score — federation
-        run: pnpm --filter @agentix-e/db-federation run test:mutation
+        run: pnpm run test:mutation:federation
       - name: Mutation score — operations
-        run: pnpm --filter @agentix-e/db-operations run test:mutation
-      - name: Sources restored
+        run: pnpm run test:mutation:operations
+      # The sandbox is the claim, so the working tree is the evidence. A run that
+      # instruments in place leaves modified sources, and one that leaves them is a run
+      # whose verdicts came from a file another worker was rewriting.
+      - name: The run did not touch the working tree
         run: |
           set -euo pipefail
-          if [ -n "$(git status --porcelain -- '*/src')" ]; then
-            echo "::error::mutation run left modified sources behind"
-            git status --porcelain -- '*/src'
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::the mutation run modified the working tree — it was not sandboxed"
+            git status --porcelain
             exit 1
           fi
       - name: Upload mutation reports
@@ -413,7 +423,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mutation-reports
-          path: '*/reports/mutation/*.json'
+          path: 'reports/mutation/*.json'
           if-no-files-found: warn
           retention-days: 14
 

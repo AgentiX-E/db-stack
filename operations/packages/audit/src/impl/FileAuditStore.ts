@@ -33,8 +33,10 @@
 
 import { randomUUID } from 'node:crypto';
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -95,6 +97,16 @@ export interface FileAuditStoreConfig {
    * returned.
    */
   fileSystem?: DurableFileSystem;
+  /**
+   * How a segment name is claimed, `O_CREAT | O_EXCL` by default.
+   *
+   * Injectable for one reason: the interesting answers are "somebody else has that
+   * name" and "the name could not be created", and a runner cannot produce either on
+   * demand. A store that reported a taken name as a failed disk would stop rotating
+   * under load; a store that reported a failed disk as a taken name would spin eight
+   * times and then accuse its peers.
+   */
+  claim?: (path: string) => void;
 }
 
 // ── Defaults ────────────────────────────────────────────────────
@@ -103,6 +115,16 @@ export const DEFAULT_MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 export const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 export const DEFAULT_RETENTION_DAYS = 90;
 export const DEFAULT_FILE_PREFIX = 'audit';
+
+/**
+ * How many names the store tries before it gives up on claiming a segment.
+ *
+ * Eight refusals mean eight other writers named a segment in the same millisecond.
+ * The bound exists because a retry loop with no ceiling is not a policy, and the
+ * error it raises names the real problem: a directory being written by more processes
+ * than it can serve.
+ */
+const CLAIM_ATTEMPTS = 8;
 export const DEFAULT_MAX_SCAN_LINES = 10000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -259,6 +281,87 @@ export function unlinkIfUnchanged(
   }
 }
 
+/**
+ * Whether `after` is still the file the compressor read.
+ *
+ * `null` — the file is gone — counts as publishable, and that is not laxity: the
+ * archive holds every byte that was in it, so it is now the only copy of those
+ * entries and refusing to publish it would delete them.
+ *
+ * A *different* file at the same path, or the same file grown, does not. Both mean
+ * the archive is a prefix of the segment, and since a reader prefers an archive
+ * over its original, publishing it would make every line after the prefix
+ * unreadable — data on the disk that no query can see, which is the failure this
+ * module exists to be incapable of. The appends are atomic; it is the *archive*
+ * that has to be whole.
+ *
+ * A function of two identities rather than an inline comparison because the three
+ * answers (gone, same, grown) are the whole of the rule and a runner cannot
+ * produce the middle one at will.
+ */
+export function isWholeSegment(after: FileIdentity | null, before: FileIdentity): boolean {
+  if (after === null) return true;
+  return after.ino === before.ino && after.size === before.size;
+}
+
+/**
+ * Whether a segment has outlived its retention window.
+ *
+ * `mtime === null` — the date could not be read — is **not** an expiry. Deleting a
+ * segment because its `stat` failed turns an I/O error into permanent data loss,
+ * and reporting an expiry that did not happen is worse than leaving the file for
+ * the next sweep, which is what the next rotation is.
+ *
+ * Three lines, and worth extracting: this was the one expression in the store that
+ * no test could distinguish, because its null arm was reachable only through a
+ * failing `stat` — so mutation testing reported a change to it as *survived* while
+ * every other line in the file was accounted for. The rule is now a function with
+ * a name, and the four cases are four assertions.
+ */
+export function isExpired(mtime: number | null, cutoff: number): boolean {
+  if (mtime === null) return false;
+  return mtime < cutoff;
+}
+
+/**
+ * Take exclusive ownership of a segment name, or report that somebody else has it.
+ *
+ * A segment name is chosen by reading the directory and taking the next sequence
+ * number — a decision two processes can reach at the same moment, in the same
+ * millisecond, from the same scan. Without a claim both append into the same file,
+ * and the damage is not the interleaving (an `O_APPEND` write is positioned by the
+ * kernel) but what follows it: whoever rotates first compresses that segment and
+ * unlinks it while the other is still writing, the other's next append recreates
+ * the name, and the reader — which prefers an archive over the plain file of the
+ * same name — stops seeing everything written after the archive was taken. On the
+ * disk, invisible to every query.
+ *
+ * `O_CREAT | O_EXCL` is the only operation that answers "was this name free?"
+ * atomically, so a name is claimed before it is written to.
+ *
+ * `false` means "that name is taken", which is an answer. Anything else is thrown:
+ * a failure to create the file is not a collision, and retrying it would turn an
+ * unavailable disk into a slow loop.
+ */
+export function claimSegment(
+  path: string,
+  claim: (path: string) => void = (target) => closeSync(openSync(target, 'wx')),
+): boolean {
+  try {
+    claim(path);
+    return true;
+  } catch (error) {
+    if (isAlreadyExists(error)) return false;
+    throw error;
+  }
+}
+
+/** Whether a failure means "that name exists", which is an answer and not an error. */
+export function isAlreadyExists(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  return (error as { code?: unknown }).code === 'EEXIST';
+}
+
 // ── Directory primitives ────────────────────────────────────────
 //
 // Five places in this file need "the names in this directory, or nothing", "is this
@@ -387,13 +490,16 @@ export async function gzipFile(source: string, destination: string): Promise<voi
  * disk. An audit store that cannot find an entry it holds is wrong in the one
  * place wrongness is not recoverable, and it was wrong for as long as gzip ran.
  *
- * Three steps, and the same rule as the write path: nothing is published before
+ * Four steps, and the same rule as the write path: nothing is published before
  * it is complete.
  *
  *   1. compress into `<archive>.part` — a name no reader believes in;
- *   2. `rename`, which is atomic within a directory, so the archive appears
+ *   2. check that the segment is still the segment, and still the same length —
+ *      an append that arrived while gzip ran makes the archive a prefix, and a
+ *      prefix is not a segment (see `isWholeSegment`);
+ *   3. `rename`, which is atomic within a directory, so the archive appears
  *      complete or not at all;
- *   3. unlink the plain segment, if it is still the file that was compressed, in
+ *   4. unlink the plain segment, if it is still the file that was compressed, in
  *      the same synchronous block as the rename — so in this process the two
  *      never coexist, and a scan cannot double-count them.
  *
@@ -416,6 +522,20 @@ export async function archiveSegment(
   const partial = archive + PARTIAL_ARCHIVE_SUFFIX;
   try {
     await compress(source, partial);
+
+    // The segment must be the same segment, and the same length, before the archive
+    // is allowed to exist. A reader prefers an archive over the plain file of the
+    // same name — otherwise a scan between the rename and the unlink counts every
+    // entry twice — so an archive of a *prefix* hides every line appended while gzip
+    // ran. Those lines would be in the file, complete, and invisible to `get()`,
+    // `query()` and `count()`: the one failure mode this store exists to be
+    // incapable of. Publish nothing and leave the plain segment as the single name
+    // a reader can see.
+    if (!isWholeSegment(fileIdentity(source), identity)) {
+      discard(partial);
+      return;
+    }
+
     renameSync(partial, archive);
     unlinkIfUnchanged(source, identity);
   } catch (error) {
@@ -514,8 +634,29 @@ export class FileAuditStore implements IAuditStore {
   /** Where written lines go, and what "durable" means there. */
   private readonly fileSystem: DurableFileSystem;
 
-  /** Current active file path. */
+  /** How a segment name is taken. See `FileAuditStoreConfig.claim`. */
+  private readonly claim: (path: string) => void;
+
+  /**
+   * The segment being appended to, or `''` when this store has not named one yet.
+   *
+   * Empty is a state, not a missing value: `rotate()` closes a segment and leaves
+   * the store without a name, and the next line claims one. Naming a segment before
+   * it is needed is how an idle store ends up leaving an empty file in a directory
+   * it never wrote to, and it separates the decision "which number is free" from the
+   * moment "that number is mine" can be made atomically.
+   */
   private activeFilePath: string;
+
+  /**
+   * Whether the active segment's name is this store's.
+   *
+   * A segment adopted at construction is already somebody's: it exists, so claiming
+   * it is neither possible nor necessary, and continuing it is the whole point of
+   * adopting it. Every other segment is created here, exclusively, before its first
+   * line — see `claimSegment`.
+   */
+  private activeSegmentClaimed = false;
 
   /** Current file stats (track size). */
   private currentSize = 0;
@@ -584,6 +725,7 @@ export class FileAuditStore implements IAuditStore {
     this.maxScanLines = config.maxScanLines ?? DEFAULT_MAX_SCAN_LINES;
     this.segmentReader = config.segmentReader ?? readSegmentFromDisk;
     this.fileSystem = config.fileSystem ?? nodeDurableFileSystem;
+    this.claim = config.claim ?? ((path: string) => closeSync(openSync(path, 'wx')));
 
     // Inverted until now: the directory was created only if it already existed, so
     // a store pointed at a fresh path failed on its first write with ENOENT.
@@ -601,7 +743,8 @@ export class FileAuditStore implements IAuditStore {
     this.sweepAbandonedArchives();
 
     this.activeFilePath = this.resolveActiveFile();
-    this.currentSize = existsSync(this.activeFilePath) ? statSync(this.activeFilePath).size : 0;
+    this.activeSegmentClaimed = this.activeFilePath !== '';
+    this.currentSize = this.activeSegmentClaimed ? statSync(this.activeFilePath).size : 0;
     this.currentCreatedAt = Date.now();
 
     // A store cannot know whether the process that created this segment synced its
@@ -614,8 +757,9 @@ export class FileAuditStore implements IAuditStore {
     // medium" — so the first flush pays for the segment this store adopted.
 
     // The other thing the previous run may have left behind: a segment that does
-    // not end on a line boundary. Asked once, here.
-    this.separatorOwed = this.fileSystem.needsSeparator(this.activeFilePath);
+    // not end on a line boundary. Asked once, here — and only for a segment this
+    // store adopted, because a segment it names itself is created empty.
+    this.separatorOwed = this.activeSegmentClaimed && this.fileSystem.needsSeparator(this.activeFilePath);
   }
 
   // ── Private helpers ─────────────────────────────────────────
@@ -647,32 +791,81 @@ export class FileAuditStore implements IAuditStore {
     return maxSeq + 1;
   }
 
-  /** Find or create the active (current write) file. */
+  /**
+   * The newest open segment to continue, or `''` when this store has to name one.
+   *
+   * Adopting rather than always starting fresh is what makes a restart a
+   * continuation instead of a gap: a process that is killed leaves a segment that
+   * ends mid-trail, and the store that comes after it appends to that file. Creating
+   * a name here instead would leave an empty segment behind every construction and
+   * put a second file between two lines that belong together.
+   */
   private resolveActiveFile(): string {
     const active = newestOpenSegment(readdirSync(this.dataDir), this.filePrefix);
-    // No segment yet, or every one is archived: start the next one. Falling back
-    // to `generateFilePath` rather than constructing a name here keeps the
-    // sequence collision rule in one place.
-    return active === '' ? this.generateFilePath() : join(this.dataDir, active);
+    return active === '' ? '' : join(this.dataDir, active);
+  }
+
+  /**
+   * Name and claim the segment the next line will go into.
+   *
+   * Once per segment: the claim is what makes a name this store's, so it happens
+   * where a name is first needed and never earlier — a store that is constructed and
+   * never written to leaves nothing behind.
+   */
+  private claimActiveSegment(): void {
+    if (this.activeSegmentClaimed) return;
+    this.activeFilePath = this.claimNewSegmentPath();
+    this.activeSegmentClaimed = true;
+    this.currentSize = 0;
+    this.currentCreatedAt = Date.now();
+    // The claim created the file, so it is empty: no separator can be owed. Its
+    // name is not on the medium until the first flush syncs the directory.
+    this.separatorOwed = false;
+    this.segmentGeneration++;
+  }
+
+  /**
+   * The first segment name this store can have, scanning again after a refusal.
+   *
+   * The rescan *is* the retry: `O_EXCL` failing means the name exists, and it exists
+   * by the time the next scan runs, so the candidate after a refusal is the one after
+   * it — no arithmetic of its own, and correct against any number of writers. The
+   * bound is there because a loop that cannot terminate is not a retry policy: eight
+   * refusals mean eight other writers named a segment in the same millisecond, which
+   * is a deployment that needs its writers to stop sharing a directory.
+   */
+  private claimNewSegmentPath(): string {
+    for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt++) {
+      const path = this.generateFilePath();
+      if (claimSegment(path, this.claim)) return path;
+    }
+    throw new Error(
+      `audit: could not claim a segment name in ${this.dataDir} after ${CLAIM_ATTEMPTS} attempts — ` +
+        `${CLAIM_ATTEMPTS} segments were created by other writers in the same millisecond`,
+    );
   }
 
   /** Check if rotation is needed. */
   private shouldRotate(): boolean {
+    // Nothing to rotate away from: this store has not named a segment yet, and the
+    // first line goes into a fresh one anyway.
+    if (!this.activeSegmentClaimed) return false;
     if (this.currentSize >= this.maxFileSize) return true;
     if (Date.now() - this.currentCreatedAt >= this.maxAgeMs) return true;
     return false;
   }
 
-  /** Rotate: close current file, compress old, start new. */
+  /** Rotate: close current file, compress old, and leave the next name to the claim. */
   private rotate(): void {
     const oldPath = this.activeFilePath;
-    this.activeFilePath = this.generateFilePath();
+    // The store is between segments. The next line claims a name, which is the one
+    // moment the "is this number free?" question can be answered atomically; naming
+    // it here would answer it at a moment that is already stale by the time the file
+    // is created.
+    this.activeFilePath = '';
+    this.activeSegmentClaimed = false;
     this.currentSize = 0;
     this.currentCreatedAt = Date.now();
-    // The new segment does not exist yet, so its name is not on the medium and
-    // its first append has to fix that. It is also the first thing written into
-    // it, so no separator can be owed.
-    this.segmentGeneration++;
     this.separatorOwed = false;
 
     // What is being compressed, captured now rather than trusted later: segment
@@ -752,8 +945,7 @@ export class FileAuditStore implements IAuditStore {
       // A segment whose date cannot be read is not one to delete: reporting an
       // expiry that did not happen is worse than leaving the file for the next
       // sweep, which is what the next rotation is.
-      const mtime = mtimeOf(path);
-      if (mtime === null || mtime >= cutoff) continue;
+      if (!isExpired(mtimeOf(path), cutoff)) continue;
       // No skip for the live segment: this runs after rotation moved
       // `activeFilePath` to the segment that was just opened, so the file being
       // expired is by definition a closed one. The guard that used to be here could
@@ -810,6 +1002,11 @@ export class FileAuditStore implements IAuditStore {
     if (this.shouldRotate()) {
       this.rotate();
     }
+    // Before the write, not after: a segment name is a shared resource, and the
+    // only way to know it is this store's is to create it exclusively first. An
+    // append to a name that another writer owns is the state in which entries end up
+    // inside a file the reader has already archived.
+    this.claimActiveSegment();
 
     const data = `${this.separatorOwed ? '\n' : ''}${line}\n`;
 

@@ -35,6 +35,7 @@
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { resolve, dirname, join, relative } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -294,8 +295,6 @@ function resolveFilter(filter, all, dirToName, byName) {
   return [];
 }
 
-// ── 7. mutation testing: one instrument per package, and it is pulled ─
-
 /** Convert the small glob vocabulary the configs use to a RegExp. */
 function globToRegExp(pattern) {
   let out = "";
@@ -320,6 +319,20 @@ function filesMatching(dir, pattern) {
     .filter((file) => re.test(file));
 }
 
+// ── 7. mutation testing: one instrument, one sandbox, every target pulled ─
+//
+// The instrument used to be one Stryker config per package, run with `--inPlace`.
+// In place is not a sandbox: four workers read the sources a fifth was rewriting, and
+// the whole reason for the flag was that a per-package sandbox has no parent — so
+// neither `tsconfig.base.json` (which every `operations` tsconfig extends, and which
+// Vite reads while transforming) nor `scripts/test-tmpdir.mjs` (which every
+// `vitest.setup.ts` imports) exists inside it.
+//
+// Both of those files are at the repository root, so the sandbox that contains them is
+// a copy of the repository — which means the run has to start at the root. That is now
+// the shape, and the checks below hold it: one config, one entry point, no in-place,
+// and every target still honest about the files it mutates and the suite behind them.
+
 const rootGitignore = readText(resolve(root, ".gitignore"));
 const workflowText = existsSync(workflowDir)
   ? readdirSync(workflowDir)
@@ -331,74 +344,38 @@ const workflowText = existsSync(workflowDir)
       .join("\n")
   : "";
 
-for (const pkg of packages) {
-  const configPath = resolve(pkg.dir, "stryker.config.json");
-  const hasConfig = existsSync(configPath);
-  const hasScript = "test:mutation" in pkg.scripts;
-
-  if (!hasConfig && !hasScript) continue;
-  if (hasConfig && !hasScript) {
-    failures.push(
-      `${pkg.name}: stryker.config.json exists but no "test:mutation" script runs it — an orphan configuration is not a gate`,
-    );
-    continue;
-  }
-  if (hasScript && !hasConfig) {
-    failures.push(
-      `${pkg.name}: "test:mutation" exists but stryker.config.json does not — the script cannot run`,
-    );
-    continue;
+const mutationConfigPath = resolve(root, "stryker.config.mjs");
+if (!existsSync(mutationConfigPath)) {
+  failures.push(
+    "stryker.config.mjs is missing from the root — the mutation gate has no instrument",
+  );
+} else {
+  // The config's default export throws without a target (running the wrong package
+  // silently is worse than not running), so the table is imported directly.
+  let targets;
+  try {
+    ({ TARGETS: targets } = await import(
+      pathToFileURL(resolve(root, "mutation/targets.mjs")).href
+    ));
+  } catch (error) {
+    failures.push(`mutation/targets.mjs cannot be imported: ${error.message}`);
   }
 
-  const config = readJson(configPath);
-
-  if (typeof config.thresholds?.break !== "number") {
+  const configText = readText(mutationConfigPath);
+  if (!/IN_PLACE_FLAG/.test(configText)) {
     failures.push(
-      `${pkg.name}: stryker.config.json has no numeric thresholds.break — a score nobody fails on is a report, not a gate`,
+      "stryker.config.mjs does not refuse --inPlace — an in-place run is not a sandbox, and its verdicts cannot be trusted",
     );
   }
 
-  const mutate = Array.isArray(config.mutate) ? config.mutate : [];
-  if (mutate.length === 0) {
-    failures.push(`${pkg.name}: stryker.config.json mutates nothing`);
-  }
-  for (const pattern of mutate) {
-    const matches = filesMatching(pkg.dir, pattern);
-    if (matches.length === 0) {
-      failures.push(
-        `${pkg.name}: stryker.config.json mutates "${pattern}", which matches no file`,
-      );
-    } else if (verbose) {
-      notes.push(`${pkg.name}: mutates ${matches.length} file(s) for ${pattern}`);
-    }
-  }
-
-  const mutationVitest = config.vitest?.configFile ?? "vitest.mutation.config.ts";
-  const mutationVitestPath = resolve(pkg.dir, mutationVitest);
-  if (!existsSync(mutationVitestPath)) {
+  const runnerPath = resolve(root, "scripts/mutation.mjs");
+  const runnerText = existsSync(runnerPath) ? readText(runnerPath) : "";
+  if (!runnerText) {
+    failures.push("scripts/mutation.mjs is missing — nothing anchors the run to the repository root");
+  } else if (!/resolve\(process\.cwd\(\)\)\s*!==\s*repositoryRoot/.test(runnerText)) {
     failures.push(
-      `${pkg.name}: stryker.config.json names ${mutationVitest}, which does not exist`,
+      "scripts/mutation.mjs does not check the working directory — from a package directory the sandbox loses its parent",
     );
-  } else {
-    const text = readText(mutationVitestPath);
-    const includeMatch = text.match(/include:\s*\[([\s\S]*?)\]/);
-    const patterns = includeMatch
-      ? [...includeMatch[1].matchAll(/'([^']+)'|"([^"]+)"/g)].map(
-          (m) => m[1] ?? m[2],
-        )
-      : [];
-    if (patterns.length === 0) {
-      failures.push(
-        `${pkg.name}: ${mutationVitest} declares no include list — the mutant verdict would come from the whole suite`,
-      );
-    }
-    for (const pattern of patterns) {
-      if (filesMatching(pkg.dir, pattern).length === 0) {
-        failures.push(
-          `${pkg.name}: ${mutationVitest} includes "${pattern}", which matches no test file`,
-        );
-      }
-    }
   }
 
   for (const ignored of ["reports/mutation/", ".stryker-tmp/"]) {
@@ -407,25 +384,116 @@ for (const pkg of packages) {
     }
   }
 
-  const dirPath = relative(root, pkg.dir).replaceAll("\\", "/");
-  const targets = [
-    pkg.name,
-    `'${pkg.name}'`,
-    `"${pkg.name}"`,
-    dirPath,
-    `./${dirPath}`,
-    `'./${dirPath}'`,
-  ].map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const invoked = new RegExp(
-    `pnpm\\s+--filter\\s+(?:${targets.join("|")})\\s+run\\s+test:mutation`,
-  );
-  const viaRoot = /(?<!-)(?<![\w-])pnpm\s+run\s+test:mutation/.test(workflowText);
-  if (!invoked.test(workflowText) && !viaRoot) {
-    failures.push(
-      `${pkg.name}: nothing in .github/workflows runs its test:mutation — a gate no workflow executes is a claim nobody checks`,
+  const rootScripts = readJson(resolve(root, "package.json")).scripts ?? {};
+  const seen = new Set();
+
+  for (const [target, entry] of Object.entries(targets ?? {})) {
+    seen.add(target);
+
+    if (typeof entry.thresholds?.break !== "number") {
+      failures.push(
+        `mutation target "${target}": no numeric thresholds.break — a score nobody fails on is a report, not a gate`,
+      );
+    }
+
+    // Root-relative, because the root is where the run starts and where the sandbox
+    // copies from. A pattern that matches nothing would silently mutate nothing and
+    // report a perfect score over no mutants.
+    const mutate = Array.isArray(entry.mutate) ? entry.mutate : [];
+    if (mutate.length === 0) failures.push(`mutation target "${target}": mutates nothing`);
+    for (const pattern of mutate) {
+      const matches = filesMatching(root, pattern);
+      if (matches.length === 0) {
+        failures.push(
+          `mutation target "${target}": mutate pattern "${pattern}" matches no file`,
+        );
+      } else if (verbose) {
+        notes.push(`mutation target "${target}": ${matches.length} file(s) for ${pattern}`);
+      }
+    }
+
+    const testConfig = entry.testConfig;
+    const testConfigPath = typeof testConfig === "string" ? resolve(root, testConfig) : "";
+    if (!testConfigPath || !existsSync(testConfigPath)) {
+      failures.push(
+        `mutation target "${target}": testConfig "${testConfig}" does not exist`,
+      );
+    } else {
+      const text = readText(testConfigPath);
+      const includeMatch = text.match(/include:\s*\[([\s\S]*?)\]/);
+      const includePatterns = includeMatch
+        ? [...includeMatch[1].matchAll(/'([^']+)'|"([^"]+)"/g)].map((m) => m[1] ?? m[2])
+        : [];
+      if (includePatterns.length === 0) {
+        failures.push(
+          `mutation target "${target}": ${testConfig} declares no include list — the verdict would come from the whole suite`,
+        );
+      }
+      // Includes are relative to the package the config lives in, so a pattern has to
+      // resolve there, not at the root.
+      const packageDir = dirname(testConfigPath);
+      for (const pattern of includePatterns) {
+        if (filesMatching(packageDir, pattern).length === 0) {
+          failures.push(
+            `mutation target "${target}": ${testConfig} includes "${pattern}", which matches no test file`,
+          );
+        }
+      }
+    }
+
+    // The owner of a target is the package whose directory it names, and its
+    // `test:mutation` has to reach the root: `pnpm -w` is the only way a script can
+    // start a run where the sandbox can see `tsconfig.base.json` and `scripts/`.
+    const owner = packages.find(
+      (p) => relative(root, p.dir).replaceAll("\\", "/") === target,
     );
-  } else if (verbose) {
-    notes.push(`${pkg.name}: mutation is invoked by a workflow`);
+    if (!owner) {
+      failures.push(
+        `mutation target "${target}" names no workspace package — the target and its package directory are the same word by convention`,
+      );
+    } else {
+      const body = owner.scripts["test:mutation"];
+      if (!body) {
+        failures.push(`${owner.name}: no "test:mutation" script — the gate is not runnable from its own package`);
+      } else if (!body.includes(`-w run test:mutation:${target}`)) {
+        failures.push(
+          `${owner.name}: "test:mutation" does not delegate to "test:mutation:${target}" — a run started in the package directory gets a sandbox with no parent`,
+        );
+      }
+    }
+
+    const script = `test:mutation:${target}`;
+    const invoked = new RegExp(
+      `pnpm\\s+(?:-w\\s+|--workspace-root\\s+)?run\\s+${script.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+    );
+    if (!invoked.test(workflowText)) {
+      failures.push(
+        `nothing in .github/workflows runs "${script}" — a gate no workflow executes is a claim nobody checks`,
+      );
+    } else if (verbose) {
+      notes.push(`mutation target "${target}" is invoked by a workflow`);
+    }
+  }
+
+  // A package script that runs Stryker itself would put the sandbox back where it
+  // cannot work. Delegation is the only shape allowed.
+  for (const pkg of packages) {
+    const body = pkg.scripts["test:mutation"];
+    if (body && !/(-w|--workspace-root)\s+run\s+test:mutation:/.test(body)) {
+      failures.push(
+        `${pkg.name}: "test:mutation" runs something other than a root target ("${body}") — the sandbox is a copy of the working directory`,
+      );
+    }
+  }
+
+  // A target nobody can name is not a target: the table and the scripts have to agree
+  // in both directions.
+  for (const name of Object.keys(rootScripts)) {
+    if (!name.startsWith("test:mutation:")) continue;
+    const target = name.slice("test:mutation:".length);
+    if (!seen.has(target)) {
+      failures.push(`package.json defines "${name}" for a target that stryker.config.mjs does not declare`);
+    }
   }
 }
 

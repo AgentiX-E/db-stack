@@ -439,11 +439,27 @@ segment may hold another process's bytes. So the guarantee is *at-least-once* ac
 at-most-once: when `write()` rejects, retry with a fresh id rather than assuming the entry is absent,
 and reconcile duplicates downstream if that matters to your compliance statement.
 
-**Two processes may append to one trail.** The append is an `O_APPEND` write, which the kernel
-places at the end of the file, so there is no window in which one writer's line can overwrite
-another's. The recipe this replaced read the segment, concatenated and renamed, so two writers lost
-each other's lines in proportion to how busy the trail was — and both were writing the same scratch
-path, so one of them could fail outright while the other renamed underneath it.
+**A segment has one writer, and the name is claimed before it is written to.** The append is an
+`O_APPEND` write, which the kernel places at the end of the file, so there is no window in which one
+writer's line can overwrite another's. The recipe this replaced read the segment, concatenated and
+renamed, so two writers lost each other's lines in proportion to how busy the trail was — and both
+were writing the same scratch path, so one of them could fail outright while the other renamed
+underneath it.
+
+Two processes appending to one *trail* is supported; two processes appending to one *segment* is not,
+and the difference is worth knowing because it is what the file names mean:
+
+| Situation | What happens |
+|---|---|
+| Two processes start together on an empty directory | Each claims a different segment name (`O_CREAT \| O_EXCL`, retried by re-scanning), so neither can write into the other's file. |
+| A process starts while another is writing | It continues the newest open segment rather than starting a new one — that is what makes a restart a continuation instead of a gap. The consequence is that two *live* processes share that segment until one of them rotates. |
+| One process rotates a segment the other is still appending to | The archive is **not published**: the segment grew while it was being compressed, and an archive of a prefix would hide every line after it, because a reader prefers an archive over the plain file of the same name. The plain segment stays as the only name, and every line in it stays readable. |
+
+So the rule to deploy by: **one writer per trail**, unless the writers are starting together and
+rolling over continuously (a fan-in of short-lived processes works; two long-lived services pointing
+at one directory does not). A second live writer that *adopts* a segment which the first one later
+archives can still write lines that the archive then hides — that is a remaining gap, tracked rather
+than papered over, and it is the reason the sentence above is a rule and not a suggestion.
 
 **A crash leaves at most one unreadable line — and it cannot swallow the next one.** A process killed
 between the write and its newline leaves a fragment. Readers skip an unparsable line, so the fragment
@@ -491,6 +507,12 @@ caller who wants to prune chooses when:
 ```ts
 await audit.pruneOlderThan(new Date(Date.now() - 30 * 24 * 3600 * 1000));
 ```
+
+The window is the segment's modification time, and a segment whose date **cannot be read is left
+alone**: a failed `stat` is an I/O error, and turning one into a deletion converts a transient fault
+into permanent loss of the evidence. It stays until the next sweep, which is the next rotation. The
+comparison is strict at the boundary as well — a segment whose last write is exactly `retentionDays`
+ago is still inside the window.
 
 `pruneOlderThan` deletes only names this store could have produced (`<prefix>-YYYYMMDD-NNNN.ndjson`
 and its `.gz`), never the segment it is appending to, and it reports the number of files that

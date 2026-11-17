@@ -5,6 +5,56 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] — 2026-11-17
+
+### Added
+
+- **`claimSegment(path, claim?)`**, **`isAlreadyExists(error)`** — a segment name is taken with
+  `O_CREAT | O_EXCL` before anything is written to it. Two processes choosing the same next number
+  used to append into one file, and the damage was not the interleaving (that is atomic) but what
+  followed: whoever rotated first archived the segment while the other was still writing, the other's
+  next append recreated the name, and the reader — which prefers an archive over the plain file of the
+  same name — stopped seeing everything appended after the archive was taken.
+- **`isWholeSegment(after, before)`** and a fourth step in `archiveSegment`: the segment must be the
+  same file, at the same length, at the moment the archive is published. A segment that grew while it
+  was being compressed produces an archive of a *prefix*, and a prefix hides every line after it. A
+  segment that is *gone* is a different answer and is still published — the archive is then the only
+  copy.
+- **`isExpired(mtime, cutoff)`** — the retention decision as a function with four cases. `null` (the
+  date could not be read) is not an expiry: turning a failed `stat` into a deletion converts a
+  transient I/O error into permanent loss of evidence.
+- **`FileAuditStoreConfig.claim`** — how a name is taken, injectable for the same reason the write
+  port is: the two answers that matter (`EEXIST`, and a failure that is not one) cannot both be
+  produced on a runner.
+- **`append-child.ts --rotate --await <path>`** — the fixture can now rotate on every line and hold
+  until released, so two real processes can be made to choose a segment name at the same instant.
+
+### Changed
+
+- **A store names a segment when it writes to it, not when it is constructed.** `rotate()` closes a
+  segment and leaves the store without a name; the next `appendLine` claims one. An idle store
+  therefore leaves no empty segment, and the "which number is free" question is answered at the one
+  moment the answer can be made atomic.
+- **Retention uses `isExpired`**, and the comparison is strict at the boundary: a segment whose last
+  write is exactly `retentionDays` old is still inside the window.
+
+### Fixed
+
+- **Two concurrent writers could share a segment.** `TW.2` failed with
+  `audit-20261117-0016.ndjson holds lines from proc-26841, proc-26842` before the claim; `SC.5` is the
+  same defect in one process, deterministically.
+- **A compression that outlived an append published an archive of a prefix**, which made the
+  appended lines unreadable while they sat on the disk (`WS.2`).
+- **`scripts/replay-mutant.mjs` verified the wrong report.** Its default report path was
+  `reports/mutation/operations.json`, resolved against the working directory — which was
+  `operations/`, because that is where the script lives. Once the mutation run moved to the repository
+  root (P3-4) the report it writes is at the root and the paths inside it are root-relative, so the
+  tool silently read the stale in-place report left behind by the previous iteration and spliced edits
+  into a file that had changed since: the verdicts were about a report nobody had just produced. The
+  report and every path inside it now resolve against the repository root, `apply` refuses a report
+  older than the file it describes (`--allow-stale` to override, with a warning), and `restore` puts
+  the original mtime back so that a second replay is not blocked by the first one's own write.
+
 ## [1.10.0] — 2026-11-17
 
 ### Added

@@ -147,6 +147,23 @@ line — measured at 1 000× the payload before this was changed. Because the ap
 is an `O_APPEND` write, two processes may append to the same trail without losing
 each other's lines.
 
+**A segment name is claimed before it is written to.** The name is chosen by reading
+the directory and taking the next sequence number, which two processes can decide at
+the same instant — and then both write into one file, one of them rotates it while the
+other is still appending, and the reader (which prefers an archive over the plain file
+of the same name) stops seeing everything written after the archive was taken. So the
+name is created with `O_CREAT | O_EXCL` first; a refusal means somebody else has it,
+and the store re-scans rather than guessing an offset. Two processes starting together
+therefore get different segments, and concurrent writers of one *trail* never append to
+one *segment* by accident.
+
+**An archive is published only if it is the whole segment.** If the segment grew while
+it was being compressed — a second writer, in the window between rotation and the end
+of a gzip — the archive is a prefix, and publishing it would hide every line appended
+after it. The partial is discarded and the plain segment stays as the single readable
+name. A segment that is *gone* is a different answer: the archive holds every byte that
+was in it, so it is published, because it is now the only copy.
+
 **One sync acknowledges a turn's worth of appends.** The append stays synchronous;
 the sync moved to the end of the event-loop turn, and a file sync covers every byte
 appended before it, so callers that arrive together share one round trip to the
@@ -195,6 +212,7 @@ await store.close();                     // waits for background compression
 | `maxScanLines` | 10 000 | Bound on what `query()` *reads and returns*; `get()`/`count()` are unbounded |
 | `segmentReader` | `readSegmentFromDisk` | Read port: `(path, compressed) => string \| null` |
 | `fileSystem` | `nodeDurableFileSystem` | Write port: `append`, `syncFile`, `syncDirectory`, `needsSeparator` |
+| `claim` | `O_CREAT \| O_EXCL` | How a segment name is taken; injectable so both answers (taken, failed) are assertable |
 
 A custom write port must be durable when each method returns — that is the whole
 contract, and it is the caller's to keep:
@@ -228,6 +246,13 @@ Two consequences worth knowing before you deploy it:
   `<segment>.ndjson.gz.part` and renames it, so a reader never sees an incomplete
   archive — and never has a complete segment suppressed by one. A `.part` left by a
   killed process is swept when the next store opens the directory.
+- **One writer per segment.** A trail may be shared by processes that start together;
+  a segment may not be shared by two live ones. A process that starts while another is
+  running continues the newest open segment (that is what makes a restart a
+  continuation), so two long-lived services pointed at one directory will share it
+  until one rotates — and a line the second one appends after the first one archives
+  that segment is on the disk and hidden by the archive. Fan-in of short-lived writers
+  is fine; two services on one directory is not.
 
 ### `JsonAuditExporter`
 

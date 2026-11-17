@@ -240,37 +240,77 @@ a backup can be replayed at all (`operations/.../backupChain.ts`,
 time and runs the tests that cover the change; a change no test notices is a behaviour nothing
 constrains. Which edit Stryker made is recorded in `reports/mutation/operations.json`, and
 `operations/scripts/replay-mutant.mjs` applies it by that record — a line number is not enough, and
-iteration 30 proved it the hard way. There is one instrument: the three hand-rolled engines the operations package carried
-until iteration 26 are gone, and `check:gates` now fails if a `test:mutation` script is not
-invoked by a workflow.
+iteration 30 proved it the hard way.
+
+**There is exactly one instrument, and it lives at the root.** Stryker copies `process.cwd()` into a
+sandbox and runs the suite inside the copy; that single fact decides where the configuration may live.
+Until iteration 36 each package carried its own `stryker.config.json`, so the sandbox was a copy of
+*one package* — and both things every test file needs (`tsconfig.base.json`, which Vite reads while
+transforming, and `scripts/test-tmpdir.mjs`, which every `vitest.setup.ts` imports) live one directory
+above it. The run died on `TSConfckParseError: failed to resolve "extends"` rather than producing a
+wrong number, which is the only reason the arrangement survived review as long as it did. There is now
+one `stryker.config.mjs` and one `mutation/targets.mjs`, both at the root; the three package configs
+are deleted. `scripts/mutation.mjs` is the only entry point: it refuses to start anywhere but the
+repository root, refuses `--inPlace`, and sets `MUTATION_TARGET` for `stryker.config.mjs`, which in
+turn refuses to run without it. The three `vitest` configs pin `root: __dirname`, because `include` and
+`setupFiles` resolve against `root` and `root` defaults to the working directory — without the pin, a
+run started from the root collects zero files and reports a perfect score over nothing.
+`check:gates` grew a rule that fails when a `test:mutation` script is not invoked by a workflow, when a
+target's `break` threshold is missing, when a `mutate` glob matches no file, or when any package runs
+Stryker directly instead of delegating to the root. CI runs the three targets as
+`pnpm run test:mutation:<target>` and then asserts that `git status --porcelain` is empty — an
+in-place edit that leaked out of a sandbox would otherwise be committed by the next person.
 
 | Package | Module | Mutants | Killed | Survived | Score | Threshold |
 |---|---|---:|---:|---:|---:|---:|
-| cluster | `SqliteStorage.ts` | 510 | 356–359 (+19 timeout) | 130–133 | **73.8–74.4 %** | break 70 |
-| federation | `TcpSecureTransport.ts` | 260 | 208 (+1 timeout) | 56 (+6 no coverage) | **77.1 %** | break 70 |
+| cluster | `SqliteStorage.ts` | 510 | 356 (+19 timeout, +1 error) | 133 (+1 ignored) | **73.82 %** | break 70 |
+| federation | `TcpSecureTransport.ts` | 271 | 208 (+1 timeout) | 56 (+6 no coverage) | **77.12 %** | break 70 |
 | operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
-| operations | `InMemoryBackupManager.ts` | 94 | 92 (+1 timeout) | 1 | **98.9 %** | break 86 |
-| operations | `RetentionPolicyEvaluator.ts` | 174 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
-| operations | `cron.ts` | 87 | 81 (+6 timeout) | 0 | **100 %** | break 86 |
-| operations | `MaintenanceWindowScheduler.ts` | 621 | 602 (+13 timeout) | 6 | **99.0 %** | break 86 |
-| operations | `FileAuditStore.ts` | 466 | 421 (+21 timeout) | 13 (+1 error) | **100 %** after re-application — 97.15 % as reported | break 86 |
-| operations | `DurableFileSystem.ts` | 73 | 73 | 0 | **100 %** | break 86 |
-| operations | `KeyRotationManager.ts` | 238 | 233 (+3 timeout) | 2 | **99.2 %** | break 86 |
-| operations | `RotationAuditor.ts` | 282 | 275 | 7 | **97.5 %** | break 86 |
-| operations | `AuditLogManager.ts` | 337 | 323 (+2 timeout) | 10 (+2 no coverage) | **96.44 %** | break 86 |
-| operations | `KeyManager.ts` | 136 | 122 (+6 timeout) | 7 (+1 no coverage) | **94.12 %** | break 86 |
-| operations | `EnvelopeEncryptionProvider.ts` | 110 | 108 | 2 | **98.18 %** | break 86 |
+| operations | `InMemoryBackupManager.ts` | 95 | 92 (+1 timeout) | 1 | **98.94 %** | break 86 |
+| operations | `RetentionPolicyEvaluator.ts` | 196 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
+| operations | `cron.ts` | 87 | 80 (+7 timeout) | 0 | **100 %** | break 86 |
+| operations | `MaintenanceWindowScheduler.ts` | 622 | 603 (+12 timeout) | 6 | **99.03 %** | break 86 |
+| operations | `FileAuditStore.ts` | 545 | 488 (+20 timeout) | 26 (+1 error) | **95.13 %** (95.32 % after replaying all 27) | break 86 |
+| operations | `DurableFileSystem.ts` | 74 | 73 | 0 | **100 %** | break 86 |
+| operations | `KeyRotationManager.ts` | 239 | 233 (+3 timeout) | 2 | **99.16 %** | break 86 |
+| operations | `RotationAuditor.ts` | 286 | 275 | 7 | **97.52 %** | break 86 |
+| operations | `AuditLogManager.ts` | 343 | 323 (+2 timeout) | 10 (+2 no coverage) | **96.44 %** | break 86 |
+| operations | `KeyManager.ts` | 139 | 122 (+6 timeout) | 7 (+1 no coverage) | **94.12 %** | break 86 |
+| operations | `EnvelopeEncryptionProvider.ts` | 111 | 108 | 2 | **98.18 %** | break 86 |
 | operations | `AES256GCMEncryptionProvider.ts` | 81 | 79 | 2 | **97.53 %** | break 86 |
 
-Operations overall: 2 755 judged mutants, **98.08 %** as the instrument reports it and **98.58 %** after
-re-applying what it reported as undetected — 2 640 killed, 61 timed out, 50 survived, 3 with no
-coverage and 1 that crashes the runner rather than failing a test. The discrepancy is not rounding: in
-`--inPlace` mode four Stryker workers share one source tree, so a worker's vitest can read a file
-another worker has already restored, and a mutant is then scored against the *original* code. Fourteen
-such mutants in `FileAuditStore.ts` were re-applied one at a time and run: **all fourteen fail a named
-case** (`AC 67.1`, `AC 67.15`, `DW.5`, `GC.5`, `GC.6`), which is why that file's row above reads 100 %.
-The instrument defect is P3-4 and it is now armed with the evidence rather than with the diagnosis;
-until it is fixed, every number in this section is a floor. The headline moved for reasons that are worth separating: modules joined the list
+Operations overall: **97.67 %** — 2 707 killed, 60 timed out, 63 survived and 3 with no coverage out of
+the 2 834 mutants the instrument judges (it enumerates 2 884 and reports 50 as ignored, because a
+mutant that runs at import time executes before any test can be blamed for it). The arithmetic is the
+gate's own: `(killed + timeout) / (killed + timeout + survived + no coverage)`.
+
+**The survivors were replayed, and the suite agreed with the report 26 times out of 27.** Each of the
+27 undetected mutants in `FileAuditStore.ts` was applied exactly as the report prints it and run
+against the 178-case audit suite: one is killed (`config.claim ?? …` → `() => undefined`, spotted by
+`TW.2`) and 26 leave all 178 cases green. The largest file's score therefore went *down* this
+iteration — 97.15 % → 95.13 % — because the file grew by a claim loop, an archive-integrity check and
+an expiry decision, and those are the three places where a missing assertion costs the most. The 26
+are unread, and reading them is P3-12; two of them are the equivalence family described further down,
+and the rest are string literals in messages and boolean literals in guards.
+
+**The previous version of this paragraph said all 27 were killed. That was wrong, and the way it was
+wrong is the point.** The tool used to verify them, `operations/scripts/replay-mutant.mjs`, resolved
+its default report path against the working directory — so, started from `operations/` where it lives,
+it opened a 2.6 MB in-place report left over from that morning, found fourteen survivors in it, and
+reported them killed; four of those "kills" were runs that never finished. The tool now resolves the
+report and every path inside it against the repository root, refuses a report older than the file it
+describes, and restores the mtime so its own second replay is not blocked by the first.
+
+The previous version of *this* section also said every number here was a floor. That claim is
+withdrawn for a different reason, and the way it was withdrawn matters: iteration 35 argued that
+`--inPlace` let four workers share one source tree, so a worker's vitest could read a file another
+worker had already restored. The *symptom* was real, but the hand application was not the edit the
+report printed — the report said `false || mtime >= cutoff` and what was applied was
+`if (false) continue;`, which is a *stronger* change. Applying the printed replacement left all 162
+tests green: the `mtime === null` arm had never been tested. The rule that came out of it is now part
+of the review habit: **apply the replacement the report prints, never a stronger one.** A survivor is
+either a missing assertion or an equivalent mutant, and both are provable; "the runner is wrong" is
+not a third option. The headline moved for reasons that are worth separating: modules joined the list
 (`AES256GCMEncryptionProvider` at 97.53 %, `DurableFileSystem` at 100 % on its first measurement) and
 the weakest improved because their defects were fixed rather than excused —
 `EnvelopeEncryptionProvider` 90.38 → 98.18 %, `KeyManager` 86.60 → 94.12 %, and `FileAuditStore`
@@ -290,11 +330,15 @@ gaps: the `err` branch of the PBKDF2 callback (Node throws synchronously for an 
 the branch is unreachable — proved by AC 75.21, which sees the throw from `generateKey`) and the
 optional call on a `Map` entry read one statement earlier.
 
-The operations floor is higher than the other two because the mutated surface is pure decision
+The operations score is higher than the other two because the mutated surface is pure decision
 logic with no sockets and no clock of its own: a surviving mutant there is almost always a missing
 assertion rather than a verdict that depends on the machine.
 
-The survivors were read one by one. Each family below names the property that makes it
+The survivors were read one by one — for every module except `FileAuditStore`, whose 26 current
+survivors arrived with this iteration's claim loop, archive check and expiry decision and are the
+subject of P3-12. Where a row below describes a `FileAuditStore` mutant that is no longer reported, the
+reason still holds for the family; where the file has grown new survivors, they are listed by location
+in the roadmap entry rather than papered over here. Each family names the property that makes it
 invisible to any in-process assertion — the reasons are grouped, because one property often explains
 several mutants:
 
