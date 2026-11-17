@@ -2,7 +2,7 @@
   "name": "db-stack",
   "version": "1.1.0",
   "private": true,
-  "description": "AgentiX-E database stack — cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
+  "description": "AgentiX-E database stack \u2014 cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
   "license": "MIT",
   "packageManager": "pnpm@10.28.2",
   "engines": {
@@ -33,7 +33,8 @@
     "test:perf": "pnpm --filter @agentix-e/db-cluster run test:perf && pnpm --filter @agentix-e/db-stack-e2e run bench",
     "test:mutation:cluster": "node scripts/mutation.mjs cluster",
     "test:mutation:federation": "node scripts/mutation.mjs federation",
-    "test:mutation:operations": "node scripts/mutation.mjs operations"
+    "test:mutation:operations": "node scripts/mutation.mjs operations",
+    "audit:policy": "node scripts/audit-policy.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -61,5 +62,15 @@
       "@vitest/pretty-format": "3.2.6",
       "tinypool": "2.2.0"
     }
+  },
+  "auditPolicy": {
+    "allow": [
+      {
+        "advisory": "GHSA-fc5q-39xc-vjpf",
+        "package": "picomatch",
+        "reason": "ReDoS through single-branch repeated extglobs; reaches the tree only through vitest/stryker/vite (dev), whose glob input is this repository's own paths \u2014 no patched version has been published (patched: <0.0.0)",
+        "reviewed": "2026-11-18"
+      }
+    ]
   }
 }

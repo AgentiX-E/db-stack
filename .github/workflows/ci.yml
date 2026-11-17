@@ -440,8 +440,13 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Dependency audit (high and above)
-        run: pnpm audit --audit-level high
+      # `pnpm audit --audit-level high` answers "is there a high advisory anywhere?", which is the
+      # right question for a release and the wrong one for a repository whose tree holds the test
+      # toolchain as well. This checker splits it: production is held to zero with no exceptions, a
+      # dev-tree advisory needs a dated entry in `auditPolicy.allow`, and an entry that matches
+      # nothing fails the gate so the list cannot rot.
+      - name: Dependency audit — production held to zero, dev exceptions named and dated
+        run: pnpm audit:policy
       - name: Secret scan — credentials must never be committed
         run: |
           set -euo pipefail
