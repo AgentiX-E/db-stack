@@ -188,9 +188,9 @@ configuration file that looked like a gate and ran nowhere.
 | **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
 | **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
 | **Operations process-level acceptance**                  | Partially covered (iteration 35) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. Batching did not widen that gap: a burst of concurrent writes is acknowledged by **one** sync, and `GC.8` pins the case with one caller at a time to the same one-sync-per-write it always paid, so the throughput gain is concurrency and not a weaker promise. No other operations package has an out-of-process case yet. |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 98.08 % as reported and 98.58 % re-applied, gates at 70, 70 and 86). In operations thirteen of 21 *modules* are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
+| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (**94.26 %**, **94.10 %**, **98.09 %** as reported, gates at 70, 70 and 86). In operations thirteen of 21 *modules* are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. In cluster and federation one module each is mutated — the SQLite log and the TLS wire — because those are the two places a green suite can be green for the wrong reason. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
 | **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
-| **Cross-version upgrade path**                           | Not covered                | The wire and snapshot formats are versioned, but no test exercises an N-1 → N upgrade.                                                                                                             |
+| **Cross-version upgrade path**                           | Partially covered          | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
 | **Harness `.mjs` child programs**                        | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
 
@@ -263,8 +263,8 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 
 | Package | Module | Mutants | Killed | Survived | Score | Threshold |
 |---|---|---:|---:|---:|---:|---:|
-| cluster | `SqliteStorage.ts` | 510 | 358 (+19 timeout, +1 error) | 131 (+1 ignored) | **74.21 %** in CI, 74.02 % locally | break 70 |
-| federation | `TcpSecureTransport.ts` | 271 | 209 | 56 (+6 no coverage) | **77.12 %** | break 70 |
+| cluster | `SqliteStorage.ts` | 507 | 476 | 29 (+1 ignored, 1 runner error) | **94.26 %** | break 70 |
+| federation | `TcpSecureTransport.ts` | 271 | 255 | 16 | **94.10 %** | break 70 |
 | operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
 | operations | `InMemoryBackupManager.ts` | 95 | 92 (+1 timeout) | 1 | **98.94 %** | break 86 |
 | operations | `RetentionPolicyEvaluator.ts` | 196 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
@@ -333,6 +333,82 @@ it opened a 2.6 MB in-place report left over from that morning, found fourteen s
 reported them killed; four of those "kills" were runs that never finished. The tool now resolves the
 report and every path inside it against the repository root, refuses a report older than the file it
 describes, and restores the mtime so its own second replay is not blocked by the first.
+
+### The two product targets, read the same way
+
+`SqliteStorage.ts` and `TcpSecureTransport.ts` carried 215 unread verdicts between them at 74.02 %
+and 77.12 % — survivors, timeouts, runner errors and mutants no test reached. All 215 were replayed
+exactly as the report printed them, and the answer was the same shape as `FileAuditStore`'s: **almost
+all of them were missing tests**. The two files now stand at **94.26 %** (476 killed of 505 judged) and
+**94.10 %** (255 of 271): 166 of the 215 are killed, 46 remain and each has an argument below, and 3
+disappeared because the code they described was deleted.
+
+Two of the 215 were not what the report said they were, and both corrections are the same lesson —
+read the replacement, not the line:
+
+- **The 19 `Timeout` verdicts were not equivalent mutants; they were decisions nobody had made.** The
+  runner records "the test never finished" as a status the score does not count, which in a table is
+  indistinguishable from "no test noticed". The judging suite now carries `testTimeout: 8000` — the
+  whole file runs in about 5 s and its slowest case is under 100 ms, so 8 s is the line between slow
+  and stuck — and all 19 became failing tests on the first run (P3-11). The timeout column is zero
+  because there is nothing left in it, not because nothing hangs.
+- **`ready.entries.length > 0` → `true` reads like a gap and is not one.** The replacement applies to
+  the right-hand operand, so the `ready.entries &&` in front of it still guards the loop, and an
+  absent entry list still takes the skip. `>= 0` is equivalent for the same reason plus one: an empty
+  list iterates zero times.
+
+What the 166 killed mutants were, in families — and every family is a question a caller asks:
+
+| The observation that was missing | Where it is now |
+| --- | --- |
+| **When the bytes are forced out.** Three writes inside `beginBatch` opened zero descriptors; `endBatch` opened one; batch mode ended with the batch; `persistReady`'s three-entry transaction synced once, not three times; every truncation path and `setKv` forced its own | `AC 38.3` |
+| **Which file a sync touches.** `fsync` truncates the WAL, syncs the main file, closes its descriptor and nothing else; `fsyncWAL` opens `-wal` and never the main file; a refused sync is logged with its own name rather than thrown | `AC 38.4`, `AC 38.5` |
+| **What a failed open leaves behind.** A throwing `onOpen` used to leave a handle nobody could reach, `isOpen` answering true and a locked file — now rolled back, with the statements dropped and the error rethrown | `AC 38.1`, `AC 38.6` |
+| **Whether a database from an older build still opens.** The `ALTER TABLE` for the checksum column had never run against a table that predated it, so both the migration and its guard were untested | `AC 38.7` |
+| **What a damaged database reports.** `every` vs `some` over `integrity_check`, the failing rows in the message, the separators between them, and the retry verdict | `AC 38.8` |
+| **Which defaults actually reached SQLite.** `synchronous`, `wal_autocheckpoint`, `foreign_keys`, `busy_timeout` and `maxLogSize` were computed and then never read back — and `pragma(name, value)` was never asserted to have written anything | `AC 38.2` |
+| **The auto-compaction boundary.** A limit of `0` means "no limit" rather than "compact always"; a snapshot index of `0` is not a reason to compact; a log exactly at the limit is not past it | `AC 38.12` |
+| **The wire frame, field by field.** The transport's own suite asserted `send` had been called, not what it carried — the message id, the source peer, the `federation_send` type, the payload bytes and the BigInt wall clock encoded as a string | `AC 47.1` |
+| **A configuration that cannot be addressed.** Two peers sharing a wire id, a peer sharing this node's, an id with no number in it, `peers: []` falling through to the address list, and a legacy address with no host or no port | `AC 47.3`–`AC 47.5` |
+| **The retry schedule as a schedule.** `maxRetries` attempts double, attempt `maxRetries + 1` is capped — asserted on `retryDelayMs()` instead of by timing a timer | `AC 47.6` |
+| **What a refused send costs.** An unknown peer arms no timer, a reachability refusal comes from the live check before the lagging snapshot, and `broadcast` counts deliveries rather than attempts | `AC 47.2`, `AC 47.9`–`AC 47.11` |
+
+Three of those turned into product fixes rather than tests, because the observation showed the
+behaviour was wrong:
+
+1. **`open()` was not exception-safe.** A throwing `onOpen` produced a half-open storage.
+2. **`stop()` skipped detaching the inbound bridge when the transport had never started**, so an
+   object destroyed during bootstrap stayed registered on the inner transport for that transport's
+   whole life.
+3. **`reconnect()` returned `void` over asynchronous work**, which made every failure inside it an
+   unobserved rejection — and made the transport's own guards untestable, because breaking one of
+   them produced no observable failure at all.
+
+The leftovers are equivalent, in eight families for `SqliteStorage` and eight for `TcpSecureTransport`:
+
+| Survivor(s) | Why nothing can distinguish it |
+| --- | --- |
+| `if (!fs.existsSync(dir))` → `true` | `mkdirSync(recursive: true)` on an existing directory is a no-op |
+| `handle?.close()` → `handle.close()` | `handle` is the value assigned one statement earlier, so it is never nullish |
+| the `checkpoint('PASSIVE')` guard and its mode in `close()` | the handle is closed either way, and SQLite checkpoints on close; `wal_checkpoint()` with no argument is `PASSIVE` |
+| `if (!this.db) return` in `initStatements` | every call is inside `open()`, after the handle is set |
+| `queue.length >= maxBatch` → `true`, `if (this.groupCommitTimer)` → `true`/`false`/`{}`, `clearTimeout` → `;`, `if (!this.groupCommitTimer)` → `true` | a flush of an empty queue returns at its first line, so a surplus timer or a surplus flush syncs nothing; `clearTimeout(null)` and `Map.delete` of an absent key are no-ops |
+| `unref()` → `;` | it changes whether the event loop stays alive, which no test observes and the runner decides |
+| `let batch = []` → a foreign element, `queue = []` → a foreign element | the initial value is overwritten by the mutex callback before it is read; the queue variant replaced by a foreign element throws inside a timer callback, which is the runner error this file records rather than a verdict |
+| `if (batch.length === 0) return` → `false` | an empty batch syncs a database that has nothing to sync — same bytes, one extra call |
+| `?.minIndex`, `?.count`, `countRow?.count`, `row?.minIndex`, `row?.count` | `MIN`, `COUNT` and `LIMIT 1` over a non-empty table always return a row; over an empty one `MIN` answers `null`, which the `?? 0` behind it handles |
+| `if (hardStateBuf)`, `if (metaBuf)`, `if (meta.hardState)` → `true` | `JSON.parse(buf.toString())` on `null` throws into the `catch` that already exists, leaving the field unset |
+| `ready.entries.length > 0` → `true`/`>= 0`, same for `committedEntries` | the `ready.entries &&` in front of the operand still guards the loop; an empty list iterates zero times |
+| `this._batchMode = true` → `false` in `persistReady` | inside a `better-sqlite3` transaction every `fsync()` fails with `SQLITE_BUSY` and is caught by its own handler, so the per-entry syncs the flag suppresses would not have reached the file anyway |
+| `if (fromIndex > lastIndex) return []` → `false` | the range query answers `[]` for the same input, which is what the guard was returning |
+| `if (existing)` → `true`, `_retryTimers.delete()` → `;` | `clearTimeout(undefined)` is a no-op, and the entry is overwritten by the `set` two lines later |
+| `getStatus?.()?.connectedPeers.includes(id)` variants | the refusal below it reads the same snapshot directly, so a wrong `reachable` is corrected one statement later |
+| `if (peers.length === 0) return 0` → `false` | `allSettled([])` is `[]`, and the filter of an empty array is `0` |
+| `r.status === 'fulfilled'` → `true` in the broadcast filter | `true && r.value` is `r.value`: a rejected settlement has no `value`, so it is still not counted |
+| `/^\d+$/` → `/\d+$/` and → `/^\d+/` | `Number('abc12')` and `Number('12abc')` are `NaN`, and `logicalByNumeric.has(NaN)` is false, so both fall through to the string form |
+| `messageHandlers.clear()` → `;` in `destroy()` | `destroy()` calls `stop()` first, which detaches the bridge; there is no subscriber left to iterate |
+| `if (digits.length === 0) return null` → `false`, and `?? ''` → any text in `extractPort` | `parseInt('')` and `parseInt('Stryker was here!')` are both `NaN`, which the `Number.isNaN` behind them maps to the same `null` / `7000` |
+| `host && host.length > 0` → `host || …`, `> 0` → `>= 0`, `?:` → `true` | the `host &&` outside the comparison already rejects the empty string, so the condition is never the only thing standing between `''` and the answer |
 
 The previous version of *this* section also said every number here was a floor. That claim is
 withdrawn for a different reason, and the way it was withdrawn matters: iteration 35 argued that
@@ -481,6 +557,11 @@ point — **74.02 %** locally (357 killed, 132 survived, 19 timeouts) and **74.2
 already starts four workers, each with its own sandbox copy of the repository. Four files in parallel
 inside each of those is sixteen processes for a suite that takes five seconds. The mutation job itself
 went from about an hour to **4 m 15 s** for this target.
+
+That number was a floor, and the iteration after it found out how low: the nineteen timeouts were the
+first hint, and the 132 survivors were the rest. Reading them (see *The two product targets, read the
+same way* above) took the same target to **94.26 %** — 476 killed, 29 equivalent, one runner error — with
+a run time of 1 m 35 s, because a suite that fails fast costs less than one that waits to be killed.
 
 **How the performance numbers are produced.** Every latency case goes through
 `src/testing/latency.ts`: an explicit warmup window that is discarded, then nearest-rank
