@@ -147,6 +147,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The mutation suite was flaky, and a flaky suite moves a mutation score in both directions.**
+  `vitest.mutation.config.ts` ran its four files in parallel; three clean runs — *no mutant applied* —
+  failed a test in two of them with `SqliteError: disk I/O error` from `pragma journal_mode = WAL`, a
+  different test each time. Replaying the 133 reported survivors showed what that does to the number:
+  **68 of them failed** when applied, because a flaky test was failing and the runner charged it to the
+  mutant. With `fileParallelism: false` and nothing else changed, four of four clean runs pass, the whole
+  mutation run is **faster** (3 m 40 s against roughly ten), and the score rose from 73.62 % to
+  **74.02 %** (357 killed, 132 survived, 19 timeouts). The suites are isolated per file, so what they
+  share is the machine — and Stryker already runs four workers, each with its own sandbox.
 - **A node had fifteen seconds to say it was ready — on any machine.** CI run 44045755888
   failed `AC 8.13 — connection drop and reconnect` with `Timeout waiting for "ready" from
   node 1 (15000ms)`, and the restarted process had printed nothing but its first `DEP0123`

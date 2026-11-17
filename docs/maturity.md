@@ -263,7 +263,7 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 
 | Package | Module | Mutants | Killed | Survived | Score | Threshold |
 |---|---|---:|---:|---:|---:|---:|
-| cluster | `SqliteStorage.ts` | 510 | 355 (+19 timeout, +1 error) | 134 (+1 ignored) | **73.62 %** | break 70 |
+| cluster | `SqliteStorage.ts` | 510 | 357 (+19 timeout, +1 error) | 132 (+1 ignored) | **74.02 %** | break 70 |
 | federation | `TcpSecureTransport.ts` | 271 | 209 | 56 (+6 no coverage) | **77.12 %** | break 70 |
 | operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
 | operations | `InMemoryBackupManager.ts` | 95 | 92 (+1 timeout) | 1 | **98.94 %** | break 86 |
@@ -462,12 +462,23 @@ number across dates, its retention setting was read by nothing, and the rotation
 detector in this repository.
 
 The cluster score moves by about half a point between runs, which is why the break threshold sits
-three points below the observed value rather than one. The movement is not noise in the product: it
-comes from the 19 mutants that time out, whose verdict depends on how much of the runner the four
-test-runner processes get that minute. Two runs of the same commit measured **73.62 %** in CI (run
-44033693071, 355 killed / 134 survived) and **73.82 %** on the development machine (356 / 133) — the
-same nineteen timeouts, one verdict crossing the line. A threshold tight enough to catch that movement
-would fail on a busy CI machine and teach people to ignore it.
+three points below the observed value rather than one. Most of that movement comes from the 19 mutants
+that time out, whose verdict depends on how much of the runner they get that minute — but not all of it
+did, and finding out which part was not is worth more than the half point.
+
+**The mutation config for this package was itself flaky, and it was measuring noise.** With
+`fileParallelism: true`, three clean runs of the config — no mutant applied at all — failed a test in
+two of them, with `SqliteError: disk I/O error` from `pragma journal_mode = WAL`, and a *different* test
+each time. Replaying the reported survivors made the consequence concrete: 68 of the 133 "survived"
+mutants failed the suite when applied, because a flaky test was failing and the runner attributed it to
+the mutant. A score moved by noise moves in both directions, and neither is evidence.
+
+Turning file parallelism off — and nothing else — fixed it: four of four clean runs pass, the suite is
+**faster** (3 m 40 s for the whole mutation run against roughly ten), and the score went **up** by half a
+point to **74.02 %** (357 killed, 132 survived, 19 timeouts). The suites are isolated per file
+(`mkdtemp`), so what they share is the box: SQLite's WAL bookkeeping, and a runner on which Stryker
+already starts four workers, each with its own sandbox copy of the repository. Four files in parallel
+inside each of those is sixteen processes for a suite that takes five seconds.
 
 **How the performance numbers are produced.** Every latency case goes through
 `src/testing/latency.ts`: an explicit warmup window that is discarded, then nearest-rank

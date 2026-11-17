@@ -9,6 +9,21 @@ import baseConfig from './vitest.config';
  * before the first mutant is even generated. This config names the files that
  * exercise the modules in `stryker.config.json`'s `mutate` list. When that list
  * grows, this one grows with it; `check:gates` fails if the two disagree.
+ *
+ * `fileParallelism: false`, and that is a measurement rather than a preference.
+ * With it on, three clean runs of this config produced failures in two of them —
+ * `SqliteError: disk I/O error` from `pragma journal_mode = WAL`, and a different
+ * test each time — with **no mutant applied at all**. The suites are individually
+ * isolated (`mkdtemp` per file), so what they share is the box: SQLite WAL
+ * bookkeeping, and a runner on which Stryker already runs four workers, each with
+ * its own sandbox copy of the repository. Four files in parallel inside each of
+ * those multiplies processes to sixteen for a suite that takes five seconds.
+ *
+ * A flaky test is worse than a slow one here for a specific reason: it fails
+ * *because of the mutant* in the runner's accounting. Replaying the 133 reported
+ * survivors made that concrete — 68 of them "failed" while the same suite passes
+ * them one at a time — so the score was being moved by noise in both directions.
+ * With parallelism off, four of four runs pass, and the number means what it says.
  */
 const base = baseConfig as unknown as {
   test: Record<string, unknown> & { coverage?: Record<string, unknown> };
@@ -26,7 +41,7 @@ export default defineConfig({
     ],
     exclude: [],
     pool: 'forks',
-    fileParallelism: true,
+    fileParallelism: false,
     coverage: { ...base.test.coverage, enabled: false },
   },
 });
