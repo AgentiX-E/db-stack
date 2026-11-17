@@ -37,11 +37,21 @@ export default defineConfig({
       'src/__tests__/unit/SqliteStorage.test.ts',
       'src/__tests__/unit/SqliteStorageConcurrency.test.ts',
       'src/__tests__/unit/SqliteStorage.handle-lifecycle.test.ts',
+      'src/__tests__/unit/SqliteStorage.durability.test.ts',
       'src/__tests__/unit/SqliteNodeStorage.test.ts',
     ],
     exclude: [],
     pool: 'forks',
     fileParallelism: false,
+    // A mutant that makes the storage wait forever must be *reported*, and the
+    // only party that can report it is the test that is waiting. Without this
+    // the runner's own 30 s cap is what fires, and it records the verdict as
+    // "timeout" — a status the score does not count, so a mutant that deadlocks
+    // the log was scored as if no test had noticed. The whole file runs in
+    // ~5 s and its slowest case is under 100 ms, so 8 s is not a margin any
+    // correct behaviour can consume; it is the boundary between "slow" and
+    // "stuck", and a stuck storage is a defect, not an unjudged mutant.
+    testTimeout: 8000,
     coverage: { ...base.test.coverage, enabled: false },
   },
 });

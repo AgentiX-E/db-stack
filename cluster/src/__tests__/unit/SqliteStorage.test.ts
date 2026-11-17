@@ -361,12 +361,15 @@ describe('SqliteStorage — recoverFromCrash / vacuum / pragma / stats', () => {
     expect(st.hardState).toBeUndefined();
   });
 
-  it('AC 32.6: stats throws when not initialized', () => {
-    const s2 = new SqliteStorage({ file: tmpDb('uninit') });
+  it('AC 32.6: stats throws when the storage is closed', () => {
+    // The state this asserts is a real one: `open()` succeeded and `close()`
+    // undid it. The previous version of this case manufactured a third state by
+    // writing to a private field, which a caller can never produce and which
+    // the storage no longer has a field to represent.
+    const s2 = new SqliteStorage({ file: tmpDb('closed-stats') });
     s2.open();
-    (s2 as any)._initialized = false;
-    expect(() => s2.stats()).toThrow(/not initialized/i);
     s2.close();
+    expect(() => s2.stats()).toThrow(/not open/i);
     cleanup(path.dirname((s2 as any).filePath));
   });
 });

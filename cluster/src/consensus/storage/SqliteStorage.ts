@@ -149,8 +149,6 @@ export class SqliteStorage {
 
   /** When true, fsync is deferred (used during batch writes). */
   private _batchMode: boolean = false;
-  /** Set to true at the end of open() — guards all prepared statement usage. */
-  private _initialized: boolean = false;
 
   // ── Compaction Configuration ──────────────────
   private compactionConfig?: CompactionConfig;
@@ -246,60 +244,75 @@ export class SqliteStorage {
     this.db = new Database(this.filePath);
     openHandleCount += 1;
 
-    // Apply PRAGMAs
-    this.db.pragma(`journal_mode = ${this.opts.journalMode}`);
-    this.db.pragma(`synchronous = ${this.opts.synchronous}`);
-    this.db.pragma(`wal_autocheckpoint = ${this.opts.walAutocheckpoint}`);
-    this.db.pragma(`busy_timeout = ${this.opts.busyTimeout}`);
-    this.db.pragma(`foreign_keys = ${this.opts.foreignKeys ? 'ON' : 'OFF'}`);
-
-    // Custom PRAGMAs
-    for (const [key, value] of Object.entries(this.opts.pragmas)) {
-      this.db.pragma(`${key} = ${value}`);
-    }
-
-    // Create tables
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS raft_log (
-        entry_index INTEGER PRIMARY KEY,
-        term INTEGER NOT NULL,
-        type INTEGER NOT NULL DEFAULT 0,
-        data BLOB,
-        checksum INTEGER DEFAULT 0
-      );
-
-      CREATE TABLE IF NOT EXISTS raft_kv (
-        key TEXT PRIMARY KEY,
-        value BLOB NOT NULL
-      );
-    `);
-
-    // Ensure checksum column exists on existing databases (safe no-op if already present)
     try {
-      this.db.exec(`ALTER TABLE raft_log ADD COLUMN checksum INTEGER DEFAULT 0`);
-    } catch {
-      // Column already exists — safe to ignore
+      // Apply PRAGMAs
+      this.db.pragma(`journal_mode = ${this.opts.journalMode}`);
+      this.db.pragma(`synchronous = ${this.opts.synchronous}`);
+      this.db.pragma(`wal_autocheckpoint = ${this.opts.walAutocheckpoint}`);
+      this.db.pragma(`busy_timeout = ${this.opts.busyTimeout}`);
+      this.db.pragma(`foreign_keys = ${this.opts.foreignKeys ? 'ON' : 'OFF'}`);
+
+      // Custom PRAGMAs
+      for (const [key, value] of Object.entries(this.opts.pragmas)) {
+        this.db.pragma(`${key} = ${value}`);
+      }
+
+      // Create tables
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS raft_log (
+          entry_index INTEGER PRIMARY KEY,
+          term INTEGER NOT NULL,
+          type INTEGER NOT NULL DEFAULT 0,
+          data BLOB,
+          checksum INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS raft_kv (
+          key TEXT PRIMARY KEY,
+          value BLOB NOT NULL
+        );
+      `);
+
+      // Ensure checksum column exists on existing databases (safe no-op if already present)
+      try {
+        this.db.exec(`ALTER TABLE raft_log ADD COLUMN checksum INTEGER DEFAULT 0`);
+      } catch {
+        // Column already exists — safe to ignore
+      }
+
+      // Initialize prepared statements
+      this.initStatements();
+
+      // Call onOpen callback
+      if (this.opts.onOpen) {
+        this.opts.onOpen(this.db);
+      }
+    } catch (err: unknown) {
+      // A callback that throws used to leave the storage half open: the handle
+      // existed, no caller could reach it, the file stayed locked, and the
+      // process held a descriptor for a database nobody could use. Undo the
+      // open, so that a failed `open()` leaves the object exactly as it was.
+      const handle = this.db;
+      this.db = null;
+      openHandleCount -= 1;
+      this.resetStatements();
+      try {
+        handle?.close();
+      } catch {
+        // The handle may be unusable already; the original error is the one
+        // that explains the failure.
+      }
+      throw err;
     }
-
-    // Initialize prepared statements
-    this.initStatements();
-
-    // Call onOpen callback
-    if (this.opts.onOpen) {
-      this.opts.onOpen(this.db);
-    }
-
-    this._initialized = true;
   }
 
   /**
    * Close the database connection.
    *
    * Idempotent, and it returns the object to the pre-open state so `open()` can
-   * bring it back. `_initialized` is cleared with the handle: leaving it set
-   * made a closed storage answer `isOpen` questions inconsistently and turned
-   * every later call into a `null.prepare` TypeError instead of the documented
-   * "Database not open".
+   * bring it back. The prepared statements are dropped with the handle: they
+   * belong to it, and leaving them behind made a re-opened storage use statement
+   * objects bound to a database that no longer existed.
    */
   close(): void {
     if (this.db) {
@@ -312,7 +325,11 @@ export class SqliteStorage {
       this.db = null;
       openHandleCount -= 1;
     }
-    this._initialized = false;
+    this.resetStatements();
+  }
+
+  /** Drop every prepared statement. They are owned by a handle, not by this object. */
+  private resetStatements(): void {
     this.stmtInsertLog = null;
     this.stmtGetLog = null;
     this.stmtGetLogRange = null;
@@ -534,7 +551,6 @@ export class SqliteStorage {
    */
   stats(): StorageStats {
     if (!this.db) throw new Error('Database not open');
-    if (!this._initialized) throw new Error('SqliteStorage not initialized');
 
     const minIndex = (this.stmtMinLogIndex!.get() as any)?.minIndex ?? 0;
     const countRow = this.stmtCountLogs!.get() as any;
@@ -632,7 +648,10 @@ export class SqliteStorage {
       }));
     }
 
-    return Object.keys(result).length > 0 ? result : {};
+    // Every branch above writes into `result` only when there is something to
+    // write, so the empty outcome is already `{}`. The ternary that used to
+    // stand here returned `{}` from both of its arms.
+    return result;
   }
 
   /**

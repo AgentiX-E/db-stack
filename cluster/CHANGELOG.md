@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`SqliteStorage.durability.test.ts`** — `AC 38.1`–`AC 38.13`, 43 cases covering what the AC 32
+  suite cannot see because it asserts return values: which file descriptor a sync opens, when a batch
+  defers one, whether the native handle is released, whether a database written before the checksum
+  column existed still opens, whether `VACUUM` gives the space back, and what a damaged database
+  reports. Measurement goes through a wrapped `fs`, so every counted call still reaches the kernel.
+  The module moved from 74.02 % to **94.26 %** (476 killed, 29 equivalent, 1 runner error of 510).
 - **`RaftTcpTransport.canReach(peerId)`** — whether a frame written right now would reach a
   live, certificate-verified socket rather than the in-memory buffer `send()` falls back to.
   `send()` is non-blocking by design here (blocking the Raft tick on I/O costs an election),
@@ -94,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`_initialized` is gone; `stats()` has one guard instead of two.** The flag distinguished "handle
+  open" from "open finished", a state only a throwing `onOpen` could produce — and that now rolls back,
+  so the second guard was unreachable by construction. Its only test manufactured the state by writing
+  to the private field, which no caller can do. `close()` and the open rollback share `resetStatements()`,
+  because a prepared statement belongs to the handle that prepared it and outliving it means the next
+  `open()` uses a statement against a database that no longer exists.
+- **`initialState()` returns the object it built.** `Object.keys(result).length > 0 ? result : {}`
+  answered `{}` from both arms: every branch writes only when it has something to write.
 - **The boundary suites assert retention, not allocation, and each case carries a budget
   derived from its own volume.** The heap bounds were 100, 200, 300 and 200 MB against cases of
   10 000, 5 000, 2 000 and 1 000 proposals — the tightest attached to the heaviest, and it
@@ -147,6 +161,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A throwing `onOpen` left the storage half open.** The callback runs after the handle is created,
+  so a configuration hook that threw produced a live better-sqlite3 handle reachable from nowhere,
+  `isOpen` answering `true`, and a file locked for the life of the process — while every later call
+  reported the documented "Database not open" and blamed the caller. `open()` now rolls the handle
+  back, drops the statements prepared against it and rethrows the original error, so a failed open is
+  the whole effect of the call (`AC 38.1`). Measured: handle count and file lock both clear, and a
+  clean `open()` on the same path afterwards works.
+- **A mutant that deadlocks the log was scored as if no test had noticed it.** The runner records a
+  mutant whose test never finishes as `Timeout`, a status the mutation score does not count — so the
+  19 deadlocking mutants of `SqliteStorage.ts` were invisible in the number, and `Survived` and
+  `Timeout` were being read as "equivalent" and "unanswered" in the same table. The judging suite now
+  carries `testTimeout: 8000`: the whole file runs in ~5 s and its slowest case is under 100 ms, so
+  8 s is the boundary between "slow" and "stuck", and a stuck storage is a defect. All 19 now count as
+  killed (P3-11).
 - **The mutation suite was flaky, and a flaky suite moves a mutation score in both directions.**
   `vitest.mutation.config.ts` ran its four files in parallel; three clean runs — *no mutant applied* —
   failed a test in two of them with `SqliteError: disk I/O error` from `pragma journal_mode = WAL`, a
