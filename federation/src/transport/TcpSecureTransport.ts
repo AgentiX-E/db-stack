@@ -191,9 +191,16 @@ export class TcpSecureTransport implements ITransport {
   /**
    * Initiate (or re-initiate) a connection to a given peer, with exponential
    * backoff on failure.
+   *
+   * Returns a promise that settles when the attempt is over. It used to return
+   * `void` while the work was asynchronous, which made every failure inside it
+   * an unhandled rejection: `reconnect('typo')` looked like a call that did
+   * nothing, and the transport's own guards were untestable because breaking
+   * them produced no observable failure. Callers that only want to arm the
+   * channel can ignore the promise; callers that want to know can await it.
    */
-  reconnect(peerId: string): void {
-    this._connectToPeer(peerId);
+  reconnect(peerId: string): Promise<void> {
+    return this._connectToPeer(peerId);
   }
 
   private async _connectToPeer(peerId: string): Promise<void> {
@@ -213,7 +220,7 @@ export class TcpSecureTransport implements ITransport {
     // longer than the fast backoff budget (~3 s at the defaults) never came back
     // without a process restart — the outbox kept the entries and had no way to
     // deliver them. Past the budget the interval is capped instead of abandoned.
-    const delay = attempt > this._maxRetries ? maxMs : Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
+    const delay = retryDelayMs(attempt, baseMs, maxMs, this._maxRetries);
 
     // One lookup, one guard. The previous shape consulted `numericByLogical`
     // first and then searched `resolvePeers()` again, which made the `!peer`
@@ -249,9 +256,19 @@ export class TcpSecureTransport implements ITransport {
     this.started = true;
   }
 
-  /** Stop the transport and clear all retry timers. */
+  /**
+   * Stop the transport, detach the inbound bridge and clear all retry timers.
+   *
+   * The bridge is detached even when the transport was never started. It is
+   * registered in the constructor, so an object that was built and then
+   * destroyed without starting — a failed configuration, a test, a node that
+   * shuts down during bootstrap — used to keep a handler on the inner transport
+   * for as long as that transport lived, holding this instance with it. The
+   * early return now covers only the inner `stop()`, which is the part that
+   * needs a start to undo.
+   */
   async stop(): Promise<void> {
-    if (!this.started) return;
+    const wasStarted = this.started;
     this.started = false;
     this.unsubFromRaft();
 
@@ -259,6 +276,7 @@ export class TcpSecureTransport implements ITransport {
     this._retryTimers.clear();
     this._attemptCount.clear();
 
+    if (!wasStarted) return;
     await this.transport.stop();
   }
 
@@ -461,6 +479,24 @@ export class TcpSecureTransport implements ITransport {
       this.transport.offMessage?.(handler);
     };
   }
+}
+
+/**
+ * Delay before the next attempt to a peer whose last attempt was refused.
+ *
+ * `maxRetries` bounds the *fast* attempts, not the lifetime of the channel:
+ * past the budget the interval is capped at `maxMs` rather than the
+ * reconnection being abandoned, because a datacenter that is down is not a
+ * datacenter that was deleted.
+ *
+ * Exported because the boundary is the interesting part — attempt `maxRetries`
+ * still doubles, attempt `maxRetries + 1` is capped — and reaching it through
+ * `setTimeout` meant timing a timer to assert a number.
+ *
+ * @internal
+ */
+export function retryDelayMs(attempt: number, baseMs: number, maxMs: number, maxRetries: number): number {
+  return attempt > maxRetries ? maxMs : Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
 }
 
 /**

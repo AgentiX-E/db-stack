@@ -1,6 +1,6 @@
 {
   "name": "@agentix-e/db-federation",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Cross-cluster data federation: CDC, outbox replication, conflict resolution and anti-entropy",
   "type": "module",
   "main": "./dist/index.js",

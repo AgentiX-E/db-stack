@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`TcpSecureTransport.delivery.test.ts`** — `AC 47.1`–`AC 47.15`, 31 cases covering the two
+  properties a cross-DC link lives or dies by and a return value cannot express: the wire frame is
+  asserted field by field (including the BigInt wall clock that travels as a string), and every
+  configuration that cannot be addressed is refused at construction with the sentence that names it.
+  Also `retryDelayMs()`, exported so the retry schedule is asserted as a schedule rather than timed
+  through `setTimeout`. The module moved from 77.12 % to **94.10 %** (255 killed, 16 equivalent of 271).
 - **`TcpSecureTransport.canReach(peerId)`** on the transport seam, and
   `RaftTcpTransport.canReach()` behind it — whether a frame written now would reach a live
   socket rather than an in-memory buffer. `send()` is deliberately non-blocking inside Raft
@@ -36,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The retry schedule is a function, not three lines inside a reconnect.** `retryDelayMs(attempt,
+  baseMs, maxMs, maxRetries)` is exported so the boundary can be asserted directly: attempt
+  `maxRetries` still doubles, attempt `maxRetries + 1` is capped. Reaching that boundary through
+  `setTimeout` meant timing a timer to assert a number, which is why the schedule had never been
+  checked at the point where it changes shape.
 - **A peer's wire id is derived from its logical id, not from its position.** `peers:
   [{ nodeId: 'dc-east' }]` used to give the peer id 1 because it was first in the list,
   while a local `nodeId: 'dc-west'` also derived 1 — two nodes, one number. The number is
@@ -56,6 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`reconnect()` returned `void` over asynchronous work, so every failure inside it disappeared.**
+  A typo in a peer id, or a transport whose `register()` is missing, made `reconnect('dc-nowhere')`
+  look like a call that did nothing: the throw happened inside an unobserved promise. It now returns
+  the promise, which is what makes the guards behind it testable — breaking one of them produces a
+  rejection instead of silence. Callers that only want to arm the channel can ignore the result.
+- **`stop()` skipped detaching the inbound bridge when the transport had never started.** The bridge
+  is registered in the constructor, so an object that was built and then destroyed without starting —
+  a failed configuration, a shutdown during bootstrap — kept a handler on the inner transport for as
+  long as that transport lived, holding this instance with it. The early return now covers only the
+  inner `stop()`, which is the part that needs a start to undo.
 - **`TcpSecureTransport.send()` reported success for a message it had only buffered.**
   `RaftTcpTransport.send()` is non-blocking: with no connection it pushes the frame into
   `_pendingMessages` and resolves. `TcpSecureTransport` treated that as delivered, so
