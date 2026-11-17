@@ -1,6 +1,6 @@
 {
   "name": "@agentix-e/db-operations-audit",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Audit log and export abstractions for db-operations",
   "type": "module",
   "private": false,

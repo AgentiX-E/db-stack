@@ -270,7 +270,7 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 | operations | `RetentionPolicyEvaluator.ts` | 196 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
 | operations | `cron.ts` | 87 | 80 (+7 timeout) | 0 | **100 %** | break 86 |
 | operations | `MaintenanceWindowScheduler.ts` | 622 | 603 (+12 timeout) | 6 | **99.03 %** | break 86 |
-| operations | `FileAuditStore.ts` | 545 | 488 (+20 timeout) | 26 (+1 error) | **95.13 %** (95.32 % after replaying all 27) | break 86 |
+| operations | `FileAuditStore.ts` | 543 | 497 (+21 timeout) | 14 (+1 error) | **97.37 %** | break 86 |
 | operations | `DurableFileSystem.ts` | 74 | 73 | 0 | **100 %** | break 86 |
 | operations | `KeyRotationManager.ts` | 239 | 233 (+3 timeout) | 2 | **99.16 %** | break 86 |
 | operations | `RotationAuditor.ts` | 286 | 275 | 7 | **97.52 %** | break 86 |
@@ -279,19 +279,52 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 | operations | `EnvelopeEncryptionProvider.ts` | 111 | 108 | 2 | **98.18 %** | break 86 |
 | operations | `AES256GCMEncryptionProvider.ts` | 81 | 79 | 2 | **97.53 %** | break 86 |
 
-Operations overall: **97.67 %** — 2 707 killed, 60 timed out, 63 survived and 3 with no coverage out of
-the 2 834 mutants the instrument judges (it enumerates 2 884 and reports 50 as ignored, because a
-mutant that runs at import time executes before any test can be blamed for it). The arithmetic is the
-gate's own: `(killed + timeout) / (killed + timeout + survived + no coverage)`.
+Operations overall: **98.09 %** — 2 716 killed, 61 timed out, 51 survived, 3 with no coverage and one
+that crashes the runner rather than failing a test, out of the 2 832 mutants the instrument judges (it
+enumerates 2 882 and reports 50 as ignored, because a mutant that runs at import time executes before
+any test can be blamed for it). The arithmetic is the gate's own:
+`(killed + timeout) / (killed + timeout + survived + no coverage)`.
 
-**The survivors were replayed, and the suite agreed with the report 26 times out of 27.** Each of the
-27 undetected mutants in `FileAuditStore.ts` was applied exactly as the report prints it and run
-against the 178-case audit suite: one is killed (`config.claim ?? …` → `() => undefined`, spotted by
-`TW.2`) and 26 leave all 178 cases green. The largest file's score therefore went *down* this
-iteration — 97.15 % → 95.13 % — because the file grew by a claim loop, an archive-integrity check and
-an expiry decision, and those are the three places where a missing assertion costs the most. The 26
-are unread, and reading them is P3-12; two of them are the equivalence family described further down,
-and the rest are string literals in messages and boolean literals in guards.
+**The twenty-six survivors of `FileAuditStore.ts` were read one by one, and ten of them were real
+gaps.** Every one was applied *exactly as the report printed it* and run against the whole audit
+suite: all twenty-six stayed green, which is what a survivor means — the suite did not make the
+distinction, the instrument did not miss a failure. Each of the ten now has the case it lacked in
+`AC 89`, and each of those cases was then re-checked the other way round: put the mutant back and the
+named case fails. They are one family in seven shapes, and every shape is a boundary nobody had asked
+about:
+
+| Mutant | The observation that was missing | Case |
+| --- | --- | --- |
+| `typeof error !== 'object'` → `false` in `isAlreadyExists` | `undefined` is the only input where reading `.code` off it throws instead of answering `false`; `null` is caught by the second disjunct and a string answers `undefined` | `SV.1` |
+| `retentionDays ?? DEFAULT` → `&&` | a window given as `2`: the suite had only ever passed `0` (disables) or `90` (the default), and `??` and `&&` agree on both | `SV.2` |
+| the default `claim` → `() => undefined` | the claim was only ever observed *after* the append that followed it — a store that claimed nothing passed `SC.5`, because the file the second store found was the one the first store's append had just created | `SV.3` |
+| `activeSegmentClaimed && needsSeparator(...)` → `true` (and → `\|\|`) | a separator owed by an *adopted* segment that ends cleanly: `DW.8` asserts the owed case and `DW.3` the store's own segment, and the parser skips a blank line, so only the bytes can tell | `SV.4` |
+| `attempt < CLAIM_ATTEMPTS` → `<=`, and the second half of the failure message → `''` | the eighth attempt, counted; and the sentence that says what eight means — a loop that ran nine times and a message that stopped explaining the bound both passed | `SV.5` |
+| `i < covered && …` → `true` (and `i <` → `i <=`) | a failure on the *first* sync of a batch: `GC.5` fails the second, where the generation test rejects the rest on its own, so the count of covered commits was never load-bearing | `SV.6` |
+| `mtime === null` → `false` in `pruneOlderThan` | a segment name the prune cannot date — the rule `EX.1` states for the retention sweep, at the boundary a caller chooses | `SV.7` |
+
+Two survivors were not gaps at all, they were **dead assignments**, and they were deleted rather than
+defended: `rotate()` reset `currentSize`, `currentCreatedAt` and `separatorOwed`, and the claim that
+follows sets all three — so the second write always agreed with the first and no run could tell them
+apart; and `activeSegmentClaimed` carried a `= false` initializer that the constructor overwrites. The
+file is 543 mutants instead of 545 for that reason, and 97.37 % instead of 95.13 % because ten of what
+remained are now killed.
+
+The other fourteen are **equivalent**, and each has an argument rather than a test:
+
+| Survivor | Why nothing can distinguish it |
+| --- | --- |
+| `name > newest` → `>=` in `newestOpenSegment` | `readdir` cannot return a name twice; when the strings are equal the assignment writes the value already there |
+| `?? []` in `sweepAbandonedArchives` → a foreign name | the loop keeps names that start with `<prefix>-` and end with `.ndjson.gz.part`; a foreign name removes nothing and the count is `0`, exactly as for an empty list |
+| `?? []` in `getNextSequence` → a foreign name | the regex cannot match it, so `maxSeq` stays `0` and the answer is `0001` — the same as for an empty list |
+| `if (!this.activeSegmentClaimed) return false` in `shouldRotate` → `true`, and → `false` | `rotate()` reads no file when the store has no name: `fileIdentity('')` throws `ENOENT`, which it catches. The two smaller tests would then be asked with `currentSize === 0` and an age measured from construction, and both can only answer true for a zero threshold — after which `rotate()` is the same no-op |
+| `this.activeFilePath = ''` in `rotate` → any name | every read of it is guarded by `activeSegmentClaimed`: `appendLine` claims before it appends, `shouldRotate` returns on the unclaimed state, and the next claim overwrites it. There is no suspension point in between |
+| `if (!fileIdentity(oldPath)) return` in `rotate` → `false` | `archiveSegment` opens with the identical check and returns before it compresses, so the only difference is a scheduled job that does nothing |
+| `if (this.flushScheduled) return` → `false`, and `this.flushScheduled = true` → `false` | a second schedule in one turn produces a second `setImmediate` that calls `flush()` on an empty queue, which returns at its first line. The flag's entire effect is the absence of a no-op |
+| `if (this.pendingCommits.length === 0) return` → `false` | an empty batch syncs nothing: `highest` is `-1`, `durableDirectoryGeneration` starts at `-1` and only rises, and both loops are over an empty array |
+| `let synced = ''` → any name | the initial value is compared with an absolute path inside the data directory, so the first commit of a batch syncs either way and `synced` is overwritten immediately |
+| `let highest = -1` → `+1` | a commit's generation *is* its segment's generation, so the newest commit in a batch is always at least the current one and the initial value cannot be the maximum |
+| `?? ''` in `readSegment`, and `return ''` in its `catch` → any text | the text reaches a parser that accepts nothing but NDJSON, so every alternative contributes zero entries — which is the property that let the `null` sentinel be deleted in iteration 34 |
 
 **The previous version of this paragraph said all 27 were killed. That was wrong, and the way it was
 wrong is the point.** The tool used to verify them, `operations/scripts/replay-mutant.mjs`, resolved
@@ -334,12 +367,11 @@ The operations score is higher than the other two because the mutated surface is
 logic with no sockets and no clock of its own: a surviving mutant there is almost always a missing
 assertion rather than a verdict that depends on the machine.
 
-The survivors were read one by one — for every module except `FileAuditStore`, whose 26 current
-survivors arrived with this iteration's claim loop, archive check and expiry decision and are the
-subject of P3-12. Where a row below describes a `FileAuditStore` mutant that is no longer reported, the
-reason still holds for the family; where the file has grown new survivors, they are listed by location
-in the roadmap entry rather than papered over here. Each family names the property that makes it
-invisible to any in-process assertion — the reasons are grouped, because one property often explains
+The survivors of every other module were read one by one as well; `FileAuditStore`'s are accounted for
+above, one mutant at a time. Where a row below describes a mutant that is no longer reported, the
+reason still holds for the family — a survivor disappears when the behaviour it changes gets an
+assertion, and the argument for the family does not. Each family names the property that makes it
+invisible to any in-process assertion; the reasons are grouped, because one property often explains
 several mutants:
 
 | Module | Surviving mutant | Why no test can distinguish it |

@@ -5,6 +5,35 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.1] — 2026-11-17
+
+### Fixed
+
+- **Ten of the twenty-six mutants that survived the measurement were missing tests, not a blind
+  instrument.** Every survivor was applied *exactly as the report printed it* and the whole audit suite
+  stayed green, so the file was 95.13 % and the number was the file's own. Each of the ten now has the
+  case it lacked (`AC 89`): a guard whose only observable shape is `undefined`, which is the one input
+  where reading `.code` off a non-object throws instead of answering; a retention window given as `2`
+  and never as anything but the default or `0`, where `??` and `&&` agree; a claim observed only
+  *after* the append that followed it, which a store that claimed nothing still passed because the
+  file it wrote to was the file the next store then found; a separator owed by a segment this store
+  adopted and that ends cleanly, which only the bytes can show; the eighth attempt and the sentence
+  that explains why eight is the bound; a failure on the *first* sync of a batch, where the generation
+  test cannot tell a line from a durable one and only the count of covered commits can; and a segment
+  the prune cannot date.
+- **`sweepAbandonedArchives` and `getNextSequence` return the same answer for an unlistable
+  directory** as for an empty one — that is now stated where the fallback is, since a mutation run
+  reaches the array literal and a reader of the report has to be able to tell why it is invisible.
+
+### Changed
+
+- **`rotate()` clears the name and nothing else.** `currentSize`, `currentCreatedAt` and
+  `separatorOwed` describe a segment, and `claimActiveSegment` is where all three are set for the one
+  that follows; resetting them in both places made three assignments no run could tell apart from the
+  first, and one of them — `separatorOwed` — survived a whole iteration as a mutant because of it.
+- **`FileAuditStore.activeSegmentClaimed` has no initializer.** The constructor computes it from the
+  directory; a default that is always overwritten is a second place to state the same fact.
+
 ## [1.11.0] — 2026-11-17
 
 ### Added

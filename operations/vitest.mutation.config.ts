@@ -66,6 +66,7 @@ export default defineConfig({
       'packages/audit/src/__tests__/AC86-two-writers.test.ts',
       'packages/audit/src/__tests__/AC87-retention-decision.test.ts',
       'packages/audit/src/__tests__/AC88-archive-whole-segment.test.ts',
+      'packages/audit/src/__tests__/AC89-what-the-suite-could-not-see.test.ts',
       'packages/audit/src/__tests__/DurableFileSystem.test.ts',
       'packages/security/src/__tests__/i29-audit-logging.test.ts',
       'packages/security/src/__tests__/i29-audit-logging-edges.test.ts',

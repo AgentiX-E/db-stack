@@ -655,8 +655,11 @@ export class FileAuditStore implements IAuditStore {
    * it is neither possible nor necessary, and continuing it is the whole point of
    * adopting it. Every other segment is created here, exclusively, before its first
    * line — see `claimSegment`.
+   *
+   * No initializer, because the constructor computes it from the directory and an
+   * initial value would be a second place to state a fact that is decided once.
    */
-  private activeSegmentClaimed = false;
+  private activeSegmentClaimed: boolean;
 
   /** Current file stats (track size). */
   private currentSize = 0;
@@ -862,11 +865,15 @@ export class FileAuditStore implements IAuditStore {
     // moment the "is this number free?" question can be answered atomically; naming
     // it here would answer it at a moment that is already stale by the time the file
     // is created.
+    //
+    // Only the name is cleared. The size, the age and the owed separator describe a
+    // *segment*, and the segment that follows does not exist yet: `claimActiveSegment`
+    // is where all three are set, so resetting them here as well would be a second
+    // opinion that always agrees — and one that a mutation run cannot distinguish
+    // from the first, which is how one of these assignments survived a whole
+    // iteration as a mutant.
     this.activeFilePath = '';
     this.activeSegmentClaimed = false;
-    this.currentSize = 0;
-    this.currentCreatedAt = Date.now();
-    this.separatorOwed = false;
 
     // What is being compressed, captured now rather than trusted later: segment
     // names are reused after a directory is recreated, so "the file at oldPath" at
