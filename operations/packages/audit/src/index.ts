@@ -28,9 +28,20 @@ export {
   newestOpenSegment,
   readSegmentFromDisk,
   readableSegmentsNewestFirst,
+  readView,
+  relateTwin,
   removeFile,
+  repairFor,
   segmentPattern,
+  shadowedPairs,
   sweepAbandonedArchives,
   unlinkIfUnchanged,
 } from './impl/FileAuditStore.js';
-export type { CompressFile, FileAuditStoreConfig, FileIdentity } from './impl/FileAuditStore.js';
+export type {
+  CompressFile,
+  FileAuditStoreConfig,
+  FileIdentity,
+  SegmentView,
+  TwinRepair,
+  TwinVerdict,
+} from './impl/FileAuditStore.js';

@@ -5,6 +5,42 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.3] — 2026-11-18
+
+### Added
+
+- **`relateTwin(plain, archived)` and `readView(path, compressed)`** — the rule that decides what a
+  segment name and its archive say to each other, as a function of the two views rather than of the
+  directory. Eight answers, because "exists" and "readable" are different questions and only one of
+  them is about the bytes: `no-twin`, `plain-missing`, `plain-unreadable`, `archive-unreadable`,
+  `same`, `plain-extra`, `archive-extra`, `disjoint`. Exported with `TwinVerdict` and `SegmentView`
+  so a deployment that keeps segments on another medium can apply the same rule.
+
+### Fixed
+
+- **A line appended after another process archived the segment it was writing to is no longer
+  hidden.** The adopting store recreates the plain name from the unlink onwards, and every reader
+  prefers an archive over a plain file of the same name — so those lines were complete, on the disk,
+  and invisible to `get()`, `query()` and `count()`. `FileAuditStore` now compares its file with the
+  archive of its own name after every append and before the acknowledgement, and repairs the
+  disagreement: an archive that a longer file supersedes is removed, a file that carries nothing its
+  archive does not hold is abandoned for a new segment, and two views with different entries are
+  separated — the file is renamed to a name of its own. The construction path sweeps the directory
+  for the same condition, which is what repairs the segment of a writer that died before it could.
+- **A damaged archive no longer hides a readable segment.** A name that exists and yields no text was
+  preferred by every reader over the complete segment beside it, so the segment was unreachable for
+  as long as the damage lasted. The archive is removed instead.
+
+### Changed
+
+- **`write()` acknowledges a line only after its name is a name a reader reads.** The check costs one
+  `stat` per append in the ordinary case, where no archive of the active name exists, and reads both
+  views only when one does — once per segment, not once per line.
+- **The documented rule is no longer "one writer per trail".** Two long-lived services on one
+  directory now work, and a crashed writer's segment is repaired by the store that comes after it;
+  what remains is a window of microseconds between that check and the sync, which the next append or
+  the next start repairs. `docs/user-guide/operations.md` states the rule and the window.
+
 ## [1.11.2] — 2026-11-17
 
 ### Added

@@ -305,6 +305,141 @@ export function isWholeSegment(after: FileIdentity | null, before: FileIdentity)
 }
 
 /**
+ * What a segment name and its archive say to each other when both exist.
+ *
+ * A name is a view of a segment, and rotation publishes a second view of the same
+ * segment as `<name>.gz`. Every reader prefers the archive — correctly, because
+ * between the rename and the unlink both hold the same entries — and that preference
+ * is sound only while the two views cover the same bytes.
+ *
+ * A second live writer breaks that, and it breaks it through the feature that makes a
+ * restart a continuation: the second store *adopts* the newest open segment, the first
+ * one later rotates and archives it, and the second one's next append recreates the
+ * plain name from the unlink onwards — holding lines the archive has never seen. Those
+ * lines are complete and on the disk, behind a name every reader has already decided
+ * to skip.
+ *
+ * Comparing the two texts is the only evidence that survives a crash, because it is
+ * the only evidence about the *bytes*: a pid, an mtime or a lease file all record who
+ * meant to own the name, and the question is what the name holds. Eight answers, each
+ * with its own repair:
+ *
+ *   `no-twin`           only one of the two names exists — nothing to relate
+ *   `plain-missing`     the archive's name exists, the segment's does not
+ *   `plain-unreadable`  the segment's name exists but yields no text
+ *   `archive-unreadable` the archive's name exists but yields no text — a damaged
+ *                        archive hides a readable segment while contributing nothing
+ *   `same`              identical bytes: the plain file is a complete second copy
+ *   `plain-extra`       the file starts with the archive and is longer, so the *file*
+ *                       is the superset and it is the archive that hides entries
+ *   `archive-extra`     the archive starts with the file, so the file carries nothing
+ *                       the archive does not already hold
+ *   `disjoint`          neither contains the other: both carry unique entries and one
+ *                       of them has to move to a name of its own
+ *
+ * `startsWith` and not a byte-wise diff: a segment is newline-delimited records
+ * appended in order, so "one contains the other" is the whole of the relation between
+ * two views of it. A shared prefix that ends mid-record cannot occur — an archive is
+ * produced from a whole file, and the file grows by whole lines.
+ */
+export type TwinVerdict =
+  | 'no-twin'
+  | 'plain-missing'
+  | 'plain-unreadable'
+  | 'archive-unreadable'
+  | 'same'
+  | 'plain-extra'
+  | 'archive-extra'
+  | 'disjoint';
+
+/**
+ * One view of a segment: whether the name is there, and what it says.
+ *
+ * Two fields rather than one nullable string because they are two different questions
+ * and only one of them is about the bytes: a name that exists and yields no text — a
+ * damaged archive, a file this process may not read — is a name a reader will still
+ * prefer over its twin, so "exists" and "readable" have to be answerable separately.
+ */
+export interface SegmentView {
+  readonly exists: boolean;
+  readonly text: string | null;
+}
+
+/** The view of `path`, read from the local filesystem. */
+export function readView(path: string, compressed: boolean): SegmentView {
+  if (!isRegularFile(path)) return { exists: false, text: null };
+  return { exists: true, text: readSegmentFromDisk(path, compressed) };
+}
+
+/**
+ * What to do about a pair of views, given where they were found.
+ *
+ * A table rather than two chains of `if`, because the two chains are the same decision
+ * asked in two places and the answers differ in exactly three cells: a file that is an
+ * exact copy of its archive is deleted at rest (nothing continues it) and the *archive*
+ * is deleted while writing (the file is the thing being appended to); a file contained
+ * in its archive is the file that goes at rest and the name that is abandoned while
+ * writing; a file whose archive exists but has no file beside it is nothing at rest and
+ * a refusal while writing. Written as two chains, three of those five differences were
+ * mutants no test could tell from the wrong answer, because the wrong answer also
+ * repaired the state on the next line.
+ *
+ * `release` is not a repair of the pair — it is the statement that this store cannot
+ * prove the line belongs to a file it holds, so it stops using the name and refuses the
+ * write. `none` covers the two verdicts where the right move is to do nothing: no twin
+ * at all, and a view that cannot be read (deleting evidence to make a verdict come out
+ * clean is not a repair).
+ */
+export function repairFor(verdict: TwinVerdict, when: 'live' | 'at-rest'): TwinRepair {
+  if (verdict === 'disjoint') return 'promote';
+  if (verdict === 'plain-extra' || verdict === 'archive-unreadable') return 'remove-archive';
+  if (verdict === 'same') return when === 'live' ? 'remove-archive' : 'remove-plain';
+  if (verdict === 'archive-extra') return when === 'live' ? 'release' : 'remove-plain';
+  if (verdict === 'plain-missing') return when === 'live' ? 'release' : 'none';
+  return 'none';
+}
+
+/** What `repairFor` decides. See the table it is written from. */
+export type TwinRepair = 'none' | 'remove-archive' | 'remove-plain' | 'promote' | 'release';
+
+/**
+ * The segment names in `names` that have an archive beside them.
+ *
+ * A function of the listing rather than a loop inside the sweep, for the reason
+ * `newestOpenSegment` is one: the pairing rule has four conditions and a runner cannot
+ * produce the directory states that separate them one at a time, so they are asserted
+ * on arrays. The three that look redundant are not: without `endsWith('.gz')` an
+ * archive that has an archive of its own (`X.ndjson.gz.gz`) makes `X.ndjson.gz` look
+ * like a segment, and without the prefix test a neighbouring store's files are this
+ * store's to rename.
+ */
+export function shadowedPairs(names: readonly string[], prefix: string): string[] {
+  const segment = segmentPattern(prefix);
+  const pairs: string[] = [];
+  for (const name of names) {
+    if (name.endsWith('.gz')) continue;
+    if (!segment.test(name)) continue;
+    if (!names.includes(`${name}.gz`)) continue;
+    pairs.push(name);
+  }
+  return pairs;
+}
+
+/** Relate a segment's two views. See `TwinVerdict` for what each answer means. */
+export function relateTwin(plain: SegmentView, archived: SegmentView): TwinVerdict {
+  if (!archived.exists) return 'no-twin';
+  if (!plain.exists) return 'plain-missing';
+  // An unreadable view is not an empty one: it is a name a reader prefers and gets
+  // nothing from, which is the state worth repairing rather than the state to ignore.
+  if (plain.text === null) return 'plain-unreadable';
+  if (archived.text === null) return 'archive-unreadable';
+  if (plain.text === archived.text) return 'same';
+  if (plain.text.startsWith(archived.text)) return 'plain-extra';
+  if (archived.text.startsWith(plain.text)) return 'archive-extra';
+  return 'disjoint';
+}
+
+/**
  * Whether a segment has outlived its retention window.
  *
  * `mtime === null` — the date could not be read — is **not** an expiry. Deleting a
@@ -745,6 +880,11 @@ export class FileAuditStore implements IAuditStore {
     // crash for the life of the deployment.
     this.sweepAbandonedArchives();
 
+    // Before a name is adopted, not after: the sweep can move the newest segment to a
+    // name of its own, and adopting first would mean continuing a name whose archive
+    // the sweep is about to look at.
+    this.sweepShadowedSegments();
+
     this.activeFilePath = this.resolveActiveFile();
     this.activeSegmentClaimed = this.activeFilePath !== '';
     this.currentSize = this.activeSegmentClaimed ? statSync(this.activeFilePath).size : 0;
@@ -925,6 +1065,121 @@ export class FileAuditStore implements IAuditStore {
   }
 
   /**
+   * Repair every segment whose two views disagree, before a name is adopted.
+   *
+   * This is the half of the twin rule that a crash makes necessary. A store that dies
+   * between appending a line and flushing it leaves that line in a plain segment whose
+   * archive is already published: the next store skips the name (it is archived, so it
+   * is not the open segment) and the line stays on the disk, invisible to every query,
+   * for as long as the archive is there. Nothing in the write path can repair that,
+   * because the writer that could have is gone — so the repair runs where a new store
+   * looks at the directory, and it is the same rule the live path applies.
+   *
+   * Three of the four repairable verdicts delete a view that carries no unique bytes:
+   * an archive that hides a superset goes, a plain file fully contained in its archive
+   * goes. Only `disjoint` moves data, and it moves the *plain* file to a new name
+   * rather than merging, because a merge would have to rewrite one of the two and a
+   * rewrite is the operation that can be interrupted. What each verdict *does* is
+   * `repairFor`'s table, asserted cell by cell in `AC 90`; this method only applies it.
+   */
+  private sweepShadowedSegments(): void {
+    const names = listDirectory(this.dataDir);
+    if (names === null) return;
+
+    for (const name of shadowedPairs(names, this.filePrefix)) {
+      const plainPath = join(this.dataDir, name);
+      const archivePath = `${plainPath}.gz`;
+      const repair = repairFor(relateTwin(readView(plainPath, false), readView(archivePath, true)), 'at-rest');
+
+      if (repair === 'remove-archive') removeFile(archivePath);
+      else if (repair === 'remove-plain') removeFile(plainPath);
+      else if (repair === 'promote') this.promoteSegment(plainPath);
+      // `none` is a verdict about a pair that a later store can still act on, or one it
+      // must not act on. See `repairFor`.
+    }
+  }
+
+  /**
+   * Move a plain segment to a name of its own, returning the new path.
+   *
+   * The name is claimed exclusively first, so the destination cannot be another
+   * writer's file; `rename` then replaces the empty name this store just took, which
+   * is atomic within a directory. A crash between the two leaves an empty segment —
+   * readable, contributes nothing, adopted or rotated away by the next store — rather
+   * than a half-copied one.
+   */
+  private promoteSegment(from: string): string {
+    const to = this.claimNewSegmentPath();
+    renameSync(from, to);
+    return to;
+  }
+
+  /**
+   * Make sure the segment a line was just appended to is the one a reader reads.
+   *
+   * Runs after every append, before the acknowledgement, and costs one `stat` in the
+   * ordinary case, where no archive of the active name exists. The expensive part —
+   * reading both views — only happens when one does, and every repair moves the
+   * question on: the archive is removed, or the file is renamed, or the line is
+   * refused. There is no state in which the same pair has to be related twice, which
+   * is why there is no memo of what was already looked at.
+   *
+   * A store that appended into a shadowed name and then died would leave the state the
+   * construction sweep repairs. Repairing here instead is what makes the promise
+   * narrower than "the next process will notice": an entry is acknowledged only after
+   * its name is a name a reader reads.
+   */
+  private resolveShadowedSegment(): void {
+    const archivePath = `${this.activeFilePath}.gz`;
+    // Behaviourally redundant — `relateTwin` answers `no-twin` for an archive that is
+    // not there — and kept for what it prevents: without it, every append would read
+    // the whole active segment to compare it with an archive that does not exist.
+    if (!isRegularFile(archivePath)) return;
+
+    const repair = repairFor(relateTwin(readView(this.activeFilePath, false), readView(archivePath, true)), 'live');
+    if (repair === 'remove-archive') {
+      removeFile(archivePath);
+      return;
+    }
+    if (repair === 'release') {
+      // The line cannot be shown to be in a segment this store holds: the file it was
+      // appended to is gone, and whether the archiving process captured those bytes
+      // depends on when its identity check ran. Acknowledging would be a claim the
+      // store cannot verify, and appending the line again would count an entry twice
+      // if the archive did capture it — so the line is *not* acknowledged, and the
+      // retry names a segment of this store's own.
+      const abandoned = this.activeFilePath;
+      this.releaseActiveFile();
+      throw new Error(
+        `audit: ${abandoned} was archived while this store was appending to it — ` +
+          'the line was not acknowledged; retry it and it will land in a new segment',
+      );
+    }
+    if (repair === 'promote') this.promoteActiveFile();
+  }
+
+  /** Stop appending to the current name; the next append claims one. */
+  private releaseActiveFile(): void {
+    this.activeFilePath = '';
+    this.activeSegmentClaimed = false;
+  }
+
+  /** Keep appending to the same bytes under a name no archive shadows. */
+  private promoteActiveFile(): void {
+    const to = this.promoteSegment(this.activeFilePath);
+    this.activeFilePath = to;
+    this.activeSegmentClaimed = true;
+    this.currentCreatedAt = Date.now();
+    // `currentSize` is not re-read: a rename does not change a file's length, and every
+    // byte in it was counted either when the segment was adopted (one `stat`) or when it
+    // was appended. A count that drifted — a name another process truncated — makes the
+    // rotation threshold fire early, which is a heuristic moving, not a line lost.
+    //
+    // A new name has to reach the medium before a line appended under it is
+    // acknowledged, exactly like a claimed segment.
+    this.segmentGeneration++;
+  }
+  /**
    * Delete segments whose last write is older than `retentionDays`.
    *
    * Retention was a documented configuration value that nothing read: a store
@@ -1024,6 +1279,13 @@ export class FileAuditStore implements IAuditStore {
     this.fileSystem.append(this.activeFilePath, data);
     this.currentSize += Buffer.byteLength(data);
     this.separatorOwed = false;
+
+    // After the bytes and before the acknowledgement, and that order is the point: a
+    // name an archive shadows is not a name a reader reads, so a line may not be
+    // acknowledged into one. Checking before the append instead would leave the window
+    // in which the archive is published between the check and the write — this way the
+    // line that lands in that window is the one that gets moved, not the one after it.
+    this.resolveShadowedSegment();
 
     return this.commit(this.activeFilePath, this.segmentGeneration);
   }
