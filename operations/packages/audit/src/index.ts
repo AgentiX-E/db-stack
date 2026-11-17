@@ -17,12 +17,20 @@ export {
 export type { DurableFileSystem, NodeFileCalls } from './impl/DurableFileSystem.js';
 export {
   FileAuditStore,
+  PARTIAL_ARCHIVE_SUFFIX,
+  archiveSegment,
   fileIdentity,
+  gzipFile,
+  isRegularFile,
   isUnlinkRefusal,
+  listDirectory,
+  mtimeOf,
   newestOpenSegment,
   readSegmentFromDisk,
   readableSegmentsNewestFirst,
+  removeFile,
   segmentPattern,
+  sweepAbandonedArchives,
   unlinkIfUnchanged,
 } from './impl/FileAuditStore.js';
-export type { FileAuditStoreConfig, FileIdentity } from './impl/FileAuditStore.js';
+export type { CompressFile, FileAuditStoreConfig, FileIdentity } from './impl/FileAuditStore.js';

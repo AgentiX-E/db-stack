@@ -31,7 +31,11 @@ import { appendFileSync, closeSync, fstatSync, fsyncSync, openSync, readSync } f
  *
  * 1. `append` places all of `data` at the end of `path`, creating the file when
  *    it is absent, or throws. It does not have to be durable when it returns.
- * 2. `syncFile` returns only once `path`'s data is on the medium, or throws.
+ * 2. `syncFile` returns only once `path`'s data is on the medium, or throws. The
+ *    data is *everything appended to `path` before the call* — not one line. That
+ *    is what lets the store acknowledge a whole turn's appends with one call
+ *    (`FileAuditStore` group commit), and an implementation that synced only the
+ *    most recent append would make every batch except the last a false claim.
  * 3. `syncDirectory` returns only once the entries *naming* files in `path` are
  *    on the medium, or throws. It is called once per segment, after the segment's
  *    first line, because that is when a new name appears.

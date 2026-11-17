@@ -337,6 +337,15 @@ stay readable. A segment that cannot be decoded is skipped rather than aborting 
 damaged archive costs you those entries, not the whole trail. A segment being archived is
 counted once — the archive wins over the original that is about to be removed.
 
+**An archive is published, not written in place.** Compression writes `<segment>.ndjson.gz.part` and
+renames it, because the rule that an archive wins over its original is only sound if an archive that
+exists is complete. Written in place, the archive existed and was half-written for the whole duration
+of a gzip — a second, on a fifty-megabyte segment — while the complete original beside it was
+suppressed by it: `get(id)` answered "no entry" for an entry on the disk, for as long as the
+compression ran. A `.part` is not a segment by any rule the store applies — it is not read, not
+adopted as the active segment, not expired — and one left behind by a killed process is removed the
+next time a store opens the directory.
+
 **A page is not a fact.** `maxScanLines` (default 10 000) bounds what `query()` returns,
 because the budget exists to keep a grep-shaped read cheap. It does not bound what `get()` or
 `count()` *look up*:
@@ -405,10 +414,30 @@ line to it. Measured over 2 000 lines of 524 bytes, writing to a real filesystem
 | Append the line | **1.0 MiB** (1.0× the payload) | 20.0 s |
 
 The wall time is the `fsync`: 2 000 bare `append`+`fsync` pairs with no store at all take 20.8 s on
-the same runner, so the store now adds nothing measurable above the durability it provides — and
-about 96 acknowledged entries per second per writer is the price of that durability on a device with
-a 10 ms flush. Batching concurrent writers behind one flush (group commit) is the next step, and is
-tracked as such rather than assumed.
+the same runner, so the store now adds nothing measurable above the durability it provides.
+
+**One flush acknowledges a turn's worth of writes.** A file sync covers every byte appended before
+it, so writers that arrive together need only one of them. The append stays synchronous — `O_APPEND`
+puts each line where its caller wrote it — and the sync moved to the end of the event-loop turn.
+Measured on the same runner, 500 entries each:
+
+| Callers | `fsync` calls | Throughput |
+|---|---:|---:|
+| one at a time | 500 | 101 entries/s |
+| 10 in flight, continuously | 50 | 981 entries/s |
+| a burst of 500 at once | 1 | 20 646 entries/s |
+
+A caller who waits for one write before issuing the next pays exactly what it paid before, so the
+serial figure is unchanged — the gain belongs to concurrency, and a service that handles a hundred
+requests at once no longer pays a hundred round trips to the disk to record a hundred events. The
+acknowledgement still never runs ahead of the sync: a line appended *while* a flush is in progress
+belongs to the next flush, not to the one that has already started.
+
+**A rejected write may still be in the trail.** The append happens before the sync, and a failed
+`fsync` cannot be undone by truncating — that is a second write with its own failure mode, and the
+segment may hold another process's bytes. So the guarantee is *at-least-once* across a failure, never
+at-most-once: when `write()` rejects, retry with a fresh id rather than assuming the entry is absent,
+and reconcile duplicates downstream if that matters to your compliance statement.
 
 **Two processes may append to one trail.** The append is an `O_APPEND` write, which the kernel
 places at the end of the file, so there is no window in which one writer's line can overwrite

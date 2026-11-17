@@ -5,6 +5,59 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — 2026-11-17
+
+### Added
+
+- **Group commit.** `write()` appends synchronously and the sync moved to the end of the event-loop
+  turn, so every append made in the same turn shares one `fsync` — sound because a file sync covers
+  every byte appended before it, which is now stated as part of the `DurableFileSystem` contract.
+  Measured on the same runner, 500 entries each: **500** `fsync` and 101 entries/s for a serial
+  writer, **50** and 981 entries/s with 10 requests in flight, **1** and 20 646 entries/s for a burst.
+  A serial caller pays exactly what it paid before; the gain belongs to concurrency.
+- **`archiveSegment(source, archive, compress?)`**, **`gzipFile`**, **`PARTIAL_ARCHIVE_SUFFIX`** — a
+  rotated segment is compressed to `<archive>.part`, `rename`d into place and unlinked in one
+  synchronous block. The archive therefore exists only when it is complete.
+- **`listDirectory`**, **`isRegularFile`**, **`mtimeOf`**, **`removeFile`**,
+  **`sweepAbandonedArchives(directory, prefix)`** — the answers five call sites needed, as functions.
+  Each replaces a `try`/`catch` whose failure arm no runner can produce (an unlistable directory, a
+  removal that fails rather than refuses), and `removeFile`/`unlinkIfUnchanged` take the removal as a
+  parameter so the arm is asserted by being handed an `EIO` instead of assumed.
+
+### Fixed
+
+- **A segment was invisible while its archive was being written.** Compression wrote straight to
+  `<segment>.ndjson.gz`, and the reader prefers an archive over its original — correctly, since
+  between the archive and the unlink both hold the same entries. Together those two rules meant that
+  for the whole duration of a gzip the archive existed and was incomplete, the complete original was
+  suppressed by it, and `get(id)` answered `null` for an entry sitting on the disk. An audit store
+  that cannot find an entry it holds is wrong in the one place wrongness is not recoverable.
+- **A directory wearing an archive's name hid the segment beside it.** Reads now take files, not
+  names: `X.ndjson.gz` that is a directory holds nothing, and letting it win the comparison made a
+  complete `X.ndjson` unreadable.
+- **`pruneOlderThan` reports a removal that failed instead of counting it as a leftover.** A refusal
+  (already gone, not this process's to delete) is still "leave it for the next sweep"; anything else
+  now reaches the caller, because a cleanup that reports success for something it could not do is how
+  evidence sits past its retention while the report says it expired.
+
+### Changed
+
+- **An acknowledgement is deferred by one event-loop turn.** `write()` still resolves only after the
+  sync that covers the line, but that sync may also cover other callers' lines. `close()` flushes what
+  is still queued, so a caller that never awaited a write still learns about it before shutdown.
+- **`unlinkIfUnchanged(path, identity, unlink?)`** gained the optional third parameter (source
+  compatible) for the reason `nodeFileCalls` exists.
+- **A rejected write may still be in the trail.** The append precedes the sync and truncating after a
+  failed `fsync` is a second write with its own failure mode, so the guarantee is at-least-once across
+  a failure, never at-most-once. Documented in the guide; retry with a fresh id.
+
+### Notes
+
+- **The two defects above were found by a test that had been passing.** Making an acknowledged write
+  cheaper changed the timing of `FileAuditStore.test.ts`'s rotation case, the archive window became
+  observable, and two assertions that had been true by luck stopped being true. Neither was a flaky
+  test: both were reads that could not see data that was on the disk.
+
 ## [1.9.0] — 2026-11-17
 
 ### Breaking

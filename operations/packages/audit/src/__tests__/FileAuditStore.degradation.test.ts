@@ -167,11 +167,15 @@ describe('FileAuditStore — degraded directory', () => {
   });
 
   it('keeps the segment when its archive cannot be written', async () => {
-    // The archive path is occupied by a directory, so `createWriteStream` fails.
-    // The segment must survive with its entries readable: an audit trail that
-    // drops a segment because compressing it failed deletes evidence to save
-    // space. The cleanup that removes the partial archive must also not be able
-    // to fail the job, because nothing above it handles the rejection.
+    // The archive name is occupied by a directory, so the compression is written
+    // to its partial name and the rename that would publish it refuses. Two things
+    // must hold afterwards: the segment survives with its entries readable — an
+    // audit trail that drops a segment because compressing it failed deletes
+    // evidence to save space — and the reader must not let a directory that merely
+    // shares the archive's name stand in for it, which would hide the complete
+    // segment behind a name that holds nothing. The cleanup that removes the
+    // partial must also not be able to fail the job, because nothing above it
+    // handles the rejection.
     store = new FileAuditStore(makeConfig({ maxAgeMs: 0 }));
     await store.write(ENTRY);
     await store.close();
@@ -184,6 +188,8 @@ describe('FileAuditStore — degraded directory', () => {
     await store.close();
 
     expect(existsSync(join(TEST_DIR, segment))).toBe(true);
+    // No half-written archive was left behind either.
+    expect(readdirSync(TEST_DIR).filter((f) => f.includes('.gz.part'))).toEqual([]);
     expect(await store.count()).toBe(2);
   });
 

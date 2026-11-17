@@ -147,6 +147,22 @@ line — measured at 1 000× the payload before this was changed. Because the ap
 is an `O_APPEND` write, two processes may append to the same trail without losing
 each other's lines.
 
+**One sync acknowledges a turn's worth of appends.** The append stays synchronous;
+the sync moved to the end of the event-loop turn, and a file sync covers every byte
+appended before it, so callers that arrive together share one round trip to the
+medium. Measured on the same disk (500 entries, `O_APPEND` + `fsync`):
+
+| Callers | Entries | `fsync` | Throughput |
+|---|---|---|---|
+| one at a time (serial) | 500 | 500 | 101 entries/s |
+| 10 in flight, continuous | 500 | 50 | 981 entries/s |
+| a burst of 500 at once | 500 | 1 | 20 646 entries/s |
+
+A caller who waits for each write pays exactly what it paid before — one sync — so
+the serial figure is unchanged and the gain belongs to concurrency. A write is
+acknowledged only after the sync that covers it: a line appended *while* a flush is
+running belongs to the next flush, never to the one in flight.
+
 ```typescript
 import { FileAuditStore } from '@agentix-e/db-operations-audit';
 
@@ -199,8 +215,19 @@ new FileAuditStore({ dataDir: 'audit/', fileSystem: objectStore });
 What no test can prove, and what the guarantee therefore does not claim: that a
 synced line survives a **power cut** — a killed process leaves the page cache
 behind, so `SIGKILL` shows the line is in the file and not that it reached the
-medium. Durability is also not free: one `fsync` per entry allows roughly a hundred
-acknowledged entries per second per writer on a device with a 10 ms flush.
+medium.
+
+Two consequences worth knowing before you deploy it:
+
+- **A rejected write may still be in the trail.** The append happens before the
+  sync, and a failed `fsync` cannot be undone by truncating (that is a second write
+  with its own failure mode, and the file may hold another process's bytes). So the
+  promise is at-least-once across a failure, never at-most-once: on rejection, retry
+  with a fresh id and reconcile duplicates downstream if that matters to you.
+- **Archives are published, not written in place.** Compression writes
+  `<segment>.ndjson.gz.part` and renames it, so a reader never sees an incomplete
+  archive — and never has a complete segment suppressed by one. A `.part` left by a
+  killed process is swept when the next store opens the directory.
 
 ### `JsonAuditExporter`
 

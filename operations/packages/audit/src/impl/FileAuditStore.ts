@@ -6,7 +6,11 @@
  *   - Automatic log rotation by size or time
  *   - Durable writes: append, sync the file, sync the directory that names it
  *     (`DurableFileSystem`, injectable so the order is assertable)
- *   - Compression (gzip) of rotated files
+ *   - Group commit: one file sync acknowledges every append made in the same turn,
+ *     because a sync covers all the bytes before it — so ten concurrent callers pay
+ *     one round trip to the medium instead of ten
+ *   - Compression (gzip) of rotated files, written to a partial name and renamed
+ *     into place, so an incomplete archive is never visible to a reader
  *   - Query support via a bounded scan across active and compressed segments
  *     (`maxScanLines`), so rotation does not make the trail unreadable
  *   - Expiry by segment age (`retentionDays`, swept on rotation) and by explicit
@@ -33,7 +37,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  rmSync,
+  renameSync,
   statSync,
   createWriteStream,
   createReadStream,
@@ -231,13 +235,100 @@ export function isUnlinkRefusal(error: unknown): boolean {
  * next test's or the next day's. Deleting that would be data loss caused by a
  * cleanup, so identity is checked first. A missing file is not an error: something
  * else already removed it.
+ *
+ * `unlink` is injectable for the same reason `nodeFileCalls` is: the branch that
+ * matters most here — a removal that fails for a reason other than refusal, which
+ * must reach the caller instead of reporting "cannot delete" — cannot be produced on
+ * a runner that deletes as root. Rather than leave that arm untested, it is a
+ * parameter a test can hand an `EIO` to.
  */
-export function unlinkIfUnchanged(path: string, expected: FileIdentity): boolean {
+export function unlinkIfUnchanged(
+  path: string,
+  expected: FileIdentity,
+  unlink: (path: string) => void = unlinkSync,
+): boolean {
   const actual = fileIdentity(path);
   if (!actual) return false;
   if (actual.ino !== expected.ino || actual.size !== expected.size) return false;
   try {
-    unlinkSync(path);
+    unlink(path);
+    return true;
+  } catch (error) {
+    if (isUnlinkRefusal(error)) return false;
+    throw error;
+  }
+}
+
+// ── Directory primitives ────────────────────────────────────────
+//
+// Five places in this file need "the names in this directory, or nothing", "is this
+// a file", "what is its mtime", "remove it if you can". Each of them used to carry
+// its own `try`/`catch`, which meant five handlers nobody could reach: `readdir` on
+// the store's own directory fails when it has been unmounted, `rm` fails when the
+// medium is read-only, and a runner that runs as root can produce neither. Written
+// as functions, each answer is one call a test can make with a path that is missing
+// or a `remove` that refuses.
+
+/**
+ * The names in `directory`, or `null` when it cannot be read.
+ *
+ * `null` and not `[]`: "there is nothing here" and "I could not look" are different
+ * answers, and the callers that care (adoption, expiry) behave differently — but both
+ * are survivable, which is why none of them throws at a caller who is already
+ * investigating an incident.
+ */
+export function listDirectory(directory: string): string[] | null {
+  try {
+    return readdirSync(directory);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether `path` is a file that can be read, as opposed to a name that exists.
+ *
+ * A directory called `X.ndjson.gz` holds no entries, and treating it as an archive
+ * hid the complete `X.ndjson` beside it. `false` for a path that is gone covers the
+ * race this is called inside: another process's rotation retires an archive between
+ * the listing and the read all the time.
+ */
+export function isRegularFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** When `path` was last written, or `null` when it has no answer to give. */
+export function mtimeOf(path: string): number | null {
+  try {
+    return statSync(path).mtime.getTime();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove `path`, reporting whether it went.
+ *
+ * `false` for a removal that was refused — already gone, not ours to delete, a
+ * directory where a file was expected — because in each of those cases the caller's
+ * next move is the same: leave it for the next sweep. A failure that is *not* a
+ * refusal is not reported as "cannot delete": it is thrown, because a cleanup that
+ * reports success for something it could not do is how evidence stays past its
+ * retention while the report says it expired.
+ *
+ * Not `recursive`, deliberately: a directory that carries a segment's name is not a
+ * segment, and removing a tree because it shares a name with one is how a cleanup
+ * becomes data loss. `EISDIR` is a refusal, so the sweep leaves it alone.
+ *
+ * `remove` is injectable for the same reason `unlink` is above.
+ */
+export function removeFile(path: string, remove: (path: string) => void = unlinkSync): boolean {
+  try {
+    remove(path);
     return true;
   } catch (error) {
     if (isUnlinkRefusal(error)) return false;
@@ -264,6 +355,83 @@ export function readSegmentFromDisk(path: string, compressed: boolean): string |
   }
 }
 
+// ── Archiving ───────────────────────────────────────────────────
+
+/**
+ * The suffix a compression writes under before it is published.
+ *
+ * A name with it is not a segment: `segmentPattern`, `newestOpenSegment` and the
+ * store's own reader all ignore it, so a half-written archive is invisible —
+ * which is the whole point. See `archiveSegment`.
+ */
+export const PARTIAL_ARCHIVE_SUFFIX = '.part';
+
+/** How an archive is produced. Injectable so the publication can be observed. */
+export type CompressFile = (source: string, destination: string) => Promise<void>;
+
+/** Compress one file into another with gzip. The default `CompressFile`. */
+export async function gzipFile(source: string, destination: string): Promise<void> {
+  await pipeline(createReadStream(source), createGzip(), createWriteStream(destination));
+}
+
+/**
+ * Compress a rotated segment, then publish the archive — in that order.
+ *
+ * The order is the fix for a defect this function exists to make unrepresentable.
+ * Compression used to write straight to `<segment>.ndjson.gz`, and the reader
+ * prefers an archive over the plain segment of the same name (otherwise a scan
+ * between the archive and the unlink reports every entry twice). So for the whole
+ * duration of a compression — a second, on a fifty-megabyte segment — the archive
+ * existed and was incomplete, the plain segment was still complete and was
+ * therefore *hidden*, and `get(id)` answered `null` for an entry sitting on the
+ * disk. An audit store that cannot find an entry it holds is wrong in the one
+ * place wrongness is not recoverable, and it was wrong for as long as gzip ran.
+ *
+ * Three steps, and the same rule as the write path: nothing is published before
+ * it is complete.
+ *
+ *   1. compress into `<archive>.part` — a name no reader believes in;
+ *   2. `rename`, which is atomic within a directory, so the archive appears
+ *      complete or not at all;
+ *   3. unlink the plain segment, if it is still the file that was compressed, in
+ *      the same synchronous block as the rename — so in this process the two
+ *      never coexist, and a scan cannot double-count them.
+ *
+ * A failed compression leaves the plain segment (readable, uncompressed) and
+ * removes its own partial: an archive that is not there is a cost, an archive
+ * that is there and empty is a lost entry.
+ */
+export async function archiveSegment(
+  source: string,
+  archive: string,
+  compress: CompressFile = gzipFile,
+  discard: (path: string) => unknown = removeFile,
+): Promise<void> {
+  // Captured before the compression, checked after it: segment names are reused
+  // when a directory is recreated, so "the file at this path" after a second of
+  // gzip is not necessarily the file that was read.
+  const identity = fileIdentity(source);
+  if (!identity) return;
+
+  const partial = archive + PARTIAL_ARCHIVE_SUFFIX;
+  try {
+    await compress(source, partial);
+    renameSync(partial, archive);
+    unlinkIfUnchanged(source, identity);
+  } catch (error) {
+    // A partial that cannot be removed must not replace the failure that is worth
+    // reporting: the compression is what went wrong, the cleanup is bookkeeping. The
+    // discard is injectable so this arm — a cleanup that itself fails, which a runner
+    // that deletes as root cannot produce — is asserted instead of assumed.
+    try {
+      discard(partial);
+    } catch {
+      /* the original failure is the one that explains this call */
+    }
+    throw error;
+  }
+}
+
 /**
  * Whether an entry satisfies a filter.
  *
@@ -281,9 +449,56 @@ function matches(entry: AuditEntry, filter: AuditQueryFilter): boolean {
   return true;
 }
 
+/**
+ * Remove half-written archives left behind by a process that died mid-compression,
+ * returning how many went.
+ *
+ * A `.part` is not a segment, so nothing reads it — which is exactly why it needs
+ * removing: it would otherwise sit in the directory forever, holding the bytes of a
+ * compression nobody will finish. A store that finds one when it opens the directory
+ * knows no compressor of its own wrote it, so the only live owner it could have is
+ * another process sharing the directory. Deleting a live compressor's partial makes
+ * its `rename` fail, which its own `catch` turns into "keep the plain segment" — a
+ * wasted compression, not a lost entry.
+ *
+ * A function of the directory rather than a method, so that the two answers worth
+ * asserting are assertable: a directory that cannot be listed has nothing to sweep,
+ * and a name that is not this store's is not its garbage.
+ */
+export function sweepAbandonedArchives(directory: string, prefix: string): number {
+  // `?? []`: a directory that is gone holds nothing to remove.
+  const names = listDirectory(directory) ?? [];
+  const owned = `${prefix}-`;
+  const partialName = `.ndjson.gz${PARTIAL_ARCHIVE_SUFFIX}`;
+  let removed = 0;
+  for (const name of names) {
+    if (!name.startsWith(owned)) continue;
+    if (!name.endsWith(partialName)) continue;
+    // A partial that cannot be removed is still invisible to every reader, which is
+    // why a refusal here is not reported as a failure.
+    if (removeFile(join(directory, name))) removed++;
+  }
+  return removed;
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  FileAuditStore
 // ══════════════════════════════════════════════════════════════════
+
+/**
+ * One append waiting to be acknowledged.
+ *
+ * It remembers *where* it went and *which* segment generation it belongs to,
+ * because between the append and the flush the store may have rotated: the sync
+ * that acknowledges a line has to be a sync of the file that line is in, and not
+ * of whatever file happens to be active when the flush runs.
+ */
+interface PendingCommit {
+  readonly path: string;
+  readonly generation: number;
+  readonly resolve: () => void;
+  readonly reject: (error: unknown) => void;
+}
 
 export class FileAuditStore implements IAuditStore {
   private readonly dataDir: string;
@@ -312,8 +527,16 @@ export class FileAuditStore implements IAuditStore {
    * A file's existence is a directory entry, and syncing the file does not sync
    * the name that leads to it. The first line of a segment therefore pays for one
    * `syncDirectory`, and no later line does.
+   *
+   * Expressed as two numbers — how many segments this store has opened, and the
+   * highest one whose name is on the medium — rather than as a boolean, because a
+   * boolean has to be cleared by whoever synced last, and with group commit nobody
+   * knows who that is until the batch is flushed. Monotone, so a batch that spans
+   * a rotation still costs one directory sync, and a failed one leaves the number
+   * where it was and is paid again.
    */
-  private segmentNeedsDirectorySync: boolean;
+  private segmentGeneration = 0;
+  private durableDirectoryGeneration = -1;
 
   /**
    * The segment ends mid-line, so the next append must start with a newline.
@@ -336,6 +559,22 @@ export class FileAuditStore implements IAuditStore {
    */
   private readonly pendingCompressions = new Set<Promise<void>>();
 
+  /**
+   * Appends waiting for the sync that makes them durable.
+   *
+   * This is the group-commit queue: `write()` appends immediately and hands its
+   * acknowledgement here, and one flush serves every append made before it. The
+   * entries are queued rather than synced in place because the sync is the
+   * expensive step (one round trip to the medium per call, tens of microseconds on
+   * a quiet disk, milliseconds under load) and it is the *same* step for all of
+   * them — a file sync covers everything appended before it, which is the property
+   * the batch relies on and the port promises.
+   */
+  private readonly pendingCommits: PendingCommit[] = [];
+
+  /** Whether a flush is already scheduled for the end of this turn. */
+  private flushScheduled = false;
+
   constructor(config: FileAuditStoreConfig) {
     this.dataDir = config.dataDir;
     this.maxFileSize = config.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
@@ -356,6 +595,11 @@ export class FileAuditStore implements IAuditStore {
     // where a store that cannot list its own segments should fail.
     mkdirSync(this.dataDir, { recursive: true });
 
+    // Before the directory is read for a name to adopt: an abandoned partial is
+    // not a name to avoid, and leaving it would grow the directory by one file per
+    // crash for the life of the deployment.
+    this.sweepAbandonedArchives();
+
     this.activeFilePath = this.resolveActiveFile();
     this.currentSize = existsSync(this.activeFilePath) ? statSync(this.activeFilePath).size : 0;
     this.currentCreatedAt = Date.now();
@@ -365,7 +609,10 @@ export class FileAuditStore implements IAuditStore {
     // one directory sync per segment it opens. Asking `currentSize === 0` saved a
     // single `fsync` per process start and turned "the name is durable" into "the
     // name was probably durable", which is not the same claim.
-    this.segmentNeedsDirectorySync = true;
+    //
+    // `durableDirectoryGeneration` stays at -1 — "no name is known to be on the
+    // medium" — so the first flush pays for the segment this store adopted.
+
     // The other thing the previous run may have left behind: a segment that does
     // not end on a line boundary. Asked once, here.
     this.separatorOwed = this.fileSystem.needsSeparator(this.activeFilePath);
@@ -385,13 +632,9 @@ export class FileAuditStore implements IAuditStore {
   /** Get the next sequence number for a given date prefix. */
   private getNextSequence(datePrefix: string): number {
     const taken = new RegExp(`^${escapeRegExp(this.filePrefix)}-${datePrefix}-(\\d{4})\\.ndjson(\\.gz)?$`);
-    let files: string[];
-    try {
-      files = readdirSync(this.dataDir);
-    } catch {
-      // A directory that cannot be listed holds no names to avoid.
-      return 1;
-    }
+
+    // A directory that cannot be listed holds no names to avoid.
+    const files = listDirectory(this.dataDir) ?? [];
 
     // Outside the `try`: a parse bug in this loop used to be caught by the same
     // handler as a missing directory, so the sequence restarted at 0001 and the
@@ -429,32 +672,27 @@ export class FileAuditStore implements IAuditStore {
     // The new segment does not exist yet, so its name is not on the medium and
     // its first append has to fix that. It is also the first thing written into
     // it, so no separator can be owed.
-    this.segmentNeedsDirectorySync = true;
+    this.segmentGeneration++;
     this.separatorOwed = false;
 
     // What is being compressed, captured now rather than trusted later: segment
     // names are reused after a directory is recreated, so "the file at oldPath" at
-    // completion time is not necessarily the file that was read.
-    const source = fileIdentity(oldPath);
-    if (!source) return;
+    // completion time is not necessarily the file that was read. `archiveSegment`
+    // captures it again at its own start, which is the hop below — close enough to
+    // this one that nothing can reuse the name in between, and it is the file's
+    // identity, not this line, that decides what may be unlinked.
+    if (!fileIdentity(oldPath)) return;
 
     // Compress the rotated file in background (non-blocking), but tracked.
     const job = new Promise<void>((resolve) => {
       setImmediate(() => {
-        const gzPath = oldPath + '.gz';
-        pipeline(createReadStream(oldPath), createGzip(), createWriteStream(gzPath))
-          .then(() => {
-            // Remove the original only if it is still the file that was compressed.
-            unlinkIfUnchanged(oldPath, source);
-          })
-          .catch(() => {
-            // Compression failed: keep the original, drop whatever partial archive
-            // is there. `recursive` because the thing at that path may not be a
-            // file — and because a throw *here* has no handler above it: the job's
-            // promise is resolved by `finally`, so a rejected cleanup would surface
-            // as an unhandled rejection in a process that is otherwise fine.
-            rmSync(gzPath, { force: true, recursive: true });
-          })
+        // A failure here is not a failure of the store: the plain segment stays,
+        // readable and uncompressed, and the next rotation tries again. What must
+        // not happen is a rejection with no handler — the job's promise is resolved
+        // by `finally`, so a throw here would surface as an unhandled rejection in
+        // a process that is otherwise fine.
+        archiveSegment(oldPath, oldPath + '.gz')
+          .catch(() => {})
           .finally(() => {
             // After the archive is in place, so the sweep sees the segment under
             // the name it will keep.
@@ -465,6 +703,25 @@ export class FileAuditStore implements IAuditStore {
     });
     this.pendingCompressions.add(job);
     void job.finally(() => this.pendingCompressions.delete(job));
+  }
+
+  /**
+   * Remove half-written archives left behind by a process that died mid-compression.
+   *
+   * A `.part` is not a segment, so nothing reads it — which is exactly why it needs
+   * removing: it would otherwise sit in the directory forever, holding the bytes of
+   * a compression nobody will finish. A store that finds one at construction knows
+   * no compressor of its own wrote it (its own start after this point), so the only
+   * live owner it could have is another process sharing the directory. Deleting a
+   * live compressor's partial makes its `rename` fail, which its own `catch` turns
+   * into "keep the plain segment" — a wasted compression, not a lost entry.
+   *
+   * Delegated to `sweepAbandonedArchives`, which is a function of the directory so
+   * that both answers — a directory that cannot be listed, and a name that is not
+   * this store's — are assertions rather than branches nobody can reach.
+   */
+  private sweepAbandonedArchives(): void {
+    sweepAbandonedArchives(this.dataDir, this.filePrefix);
   }
 
   /**
@@ -486,28 +743,22 @@ export class FileAuditStore implements IAuditStore {
     const cutoff = Date.now() - this.retentionDays * DAY_MS;
     const segment = segmentPattern(this.filePrefix);
 
-    let files: string[];
-    try {
-      files = readdirSync(this.dataDir);
-    } catch {
-      return;
-    }
+    const files = listDirectory(this.dataDir);
+    if (files === null) return;
 
     for (const f of files) {
       if (!segment.test(f)) continue;
+      const path = join(this.dataDir, f);
+      // A segment whose date cannot be read is not one to delete: reporting an
+      // expiry that did not happen is worse than leaving the file for the next
+      // sweep, which is what the next rotation is.
+      const mtime = mtimeOf(path);
+      if (mtime === null || mtime >= cutoff) continue;
       // No skip for the live segment: this runs after rotation moved
       // `activeFilePath` to the segment that was just opened, so the file being
       // expired is by definition a closed one. The guard that used to be here could
       // never be true for an expired path, which is why no test could see it.
-      const path = join(this.dataDir, f);
-      try {
-        if (statSync(path).mtime.getTime() >= cutoff) continue;
-        rmSync(path);
-      } catch {
-        // A segment that cannot be examined is not one to delete: reporting an
-        // expiry that did not happen is worse than leaving the file for the next
-        // sweep, which is what the next rotation is.
-      }
+      removeFile(path);
     }
   }
 
@@ -515,16 +766,20 @@ export class FileAuditStore implements IAuditStore {
    * Wait for a graceful stop: everything that was scheduled has finished.
    *
    * Call this before removing the data directory, or before asserting on its
-   * contents — otherwise the assertion races a compressor.
+   * contents — otherwise the assertion races a compressor. The flush here is not
+   * politeness: an append whose acknowledgement is still queued would otherwise be
+   * resolved by an `setImmediate` that the caller has stopped waiting for, and
+   * `close()` is the promise that "what I acknowledged is what is on the medium".
    */
   async close(): Promise<void> {
+    this.flush();
     while (this.pendingCompressions.size > 0) {
       await Promise.allSettled([...this.pendingCompressions]);
     }
   }
 
   /**
-   * Append one line so that it survives a power loss.
+   * Append one line and hand back the acknowledgement the caller must wait for.
    *
    * The recipe is three steps and one order:
    *
@@ -533,6 +788,10 @@ export class FileAuditStore implements IAuditStore {
    *   3. `syncDirectory`, only for a segment created by this run — the *name* is
    *      on the medium. The name is a directory entry; step 2 does not touch it,
    *      so without step 3 a crash can leave the data written and unreachable.
+   *
+   * Step 1 happens here, synchronously, because it is cheap and because doing it
+   * later would move the line's position away from the order the caller wrote it
+   * in. Steps 2 and 3 happen in `flush()`, once per turn for all of them.
    *
    * Every failure propagates. The previous revision caught the `fsync` and
    * carried on — "best-effort" — which meant `write()` returned an id for an
@@ -547,7 +806,7 @@ export class FileAuditStore implements IAuditStore {
    * 400 bytes. It also made two writers to one trail lose each other's entries,
    * because each one wrote what it had read a moment earlier.
    */
-  private writeLine(line: string): void {
+  private appendLine(line: string): Promise<void> {
     if (this.shouldRotate()) {
       this.rotate();
     }
@@ -562,12 +821,113 @@ export class FileAuditStore implements IAuditStore {
     this.currentSize += Buffer.byteLength(data);
     this.separatorOwed = false;
 
-    this.fileSystem.syncFile(this.activeFilePath);
+    return this.commit(this.activeFilePath, this.segmentGeneration);
+  }
 
-    if (this.segmentNeedsDirectorySync) {
-      this.fileSystem.syncDirectory(this.dataDir);
-      this.segmentNeedsDirectorySync = false;
+  /**
+   * Queue the acknowledgement for one appended line.
+   *
+   * A promise per line, resolved by whichever flush covers it, so that the caller
+   * waits for *its* line and not for the turn. The previous revision synced inside
+   * `write()`: correct, and the reason a caller had no way to overlap ten writes
+   * with one `fsync` — each call paid a round trip to the medium while the process
+   * waited, which measurement put at ~96 acknowledged entries per second per
+   * writer on a disk with a 10 ms flush, a number that is a property of the disk
+   * and not of the store.
+   */
+  private commit(path: string, generation: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.pendingCommits.push({ path, generation, resolve, reject });
+      this.scheduleFlush();
+    });
+  }
+
+  /**
+   * Ask for a flush at the end of this turn, once.
+   *
+   * `setImmediate` and not a microtask: a microtask runs before the I/O callbacks
+   * of the current turn, so it would batch only what one synchronous stack wrote.
+   * The check phase is the last thing in a turn, which makes the batch "everything
+   * written in this turn" — the widest window that still bounds how long an
+   * acknowledgement can wait, and it waits one turn, not a timer interval.
+   *
+   * Once, because a second schedule for the same turn would find the queue already
+   * drained and cost nothing but a second `fsync` of an unchanged file.
+   */
+  private scheduleFlush(): void {
+    if (this.flushScheduled) return;
+    this.flushScheduled = true;
+    setImmediate(() => {
+      this.flushScheduled = false;
+      this.flush();
+    });
+  }
+
+  /**
+   * Make every append made before this call durable, then acknowledge it.
+   *
+   * One file sync per segment in the batch, then at most one directory sync. This
+   * is group commit and it is sound for one reason, which is the port's contract:
+   * a file sync covers everything appended to that file before the call. Writes
+   * that arrive while the batch is being formed are not covered by it — they are
+   * in the queue for the next flush, because the batch was taken by `splice`, and
+   * resolving a line the sync did not see is the single failure mode that turns
+   * this optimisation into a data-loss bug.
+   *
+   * Failures are attributed as narrowly as the sequence allows, and never more
+   * narrowly than it can prove. A line may be acknowledged only if its file was
+   * synced *and* its name is on the medium: after a failure part way through a
+   * batch, the lines in the segments before it are durable and are acknowledged,
+   * while the rest are rejected — rejecting a durable line invites the caller to
+   * write it twice, and an audit report that counts an entry twice is wrong in the
+   * same way as one that lost it. A line whose file was synced but whose name was
+   * never made durable stays rejected even though its bytes are on the disk: after
+   * the power cut it is supposed to survive, the data is there and unreachable,
+   * which is indistinguishable from absent.
+   *
+   * The bytes of a rejected line remain in the segment, because the append is what
+   * the failure could not undo — truncating after a failed `fsync` is a second
+   * write with its own failure mode, and the file may already hold another
+   * process's bytes. So the trail is at-least-once across a failed sync, never
+   * at-most-once, and a caller retries with a fresh id.
+   */
+  private flush(): void {
+    if (this.pendingCommits.length === 0) return;
+    const batch = this.pendingCommits.splice(0, this.pendingCommits.length);
+
+    // How much of the batch the sequence covered before it failed.
+    let covered = 0;
+    try {
+      // Consecutive comparison, not a set: rotation only ever moves forward, so a
+      // path cannot recur after the batch has moved past it.
+      let synced = '';
+      for (let i = 0; i < batch.length; i++) {
+        const commit = batch[i]!;
+        if (commit.path !== synced) {
+          this.fileSystem.syncFile(commit.path);
+          synced = commit.path;
+        }
+        covered = i + 1;
+      }
+
+      // The name, after the data it leads to. One sync covers every segment opened
+      // before it, so a batch that spans a rotation still pays once.
+      let highest = -1;
+      for (const commit of batch) highest = Math.max(highest, commit.generation);
+      if (highest > this.durableDirectoryGeneration) {
+        this.fileSystem.syncDirectory(this.dataDir);
+        this.durableDirectoryGeneration = highest;
+      }
+    } catch (error) {
+      for (let i = 0; i < batch.length; i++) {
+        const commit = batch[i]!;
+        if (i < covered && commit.generation <= this.durableDirectoryGeneration) commit.resolve();
+        else commit.reject(error);
+      }
+      return;
     }
+
+    for (const commit of batch) commit.resolve();
   }
 
   // ── IAuditStore implementation ──────────────────────────────
@@ -586,7 +946,7 @@ export class FileAuditStore implements IAuditStore {
       traceId: options.traceId,
     };
 
-    this.writeLine(JSON.stringify(entry));
+    await this.appendLine(JSON.stringify(entry));
     return id;
   }
 
@@ -635,25 +995,17 @@ export class FileAuditStore implements IAuditStore {
    */
   async pruneOlderThan(timestamp: Date): Promise<number> {
     const segment = segmentPattern(this.filePrefix);
-    let files: string[];
-    try {
-      files = readdirSync(this.dataDir);
-    } catch {
-      return 0;
-    }
+    const files = listDirectory(this.dataDir);
+    if (files === null) return 0;
 
     let removed = 0;
     for (const f of files) {
       if (!segment.test(f)) continue;
       const path = join(this.dataDir, f);
       if (path === this.activeFilePath) continue;
-      try {
-        if (statSync(path).mtime >= timestamp) continue;
-        rmSync(path);
-        removed++;
-      } catch {
-        /* leave it for the next sweep rather than claiming it went */
-      }
+      const mtime = mtimeOf(path);
+      if (mtime === null || mtime >= timestamp.getTime()) continue;
+      if (removeFile(path)) removed++;
     }
     return removed;
   }
@@ -690,24 +1042,31 @@ export class FileAuditStore implements IAuditStore {
    * throwing at the person who is already investigating an incident.
    */
   private listReadableFiles(): string[] | null {
-    try {
-      // This store's own names — `<prefix>-…ndjson`, archived or not — plus the
-      // single-array `.json` files it documents reading. A directory can hold an
-      // export, a second store's segments, or the `.tmp` of an in-flight write;
-      // reading them puts entries from another trail into this one's audit report,
-      // and the pruner (which only deletes names it could have produced) would
-      // never agree to remove them. The match is on the prefix rather than on the
-      // full segment shape, so a hand-planted `audit-timed.ndjson` is still read
-      // while `auditXv2-…` — another store's file — is not.
-      const owned = `${this.filePrefix}-`;
-      // `.json` is the legacy single-array format, which was written before
-      // segments had a prefix, so it is matched by extension alone.
-      const mine = (f: string): boolean =>
-        f.endsWith('.json') || (f.startsWith(owned) && (f.endsWith('.ndjson') || f.endsWith('.ndjson.gz')));
-      return readableSegmentsNewestFirst(readdirSync(this.dataDir).filter(mine));
-    } catch {
-      return null;
-    }
+    // This store's own names — `<prefix>-…ndjson`, archived or not — plus the
+    // single-array `.json` files it documents reading. A directory can hold an
+    // export, a second store's segments, or the `.tmp` of an in-flight write;
+    // reading them puts entries from another trail into this one's audit report,
+    // and the pruner (which only deletes names it could have produced) would
+    // never agree to remove them. The match is on the prefix rather than on the
+    // full segment shape, so a hand-planted `audit-timed.ndjson` is still read
+    // while `auditXv2-…` — another store's file — is not.
+    const owned = `${this.filePrefix}-`;
+    // `.json` is the legacy single-array format, which was written before
+    // segments had a prefix, so it is matched by extension alone.
+    const mine = (f: string): boolean =>
+      f.endsWith('.json') || (f.startsWith(owned) && (f.endsWith('.ndjson') || f.endsWith('.ndjson.gz')));
+
+    const names = listDirectory(this.dataDir);
+    if (names === null) return null;
+
+    // Files, not names. `readableSegmentsNewestFirst` prefers an archive over the
+    // plain segment of the same name, because between the rename and the unlink
+    // both hold the same entries. A *directory* called `X.ndjson.gz` is neither: it
+    // holds no entries, and letting it win the comparison hid the complete
+    // `X.ndjson` next to it — the reader answered "no entries" for a segment it
+    // could have read, because something unrelated shared its archive name.
+    const listed = names.filter((f) => mine(f) && isRegularFile(join(this.dataDir, f)));
+    return readableSegmentsNewestFirst(listed);
   }
 
   /**

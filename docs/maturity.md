@@ -142,7 +142,7 @@ because a harness bug produces confident, meaningless acceptance passes.
 | --------------- | ------ | ---------- | --------- | -------- |
 | `cluster`       | 99.34% | 99.34%     | 99.68%    | 98.24%   |
 | `federation`    | 99.19% | 99.19%     | 99.76%    | 98.52%   |
-| `operations`    | 99.42% | 99.42%     | 99.86%    | 98.13%   |
+| `operations`    | 99.46% | 99.46%     | 99.87%    | 98.49%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
 The `e2e` row covers `e2e/harness/support.ts` — process supervision, IPC, port allocation,
@@ -187,8 +187,8 @@ configuration file that looked like a gate and ran nowhere.
 | -------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
 | **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
-| **Operations process-level acceptance**                  | Partially covered (iteration 34) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. No other operations package has an out-of-process case yet. |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 98.34 %, gates at 70, 70 and 86). In operations thirteen of 21 *modules* are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
+| **Operations process-level acceptance**                  | Partially covered (iteration 35) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. Batching did not widen that gap: a burst of concurrent writes is acknowledged by **one** sync, and `GC.8` pins the case with one caller at a time to the same one-sync-per-write it always paid, so the throughput gain is concurrency and not a weaker promise. No other operations package has an out-of-process case yet. |
+| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (74.4 %, 77.1 %, 98.08 % as reported and 98.58 % re-applied, gates at 70, 70 and 86). In operations thirteen of 21 *modules* are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. |
 | **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
 | **Cross-version upgrade path**                           | Not covered                | The wire and snapshot formats are versioned, but no test exercises an N-1 → N upgrade.                                                                                                             |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
@@ -253,7 +253,7 @@ invoked by a workflow.
 | operations | `RetentionPolicyEvaluator.ts` | 174 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
 | operations | `cron.ts` | 87 | 81 (+6 timeout) | 0 | **100 %** | break 86 |
 | operations | `MaintenanceWindowScheduler.ts` | 621 | 602 (+13 timeout) | 6 | **99.0 %** | break 86 |
-| operations | `FileAuditStore.ts` | 347 | 334 (+9 timeout) | 4 (+1 error) | **98.85 %** | break 86 |
+| operations | `FileAuditStore.ts` | 466 | 421 (+21 timeout) | 13 (+1 error) | **100 %** after re-application — 97.15 % as reported | break 86 |
 | operations | `DurableFileSystem.ts` | 73 | 73 | 0 | **100 %** | break 86 |
 | operations | `KeyRotationManager.ts` | 238 | 233 (+3 timeout) | 2 | **99.2 %** | break 86 |
 | operations | `RotationAuditor.ts` | 282 | 275 | 7 | **97.5 %** | break 86 |
@@ -262,8 +262,15 @@ invoked by a workflow.
 | operations | `EnvelopeEncryptionProvider.ts` | 110 | 108 | 2 | **98.18 %** | break 86 |
 | operations | `AES256GCMEncryptionProvider.ts` | 81 | 79 | 2 | **97.53 %** | break 86 |
 
-Operations overall: 2 647 judged mutants, **98.34 %** — 2 553 killed, 49 timed out, 41 survived,
-3 with no coverage and 1 that crashes the runner rather than failing a test. The headline moved for reasons that are worth separating: modules joined the list
+Operations overall: 2 755 judged mutants, **98.08 %** as the instrument reports it and **98.58 %** after
+re-applying what it reported as undetected — 2 640 killed, 61 timed out, 50 survived, 3 with no
+coverage and 1 that crashes the runner rather than failing a test. The discrepancy is not rounding: in
+`--inPlace` mode four Stryker workers share one source tree, so a worker's vitest can read a file
+another worker has already restored, and a mutant is then scored against the *original* code. Fourteen
+such mutants in `FileAuditStore.ts` were re-applied one at a time and run: **all fourteen fail a named
+case** (`AC 67.1`, `AC 67.15`, `DW.5`, `GC.5`, `GC.6`), which is why that file's row above reads 100 %.
+The instrument defect is P3-4 and it is now armed with the evidence rather than with the diagnosis;
+until it is fixed, every number in this section is a floor. The headline moved for reasons that are worth separating: modules joined the list
 (`AES256GCMEncryptionProvider` at 97.53 %, `DurableFileSystem` at 100 % on its first measurement) and
 the weakest improved because their defects were fixed rather than excused —
 `EnvelopeEncryptionProvider` 90.38 → 98.18 %, `KeyManager` 86.60 → 94.12 %, and `FileAuditStore`
