@@ -263,7 +263,7 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 
 | Package | Module | Mutants | Killed | Survived | Score | Threshold |
 |---|---|---:|---:|---:|---:|---:|
-| cluster | `SqliteStorage.ts` | 510 | 357 (+19 timeout, +1 error) | 132 (+1 ignored) | **74.02 %** | break 70 |
+| cluster | `SqliteStorage.ts` | 510 | 358 (+19 timeout, +1 error) | 131 (+1 ignored) | **74.21 %** in CI, 74.02 % locally | break 70 |
 | federation | `TcpSecureTransport.ts` | 271 | 209 | 56 (+6 no coverage) | **77.12 %** | break 70 |
 | operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
 | operations | `InMemoryBackupManager.ts` | 95 | 92 (+1 timeout) | 1 | **98.94 %** | break 86 |
@@ -475,10 +475,12 @@ the mutant. A score moved by noise moves in both directions, and neither is evid
 
 Turning file parallelism off — and nothing else — fixed it: four of four clean runs pass, the suite is
 **faster** (3 m 40 s for the whole mutation run against roughly ten), and the score went **up** by half a
-point to **74.02 %** (357 killed, 132 survived, 19 timeouts). The suites are isolated per file
+point — **74.02 %** locally (357 killed, 132 survived, 19 timeouts) and **74.21 %** in CI run 44059738539
+(358 / 131), the same nineteen timeouts explaining the difference. The suites are isolated per file
 (`mkdtemp`), so what they share is the box: SQLite's WAL bookkeeping, and a runner on which Stryker
 already starts four workers, each with its own sandbox copy of the repository. Four files in parallel
-inside each of those is sixteen processes for a suite that takes five seconds.
+inside each of those is sixteen processes for a suite that takes five seconds. The mutation job itself
+went from about an hour to **4 m 15 s** for this target.
 
 **How the performance numbers are produced.** Every latency case goes through
 `src/testing/latency.ts`: an explicit warmup window that is discarded, then nearest-rank
