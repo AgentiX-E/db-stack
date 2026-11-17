@@ -147,6 +147,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A node had fifteen seconds to say it was ready — on any machine.** CI run 44045755888
+  failed `AC 8.13 — connection drop and reconnect` with `Timeout waiting for "ready" from
+  node 1 (15000ms)`, and the restarted process had printed nothing but its first `DEP0123`
+  line: it was starting, slowly, on a two-core runner shared with four other files. A cold
+  start is `node --import tsx` plus a better-sqlite3 store plus a TLS identity, so the
+  budget is now *derived* — four times the slowest start the same file has measured, floored
+  at the old number — because the right value is a property of the machine and the test is
+  the only thing in a position to ask. `raft-core.test.ts` carried the same constant at ten
+  seconds and got the same treatment.
+- **`waitForMessage` left a listener behind on every wait that succeeded.** The listener was
+  removed on the timeout only, so a file accumulated one per wait and reported
+  `MaxListenersExceededWarning: 11 message listeners added to [ChildProcess]` — a leaked
+  reference per wait, plus handlers running for messages nobody was waiting for. It is
+  removed on both exits now, and a timeout reports what the node *did* say and whether it is
+  still alive, because "timeout waiting for ready" cannot be acted on.
 - **`SqliteStorage.open()` was not idempotent, and the handle it dropped aborted the
   process.** A second `open()` built a second better-sqlite3 database and assigned it
   over the first, so the original was reachable from nowhere and could never be closed.

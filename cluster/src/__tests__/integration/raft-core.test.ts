@@ -34,6 +34,24 @@ const LEADER_ELECTION_TIMEOUT = 15000;
 const LOG_REPLICATION_TIMEOUT = 10000;
 const REELECTION_TIMEOUT = 20000;
 
+/**
+ * Floor under the "a node said it is ready" budget, and the measurement it is
+ * derived from.
+ *
+ * A node is a child process that has to transform the cluster graph through `tsx`,
+ * open a SQLite store and load a TLS identity before it can answer. Ten seconds is
+ * enough on an idle machine and not enough on a loaded one — CI run 44045755888
+ * failed a restart in the sibling suite at fifteen — so the budget here is four
+ * times the slowest start this file has measured, and never less than this floor.
+ * The number is a property of the machine, and the test asks the machine for it.
+ */
+const READY_FLOOR_MS = 10000;
+let coldStartMs = 0;
+
+function readyBudgetMs(): number {
+  return Math.max(READY_FLOOR_MS, coldStartMs * 4);
+}
+
 // ──────────────────────────────────────────
 //  Types
 // ──────────────────────────────────────────
@@ -218,8 +236,11 @@ describe('Raft Core Multi-Node Cluster', () => {
     cluster.nodes.push(...newNodes);
     cluster.ports = ports;
 
-    // Wait for all nodes to report ready
-    await Promise.all(newNodes.map((n) => waitForMessage([n], 'ready', 10000)));
+    // Wait for all nodes to report ready — and measure what that cost, because every
+    // later start in this file is budgeted from the slowest one seen.
+    const startedAt = Date.now();
+    await Promise.all(newNodes.map((n) => waitForMessage([n], 'ready', readyBudgetMs())));
+    coldStartMs = Math.max(coldStartMs, Date.now() - startedAt);
 
     return newNodes;
   }

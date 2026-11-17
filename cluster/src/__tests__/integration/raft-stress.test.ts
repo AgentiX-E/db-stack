@@ -39,6 +39,25 @@ const LEADER_ELECTION_TIMEOUT = 20000;
 const LOG_REPLICATION_TIMEOUT = 30000;
 const STRESS_TIMEOUT = 120000;
 
+/**
+ * The floor under the "a node said it is ready" budget.
+ *
+ * A node is a real child process: `node --import tsx` has to transform the cluster
+ * graph, open a SQLite store and load a TLS identity before it can answer. On a
+ * development machine that is one to two seconds; on a two-core runner sharing the
+ * box with four other vitest files it was measured well past fifteen — CI run
+ * 44045755888 failed `AC 8.13` with `Timeout waiting for "ready" from node 1
+ * (15000ms)`, and the node had printed only its first `DEP0123` line by then, so it
+ * was starting, slowly, exactly as designed.
+ *
+ * A fixed number for that is the same mistake as the memory bounds that were
+ * replaced in P3-6: it encodes an assumption about the machine and reports the
+ * machine's health as the product's. The budget is therefore *derived* — from the
+ * cold start this file has just measured for its own nodes — with this value as the
+ * floor, so a machine that has never started a node still gets a usable number.
+ */
+const READY_FLOOR_MS = 15000;
+
 // ──────────────────────────────────────────
 //  Types
 // ──────────────────────────────────────────
@@ -144,14 +163,36 @@ async function waitForMessage(node: TestNode, type: string, timeoutMs: number = 
   if (existing) return existing;
 
   return new Promise((resolve, reject) => {
+    // One listener per call, and it is removed on *both* exits. It used to be
+    // removed only on the timeout, so every wait that succeeded left a listener on
+    // the child process — a file with eleven of them logged
+    // `MaxListenersExceededWarning: 11 message listeners added to [ChildProcess]`,
+    // which is a leaked reference per wait and a handler running for messages
+    // nobody is waiting for any more.
     const timer = setTimeout(() => {
       node.process.removeListener('message', handler);
-      reject(new Error(`Timeout waiting for "${type}" from node ${node.id} (${timeoutMs}ms)`));
+      // What the node *did* say, and whether it is still alive: "timeout waiting
+      // for ready" cannot be acted on, and the difference between a node that is
+      // starting slowly and one that has exited is the whole question.
+      const seen = [...new Set(node.messages.map((m) => m.type))];
+      const state =
+        node.process.exitCode !== null
+          ? `exited with ${node.process.exitCode}`
+          : node.process.killed
+            ? 'killed'
+            : 'still running';
+      reject(
+        new Error(
+          `Timeout waiting for "${type}" from node ${node.id} (${timeoutMs}ms): ` +
+            `process ${state}, messages seen [${seen.join(', ') || 'none'}]`,
+        ),
+      );
     }, timeoutMs);
 
     const handler = (msg: any) => {
       if (msg && msg.type === type) {
         clearTimeout(timer);
+        node.process.removeListener('message', handler);
         resolve(msg as WorkerMessage);
       }
     };
@@ -328,6 +369,21 @@ describe('Raft Transport Stress & Resilience', () => {
   let nodes: TestNode[] = [];
   let ports: number[] = [];
 
+  /** The slowest cold start this file has measured, in milliseconds. */
+  let coldStartMs = 0;
+
+  /**
+   * How long a node gets to say it is ready, on this machine, under this load.
+   *
+   * Four times the coldest start the file has seen, and never less than the floor:
+   * a restart pays the same cost as a first start, and the measurement comes from
+   * the nodes the same file just started, so a loaded runner raises its own budget
+   * instead of failing and calling the product slow.
+   */
+  function readyBudgetMs(): number {
+    return Math.max(READY_FLOOR_MS, coldStartMs * 4);
+  }
+
   /** Discover the current leader node in the cluster */
   async function findLeader(): Promise<TestNode> {
     // Check each candidate; any node can tell us who the leader is
@@ -405,8 +461,11 @@ describe('Raft Transport Stress & Resilience', () => {
       nodes.push(node);
     }
 
-    // Wait for all nodes to be ready
-    await Promise.all(nodes.map((n) => waitForMessage(n, 'ready', 15000)));
+    // Wait for all nodes to be ready — and, while waiting, measure what it cost:
+    // every later restart in this file is budgeted from this number.
+    const startedAt = Date.now();
+    await Promise.all(nodes.map((n) => waitForMessage(n, 'ready', readyBudgetMs())));
+    coldStartMs = Math.max(coldStartMs, Date.now() - startedAt);
 
     // Wait for leader election
     return await waitForLeaderElection(nodes, LEADER_ELECTION_TIMEOUT);
@@ -532,7 +591,7 @@ describe('Raft Transport Stress & Resilience', () => {
       nodes[idx] = newNode;
 
       // Wait for it to come online
-      await waitForMessage(newNode, 'ready', 15000);
+      await waitForMessage(newNode, 'ready', readyBudgetMs());
       await sleep(2000); // Allow log catch-up from leader
 
       // Wait for the restarted node to catch up via heartbeats
@@ -579,7 +638,7 @@ describe('Raft Transport Stress & Resilience', () => {
       const node3 = createNode(3, port3, peerList, certs[2]!, dataDir3, 15, 3);
       nodes.push(node3);
 
-      await waitForMessage(node3, 'ready', 15000);
+      await waitForMessage(node3, 'ready', readyBudgetMs());
       await sleep(5000); // Allow log catch-up via heartbeats
 
       // Verify the two original nodes have 100+ entries (3rd node may still be catching up)
@@ -630,7 +689,7 @@ describe('Raft Transport Stress & Resilience', () => {
       cleanupTempDir(nodes[idx]!.dataDir);
       nodes[idx] = healedNode;
 
-      await waitForMessage(healedNode, 'ready', 15000);
+      await waitForMessage(healedNode, 'ready', readyBudgetMs());
       await sleep(5000); // Allow catch-up via heartbeats
 
       // Verify the nodes that stayed (not isolated) have all entries
