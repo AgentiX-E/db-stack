@@ -217,9 +217,17 @@ pnpm coverage:e2e                                    # e2e harness, same 95 % th
 pnpm coverage:gate                                   # all four packages, every dimension
 pnpm e2e                                             # 35 real-process TLS acceptance tests
 pnpm test:mutation                                   # mutation score, all three packages
+pnpm check:mutation-timeouts                         # every Timeout in those reports has been read
 (cd cluster && pnpm test:perf)                       # 22 benchmarks on a real 3-node TLS cluster
 pnpm verify                                          # all of the above, in order
 ```
+
+A `Timeout` verdict has to be read, and reading one means replaying it: there is no score that answers
+"did a test object" for a run that stopped. The replay is
+`node operations/scripts/resolve-timeouts.mjs --target <name> --record`, which applies each edit to the
+real tree, runs the tests the report attributed to it, and writes `mutation/timeouts.json`. It takes
+about half a minute per abort, so CI runs the millisecond check (`pnpm check:mutation-timeouts`) instead
+and fails when a report and that file disagree in either direction.
 
 The benchmark suite runs on GitHub runners from `.github/workflows/benchmark.yml`; results
 are attached to each run so a regression is visible next to the change that caused it. The
@@ -267,26 +275,34 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 | Package | Module | Mutants | Killed | Survived | Score | Threshold |
 |---|---|---:|---:|---:|---:|---:|
 | cluster | `SqliteStorage.ts` | 507 | 476 | 29 (+1 ignored, 1 runner error) | **94.26 %** | break 70 |
-| federation | `TcpSecureTransport.ts` | 271 | 255 | 16 | **94.10 %** | break 70 |
+| federation | `TcpSecureTransport.ts` | 271 | 254 (+1 timeout) | 16 | **94.10 %** | break 70 |
 | operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
-| operations | `InMemoryBackupManager.ts` | 95 | 92 (+1 timeout) | 1 | **98.94 %** | break 86 |
+| operations | `InMemoryBackupManager.ts` | 95 | 93 | 1 | **98.94 %** | break 86 |
 | operations | `RetentionPolicyEvaluator.ts` | 196 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
-| operations | `cron.ts` | 87 | 80 (+7 timeout) | 0 | **100 %** | break 86 |
-| operations | `MaintenanceWindowScheduler.ts` | 622 | 603 (+12 timeout) | 6 | **99.03 %** | break 86 |
-| operations | `FileAuditStore.ts` | 704 | 653 (+19 timeout) | 21 (+1 error) | **96.97 %** | break 86 |
+| operations | `cron.ts` | 87 | 81 (+6 timeout) | 0 | **100 %** | break 86 |
+| operations | `MaintenanceWindowScheduler.ts` | 622 | 602 (+13 timeout) | 6 | **99.03 %** | break 86 |
+| operations | `FileAuditStore.ts` | 704 | 664 (+8 timeout) | 21 (+1 error) | **96.97 %** | break 86 |
 | operations | `DurableFileSystem.ts` | 74 | 73 | 0 | **100 %** | break 86 |
-| operations | `KeyRotationManager.ts` | 239 | 233 (+3 timeout) | 2 | **99.16 %** | break 86 |
+| operations | `KeyRotationManager.ts` | 239 | 236 | 2 | **99.16 %** | break 86 |
 | operations | `RotationAuditor.ts` | 286 | 275 | 7 | **97.52 %** | break 86 |
 | operations | `AuditLogManager.ts` | 343 | 323 (+2 timeout) | 10 (+2 no coverage) | **96.44 %** | break 86 |
-| operations | `KeyManager.ts` | 139 | 122 (+6 timeout) | 7 (+1 no coverage) | **94.12 %** | break 86 |
+| operations | `KeyManager.ts` | 139 | 125 (+3 timeout) | 7 (+1 no coverage) | **94.12 %** | break 86 |
 | operations | `EnvelopeEncryptionProvider.ts` | 111 | 108 | 2 | **98.18 %** | break 86 |
 | operations | `AES256GCMEncryptionProvider.ts` | 81 | 79 | 2 | **97.53 %** | break 86 |
 
-Operations overall: **97.96 %** — 2 871 killed, 60 timed out, 58 survived, 3 with no coverage and one
+Operations overall: **97.96 %** — 2 890 killed, 41 timed out, 58 survived, 3 with no coverage and one
 that crashes the runner rather than failing a test, out of the 2 992 mutants the instrument judges (it
 enumerates 3 043 and reports 50 as ignored, because a mutant that runs at import time executes before
 any test can be blamed for it). The arithmetic is the gate's own:
 `(killed + timeout) / (killed + timeout + survived + no coverage)`.
+
+**Every one of the 41 timeouts has been read** (iteration 40): each was replayed against the tests the
+report attributed to it, and `mutation/timeouts.json` records what those tests said — 5 of them fail,
+36 report nothing at all and the run does not finish. None of the 41 passes, which is the question the
+column could not answer before: a `Timeout` counted towards the score without any test having been
+asked. The gate now requires the report and that file to name each other in both directions, so a new
+timeout fails CI with the command that reads it, and a record that no longer describes a timeout fails
+too. See `docs/maturity.md#the-timeout-column`.
 
 The overall figure is a share of a larger denominator than iteration 37's 98.09 %: `FileAuditStore.ts`
 gained 161 mutants with the segment/archive reconciliation, 156 of which are killed.
@@ -344,6 +360,57 @@ it opened a 2.6 MB in-place report left over from that morning, found fourteen s
 reported them killed; four of those "kills" were runs that never finished. The tool now resolves the
 report and every path inside it against the repository root, refuses a report older than the file it
 describes, and restores the mtime so its own second replay is not blocked by the first.
+
+### The timeout column
+
+A `Timeout` is not a verdict: it says the runner stopped, not that a test objected. Stryker records two
+different things under that status, and the operations target has 41 of them — every one read on
+2026-11-18, by replaying the edit against the tests the report attributed to it:
+
+| What the runner did | Count | What it means |
+|---|---:|---|
+| Hit-limit abort (`statusReason: Hit limit reached (n/100×m)`) | 33 | the vitest runner counts how often a mutant executes and abandons the run at a hundred times the original's count — a *guess* at non-termination made from an execution count |
+| Wall-clock timeout | 8 | `timeoutFactor × netTime + 30 s` elapsed |
+
+| What the suite said when it was asked again | operations | federation | cluster |
+|---|---:|---:|---:|
+| `failed` — vitest reported a failing test | 5 | 0 | 0 |
+| `stuck` — nothing reported, the run never finished | 36 | 1 | 0 |
+| `survived` — the suite passed it | **0** | **0** | **0** |
+
+The third row is the one that mattered. Had any of them passed, the score would have counted a mutant
+no test noticed, and 97.96 % would have been wrong by that much. None did: every abort is either a
+test the suite fails or an edit that cannot terminate — JavaScript cannot interrupt a synchronous
+`while (true)`, so "the run did not finish" is the strongest honest record, and
+`mutation/timeouts.json` holds the run that produced it, with the child's last three lines as evidence.
+
+**The budgets were the other half of the question.** All three mutation configs inherited their
+`testTimeout` from the unit suite — 60 s for operations, 180 s for the other two — and Stryker abandons
+a mutant at about 31 s, so no test timeout could ever fire. The values are now derived from each
+target's own measurement, four times its slowest case, rounded up to the next second and kept below the
+runner's cap:
+
+| Target | Slowest case | Where it comes from | Budget |
+|---|---:|---:|---:|
+| cluster | 2 120 ms | `SqliteStorage.handle-lifecycle` | 9 s |
+| federation | 2 479 ms | `chaos/tls-fault-injection` (a delay, injected on purpose) | 10 s |
+| operations | 3 665 ms | `AC75-work-factor` (scrypt at four work factors, on purpose) | 15 s |
+
+Eighteen of the 59 aborts this target used to report are now kills: the budget expires before the
+runner's cap, so the test is the party that fails. The cluster config's justification said "its slowest
+case is under 100 ms", which had stopped being true — the number was 2 120 ms — and the gate now fails
+when a mutation config inherits a budget instead of declaring one, or declares one at or above the cap.
+
+`check:gates` cannot check a *measurement*, so the derived numbers live in the configs with the
+measurement recorded beside them, and the relationship it can check is the one that broke: a test
+timeout below the runner's cap, on every target, declared explicitly.
+
+**The dry run found a defect before it could run a single mutant.** `AC 85`'s `SC.3` asserted on
+`audit-20261117-0001.ndjson`, a name the store derives from the clock; it passed until the first UTC
+midnight after it was written and failed from then on — the mutation run on 2026-11-18 refused to
+start at 00:03 UTC for that reason. The case now freezes `Date` (and only `Date`: the store flushes
+through `setImmediate`, which a faked timer would hold open), so the day it asserts about is the day
+it runs.
 
 ### The two product targets, read the same way
 

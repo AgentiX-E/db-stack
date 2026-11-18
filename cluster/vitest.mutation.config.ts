@@ -47,11 +47,20 @@ export default defineConfig({
     // only party that can report it is the test that is waiting. Without this
     // the runner's own 30 s cap is what fires, and it records the verdict as
     // "timeout" — a status the score does not count, so a mutant that deadlocks
-    // the log was scored as if no test had noticed. The whole file runs in
-    // ~5 s and its slowest case is under 100 ms, so 8 s is not a margin any
-    // correct behaviour can consume; it is the boundary between "slow" and
-    // "stuck", and a stuck storage is a defect, not an unjudged mutant.
-    testTimeout: 8000,
+    // the log was scored as if no test had noticed.
+    //
+    // The number is derived, and the derivation was repeated on 2026-11-18: 150
+    // cases in five files, the slowest a single 2 120 ms
+    // (`SqliteStorage.handle-lifecycle`), the next 13 ms. Four times the worst case
+    // is 8 480 ms, rounded up to 9 s and kept below the 30 s runner cap so that the
+    // budget, and not the runner, is what reports a hang. The previous value was
+    // 8 s, justified by "its slowest case is under 100 ms" — a measurement that was
+    // true when it was taken and had not been for some time.
+    testTimeout: 9_000,
+    // The same budget for hooks: a `beforeAll` that opens the database pays the
+    // same cost as a test that does, and the inherited 60 s can only ever outlast
+    // the runner.
+    hookTimeout: 9_000,
     coverage: { ...base.test.coverage, enabled: false },
   },
 });

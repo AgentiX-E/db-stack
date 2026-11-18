@@ -353,8 +353,9 @@ if (!existsSync(mutationConfigPath)) {
   // The config's default export throws without a target (running the wrong package
   // silently is worse than not running), so the table is imported directly.
   let targets;
+  let shared;
   try {
-    ({ TARGETS: targets } = await import(
+    ({ TARGETS: targets, SHARED: shared } = await import(
       pathToFileURL(resolve(root, "mutation/targets.mjs")).href
     ));
   } catch (error) {
@@ -437,6 +438,40 @@ if (!existsSync(mutationConfigPath)) {
           failures.push(
             `mutation target "${target}": ${testConfig} includes "${pattern}", which matches no test file`,
           );
+        }
+      }
+
+      // A test timeout above the runner's own cap cannot be the thing that reports a
+      // hang: Stryker abandons the mutant first, and the verdict becomes `Timeout` —
+      // "the runner gave up" — which is a verdict nobody made. The comparison is
+      // static, so it cannot rot with the machine it runs on; the *derivation* of the
+      // number is a measurement, recorded where the number is.
+      // Anchored to the start of a line, because the value is usually explained in a
+      // comment that quotes the number it replaced — and a gate that reads prose is a
+      // gate that argues with documentation.
+      const testTimeout = /^\s*testTimeout:\s*([\d_]+)/m.exec(text);
+      const hookTimeout = /^\s*hookTimeout:\s*([\d_]+)/m.exec(text);
+      const cap = shared?.timeoutMS;
+      if (typeof cap === "number") {
+        // Inheriting is how the operations target ended up with a 60 s test timeout
+        // under a 30 s cap: the value came from the unit suite, where it is chosen for
+        // a different job, so nothing could ever expire before the runner gave up.
+        for (const [name, match] of [
+          ["testTimeout", testTimeout],
+          ["hookTimeout", hookTimeout],
+        ]) {
+          if (!match) {
+            failures.push(
+              `mutation target "${target}": ${testConfig} does not declare ${name} — it would inherit the unit suite's, which is above the runner's ${cap}ms cap and therefore never fires`,
+            );
+            continue;
+          }
+          const value = Number(match[1].replaceAll("_", ""));
+          if (value >= cap) {
+            failures.push(
+              `mutation target "${target}": ${testConfig} sets ${name} ${value}ms, at or above the runner's ${cap}ms cap — a hang would be recorded as an abandoned mutant rather than as a failing test`,
+            );
+          }
         }
       }
     }

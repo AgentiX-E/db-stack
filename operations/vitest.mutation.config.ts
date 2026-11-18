@@ -78,6 +78,30 @@ export default defineConfig({
     poolOptions: { forks: {} },
     fileParallelism: true,
     maxConcurrency: 4,
+    // Derived, not inherited. `base.test` carries `testTimeout: 60_000`, which was
+    // chosen for the unit suite — where a case is allowed to build an encryption
+    // key — and Stryker abandons a mutant after `timeoutFactor × netTime + 30 s`,
+    // so a timeout inherited from there is always above the runner's own cap and
+    // can never be the thing that reports a hang. That is why the operations target
+    // used to report 60 `Timeout` verdicts: nothing in the suite could expire
+    // before the runner gave up.
+    //
+    // The number comes from the suite's own measurement (2026-11-18): 1 149 cases
+    // across 59 files, the slowest a single 3 665 ms — `AC75-work-factor`, which
+    // runs scrypt at four work factors on purpose — and the next two 3 311 ms and
+    // 3 005 ms, both of which spawn processes. Four times the worst case is
+    // 14 660 ms, floored at 15 s and kept below the 30 s cap so that the budget,
+    // and not the runner, is what reports a hang. A per-file table would only
+    // change how long a hang takes to be reported; it would also put twenty
+    // numbers in the repository that nobody re-measures.
+    testTimeout: 15_000,
+    // The same budget for the teardown, and for a second reason: a mutant that
+    // wedges a `setImmediate` leaves the store's flush pending, so `close()` in an
+    // `afterEach` waits for a promise that will never settle. With the base config's
+    // 30 s hook budget that wait outlasts Stryker's own cap, and the mutant is
+    // recorded as an abandoned run instead of a failing test — measured on
+    // 2026-11-18, mutants 419 and 420 of `FileAuditStore` did exactly that.
+    hookTimeout: 15_000,
     coverage: { ...base.test.coverage, enabled: false },
   },
 });

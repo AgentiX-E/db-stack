@@ -34,7 +34,8 @@
     "test:mutation:cluster": "node scripts/mutation.mjs cluster",
     "test:mutation:federation": "node scripts/mutation.mjs federation",
     "test:mutation:operations": "node scripts/mutation.mjs operations",
-    "audit:policy": "node scripts/audit-policy.mjs"
+    "audit:policy": "node scripts/audit-policy.mjs",
+    "check:mutation-timeouts": "node operations/scripts/resolve-timeouts.mjs --check --all"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

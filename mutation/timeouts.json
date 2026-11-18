@@ -1,0 +1,445 @@
+{
+  "note": "Every Timeout in reports/mutation/<target>.json, re-run against the tests the report attributed to it (operations/scripts/resolve-timeouts.mjs). \"failed\" means vitest reported a failing test; \"stuck\" means the attributed tests reported nothing and the run did not finish. The gate requires this list and the report to agree in both directions.",
+  "targets": {
+    "federation": {
+      "capMs": 30000,
+      "resolvedOn": "2026-11-18",
+      "entries": [
+        {
+          "file": "federation/src/transport/TcpSecureTransport.ts",
+          "line": 526,
+          "mutator": "EqualityOperator",
+          "replacement": "synthetic !== localId",
+          "reason": "Hit limit reached (4901/4900)",
+          "id": "218",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30088ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        }
+      ]
+    },
+    "operations": {
+      "capMs": 30000,
+      "resolvedOn": "2026-11-18",
+      "entries": [
+        {
+          "file": "operations/packages/audit/src/impl/FileAuditStore.ts",
+          "line": 1045,
+          "mutator": "ArrowFunction",
+          "replacement": "() => undefined",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30192ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/audit/src/impl/FileAuditStore.ts",
+          "line": 1230,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30204ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/audit/src/impl/FileAuditStore.ts",
+          "line": 1230,
+          "mutator": "EqualityOperator",
+          "replacement": "this.pendingCompressions.size <= 0",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30182ms",
+          "tail": "✓ packages/audit/src/__tests__/AC76-audit-reads-through-a-port.test.ts (11 tests | 2 skipped) 198ms ⏎ ✓ packages/audit/src/__tests__/FileAuditStore.chaos.test.ts (2 tests) 509ms ⏎ ✓ FileAuditStore Chaos (D2) > B.1: rotations in flight, then a second store recovers every entry  499ms"
+        },
+        {
+          "file": "operations/packages/audit/src/impl/FileAuditStore.ts",
+          "line": 1230,
+          "mutator": "EqualityOperator",
+          "replacement": "this.pendingCompressions.size >= 0",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30153ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/audit/src/impl/FileAuditStore.ts",
+          "line": 1231,
+          "mutator": "ArrayDeclaration",
+          "replacement": "[]",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30200ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/audit/src/impl/FileAuditStore.ts",
+          "line": 852,
+          "mutator": "ArrayDeclaration",
+          "replacement": "[\"Stryker was here\"]",
+          "verdict": "failed",
+          "detail": "a test exceeded 15000ms — and the run never exited",
+          "evidence": "30040ms",
+          "tail": "× AC 87 — what counts as expired > EX.3: the sweep deletes what is past retention and keeps what is inside it 15003ms ⏎ → Test timed out in 15000ms. ⏎ If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
+        },
+        {
+          "file": "operations/packages/audit/src/impl/FileAuditStore.ts",
+          "line": 855,
+          "mutator": "BooleanLiteral",
+          "replacement": "true",
+          "verdict": "failed",
+          "detail": "a test exceeded 15000ms — and the run never exited",
+          "evidence": "30092ms",
+          "tail": "× AC 87 — what counts as expired > EX.3: the sweep deletes what is past retention and keeps what is inside it 15005ms ⏎ → Test timed out in 15000ms. ⏎ If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
+        },
+        {
+          "file": "operations/packages/audit/src/impl/FileAuditStore.ts",
+          "line": 981,
+          "mutator": "UpdateOperator",
+          "replacement": "attempt--",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30091ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/backup/src/impl/RetentionPolicyEvaluator.ts",
+          "line": 130,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30097ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/backup/src/impl/RetentionPolicyEvaluator.ts",
+          "line": 132,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "verdict": "failed",
+          "detail": "packages/backup/src/__tests__/AC59-retention-chains.test.ts > AC 59 — a snapshot is not the unit of retention, a set is > AC 59.7: a cyclic chain terminates and",
+          "evidence": "5339ms",
+          "tail": "Tests  1 failed | 45 passed | 60 skipped (106) ⏎ Start at  09:05:49 ⏎ Duration  5.07s (transform 370ms, setup 202ms, collect 565ms, tests 3.99s, environment 1ms, prepare 1.81s)"
+        },
+        {
+          "file": "operations/packages/backup/src/impl/backupChain.ts",
+          "line": 103,
+          "mutator": "CallExpression",
+          "replacement": ";",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30094ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/backup/src/impl/backupChain.ts",
+          "line": 57,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30100ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/backup/src/impl/backupChain.ts",
+          "line": 57,
+          "mutator": "EqualityOperator",
+          "replacement": "pending.length >= 0",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30093ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/backup/src/impl/backupChain.ts",
+          "line": 64,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "verdict": "failed",
+          "detail": "packages/backup/src/__tests__/AC59-retention-chains.test.ts > AC 59 — the store keeps chains intact > AC 59.18: dependentsOf is transitive, excludes the snapsho",
+          "evidence": "5127ms",
+          "tail": "Tests  1 failed | 1 passed | 21 skipped (23) ⏎ Start at  09:02:43 ⏎ Duration  4.87s (transform 189ms, setup 21ms, collect 91ms, tests 3.98s, environment 0ms, prepare 217ms)"
+        },
+        {
+          "file": "operations/packages/backup/src/impl/backupChain.ts",
+          "line": 89,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30066ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/backup/src/impl/backupChain.ts",
+          "line": 96,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30101ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/backup/src/impl/backupChain.ts",
+          "line": 96,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30092ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 467,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30121ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 469,
+          "mutator": "AssignmentOperator",
+          "replacement": "currentMs -= DAY_MS",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30202ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 494,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30105ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 501,
+          "mutator": "ArithmeticOperator",
+          "replacement": "cursorMs - DAY_MS",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30108ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 519,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30178ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 546,
+          "mutator": "ArithmeticOperator",
+          "replacement": "month - 1",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30114ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 547,
+          "mutator": "ArithmeticOperator",
+          "replacement": "year - 1",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30096ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 547,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30093ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations ⏎ ✓ packages/maintenance/src/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 4ms"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 548,
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30179ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 548,
+          "mutator": "EqualityOperator",
+          "replacement": "newMonth <= 11",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30110ms",
+          "tail": "× AC 54 — weekly projection lower bound > AC 54.12: monthly projection honours the lower bound 35ms ⏎ → expected [] to deeply equal [ 1797314400000 ] ⏎ ↓ AC 54 — weekly projection lower bound > AC 54.13: cron projection honours the lower bound"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 548,
+          "mutator": "EqualityOperator",
+          "replacement": "newMonth >= 11",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30188ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations ⏎ ✓ packages/maintenance/src/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 3ms"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 564,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30186ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/MaintenanceWindowScheduler.ts",
+          "line": 564,
+          "mutator": "LogicalOperator",
+          "replacement": "cursor.getTime() < toMs || iterations < maxIterations",
+          "reason": "",
+          "id": "1603",
+          "verdict": "failed",
+          "detail": "a test exceeded 15000ms",
+          "evidence": "19924ms",
+          "tail": "Tests  10 failed | 25 passed | 249 skipped (284) ⏎ Start at  09:47:33 ⏎ Duration  19.63s (transform 782ms, setup 186ms, collect 1.26s, tests 20.94s, environment 1ms, prepare 4.33s)"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/cron.ts",
+          "line": 109,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "reason": "",
+          "id": "1841",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30054ms",
+          "tail": "↓ AC 58 — instance identity > AC 58.9: two windows starting at the same instant keep their own instances ⏎ ↓ AC 58 — range boundaries > AC 58.10: an occurrence exactly at the range start is included ⏎ ↓ AC 58 — range boundaries > AC 58.11: a once window with an unreadable timestamp projects nothing"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/cron.ts",
+          "line": 109,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "reason": "",
+          "id": "1844",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30098ms",
+          "tail": "✓ packages/maintenance/src/__tests__/i33-maintenance-windows.test.ts (54 tests | 53 skipped) 24ms ⏎ ✓ packages/maintenance/src/__tests__/AC58-schedule-boundaries.test.ts (11 tests | 9 skipped) 26ms ⏎ ✓ packages/maintenance/src/__tests__/AC61-schedule-boundaries.test.ts (20 tests | 17 skipped) 26ms"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/cron.ts",
+          "line": 109,
+          "mutator": "EqualityOperator",
+          "replacement": "step < 0",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30078ms",
+          "tail": "✓ packages/maintenance/src/__tests__/AC58-schedule-boundaries.test.ts (11 tests | 9 skipped) 5ms ⏎ ✓ packages/maintenance/src/__tests__/i33-maintenance-windows.test.ts (54 tests | 53 skipped) 5ms ⏎ ✓ packages/maintenance/src/__tests__/AC61-schedule-boundaries.test.ts (20 tests | 17 skipped) 8ms"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/cron.ts",
+          "line": 121,
+          "mutator": "AssignmentOperator",
+          "replacement": "value -= step",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30087ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/cron.ts",
+          "line": 55,
+          "mutator": "UpdateOperator",
+          "replacement": "value--",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "13960ms",
+          "tail": "❯ MessagePort.<anonymous> node:internal/per_context/messageport:23:28 ⏎ ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ ⏎ Serialized Error: { code: 'ERR_IPC_CHANNEL_CLOSED' }"
+        },
+        {
+          "file": "operations/packages/maintenance/src/impl/cron.ts",
+          "line": 97,
+          "mutator": "UpdateOperator",
+          "replacement": "value--",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30100ms",
+          "tail": "↓ AC 58 — instance identity > AC 58.9: two windows starting at the same instant keep their own instances ⏎ ↓ AC 58 — range boundaries > AC 58.10: an occurrence exactly at the range start is included ⏎ ↓ AC 58 — range boundaries > AC 58.11: a once window with an unreadable timestamp projects nothing"
+        },
+        {
+          "file": "operations/packages/security/src/impl/AuditLogManager.ts",
+          "line": 261,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30089ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/security/src/impl/AuditLogManager.ts",
+          "line": 275,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30095ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/security/src/impl/KeyManager.ts",
+          "line": 465,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30102ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/security/src/impl/KeyManager.ts",
+          "line": 465,
+          "mutator": "EqualityOperator",
+          "replacement": "this.kekCache.size <= MAX_CACHED_KEKS",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30187ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "operations/packages/security/src/impl/KeyManager.ts",
+          "line": 468,
+          "mutator": "CallExpression",
+          "replacement": ";",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30093ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        }
+      ]
+    }
+  }
+}

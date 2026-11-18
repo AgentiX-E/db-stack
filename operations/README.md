@@ -1,20 +1,25 @@
 # db-operations — Unified Database Operations Framework
 
-**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 2 625 unit
-tests and 331 integration tests, every coverage dimension at or above 95 %.**
+**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 3 149 test
+cases in 146 files, every coverage dimension at or above 95 %.**
 
-**Mutation score:** 97.55 % across the eleven modules that decide what gets deleted, whether a
+**Mutation score:** 97.96 % across the thirteen modules that decide what gets deleted, whether a
 backup can be restored, which key material survives at all, which key a blob was sealed with,
 whether a compliance window passed, whether evidence is tamper-evident, and when a maintenance
 window runs — `backupChain.ts` 100 %, `cron.ts` 100 %, `RetentionPolicyEvaluator.ts` 100 %,
-`KeyRotationManager.ts` 99.16 %, `MaintenanceWindowScheduler.ts` 99.03 %,
-`InMemoryBackupManager.ts` 98.94 %, `RotationAuditor.ts` 97.52 %, `FileAuditStore.ts` 97.37 %,
-`AuditLogManager.ts` 96.44 %, `EnvelopeEncryptionProvider.ts` 90.38 %,
-`KeyManager.ts` 86.60 %; gate at 86. Of 2 404 judged mutants 56 were not killed.
-Twelve of those are memory wipes and the durability recipe, which no in-process assertion can
-observe (P2-19); most of the rest are encoding defaults; two need a filesystem fault during a scan
-(P2-21). Every reason is listed in `docs/maturity.md`, and every "the runner is wrong" claim from
-iteration 30 was withdrawn there after being replayed.
+`DurableFileSystem.ts` 100 %, `KeyRotationManager.ts` 99.16 %, `MaintenanceWindowScheduler.ts`
+99.03 %, `InMemoryBackupManager.ts` 98.94 %, `AES256GCMEncryptionProvider.ts` 97.53 %,
+`RotationAuditor.ts` 97.52 %, `EnvelopeEncryptionProvider.ts` 98.18 %, `FileAuditStore.ts`
+96.97 %, `AuditLogManager.ts` 96.44 %, `KeyManager.ts` 94.12 %; gate at 86.
+
+Of the 2 992 judged mutants, 102 are not kills and every one has an answer: 58 survived (each with
+an argument in `docs/maturity.md` — sixteen families, no test can tell the versions apart), 41 are
+`Timeout` verdicts that were replayed one by one (5 fail when asked again, 36 are loops no timer can
+interrupt, **0 pass**), and 3 no test reaches. The replay is
+`node operations/scripts/resolve-timeouts.mjs --target operations --record`; the record it writes,
+`mutation/timeouts.json`, is checked against the report on every CI run by
+`pnpm check:mutation-timeouts`, so an abort nobody read fails the build.
+
 Run it yourself with
 `pnpm --filter @agentix-e/db-operations run test:mutation`.
 
@@ -22,7 +27,7 @@ Replace ad-hoc `ops/` directories with a canonical interface suite that every da
 engine implements via adapters.
 
 Package: `@agentix-e/db-operations`  
-Version: 1.3.0  
+Version: 1.11.3  
 License: MIT
 
 ---
@@ -202,8 +207,8 @@ packages/monitor/src/
 ## Testing
 
 ```bash
-npm test              # 128 files, 2 956 tests
-npm run test:mutation # Stryker over the nine modules that decide deletion, durability and timing
+npm test              # 146 files, 3 149 tests
+npm run test:mutation # Stryker over the thirteen modules that decide deletion, durability and timing
 npm run bench         # Performance benchmarks
 npm run bench:ycsb    # YCSB-style benchmarks
 npm run typecheck     # TypeScript strict type checking

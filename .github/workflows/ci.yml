@@ -407,6 +407,16 @@ jobs:
         run: pnpm run test:mutation:federation
       - name: Mutation score — operations
         run: pnpm run test:mutation:operations
+      # A `Timeout` is not a verdict: it says the runner stopped, not that a test
+      # objected. The operations target has 59 of them, and 33 are the vitest
+      # runner's hit-limit heuristic — a guess at non-termination made from an
+      # execution count — rather than a clock. This step reads them: the report and
+      # `mutation/timeouts.json` must name each other. A new one fails here with the
+      # command that resolves it, and a proof whose mutant no longer exists fails
+      # too. Milliseconds, because the replay that produced the file is
+      # `operations/scripts/resolve-timeouts.mjs --record`.
+      - name: Every timeout has been read
+        run: pnpm run check:mutation-timeouts
       # The sandbox is the claim, so the working tree is the evidence. A run that
       # instruments in place leaves modified sources, and one that leaves them is a run
       # whose verdicts came from a file another worker was rewriting.

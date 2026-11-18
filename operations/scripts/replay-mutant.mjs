@@ -46,6 +46,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
+import { replaceFile, splice } from './lib/mutant-edit.mjs';
+
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '..', '..');
 const DEFAULT_REPORT = path.join(REPOSITORY_ROOT, 'reports/mutation/operations.json');
 const BACKUP_SUFFIX = '.replay.bak';
@@ -104,22 +106,10 @@ function loadSurvivors(reportPath, status) {
 
 /**
  * The report's positions are 1-based in both axes (line 1 is the first line,
- * column 1 the first character). Treating the column as 0-based — which is what
- * Stryker's own `Position` type says — shifts every replay one character to the
- * right, which is exactly the kind of near-miss this script exists to prevent.
+ * column 1 the first character). Turning one into an offset used to live here;
+ * it moved to `lib/mutant-edit.mjs` so that the one-character shift it exists to
+ * prevent cannot be reintroduced in a second copy.
  */
-function offsetOf(text, { line, column }) {
-  let offset = 0;
-  for (let current = 1; current < line; current += 1) {
-    const next = text.indexOf('\n', offset);
-    if (next === -1) throw new Error(`line ${line} is past the end of the file`);
-    offset = next + 1;
-  }
-  const lineEnd = text.indexOf('\n', offset) === -1 ? text.length : text.indexOf('\n', offset);
-  const absolute = offset + column - 1;
-  if (absolute > lineEnd) throw new Error(`column ${column} is past the end of line ${line}`);
-  return absolute;
-}
 
 function printList(rows) {
   if (rows.length === 0) {
@@ -168,18 +158,13 @@ function apply(rows, index, options) {
   }
 
   const text = fs.readFileSync(absPath, 'utf-8');
-  const from = offsetOf(text, row.mutant.location.start);
-  const to = offsetOf(text, row.mutant.location.end);
-  const removed = text.slice(from, to);
-  const replacement = row.mutant.replacement ?? '';
+  const { removed, replacement, updated } = splice(text, row.mutant);
 
-  fs.writeFileSync(absPath + BACKUP_SUFFIX, text);
   // The mtime is part of what `restore` has to put back. Writing the file twice
   // per replay moves it forward, and the guard above reads it — a tool that
   // refuses its own second replay because *it* touched the file would be right
   // about the rule and useless in practice.
-  fs.writeFileSync(absPath + META_SUFFIX, `${JSON.stringify({ mtimeMs: mtimeOf(absPath) })}\n`);
-  fs.writeFileSync(absPath, text.slice(0, from) + replacement + text.slice(to));
+  replaceFile(absPath, updated);
 
   console.log(`${row.file}:${row.mutant.location.start.line}`);
   console.log(`- ${removed.replace(/\n/g, '\\n')}`);
