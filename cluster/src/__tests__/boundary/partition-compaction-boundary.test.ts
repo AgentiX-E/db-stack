@@ -53,8 +53,12 @@ async function waitForLeader(cluster: ChaosCluster, maxWait = 15_000): Promise<n
 }
 
 /**
- * Check all nodes converge within maxWait.
- * Uses per-call timeouts to avoid indefinite hangs.
+ * Check all nodes converge within maxWait, and fail the case when they do not.
+ *
+ * This used to `console.log('[WARN] Convergence not achieved')` and return, which
+ * made every "after healing, all nodes converge" claim in this file unfalsifiable:
+ * the only reader of the warning was a human scrolling the log. Uses per-call
+ * timeouts so a partitioned node cannot hang the wait.
  */
 async function verifyConvergence(cluster: ChaosCluster, maxWait = VERIFY_TIMEOUT): Promise<void> {
   const deadline = Date.now() + maxWait;
@@ -68,7 +72,7 @@ async function verifyConvergence(cluster: ChaosCluster, maxWait = VERIFY_TIMEOUT
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  console.log(`[WARN] Convergence not achieved: lastApplieds=${JSON.stringify(lastApplieds)}`);
+  throw new Error(`nodes did not converge within ${maxWait}ms: lastApplied=${JSON.stringify(lastApplieds)}`);
 }
 
 async function compactAll(cluster: ChaosCluster): Promise<void> {
@@ -125,7 +129,7 @@ describe('Boundary: Partition + Compaction (BP)', () => {
         const during = await cluster.verifyInvariants();
         expect(during.noSplitBrain).toBe(true);
 
-        await cluster.injectFault('partition', []);
+        await cluster.injectFault('partition', []); // isolate nobody: heal everyone
         await new Promise((r) => setTimeout(r, 3_000));
         await verifyConvergence(cluster);
 
@@ -178,7 +182,7 @@ describe('Boundary: Partition + Compaction (BP)', () => {
           }
         }
 
-        await cluster.injectFault('partition', []);
+        await cluster.injectFault('partition', []); // isolate nobody: heal everyone
         await new Promise((r) => setTimeout(r, 5_000));
         await verifyConvergence(cluster);
 
@@ -241,11 +245,11 @@ describe('Boundary: Partition + Compaction (BP)', () => {
           console.log(`[BP.3] Round ${round}: isolated ${isolateId}, entries=${totalWritten}`);
 
           await compactAll(cluster);
-          await cluster.injectFault('partition', []);
+          await cluster.injectFault('partition', []); // isolate nobody: heal everyone // isolate nobody: heal everyone
           await new Promise((r) => setTimeout(r, 1_000));
         }
 
-        await cluster.injectFault('partition', []);
+        await cluster.injectFault('partition', []); // isolate nobody: heal everyone
         await new Promise((r) => setTimeout(r, 3_000));
         await verifyConvergence(cluster);
 

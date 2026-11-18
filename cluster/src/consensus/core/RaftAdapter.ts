@@ -18,6 +18,9 @@ import { RaftNode, InMemoryNodeStorage, LogEntryType } from '@maboke123/raft-cor
 import type { RaftConfig as CoreRaftConfig, NodeStorage, Transport } from '@maboke123/raft-core';
 import { SqliteNodeStorage } from '../storage/SqliteNodeStorage';
 import { ShardStateMachine } from './ShardStateMachine';
+import { QuorumWatchdog } from './QuorumWatchdog';
+import { ObservedTransport } from '../transport/ObservedTransport';
+import { SwappableTransport } from '../transport/SwappableTransport';
 import { BatchedRaftTransport } from '../transport/BatchedRaftTransport';
 import { RaftTcpTransport as OriginalRaftTcpTransport } from '../transport/RaftTcpTransport';
 import { SqlVecError, SqlVecErrorCode } from '../../interfaces/types';
@@ -28,9 +31,36 @@ import { resolveLogLevel } from '../../observability/logLevel';
 
 const logger = pino({ level: resolveLogLevel() });
 
+/**
+ * The transport a wrapper delegates to, when it says so.
+ *
+ * Every wrapper in this package exposes `underlying` for exactly this purpose: the
+ * chain is walked to reach the layer that owns the sockets or the observer that
+ * records contact. A transport with no such property ends the walk, which is the
+ * honest answer — nothing further down is reachable.
+ */
+function underlyingOf(transport: Transport): Transport | null {
+  const candidate = (transport as { underlying?: unknown }).underlying;
+  return candidate && typeof candidate === 'object' ? (candidate as Transport) : null;
+}
+
 // ──────────────────────────────────────────
 //  Public types (re-exported for RaftGroup)
 // ──────────────────────────────────────────
+
+/** What a node knows about who has answered it lately. */
+export interface QuorumHealth {
+  /** Members in the cluster, this node included. */
+  size: number;
+  /** How many members make a majority. */
+  majority: number;
+  /** How long an answer keeps counting, in milliseconds. */
+  windowMs: number;
+  /** Whether enough members answered recently to form a majority. */
+  hasQuorum: boolean;
+  /** Members that are silent: never heard from, or heard from too long ago. */
+  unheardPeers: number[];
+}
 
 export interface RaftTcpTransportConfig {
   /** Local node info */
@@ -62,19 +92,24 @@ export interface RaftConfig {
   /** Path to a SQLite file for durable Raft log storage. */
   storagePath?: string;
   /**
-   * Accepted for compatibility, **not forwarded**: raft-core 0.2.1 implements
-   * pre-vote unconditionally and exposes no flag to turn it off, so `false` changes
-   * nothing. Declared here because the harness and the chaos configurations set it;
-   * it is removed — or made real — together with the quorum watchdog (P3-20).
+   * Accepted, **not forwarded**: raft-core 0.2.1 implements pre-vote
+   * unconditionally and exposes no flag to turn it off, so `true` describes what
+   * happens and `false` cannot. `init` warns when `false` is passed rather than
+   * pretending the setting took effect — the flag is kept because the harness and the
+   * chaos configurations set it, and because removing it would rename a knob in every
+   * caller for no behavioural change.
    */
   preVote?: boolean;
   /**
-   * Accepted for compatibility, **not forwarded, and not implemented by raft-core
-   * 0.2.1 at all**. An isolated leader keeps answering `isLeader() === true` and
-   * simply cannot commit: measured on 2026-11-18, still leading at 16 s with the
-   * commit index frozen and every write refused after 5 028 ms. Do not read this
-   * flag as a step-down guarantee; P3-20 is the item that has to make it true or
-   * delete it.
+   * Whether leadership is answered from contact with a majority (default: `true`).
+   *
+   * raft-core 0.2.1 implements no check-quorum at all: an isolated leader keeps
+   * answering `isLeader() === true` and simply cannot commit — measured on
+   * 2026-11-18, still leading at 16 s with the commit index frozen and every write
+   * refused after 5 028 ms. With this enabled, the adapter records which peers have
+   * answered it inside one election timeout and reports leadership only while a
+   * majority is still answering. The library's own role is left untouched: the node
+   * stops *claiming* to be able to serve, which is the part a router reads.
    */
   checkQuorum?: boolean;
   /**
@@ -190,7 +225,19 @@ export class RaftAdapter {
   private _appliedIndex = 0;
 
   private nodeStorage: NodeStorage | null = null;
-  private transport: Transport | null = null;
+  /**
+   * The object raft-core holds. Its inside is replaceable, which is what makes
+   * `transport` a seam rather than a field: raft-core captures the transport it is
+   * constructed with, so assigning to a plain field afterwards changed nothing and
+   * every fault injector in this repository was talking to itself.
+   */
+  private transportProxy: SwappableTransport | null = null;
+  /** The transport this adapter built; the target of the connection-report walk. */
+  private rawTransport: Transport | null = null;
+  /** Innermost wrapper: the only one that sees a real round trip. */
+  private observer: ObservedTransport | null = null;
+  /** What the leader knows about who answered it lately. */
+  private watchdog: QuorumWatchdog | null = null;
   private originalTcpTransport: OriginalRaftTcpTransport | null = null;
 
   /**
@@ -202,6 +249,15 @@ export class RaftAdapter {
    * made compaction able to discard entries no snapshot covered.
    */
   private _snapshotMeta: { lastIncludedIndex: number; lastIncludedTerm: number; observedAt: number } | null = null;
+
+  /**
+   * Settings that were accepted and could not be honoured, with the reason.
+   *
+   * A configuration option that silently does nothing is worse than no option: the
+   * caller believes it changed a behaviour. These are queryable so a deployment can
+   * assert its own configuration is fully in effect.
+   */
+  private ignoredSettings: Array<{ setting: string; reason: string }> = [];
 
   /** Forced leader flag — set by HA failover when 2-node cluster is stuck */
   private _forceLeader: boolean = false;
@@ -263,6 +319,22 @@ export class RaftAdapter {
     }
 
     if (applyHandler) this.applyHandler = applyHandler;
+
+    if (this.config.preVote === false) {
+      // Said out loud rather than honoured: raft-core runs a pre-vote phase on every
+      // election timeout and exposes no flag to skip it, so a caller asking for "no
+      // pre-vote" would otherwise be trusting a setting that cannot take effect.
+      // Recorded as well as logged, because a warning in a log nobody tails is how a
+      // dead setting stays dead.
+      this.ignoredSettings.push({
+        setting: 'preVote',
+        reason: 'raft-core pre-votes unconditionally and exposes no flag to disable it (P3-22)',
+      });
+      logger.warn(
+        { nodeId: this.config.id },
+        '[RaftAdapter] preVote: false is not forwarded — raft-core pre-votes unconditionally, so this setting cannot take effect (P3-22)',
+      );
+    }
 
     try {
       // ── Step 1: Build NodeStorage ────────────────────────────
@@ -352,7 +424,7 @@ export class RaftAdapter {
         );
       }
 
-      this.transport = raftTransport;
+      this.rawTransport = raftTransport;
 
       // Start transport
       if (!raftTransport.isStarted()) {
@@ -469,10 +541,17 @@ export class RaftAdapter {
       };
 
       // ── Step 5: Create RaftNode ──────────────────────────────
+      //
+      // The node is given the seam, not the transport, so that a transport installed
+      // later is a change raft-core observes. The quorum observer goes *inside* the
+      // seam and around the real transport: a wrapper installed later (a fault
+      // injector, a partition) sits outside it and can therefore answer a message it
+      // never delivered without that answer counting as contact.
+      const nodeTransport = this.attachTransport(raftTransport, peerIds, electionTimeoutMaxMs);
       const raftNode = new RaftNode({
         config: coreConfig,
         storage,
-        transport: raftTransport,
+        transport: nodeTransport,
         stateMachine,
         logger: {
           debug: (msg: string, ctx?: any) => logger.debug(ctx || {}, msg),
@@ -556,7 +635,21 @@ export class RaftAdapter {
   /**
    * Submit through the concurrency limiter; queues while the pipeline is full.
    */
-  private _submit(data: string): Promise<{ index: string; term: string }> {
+  private async _submit(data: string): Promise<{ index: string; term: string }> {
+    // A leader that has lost its quorum is still raft's leader, so the library would
+    // accept the entry, append it, and wait for a commit that cannot arrive: measured
+    // at 5 028 ms before the refusal. Refusing here is the same answer, delivered
+    // while the caller still cares, and it names the reason instead of a timeout.
+    if (!this._forceLeader && this.node?.isLeader() && !this.hasQuorum()) {
+      const health = this.getQuorumHealth();
+      const heard = health ? health.size - health.unheardPeers.length : 0;
+      throw new SqlVecError(
+        `write refused: this node is raft's leader but has lost its quorum — heard from ` +
+          `${heard} of ${health?.size ?? 0} members within ${health?.windowMs ?? 0}ms, ` +
+          `${health?.majority ?? 0} needed (silent: ${health?.unheardPeers.join(',') || 'none'})`,
+        SqlVecErrorCode.QUORUM_FAILED,
+      );
+    }
     if (this._inFlight >= RaftAdapter.CONCURRENCY_MAX) {
       return new Promise<{ index: string; term: string }>((resolve, reject) => {
         this._proposeQueue.push({ data, resolve, reject });
@@ -729,16 +822,129 @@ export class RaftAdapter {
   }
 
   /**
-   * Check if this node is the Raft leader.
+   * The transport raft-core is talking through, or null before init.
+   *
+   * Assigning to it re-points the seam. Anything installed here is expected to wrap
+   * the transport it replaces (a fault injector, a partition), and the assignment is
+   * refused when nothing is installed yet: a transport set before a node exists has
+   * nowhere to go, and silently keeping it would describe a node that never uses it.
+   */
+  get transport(): Transport | null {
+    return this.transportProxy?.underlying ?? null;
+  }
+
+  set transport(next: Transport | null) {
+    if (!this.transportProxy) {
+      if (next === null) return; // shutdown from a state that never installed one
+      throw new SqlVecError(
+        'RaftAdapter: transport cannot be installed before init(); pass it through init(tcpConfig) instead',
+        SqlVecErrorCode.INVALID_ARGUMENT,
+      );
+    }
+    this.transportProxy.swap(this.wrapForObservation(next));
+  }
+
+  /** The transport in use, or null. Named accessor for callers that prefer methods. */
+  getTransport(): Transport | null {
+    return this.transport;
+  }
+
+  /**
+   * Install a different transport underneath the running node.
+   *
+   * This exists because raft-core captures the transport object it is constructed
+   * with: replacing a field is invisible to the library, so fault injection and
+   * transport upgrades have to go through the one object it holds. `next` is expected
+   * to wrap the current transport (`new Wrapper(adapter.getTransport())`); a transport
+   * that does not is accepted, but the observer is re-installed outside it, and an
+   * outer wrapper that answers without delivering stops being evidence of contact.
+   */
+  setTransport(next: Transport | null): void {
+    this.transport = next;
+  }
+
+  /**
+   * Who this node has heard from lately, and whether that is a majority.
+   *
+   * Null when quorum accounting is off (`checkQuorum: false`) or impossible (a
+   * configuration with no peer list, such as a shared-transport group whose members
+   * live in another manager).
+   */
+  getQuorumHealth(): QuorumHealth | null {
+    const watchdog = this.watchdog;
+    if (!watchdog) return null;
+    return {
+      size: watchdog.size,
+      majority: watchdog.majority,
+      windowMs: watchdog.window,
+      hasQuorum: watchdog.hasQuorum(),
+      unheardPeers: watchdog.unheardPeers(),
+    };
+  }
+
+  /** Settings that were accepted but cannot take effect, with the reason. */
+  getIgnoredSettings(): Array<{ setting: string; reason: string }> {
+    return this.ignoredSettings.map((entry) => ({ ...entry }));
+  }
+
+  /** Whether this node currently hears from a majority. True when not accounted for. */
+  private hasQuorum(): boolean {
+    return this.watchdog?.hasQuorum() ?? true;
+  }
+
+  /**
+   * Check if this node is the Raft leader, **and** whether it can still serve.
+   *
+   * raft-core 0.2.1 has no check-quorum: an isolated leader reports `isLeader() ===
+   * true` indefinitely (measured: still true at 16 s with the commit index frozen).
+   * A caller routing by this method would keep sending work to a node that cannot
+   * commit it, and learn that one request timeout later. So leadership is answered
+   * from the role *and* from contact with a majority.
    */
   async isLeader(): Promise<boolean> {
     if (this._forceLeader) return true;
     if (!this.node) return false;
     try {
-      return this.node.isLeader();
+      // Awaited rather than tested: raft-core answers with a boolean, but anything
+      // wrapping it may answer with a promise, and a promise is always truthy -- the
+      // difference between "not the leader" and "asked the wrong question".
+      if (!(await this.node.isLeader())) return false;
+      return this.hasQuorum();
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Install the seam around `transport` and, when quorum accounting is possible,
+   * the observer inside it. Returns the object raft-core must be constructed with.
+   */
+  private attachTransport(transport: Transport, peerIds: readonly number[], windowMs: number): Transport {
+    const members = [...new Set(peerIds.filter((peer) => peer !== this.config.id))];
+    if (this.config.checkQuorum === false || members.length === 0) {
+      // No member list means no arithmetic: a shared-transport group keeps its
+      // members in another manager, so claiming to judge its quorum would be a guess.
+      // It keeps today's behaviour and says so through getQuorumHealth() === null.
+      this.transportProxy = new SwappableTransport(transport);
+      return this.transportProxy;
+    }
+    this.watchdog = new QuorumWatchdog({ selfId: this.config.id, peers: members, windowMs });
+    this.observer = new ObservedTransport(transport, (peer) => this.watchdog?.observe(peer));
+    this.transportProxy = new SwappableTransport(this.observer);
+    return this.transportProxy;
+  }
+
+  /**
+   * Keep exactly one observer in the chain: reuse the one inside `next` when it is
+   * there, otherwise install a new one outside it.
+   */
+  private wrapForObservation(next: Transport | null): Transport | null {
+    if (next === null || !this.observer) return next;
+    for (let cursor: Transport | null = next; cursor; cursor = underlyingOf(cursor)) {
+      if (cursor === this.observer) return next;
+    }
+    this.observer = new ObservedTransport(next, (peer) => this.watchdog?.observe(peer));
+    return this.observer;
   }
 
   /**
@@ -771,7 +977,12 @@ export class RaftAdapter {
     try {
       const leaderId = this.node.getLeaderId();
       if (leaderId === null) return null;
-      return Number(leaderId);
+      const id = Number(leaderId);
+      // A leader that can no longer hear a majority does not know who leads: it may
+      // have been replaced by a term it has not seen yet. Naming itself would be the
+      // claim this whole mechanism exists to stop making.
+      if (id === this.config.id && !this.hasQuorum()) return null;
+      return id;
     } catch {
       return null;
     }
@@ -952,12 +1163,21 @@ export class RaftAdapter {
       }
     }
 
+    // The seam and its evidence belong to the node that was just torn down. Keeping
+    // them would let a restart inherit the previous incarnation's contacts and answer
+    // `isLeader()` from a quorum that no longer exists.
+    this.transportProxy = null;
+    this.rawTransport = null;
+    this.observer = null;
+    this.watchdog?.reset();
+    this.watchdog = null;
+
     const original = this.originalTcpTransport;
     this.originalTcpTransport = null;
     // The batched wrapper owns the underlying transport; the reference is taken
     // before the field is cleared so this only runs when they are different
     // objects.
-    if (original && (original as unknown) !== transport) {
+    if (original && (original as unknown) !== this.rawTransport) {
       try {
         await original.stop();
       } catch (err) {
@@ -1033,15 +1253,19 @@ export class RaftAdapter {
    */
   getConnectedPeers(): number[] {
     type PeerReporter = { getConnectedPeers?: () => Array<number | { peerId: number }> };
-    const holder = this.transport as unknown as (PeerReporter & { underlying?: PeerReporter }) | null;
-    // `BatchedRaftTransport` is a request-response wrapper: it owns the framing
-    // but not the sockets, so the live connection table belongs to the transport
-    // it wraps. Asking only the outer object reports "no peers" on a perfectly
-    // healthy node, which is exactly the wrong signal when diagnosing a
-    // restarted node that is not catching up.
-    const reporter = typeof holder?.getConnectedPeers === 'function' ? holder : holder?.underlying;
-    if (!reporter || typeof reporter.getConnectedPeers !== 'function') return [];
-    return reporter.getConnectedPeers().map((peer) => (typeof peer === 'number' ? peer : peer.peerId));
+    // `BatchedRaftTransport` is a request-response wrapper: it owns the framing but
+    // not the sockets, so the live connection table belongs to the transport it wraps.
+    // Asking only the outer object reports "no peers" on a perfectly healthy node,
+    // which is exactly the wrong signal when diagnosing a restarted node that is not
+    // catching up. The walk is a loop rather than a single hop because the chain now
+    // has more than one layer — the seam, the quorum observer, any injector a test
+    // installed — and the answer belongs to the layer that owns the sockets.
+    for (let cursor: Transport | null = this.transport; cursor; cursor = underlyingOf(cursor)) {
+      const reporter = cursor as unknown as PeerReporter;
+      if (typeof reporter.getConnectedPeers !== 'function') continue;
+      return reporter.getConnectedPeers().map((peer) => (typeof peer === 'number' ? peer : peer.peerId));
+    }
+    return [];
   }
 
   /**

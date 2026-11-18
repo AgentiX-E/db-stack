@@ -6,6 +6,11 @@
  * guarantees a downstream harness relies on are asserted here: a returned port
  * can actually be bound, reserved ports do not collide, temporary directories
  * are isolated, and cleanup never fails a run.
+ *
+ * Acceptance criteria:
+ *   AC 53.1  isPortFree distinguishes a bound port from a free one
+ *   AC 53.2  bestEffort swallows a failure, because housekeeping is not a verdict
+ *   AC 53.3  cleaning up a directory that is already gone is not an error
  */
 
 import { describe, it, expect } from 'vitest';
@@ -13,7 +18,14 @@ import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { getFreePort, getFreePorts, createTempDir, cleanupTempDir } from '../../testing/test-utils';
+import {
+  getFreePort,
+  getFreePorts,
+  createTempDir,
+  cleanupTempDir,
+  isPortFree,
+  bestEffort,
+} from '../../testing/test-utils';
 
 function bind(port: number): Promise<net.Server> {
   return new Promise((resolve, reject) => {
@@ -100,5 +112,40 @@ describe('cleanupTempDir', () => {
     } finally {
       cleanupTempDir(dir);
     }
+  });
+});
+
+describe('housekeeping', () => {
+  it('AC 53.1 — isPortFree distinguishes a bound port from a free one', async () => {
+    const [port] = await getFreePorts(1);
+    expect(await isPortFree(port!)).toBe(true);
+
+    const server = await bind(port!);
+    try {
+      // A restart inside the window between "the node was told to stop" and "the OS
+      // released the socket" fails with EADDRINUSE, and this is the question a caller
+      // asks to wait that window out.
+      expect(await isPortFree(port!)).toBe(false);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('AC 53.2 — bestEffort swallows a failure, because housekeeping is not a verdict', () => {
+    expect(() =>
+      bestEffort(() => {
+        throw new Error('tmp is read-only');
+      }),
+    ).not.toThrow();
+
+    let ran = 0;
+    bestEffort(() => {
+      ran++;
+    });
+    expect(ran).toBe(1);
+  });
+
+  it('AC 53.3 — cleaning up a directory that is already gone is not an error', () => {
+    expect(() => cleanupTempDir(path.join(os.tmpdir(), 'raft-test-never-created-xyz'))).not.toThrow();
   });
 });

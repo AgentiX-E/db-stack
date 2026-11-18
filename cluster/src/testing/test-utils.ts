@@ -8,17 +8,129 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-/** Ask the OS for a currently free TCP port on localhost. */
-export function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.listen(0, '127.0.0.1', () => {
-      // The listen callback runs only after a successful bind, so this socket is
-      // bound to a TCP address and never reports a pipe name or no address.
-      const { port } = server.address() as net.AddressInfo;
-      server.close(() => resolve(port));
+/**
+ * Leases over the ports handed out in one test run.
+ *
+ * `getFreePort` asks the OS for a free port, which answers "free *now*": it binds,
+ * reads the number, and closes, leaving a window in which the next caller is offered
+ * the same port. Inside one process every test file shares that window, and a suite
+ * with dozens of clusters opens it dozens of times — which is how
+ * `raft-multishard` failed with `EADDRINUSE` while six of its own nodes were still
+ * binding. A lease makes the answer exclusive for the run: the port is claimed by
+ * creating a file, which fails atomically for the second claimant.
+ *
+ * The directory is keyed by pid, so workers in a thread pool — which share a pid —
+ * see each other's claims, and a later run starts from an empty directory.
+ */
+export class PortLeases {
+  private readonly dir: string;
+  private swept = false;
+
+  constructor(
+    dir: string = path.join(os.tmpdir(), `db-stack-ports-${process.pid}`),
+    /** Where lease directories live. A parameter so the sweep can be tested. */
+    private readonly tmpRoot: string = os.tmpdir(),
+  ) {
+    this.dir = dir;
+  }
+
+  /** Claim `port` for this run. False when another caller already holds it. */
+  claim(port: number): boolean {
+    try {
+      fs.mkdirSync(this.dir, { recursive: true });
+      if (!this.swept) {
+        this.sweepStaleRuns();
+        this.swept = true;
+      }
+      fs.writeFileSync(path.join(this.dir, String(port)), '', { flag: 'wx' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Give a port back, so a later caller may be offered it. */
+  release(port: number): void {
+    try {
+      fs.unlinkSync(path.join(this.dir, String(port)));
+    } catch {
+      // Releasing a port nobody claimed is not an error.
+    }
+  }
+
+  /** Drop every lease this run holds. Called on process exit. */
+  releaseAll(): void {
+    bestEffort(() => fs.rmSync(this.dir, { recursive: true, force: true }));
+  }
+
+  /** Remove lease directories left by runs that are no longer alive. */
+  private sweepStaleRuns(): void {
+    bestEffort(() => {
+      const tmp = this.tmpRoot;
+      const mine = path.basename(this.dir);
+      const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      for (const entry of fs.readdirSync(tmp)) {
+        if (!entry.startsWith('db-stack-ports-') || entry === mine) continue;
+        const full = path.join(tmp, entry);
+        if (fs.statSync(full).mtimeMs > dayAgo) continue;
+        fs.rmSync(full, { recursive: true, force: true });
+      }
     });
-    server.on('error', reject);
+  }
+}
+
+/**
+ * Run housekeeping that must never fail a test run.
+ *
+ * Removing a temp directory, sweeping a lease directory and unlinking a stale file
+ * are all cleanup: an unreadable `/tmp` in a hardened container must not turn a green
+ * suite red. Stated once, in one place, so every caller means the same thing by it.
+ */
+export function bestEffort(work: () => void): void {
+  try {
+    work();
+  } catch {
+    // Housekeeping only.
+  }
+}
+
+/** Leases for this process, shared by every port allocation in the run. */
+const portLeases = new PortLeases();
+process.once('exit', () => portLeases.releaseAll());
+
+/**
+ * Ask the OS for a free TCP port on localhost that no other caller in this run holds.
+ *
+ * `attempts` and `leases` are parameters for the same reason the lease exists: a
+ * caller that needs to prove what happens when every answer is already claimed
+ * should not have to occupy the whole ephemeral range to do it.
+ */
+export function getFreePort(attempts = 25, leases: Pick<PortLeases, 'claim'> = portLeases): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const attempt = (remaining: number): void => {
+      const server = net.createServer();
+      server.listen(0, '127.0.0.1', () => {
+        // The listen callback runs only after a successful bind, so this socket is
+        // bound to a TCP address and never reports a pipe name or no address.
+        const { port } = server.address() as net.AddressInfo;
+        server.close(() => {
+          if (leases.claim(port)) {
+            resolve(port);
+            return;
+          }
+          // The OS offered a port another caller in this run already owns. Asking again
+          // is cheap and deterministic; failing here would make the suite depend on
+          // scheduling order.
+          if (remaining <= 1) {
+            reject(new Error(`no unleased free port after ${attempts} attempts`));
+            return;
+          }
+          attempt(remaining - 1);
+        });
+      });
+      server.on('error', reject);
+    };
+    attempt(attempts);
   });
 }
 
@@ -52,9 +164,5 @@ export function createTempDir(prefix: string): string {
 
 /** Best-effort recursive removal of a temporary directory. */
 export function cleanupTempDir(dir: string): void {
-  try {
-    fs.rmSync(dir, { recursive: true, force: true });
-  } catch {
-    // Cleanup is best-effort: a leaked tmpdir must never fail a test run.
-  }
+  bestEffort(() => fs.rmSync(dir, { recursive: true, force: true }));
 }

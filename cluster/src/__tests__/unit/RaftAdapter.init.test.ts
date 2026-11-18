@@ -14,12 +14,19 @@
  *   AC 34.44: init throws without any transport
  *   AC 34.45: init with config.storage wraps into SqliteNodeStorage
  *   AC 34.46: init reports through the logger and applies via applyHandler
+ *   AC 34.47: a transport cannot be installed before init, and clearing one is a no-op
+ *   AC 34.48: a transport installed after init re-points the seam; a wrapper over the
+ *             current one is taken as it is, anything else gets a fresh observer
+ *   AC 34.49: preVote: false is recorded as a setting that cannot take effect, not
+ *             only logged
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { MockTransport } from '@maboke123/raft-core/testing';
 import { InMemoryNodeStorage } from '@maboke123/raft-core';
 import { RaftAdapter, type RaftConfig } from '../../consensus/core/RaftAdapter';
+import { ObservedTransport } from '../../consensus/transport/ObservedTransport';
+import { PartitionTransport } from '../../testing/partition';
 
 // Capture the logger object passed to RaftNode so its debug/warn/error
 // callbacks (RaftAdapter lines 316-319) can be invoked directly.
@@ -249,6 +256,68 @@ function minimalConfig(overrides: Partial<RaftConfig> = {}): RaftConfig {
   return { id: 1, peers: [2, 3], electionTick: 10, heartbeatTick: 3, ...overrides };
 }
 
+describe('RaftAdapter transport seam', () => {
+  afterEach(() => {
+    MockTransport.reset();
+    vi.restoreAllMocks();
+  });
+
+  it('AC 34.49 — preVote: false is recorded as a setting that cannot take effect', async () => {
+    // raft-core pre-votes on every election timeout and exposes no flag to skip it.
+    // Logging that is not enough: a warning in a log nobody tails is how a dead
+    // setting stays dead, so it is queryable too.
+    const adapter = new RaftAdapter(
+      minimalConfig({ useInMemoryStorage: true, preVote: false, transport: new MockTransport('1') }),
+    );
+    await adapter.init();
+
+    expect(adapter.getIgnoredSettings()).toEqual([
+      { setting: 'preVote', reason: expect.stringContaining('unconditionally') },
+    ]);
+
+    const honoured = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport: new MockTransport('1') }));
+    await honoured.init();
+    expect(honoured.getIgnoredSettings()).toEqual([]);
+  });
+
+  it('AC 34.47 — a transport cannot be installed before init, and clearing one is a no-op', () => {
+    // init builds its own transport (from `tcpConfig`, a shared transport or
+    // `config.transport`) and would overwrite anything assigned here. Accepting the
+    // assignment silently is the exact shape of the bug this seam removed: a
+    // transport installed into a field nobody reads.
+    const adapter = new RaftAdapter(minimalConfig());
+
+    expect(() => adapter.setTransport(new MockTransport('1'))).toThrow(/before init/);
+    expect(adapter.getTransport()).toBeNull();
+    expect(() => adapter.setTransport(null)).not.toThrow();
+  });
+
+  it('AC 34.48 — a transport installed after init re-points the seam', async () => {
+    const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport: new MockTransport('1') }));
+    await adapter.init();
+
+    const replacement = new MockTransport('1');
+    adapter.setTransport(replacement);
+
+    // Wrapped in a fresh observer, because the transport in use changed and the old
+    // observer sits around a transport this node no longer sends through.
+    expect(adapter.getTransport()).toBeInstanceOf(ObservedTransport);
+    expect((adapter.getTransport() as unknown as { underlying: unknown }).underlying).toBe(replacement);
+
+    // A wrapper that already contains the observer is taken as it is: re-wrapping it
+    // would put a second observer outside the wrapper, where a fabricated answer for
+    // a dropped message counts as contact.
+    const parted = new PartitionTransport(adapter.getTransport()!);
+    adapter.setTransport(parted);
+    expect(adapter.getTransport()).toBe(parted);
+
+    // A transport that cannot report connections answers nothing rather than throwing:
+    // "no peers" is what a wrapper without the method means, and a diagnostic that
+    // throws is worse than one that is empty.
+    expect(adapter.getConnectedPeers()).toEqual([]);
+  });
+});
+
 describe('RaftAdapter.init — storage & transport construction', () => {
   afterEach(() => {
     MockTransport.reset();
@@ -265,7 +334,13 @@ describe('RaftAdapter.init — storage & transport construction', () => {
     });
 
     expect((adapter as any).node).not.toBeNull();
-    expect((adapter as any).transport).toBe(transport);
+    // The adapter uses the transport it was given, one wrapper deep: raft-core holds a
+    // seam so that a later transport change is visible to it, and the quorum observer
+    // sits inside that seam. Comparing the outer object would assert the wiring, not
+    // the transport.
+    const chain: unknown[] = [];
+    for (let cursor: any = (adapter as any).transport; cursor; cursor = cursor.underlying) chain.push(cursor);
+    expect(chain).toContain(transport);
 
     const node = (adapter as any).node;
     expect(typeof node.submitCommand).toBe('function');

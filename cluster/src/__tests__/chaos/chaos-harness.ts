@@ -21,6 +21,7 @@ import type { Transport, NodeId, MessageHandler } from '@maboke123/raft-core';
 import type { RPCMessage } from '@maboke123/raft-core';
 
 import { TestCluster, type TestNode } from '../integration/TestCluster';
+import { refusal } from '../../testing/partition';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -105,7 +106,13 @@ export class ChaosInjectingTransport implements Transport {
   private inner: Transport;
   private config: ChaosConfig;
   private rng: SeededRandom;
-  private _started = false;
+  /**
+   * No lifecycle flag of its own: a wrapper installed on a *running* node must adopt
+   * the state of what it wraps. The flag this used to keep was false on every
+   * injector the harness installed, which is why every Raft RPC failed with
+   * "ChaosInjectingTransport not started" the moment the seam started routing through
+   * it — the injector had never been started, because nothing had ever called it.
+   */
 
   /** Nodes currently blocked (partitions) */
   public partitionedPeers: Set<string> = new Set();
@@ -120,38 +127,46 @@ export class ChaosInjectingTransport implements Transport {
     this.rng = rng;
   }
 
+  /**
+   * The transport this injector wraps.
+   *
+   * Declared because the adapter walks the chain to decide whether its quorum
+   * observer is already inside: an injector that hides its inner transport makes the
+   * adapter install a second observer *outside* the injector, where a fabricated
+   * answer for a dropped message would be recorded as contact.
+   */
+  get underlying(): Transport {
+    return this.inner;
+  }
+
   async start(): Promise<void> {
     await this.inner.start();
-    this._started = true;
   }
 
   async stop(): Promise<void> {
-    this._started = false;
     await this.inner.stop();
   }
 
   isStarted(): boolean {
-    return this._started;
+    return this.inner.isStarted();
   }
 
   async send(peerId: NodeId, message: RPCMessage): Promise<RPCMessage> {
-    if (!this._started) {
-      throw new Error('ChaosInjectingTransport not started');
-    }
-
     const peerStr = String(peerId);
 
     // Partition check: drop ALL messages to/from a partitioned node
     if (this.partitionedPeers.has(peerStr) || this.isolated) {
       this._stats.partitioned++;
-      // Simulate a dropped/blocked network — return a minimal error-like response
-      return { type: 'AppendEntries' as const, direction: 'response' as const, payload: { term: 0, success: false } };
+      // A dropped request is answered in its own kind at term 0. Answering a
+      // RequestVote with an AppendEntries message is not a dropped message, it is a
+      // malformed one that only reads as a rejection because nothing checks.
+      return refusal(message);
     }
 
     // Message loss: probabilistic drop
     if (this.config.messageLossProbability > 0 && this.rng.next() < this.config.messageLossProbability) {
       this._stats.lost++;
-      return { type: 'AppendEntries' as const, direction: 'response' as const, payload: { term: 0, success: false } };
+      return refusal(message);
     }
 
     // Latency: delay the message
@@ -168,7 +183,17 @@ export class ChaosInjectingTransport implements Transport {
   }
 
   onMessage(handler: MessageHandler): void {
-    this.inner.onMessage(handler);
+    // Isolation has to hold in both directions. Forwarding the handler unfiltered
+    // models a half-open partition: the isolated node cannot initiate, but it still
+    // answers the leader's heartbeats, so it stays in sync and the test that meant to
+    // cut it off verifies nothing.
+    this.inner.onMessage(async (from: NodeId, message: RPCMessage) => {
+      if (this.isolated || this.partitionedPeers.has(String(from))) {
+        this._stats.partitioned++;
+        return refusal(message);
+      }
+      return handler(from, message);
+    });
   }
 
   addPeer?(peerId: NodeId, address: string): Promise<void> {
@@ -281,11 +306,21 @@ export class ChaosCluster {
 
     switch (type) {
       case 'partition': {
-        // Isolate one or more nodes from the rest
+        if (targetList.length === 0) {
+          // Isolating nobody is healing everyone. This used to be a silent no-op, and
+          // four call sites wrote it expecting a heal -- so a test that meant "rejoin
+          // the cluster" left every node isolated and asserted about the result.
+          this.healPartitions();
+          break;
+        }
+        // Isolate one or more nodes from the rest, and record it on the other side
+        // too. The isolated node refusing to send is only half a partition: the peers
+        // that can still reach it would keep it in sync through its inbound handler.
         for (const nodeId of targetList) {
           const injector = this.injectors.get(nodeId);
-          if (injector) {
-            injector.isolated = true;
+          if (injector) injector.isolated = true;
+          for (const [otherId, other] of this.injectors) {
+            if (otherId !== nodeId) other.partitionedPeers.add(String(nodeId));
           }
         }
         break;
@@ -345,6 +380,20 @@ export class ChaosCluster {
   /**
    * Remove all active faults.
    */
+  /**
+   * Heal every partition, in both directions.
+   *
+   * Separate from `recoverFaults()`, which also restores latency, loss and crashed
+   * nodes: a test that wants the network back should not silently reset the other
+   * faults it is measuring.
+   */
+  healPartitions(): void {
+    for (const injector of this.injectors.values()) {
+      injector.isolated = false;
+      injector.partitionedPeers.clear();
+    }
+  }
+
   async recoverFaults(): Promise<void> {
     // Heal all partitions
     for (const injector of this.injectors.values()) {

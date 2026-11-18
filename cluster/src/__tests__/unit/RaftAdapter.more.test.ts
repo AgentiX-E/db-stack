@@ -29,6 +29,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RaftAdapter, type RaftConfig } from '../../consensus/core/RaftAdapter';
 import { SqlVecError, SqlVecErrorCode } from '../../interfaces/types';
+import { SwappableTransport } from '../../consensus/transport/SwappableTransport';
 
 function minimalConfig(overrides: Partial<RaftConfig> = {}): RaftConfig {
   return { id: 1, peers: [2, 3], electionTick: 10, heartbeatTick: 3, ...overrides };
@@ -507,7 +508,10 @@ describe('RaftAdapter — snapshot API & resource teardown', () => {
     };
 
     (adapter as any).node = node;
-    (adapter as any).transport = transport;
+    // Installed through the seam, because assigning a bare transport before init() is
+    // refused: init builds its own, and a field a later assignment silently overwrote
+    // is exactly the bug this seam exists to remove.
+    (adapter as any).transportProxy = new SwappableTransport(transport as never);
     (adapter as any).originalTcpTransport = originalTcp;
     (adapter as any).sqliteStorage = sqlite;
     // A storage this adapter opened itself: it is the one that must be closed,
