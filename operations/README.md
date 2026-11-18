@@ -17,8 +17,9 @@ an argument in `docs/maturity.md` — sixteen families, no test can tell the ver
 `Timeout` verdicts that were replayed one by one (5 fail when asked again, 36 are loops no timer can
 interrupt, **0 pass**), and 3 no test reaches. The replay is
 `node operations/scripts/resolve-timeouts.mjs --target operations --record`; the record it writes,
-`mutation/timeouts.json`, is checked against the report on every CI run by
-`pnpm check:mutation-timeouts`, so an abort nobody read fails the build.
+`mutation/timeouts.json`, is a cache that CI consults with `pnpm check:mutation-timeouts` — a known
+abort is answered from it, an unknown one is replayed on the spot, and the build fails only if a suite
+passes an abort, which would mean the score counted a detection nobody made.
 
 Run it yourself with
 `pnpm --filter @agentix-e/db-operations run test:mutation`.

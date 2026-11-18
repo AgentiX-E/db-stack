@@ -32,12 +32,18 @@
  *
  * A `stuck` verdict is worth exactly as much as the run that produced it, so the
  * runs are recorded: `mutation/timeouts.json` holds one entry per abort, per target,
- * keyed by file, line, mutator and replacement. `--check` (which runs in CI after
- * the mutation steps and takes milliseconds) requires the report and that file to
- * agree in both directions — every abort read, every record still true. A new abort
- * therefore fails the build with the instruction to run this tool, and a record
- * whose mutant no longer exists fails it too, because a proof nobody can reproduce
- * is a paragraph.
+ * keyed by file, line, mutator and replacement. That file is a **cache**, not an
+ * allowlist. The set of aborts is not stable across machines — CI run 44221390170
+ * reported two mutants as aborts that a 32-core workstation had killed, and two the
+ * other way round, because whether the runner drains after a failed test depends on
+ * the load — so a gate that compared the report against a snapshot would fail on the
+ * difference between two computers.
+ *
+ * `--check` (which runs in CI after the mutation steps) therefore reads what it has
+ * not seen: a known abort is answered from the record, an unknown one is replayed on
+ * the spot, and what fails the build is the answer — a suite that *passes* an abort,
+ * which is a score that counted a detection nobody made. Records whose mutant has
+ * left the report are notes, and `--prune` removes them; hygiene, not correctness.
  *
  * Attribution comes from `coveredBy` in the report — the tests that executed the
  * mutant in the dry run — mapped to their files and names through `testFiles`, and
@@ -58,7 +64,8 @@
  *        [--record] [--check [--prune] [--all]] [--proofs <p>]
  *
  *   --target   cluster | federation | operations (default: operations)
- *   --check    compare the report against the proofs file; runs no tests
+ *   --check    read every Timeout the proofs do not already answer
+ *   --no-probe with --check: report them instead of reading them
  *   --all      with --check: every target that has a report
  *   --prune    with --check: drop proofs whose mutant is no longer a timeout
  *   --record   write this run's verdicts into the proofs file
@@ -113,6 +120,7 @@ function parseArgs(argv) {
     check: false,
     prune: false,
     all: false,
+    probe: true,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -128,6 +136,7 @@ function parseArgs(argv) {
     else if (token === '--check') args.check = true;
     else if (token === '--prune') args.prune = true;
     else if (token === '--all') args.all = true;
+    else if (token === '--no-probe') args.probe = false;
     else throw new Error(`unknown argument: ${token}`);
   }
   if (!Number.isFinite(args.cap) || args.cap <= 0) throw new Error('--cap must be a positive number of milliseconds');
@@ -382,79 +391,119 @@ function writeProofs(file, proofs) {
 }
 
 /**
- * The gate: each report and its proofs must name each other.
+ * The gate: no `Timeout` counts towards a score unread.
  *
- * Both directions matter. A report entry with no proof is a verdict nobody read —
- * the state this whole tool exists to end. A proof with no report entry is a
- * resurrection claim: the edit it describes is no longer recorded as a timeout, so
- * either the suite now decides it (good, and the proof should go) or the mutant no
- * longer exists (and the proof is about code that is not there).
+ * The proofs file is a cache, not an allowlist. A `Timeout` set is not stable across
+ * machines — the same mutant is killed on a 32-core workstation and abandoned on a
+ * four-core runner, because whether the runner drains after a failed test depends on
+ * the load — so a gate that compared the report against a snapshot would fail on the
+ * difference between two computers rather than on anything about the suite. That is
+ * exactly what it did on CI run 44221390170, with two mutants in each direction.
  *
- * `--prune` drops the stale proofs instead of failing on them. It is for the case
- * the proofs were written for: a change to the test configuration turns three
- * abandoned runs into three kills, and the records of them should leave without
- * anyone editing JSON by hand. Unread timeouts still fail, because nothing about a
- * new abort is answered by deleting an old record.
+ * So the gate reads what it has not seen. A `Timeout` with a proof is answered from
+ * the record; a `Timeout` without one is replayed on the spot, half a minute, and the
+ * run says what the suite said. What fails the build is the answer, not the
+ * difference: **a suite that passes an abort** is a score that counted a detection
+ * nobody made. Records whose mutant is no longer in the report are reported as notes
+ * and, with `--prune`, removed — hygiene, not correctness.
  */
 async function check(args) {
   const names = args.all ? ['cluster', 'federation', 'operations'] : [args.target];
   const proofs = readProofs(args.proofs);
   const problems = [];
+  const notes = [];
   let totalRows = 0;
+  let probed = 0;
 
   for (const name of names) {
     const target = await targetOf(name);
     const report = args.report && !args.all ? args.report : target.report;
     if (!fs.existsSync(report)) {
-      problems.push(`$no report at ${path.relative(REPOSITORY_ROOT, report)} — run "pnpm run test:mutation:${name}"`);
+      problems.push(`no report at ${path.relative(REPOSITORY_ROOT, report)} — run "pnpm run test:mutation:${name}"`);
       continue;
     }
     const parsed = JSON.parse(fs.readFileSync(report, 'utf-8'));
-    const rows = timeoutMutants(parsed).map(({ file, mutant }) => identify(file, mutant));
+    const rows = timeoutMutants(parsed);
     const entries = proofs.targets[name]?.entries ?? [];
     totalRows += rows.length;
 
+    // Two mutants can share a key: `cron.ts:109` has two `ConditionalExpression →
+    // false` mutants on one line. The match is a multiset, and a `Set` of keys
+    // deleted a proof that was still true the first time this was written.
     const remaining = new Map();
     for (const entry of entries) {
       const key = keyOf(entry);
       remaining.set(key, (remaining.get(key) ?? 0) + 1);
     }
-    // Two mutants can share a key: `cron.ts:109` has two `ConditionalExpression →
-    // false` mutants on one line, because the line contains two of them. So the
-    // match is a multiset, and pruning has to remove the *unmatched* copies rather
-    // than every entry with a key that is short — which is what a `Set` of stale
-    // keys did on the first attempt, and it deleted a proof that was still true.
-    const matched = new Map();
-    let matchedTotal = 0;
+    const unread = [];
     for (const row of rows) {
-      const key = keyOf(row);
+      const key = keyOf(identify(row.file, row.mutant));
       const count = remaining.get(key) ?? 0;
-      if (count === 0) problems.push(`unread timeout [${name}]: ${describeKey(row)} (${row.reason || 'no reason'})`);
-      else {
-        remaining.set(key, count - 1);
-        matched.set(key, (matched.get(key) ?? 0) + 1);
-        matchedTotal += 1;
-      }
-    }
-    for (const [key, count] of remaining) {
-      if (count === 0) continue;
-      const [file, line, mutator, replacement] = key.split('\u0000');
-      problems.push(`stale proof [${name}]: ${describeKey({ file, line, mutator, replacement })} is not a Timeout any more`);
+      if (count === 0) unread.push(row);
+      else remaining.set(key, count - 1);
     }
 
     const counts = new Map();
     for (const entry of entries) counts.set(entry.verdict, (counts.get(entry.verdict) ?? 0) + 1);
-    console.log(`${name}: ${rows.length} Timeout verdict(s), ${entries.length} proof(s)`);
+    console.log(
+      `${name}: ${rows.length} Timeout verdict(s), ${entries.length} proof(s), ${unread.length} unread`,
+    );
     for (const [verdict, count] of [...counts].sort()) console.log(`  ${verdict.padEnd(10)} ${count}`);
 
-    if (args.prune && entries.length !== matchedTotal) {
-      const allowance = new Map(matched);
+    if (unread.length > 0 && args.probe) {
+      requireCleanSources([...new Set(unread.map((row) => row.file))]);
+      const testsOf = attributedTests(parsed);
+      for (const row of unread) {
+        const result = await probe(target, row, testsOf, args.cap);
+        probed += 1;
+        console.log(
+          `  read now: ${describeKey(result)} — ${result.verdict}${result.detail ? `: ${result.detail}` : ''}`,
+        );
+        if (result.verdict === 'survived') {
+          problems.push(
+            `unread timeout [${name}]: ${describeKey(result)} — the suite passed the edit, so the score counted a detection nobody made`,
+          );
+        } else if (result.verdict === 'unreplayable') {
+          problems.push(`unread timeout [${name}]: ${describeKey(result)} — cannot be replayed: ${result.detail}`);
+        } else {
+          notes.push(
+            `new proof [${name}]: ${describeKey(result)} — ${result.verdict}${
+              result.detail ? `: ${result.detail}` : ''
+            }; record it with --target ${name} --record`,
+          );
+        }
+      }
+    } else {
+      for (const row of unread) {
+        const named = identify(row.file, row.mutant);
+        problems.push(`unread timeout [${name}]: ${describeKey(named)} (${named.reason || 'no reason'})`);
+      }
+    }
+
+    const allKeys = new Map();
+    for (const [file, info] of Object.entries(parsed.files ?? {})) {
+      for (const mutant of info.mutants ?? []) {
+        const key = keyOf(identify(file, mutant));
+        allKeys.set(key, (allKeys.get(key) ?? 0) + 1);
+      }
+    }
+    const stale = new Map();
+    for (const [key, count] of remaining) {
+      if (count === 0 || (allKeys.get(key) ?? 0) > 0) continue;
+      stale.set(key, count);
+      const [file, line, mutator, replacement] = key.split('\u0000');
+      notes.push(
+        `stale proof [${name}]: ${describeKey({ file, line, mutator, replacement })} is not in the report any more`,
+      );
+    }
+    if (args.prune && stale.size > 0) {
+      const allowance = new Map(stale);
       const kept = entries.filter((entry) => {
         const key = keyOf(entry);
         const left = allowance.get(key) ?? 0;
-        if (left === 0) return false;
+        if (left === 0) return true;
         allowance.set(key, left - 1);
-        return true;
+        return false;
       });
       if (kept.length !== entries.length) {
         proofs.targets[name] = { ...proofs.targets[name], entries: kept };
@@ -463,22 +512,57 @@ async function check(args) {
           `  pruned ${entries.length - kept.length} stale proof(s) from ${path.relative(REPOSITORY_ROOT, args.proofs)}`,
         );
       }
-      for (let i = problems.length - 1; i >= 0; i -= 1) {
-        if (problems[i].startsWith(`stale proof [${name}]`)) problems.splice(i, 1);
-      }
     }
   }
 
-  console.log(`${totalRows} Timeout verdict(s) across ${names.length} target(s)`);
+  for (const note of notes) console.log(note);
+  console.log(
+    `${totalRows} Timeout verdict(s) across ${names.length} target(s)${probed > 0 ? `, ${probed} read on the spot` : ''}`,
+  );
   if (problems.length === 0) {
-    console.log('every Timeout has been read, and every proof still describes one');
+    console.log('no Timeout was counted without being read, and none hid a passing suite');
     return;
   }
-  for (const problem of problems) console.error(problem.replace(/^\$/, ''));
-  console.error(
-    ['', 'Read them with:', '  node operations/scripts/resolve-timeouts.mjs --target <name> --record'].join('\n'),
-  );
+  for (const problem of problems) console.error(problem);
   process.exitCode = 1;
+}
+
+async function probe(target, row, testsOf, cap) {
+  const named = identify(row.file, row.mutant);
+  const { files: testFiles, names: testNames } = testsOf(row.mutant.coveredBy);
+  if (testFiles.length === 0) {
+    return { ...named, verdict: 'unattributed', detail: 'no coveredBy tests' };
+  }
+
+  const absolute = path.join(REPOSITORY_ROOT, named.file);
+  const original = fs.readFileSync(absolute, 'utf-8');
+  let edit;
+  try {
+    edit = splice(original, row.mutant);
+  } catch (error) {
+    // A stale report cannot be replayed, and splicing anyway would verify an edit
+    // nobody named. The report has to be regenerated.
+    return { ...named, verdict: 'unreplayable', detail: error.message };
+  }
+  if (edit.removed === '') {
+    return { ...named, verdict: 'unreplayable', detail: 'empty replace range' };
+  }
+
+  const restore = replaceFile(absolute, edit.updated).restore;
+  activeRestore = restore;
+  let run;
+  try {
+    run = await runSuite(
+      target,
+      testFiles.map((file) => path.relative(target.packageDir, path.join(REPOSITORY_ROOT, file))),
+      namePattern(testNames),
+      cap,
+    );
+  } finally {
+    restore();
+    activeRestore = null;
+  }
+  return { ...named, ...classify(run) };
 }
 
 async function resolve(args) {
@@ -505,55 +589,17 @@ async function resolve(args) {
   const results = [];
   for (const [index, row] of rows.entries()) {
     const named = identify(row.file, row.mutant);
-    const { files: testFiles, names: testNames } = testsOf(row.mutant.coveredBy);
     const label = `${String(index + 1).padStart(2)}/${rows.length} ${describeKey(named)}`;
 
     if (args.dryRun) {
-      console.log(`${label} [${named.reason || 'no reason'}] ${testNames.length} test(s) in ${testFiles.length} file(s)`);
-      continue;
-    }
-    if (testFiles.length === 0) {
-      console.log(`${label} — no attributed tests; nothing can have decided this.`);
-      results.push({ ...named, verdict: 'unattributed', detail: 'no coveredBy tests' });
+      const { files, names } = testsOf(row.mutant.coveredBy);
+      console.log(`${label} [${named.reason || 'no reason'}] ${names.length} test(s) in ${files.length} file(s)`);
       continue;
     }
 
-    const absolute = path.join(REPOSITORY_ROOT, named.file);
-    const original = fs.readFileSync(absolute, 'utf-8');
-    let edit;
-    try {
-      edit = splice(original, row.mutant);
-    } catch (error) {
-      // A stale report cannot be replayed, and splicing anyway would verify an edit
-      // nobody named. The report has to be regenerated.
-      console.log(`${label} — cannot splice: ${error.message}`);
-      results.push({ ...named, verdict: 'unreplayable', detail: error.message });
-      continue;
-    }
-    if (edit.removed === '') {
-      console.log(`${label} — the report points at an empty range`);
-      results.push({ ...named, verdict: 'unreplayable', detail: 'empty replace range' });
-      continue;
-    }
-
-    const restore = replaceFile(absolute, edit.updated).restore;
-    activeRestore = restore;
-    let run;
-    try {
-      run = await runSuite(
-        target,
-        testFiles.map((file) => path.relative(target.packageDir, path.join(REPOSITORY_ROOT, file))),
-        namePattern(testNames),
-        args.cap,
-      );
-    } finally {
-      restore();
-      activeRestore = null;
-    }
-
-    const { verdict, detail, evidence, tail } = classify(run);
-    console.log(`${label} — ${verdict} (${evidence})${detail ? `: ${detail}` : ''}`);
-    results.push({ ...named, verdict, detail, evidence, tail });
+    const result = await probe(target, row, testsOf, args.cap);
+    console.log(`${label} — ${result.verdict} (${result.evidence ?? 'not run'})${result.detail ? `: ${result.detail}` : ''}`);
+    results.push(result);
   }
 
   if (args.out) {

@@ -300,9 +300,9 @@ any test can be blamed for it). The arithmetic is the gate's own:
 report attributed to it, and `mutation/timeouts.json` records what those tests said — 5 of them fail,
 36 report nothing at all and the run does not finish. None of the 41 passes, which is the question the
 column could not answer before: a `Timeout` counted towards the score without any test having been
-asked. The gate now requires the report and that file to name each other in both directions, so a new
-timeout fails CI with the command that reads it, and a record that no longer describes a timeout fails
-too. See `docs/maturity.md#the-timeout-column`.
+asked. The gate now reads what the file does not already answer, on the spot, and fails only when the
+suite *passes* an abort — a score that counted a detection nobody made. See
+`docs/maturity.md#the-timeout-column`.
 
 The overall figure is a share of a larger denominator than iteration 37's 98.09 %: `FileAuditStore.ts`
 gained 161 mutants with the segment/archive reconciliation, 156 of which are killed.
@@ -404,6 +404,16 @@ when a mutation config inherits a budget instead of declaring one, or declares o
 `check:gates` cannot check a *measurement*, so the derived numbers live in the configs with the
 measurement recorded beside them, and the relationship it can check is the one that broke: a test
 timeout below the runner's cap, on every target, declared explicitly.
+
+**The proof file is a cache, and CI proved it has to be.** The first version of the gate required the
+report and `mutation/timeouts.json` to name each other in both directions, and CI run `44221390170`
+failed it: the runner reported four mutants differently from the workstation the file was written on —
+two as aborts that had been killed locally, two killed that had been aborts — because whether the runner
+drains after a failed test depends on the load. A gate that fails on the difference between two
+computers is a flaky gate, so the check now settles the difference instead of reporting it: a known
+abort is answered from the file, an unknown one is replayed in place (half a minute), and the build
+fails only on an answer — a suite that passes an abort. The file saves thirty seconds per known abort and
+documents what was learned; it no longer decides whether CI is green.
 
 **The dry run found a defect before it could run a single mutant.** `AC 85`'s `SC.3` asserted on
 `audit-20261117-0001.ndjson`, a name the store derives from the clock; it passed until the first UTC
