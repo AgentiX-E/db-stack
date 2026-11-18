@@ -26,6 +26,7 @@ import os from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { generateClusterCerts, type CertBundle, type TestClusterCerts } from './test-certs';
+import { awaitAgreement, pollUntil } from '../../testing/convergence';
 
 // ──────────────────────────────────────────
 //  Constants
@@ -202,10 +203,12 @@ async function waitForMessage(node: TestNode, type: string, timeoutMs: number = 
 
 async function waitForLeaderElection(nodes: TestNode[], timeoutMs: number = LEADER_ELECTION_TIMEOUT): Promise<number> {
   const promises = nodes.map((n) => waitForMessage(n, 'leader-elected', timeoutMs));
-  // Return the first one that resolves (but wait for all to ensure leader is known)
+  // The first announcement is one node's answer, not the cluster's: every other
+  // node learns the leader on the next heartbeat, and callers read those views
+  // immediately afterwards. This used to be `sleep(500)` — a guess that happened
+  // to be long enough on an idle machine.
   const result = await Promise.race(promises);
-  // Give others a moment to catch up
-  await sleep(500);
+  await awaitLeaderAgreement(nodes, timeoutMs);
   return result.nodeId;
 }
 
@@ -220,6 +223,51 @@ async function waitForLogLength(node: TestNode, target: number, timeoutMs: numbe
     await sleep(250);
   }
   return last;
+}
+
+/**
+ * Every live node's view of who leads, required to agree within `timeoutMs`.
+ *
+ * `startCluster` returns as soon as the cluster has *a* leader; whether the other
+ * nodes already know is a separate fact, and six tests in this file used to buy it
+ * with `sleep(1000)`. A fixed pause is a guess in both directions — too short when
+ * the runner is loaded, wasted time when the cluster is already quiet — and it
+ * cannot tell "not yet" from "never". The agreement read can.
+ */
+async function awaitLeaderAgreement(nodeList: TestNode[], timeoutMs = LEADER_ELECTION_TIMEOUT): Promise<TestNode> {
+  const live = nodeList.filter((n) => n.process.connected && !n.process.killed);
+  if (live.length === 0) throw new Error('no live node to read a leader from');
+  const { value } = await awaitAgreement(
+    live.map((n) => async () => Number(((await getStatus(n)) as any)?.leader ?? 0)),
+    {
+      timeoutMs,
+      label: `nodes ${live.map((n) => n.id).join(',')} naming one leader`,
+      require: (leaderId) => leaderId > 0,
+    },
+  );
+  const leader = live.find((n) => n.id === value[0]);
+  if (!leader) throw new Error(`leader ${value[0]} is not a live node`);
+  return leader;
+}
+
+/**
+ * Poll one node's applied log until it reaches `target`.
+ *
+ * Unlike {@link waitForLogLength} this fails instead of returning the last value it
+ * saw: it is used to assert that a node which was restarted or freshly added has
+ * caught up, and "still at 7 of 100" is a failure worth naming, with the count.
+ */
+async function awaitApplied(
+  node: TestNode,
+  target: number,
+  timeoutMs: number = LOG_REPLICATION_TIMEOUT,
+): Promise<number> {
+  const { value } = await pollUntil(
+    async () => Number(((await getStatus(node)) as any).logLength ?? 0),
+    (length) => length >= target,
+    { timeoutMs, label: `node ${node.id} applied log length >= ${target}` },
+  );
+  return value;
 }
 
 async function proposeToLeader(
@@ -477,7 +525,6 @@ describe('Raft Transport Stress & Resilience', () => {
     'AC 8.11 — 1000 sequential propose + commit on 3-node cluster',
     async () => {
       await startCluster(3);
-      await sleep(1000);
 
       // Propose 1000 entries in small concurrent batches
       // Small batch size avoids IPC message queue saturation on the worker process
@@ -524,7 +571,6 @@ describe('Raft Transport Stress & Resilience', () => {
     'AC 8.12 — 100 concurrent proposals to leader',
     async () => {
       await startCluster(3);
-      await sleep(1000);
 
       const leader = await findLeader();
 
@@ -552,7 +598,6 @@ describe('Raft Transport Stress & Resilience', () => {
     'AC 8.13 — connection drop and reconnect',
     async () => {
       await startCluster(3);
-      await sleep(1000);
 
       const leader = await findLeader();
 
@@ -565,13 +610,15 @@ describe('Raft Transport Stress & Resilience', () => {
       const follower = nodes.find((n) => n.id !== leader.id)!;
       const followerPort = follower.port;
 
-      // Kill the follower
+      // Kill the follower. Its storage stays on disk: a process that dies comes back
+      // with its log, which is what this test is about.
       await gracefulShutdown(follower);
-      cleanupTempDir(follower.dataDir);
-      await sleep(1500);
 
-      // Majority should still function — propose more entries
-      const currentLeader = await findLeader();
+      // Majority should still function — propose more entries. What used to be
+      // `sleep(1500)` is the surviving pair agreeing on who leads: with two of three
+      // alive there is nothing to re-elect, but neither survivor may still be naming
+      // the node that just went away.
+      const currentLeader = await awaitLeaderAgreement(nodes);
       await proposeToLeader(currentLeader, 'post-drop-1', nodes);
       await proposeToLeader(currentLeader, 'post-drop-2', nodes);
 
@@ -583,30 +630,26 @@ describe('Raft Transport Stress & Resilience', () => {
         }
       }
 
-      const newDataDir = createTempDir(`node-${follower.id}-restart`);
-      const newNode = createNode(follower.id, followerPort, peerList, certs[follower.id - 1]!, newDataDir);
-      // Replace the node in the list
+      const newNode = createNode(follower.id, followerPort, peerList, certs[follower.id - 1]!, follower.dataDir);
       const idx = nodes.findIndex((n) => n.id === follower.id);
-      cleanupTempDir(nodes[idx]!.dataDir);
       nodes[idx] = newNode;
 
       // Wait for it to come online
       await waitForMessage(newNode, 'ready', readyBudgetMs());
-      await sleep(2000); // Allow log catch-up from leader
 
-      // Wait for the restarted node to catch up via heartbeats
-      await sleep(5000);
+      // The restarted node has to replay the log before it can be called caught up.
+      // This was `sleep(2000)` + `sleep(5000)` followed by an assertion on a
+      // *different* node: a restart that replayed nothing still passed, because the
+      // survivor it checked had every entry all along.
+      const caughtUp = await awaitApplied(newNode, 5);
+      expect(caughtUp).toBeGreaterThanOrEqual(5);
 
-      // Verify: no error checking self — just ensure proposals were committed
-      // The restarted node may still be catching up via heartbeat
-      const statusNew = await getStatus(newNode);
-      const followers = nodes.filter((n) => n.id !== newNode.id);
-      const followerStatuses = await Promise.all(followers.map((n) => getStatus(n)));
-      const leaderStatus = followerStatuses[0];
-      // Leader should have all 5 entries committed
-      if (leaderStatus) {
-        expect((leaderStatus as any).logLength).toBeGreaterThanOrEqual(5);
-      }
+      // The surviving pair kept every entry while the third node was gone.
+      const survivors = nodes.filter((n) => n.id !== newNode.id);
+      const survivorLengths = await Promise.all(
+        survivors.map(async (n) => Number(((await getStatus(n)) as any).logLength ?? 0)),
+      );
+      for (const length of survivorLengths) expect(length).toBeGreaterThanOrEqual(5);
     },
     STRESS_TIMEOUT,
   );
@@ -614,38 +657,48 @@ describe('Raft Transport Stress & Resilience', () => {
   // ── AC 8.14: Log catch-up ─────────────────────────────────────────
 
   it(
-    'AC 8.14 — log catch-up (start 2 nodes, propose 100, add 3rd)',
+    'AC 8.14 — a follower that missed 100 entries catches up while the cluster keeps writing',
     async () => {
-      // Start with 2 nodes (slower election ticks for stability)
-      await startCluster(2, undefined, 15, 5);
-      await sleep(1000);
+      await startCluster(3);
 
       const leader = await findLeader();
+      for (let i = 0; i < 5; i++) await proposeToLeader(leader, `pre-catchup-${i}`, nodes);
 
-      // Propose 100 entries on 2-node cluster
-      let committed = 0;
-      for (let i = 0; i < 100; i++) {
-        await proposeToLeader(leader, `catchup-${i}`, nodes);
-        committed++;
-      }
-      expect(committed).toBe(100);
+      // Take a follower down and keep writing to the surviving pair. The restarted
+      // node then has to replay what it missed *and* keep up with what arrives after
+      // it rejoins — the shape a rolling restart produces in production.
+      //
+      // This replaces "start 2 nodes, propose 100, add a 3rd": that test spawned a
+      // third process which was never added to the configuration, so nothing ever
+      // replicated to it. Its 5 s sleep was followed by an assertion on the two nodes
+      // that already held all 100 entries, and the property in its name was never
+      // checked — a joiner that received nothing passed. Adding a node is a
+      // membership change, which this harness cannot drive (P3-25).
+      const follower = nodes.find((n) => n.id !== leader.id)!;
+      const followerPort = follower.port;
+      await gracefulShutdown(follower);
 
-      // Add 3rd node — peers are the existing 2 nodes (not self)
-      const port3 = await getFreePort();
-      const peerList: PeerInfo[] = nodes.map((n) => ({ id: n.id, host: '127.0.0.1', port: n.port }));
+      const currentLeader = await awaitLeaderAgreement(nodes);
+      for (let i = 0; i < 100; i++) await proposeToLeader(currentLeader, `catchup-${i}`, nodes);
 
-      const dataDir3 = createTempDir('node-3-catchup');
-      const node3 = createNode(3, port3, peerList, certs[2]!, dataDir3, 15, 3);
-      nodes.push(node3);
+      const peerList: PeerInfo[] = nodes
+        .filter((n) => n.id !== follower.id)
+        .map((n) => ({ id: n.id, host: '127.0.0.1', port: n.port }));
+      const revived = createNode(follower.id, followerPort, peerList, certs[follower.id - 1]!, follower.dataDir);
+      const idx = nodes.findIndex((n) => n.id === follower.id);
+      nodes[idx] = revived;
 
-      await waitForMessage(node3, 'ready', readyBudgetMs());
-      await sleep(5000); // Allow log catch-up via heartbeats
+      await waitForMessage(revived, 'ready', readyBudgetMs());
 
-      // Verify the two original nodes have 100+ entries (3rd node may still be catching up)
-      const existingStatuses = await Promise.all(nodes.filter((n) => n.id !== 3).map((n) => getStatus(n)));
-      for (const s of existingStatuses) {
-        expect((s as any).logLength).toBeGreaterThanOrEqual(100);
-      }
+      // 5 proposals before the kill plus 100 after it, plus the entries the cluster
+      // already had. The exact overlap is the leader's business; the floor is not.
+      const caughtUp = await awaitApplied(revived, 103);
+      expect(caughtUp).toBeGreaterThanOrEqual(103);
+
+      // The pair that stayed up committed everything on its own.
+      const leaderNow = await findLeader();
+      const applied = await awaitApplied(leaderNow, 103);
+      expect(applied).toBeGreaterThanOrEqual(103);
     },
     STRESS_TIMEOUT,
   );
@@ -656,7 +709,6 @@ describe('Raft Transport Stress & Resilience', () => {
     'AC 8.15 — partition scenario (isolate, majority continues, heal, catch up)',
     async () => {
       await startCluster(3, undefined, 12, 4);
-      await sleep(1000);
 
       const leader = await findLeader();
 
@@ -668,11 +720,12 @@ describe('Raft Transport Stress & Resilience', () => {
       // Isolate one node (a non-leader)
       const toIsolate = nodes.find((n) => n.id !== leader.id)!;
       await gracefulShutdown(toIsolate).catch(() => {});
-      cleanupTempDir(toIsolate.dataDir);
-      await sleep(2000);
+      // Storage is left alone: the node comes back as itself, with its log.
 
-      // Majority (leader + 1 other) continues — propose 10 more
-      const leaderAfter = await findLeader();
+      // Majority (leader + 1 other) continues — propose 10 more. The bound is the
+      // survivors naming one leader without the node that just left; the old
+      // `sleep(2000)` was a fixed guess at how long that takes.
+      const leaderAfter = await awaitLeaderAgreement(nodes);
       for (let i = 0; i < 10; i++) {
         await proposeToLeader(leaderAfter, `post-partition-${i}`, nodes);
       }
@@ -683,16 +736,19 @@ describe('Raft Transport Stress & Resilience', () => {
         .filter((n) => n.id !== toIsolate.id)
         .map((n) => ({ id: n.id, host: '127.0.0.1', port: n.port }));
 
-      const newDataDir = createTempDir('node-isolated-heal');
-      const healedNode = createNode(toIsolate.id, portNew, survivingPeers, certs[toIsolate.id - 1]!, newDataDir);
+      const healedNode = createNode(toIsolate.id, portNew, survivingPeers, certs[toIsolate.id - 1]!, toIsolate.dataDir);
       const idx = nodes.findIndex((n) => n.id === toIsolate.id);
-      cleanupTempDir(nodes[idx]!.dataDir);
       nodes[idx] = healedNode;
 
       await waitForMessage(healedNode, 'ready', readyBudgetMs());
-      await sleep(5000); // Allow catch-up via heartbeats
 
-      // Verify the nodes that stayed (not isolated) have all entries
+      // "Heal, catch up" is two claims and the test only made the first one: after a
+      // 5 s sleep it checked the nodes that never left. The rejoined node is the one
+      // that has to replay the 10 entries it missed while it was down.
+      const healed = await awaitApplied(healedNode, 20);
+      expect(healed).toBeGreaterThanOrEqual(20);
+
+      // The nodes that stayed hold all 20 entries.
       const survivingAfter = nodes.filter((n) => n.id !== toIsolate.id);
       const survivedStatuses = await Promise.all(survivingAfter.map((n) => getStatus(n)));
       for (const s of survivedStatuses) {
@@ -708,7 +764,6 @@ describe('Raft Transport Stress & Resilience', () => {
     'AC 8.16 — requestId collision under high counter from same PID',
     async () => {
       await startCluster(3);
-      await sleep(1000);
 
       const leader = await findLeader();
 
@@ -720,11 +775,12 @@ describe('Raft Transport Stress & Resilience', () => {
       }
       await Promise.all(promises);
 
-      // Verify all committed on majority nodes
-      await sleep(500);
+      // Verify all committed on the leader. `proposeToLeader` resolves on the first
+      // `log-committed` broadcast, not per entry, so a fixed 500 ms was the only
+      // thing standing between "sent" and "applied" — and it is not a guarantee.
       const leaderNew = await findLeader();
-      const status = await getStatus(leaderNew);
-      expect((status as any).logLength).toBeGreaterThanOrEqual(count);
+      const applied = await awaitApplied(leaderNew, count);
+      expect(applied).toBeGreaterThanOrEqual(count);
     },
     STRESS_TIMEOUT,
   );

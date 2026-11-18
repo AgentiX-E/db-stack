@@ -320,7 +320,7 @@ export class JepsenController {
       }
     }
 
-    // ── Phase 3: Fuzzy register check (路 1) ─────────────
+    // ── Phase 3: Fuzzy register check (path 1) ───────────
 
     // Uses fuzzy register model: allows write→ok without immediate read visibility.
     // Only catches "forged values" (reads returning values that were never written).
@@ -336,8 +336,14 @@ export class JepsenController {
       }
     }
 
-    const totalOps = events.length / 2;
-    const completedOps = events.filter((e) => e.type === 'return').length / 2;
+    // A completed operation contributes two events — a call and a return — so the
+    // number of operations the cluster was asked to perform is the number of calls,
+    // and the number that finished is the number of returns. Halving each (which is
+    // what `events.length / 2` and `returns / 2` did) reports a run in which every
+    // operation completed as half-completed, and a call that never returns — the case
+    // a crash nemesis exists to produce — cannot be counted from either figure.
+    const totalOps = events.filter((e) => e.type === 'call').length;
+    const completedOps = events.filter((e) => e.type === 'return').length;
 
     return {
       linearizable: fuzzy.valid ? true : false,
@@ -401,10 +407,10 @@ export class JepsenController {
     }
   }
 
-  // ── 路 2: 最终状态扫描 ─────────────────────────────────
+  // ── Path 2: final state scan ──────────────────────────
 
   /**
-   * Verify final state consistency across all surviving nodes (路 2).
+   * Verify final state consistency across all surviving nodes (path 2).
    *
    * After a Jepsen-style run with faults, does a full key scan on every
    * surviving node. Confirms that all nodes with the same log index

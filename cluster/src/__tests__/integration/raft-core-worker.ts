@@ -164,6 +164,10 @@ async function main() {
             const leader = await raftAdapter.getLeader();
             const term = await raftAdapter.getTerm();
             const progress = await raftAdapter.getProgress();
+            // The leader's per-peer view is the only place a follower that is not
+            // being sent anything is visible: from the follower's own side it looks
+            // like a healthy node waiting for entries.
+            const peers = await raftAdapter.getPeerProgress();
 
             process.send?.({
               type: 'status',
@@ -177,6 +181,7 @@ async function main() {
                 lastLog: progress.lastLog,
                 committedLog: [...committedLog],
                 logLength: committedLog.length,
+                peers,
               },
               timestamp: Date.now(),
             });

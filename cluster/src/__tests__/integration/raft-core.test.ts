@@ -146,10 +146,6 @@ function waitForMessage(
   });
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 function killNode(node: TestNode): void {
   try {
     node.process.kill('SIGTERM');
@@ -331,8 +327,9 @@ describe('Raft Core Multi-Node Cluster', () => {
     const leaderNode = newNodes.find((n) => n.id === initialLeaderId)!;
     killNode(leaderNode);
 
-    // Give a brief moment for the surviving nodes to detect the leader is gone
-    await sleep(1000);
+    // Waiting for the survivors to notice is the election timeout's job, and
+    // `waitForMessage` below already bounds that wait. A fixed `sleep(1000)` here
+    // was either a wasted second or a promise the test could not keep.
 
     // Wait for a new leader among remaining nodes.
     // Must be a DIFFERENT leader from the killed one, emitted by a surviving node.
@@ -373,9 +370,10 @@ describe('Raft Core Multi-Node Cluster', () => {
 
     // Kill the leader (graceful shutdown)
     sendCommand(leaderNode, 'shutdown');
-    await new Promise((r) => setTimeout(r, 1000));
 
-    // Wait for new leader among remaining nodes (takes longer with 2 nodes)
+    // Wait for new leader among remaining nodes (takes longer with 2 nodes).
+    // The election timeout is the real bound; a fixed pause before this call could
+    // only add latency or hide a cluster that never re-elected.
     const remainingNodes = newNodes.filter((n) => n.id !== initialLeaderId);
     const newLeaderMsg = await waitForMessage(remainingNodes, 'leader-elected', REELECTION_TIMEOUT, (msg) => {
       return msg.data.leader !== initialLeaderId; // must be a DIFFERENT leader
@@ -385,10 +383,10 @@ describe('Raft Core Multi-Node Cluster', () => {
     expect(newLeader).toBeDefined();
     expect(newLeader.id).not.toBe(initialLeaderId);
 
-    // Give new leader time to stabilize before proposing
-    await sleep(1000);
-
-    // Propose after recovery
+    // Propose after recovery. The proposal is the probe: a leader that has not yet
+    // committed its no-op still appends and commits both entries, and a leader that
+    // lost the election in the meantime is a fact this test wants to see. The old
+    // `sleep(1000)` "to stabilize" decided neither question.
     sendCommand(newLeader, 'propose', 'post-failure-entry');
     const commitMsg = await waitForMessage(remainingNodes, 'log-committed', LOG_REPLICATION_TIMEOUT);
 

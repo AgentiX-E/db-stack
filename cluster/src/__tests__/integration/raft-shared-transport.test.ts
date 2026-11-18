@@ -197,8 +197,9 @@ describe('Single-process multi-RaftGroup via SharedBatchedTransport', () => {
       cluster.push({ nodeId, host: '127.0.0.1', port: ports[i]!, transport, shards, dataDir: dataDirs[i]! });
     }
 
-    // Give transports time to establish TCP connections
-    await sleep(2000);
+    // No settle pause here: the first test starts by waiting for a leader in each
+    // shard group with a 30 s bound, and that wait *requires* the transports to be
+    // connected. A fixed 2 s in `beforeAll` only made the failure later.
   }, 60_000);
 
   it(
