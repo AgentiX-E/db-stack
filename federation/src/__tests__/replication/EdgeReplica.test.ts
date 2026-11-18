@@ -1,5 +1,5 @@
 /**
- * EdgeReplica 测试 — 覆盖连接、同步完整性、网络分区恢复、backpressure。
+ * EdgeReplica tests — covers connection, sync integrity, network partition recovery and backpressure.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EdgeReplica, type EdgeSourceConfig, type ReplicationEvent } from '../../replication/EdgeReplica';
@@ -17,36 +17,36 @@ describe('EdgeReplica', () => {
     await edge.connect(DEFAULT_SOURCE);
   });
 
-  // ── 连接管理 ────────────────────────────────────────────────────
+  // ── Connection management ───────────────────────────────────────
 
-  it('connect 后状态为 syncing', () => {
+  it('the state is syncing after connect', () => {
     const status = edge.getSyncStatus();
     expect(status.state).toBe('syncing');
   });
 
-  it('disconnect 后状态为 disconnected', async () => {
+  it('the state is disconnected after disconnect', async () => {
     await edge.disconnect();
     const status = edge.getSyncStatus();
     expect(status.state).toBe('disconnected');
   });
 
-  it('重复 connect 不会出错', async () => {
+  it('a repeated connect does not fail', async () => {
     await edge.connect(DEFAULT_SOURCE);
     const status = edge.getSyncStatus();
     expect(status.state).toBe('syncing');
   });
 
-  // ── 数据接收 ────────────────────────────────────────────────────
+  // ── Data intake ─────────────────────────────────────────────────
 
-  it('接收一个 data 条目后 lag 正确更新', () => {
+  it('lag is updated correctly after one data entry arrives', () => {
     edge.receive(1, { key: 'test', value: 'hello' });
     const status = edge.getSyncStatus();
     expect(status.lastLSN).toBe(1);
     expect(status.receivedCount).toBe(1);
-    expect(status.lagLSN).toBe(0); // 源 LSN == 接收 LSN
+    expect(status.lagLSN).toBe(0); // source LSN == received LSN
   });
 
-  it('接收多个条目后 getAllData 返回完整列表', () => {
+  it('getAllData returns the full list after several entries arrive', () => {
     edge.receive(1, 'a');
     edge.receive(2, 'b');
     edge.receive(3, 'c');
@@ -56,16 +56,16 @@ describe('EdgeReplica', () => {
     expect(data.map((d) => d.payload)).toEqual(['a', 'b', 'c']);
   });
 
-  it('getLag 返回 lagLSN', () => {
-    // sourceLSN = 10（手动设置），lastLSN = 5
+  it('getLag returns lagLSN', () => {
+    // sourceLSN = 10 (set by hand), lastLSN = 5
     edge.receive(5, 'data');
     edge.receive(10, 'data'); // this updates sourceLSN to 10, lastLSN to 10
     expect(edge.getLag()).toBe(0); // sourceLSN - lastLSN = 10-10 = 0
   });
 
-  // ── 精确复制 (1000 entries) ─────────────────────────────────────
+  // ── Exact replication (1000 entries) ────────────────────────────
 
-  it('1000 entries 精确复制到边缘，无丢失无乱序', () => {
+  it('1000 entries replicate to the edge exactly, with no loss and no reordering', () => {
     for (let i = 1; i <= 1000; i++) {
       edge.receive(i, `entry-${i}`);
     }
@@ -73,15 +73,15 @@ describe('EdgeReplica', () => {
     const data = edge.getAllData();
     expect(data).toHaveLength(1000);
 
-    // 验证有序
+    // Check ordering
     expect(data[0]!.lsn).toBe(1);
     expect(data[999]!.lsn).toBe(1000);
     expect(data[499]!.payload).toBe('entry-500');
   });
 
-  // ── batch 接收 ──────────────────────────────────────────────────
+  // ── Batch intake ────────────────────────────────────────────────
 
-  it('receiveBatch 批量接收正确处理所有条目', () => {
+  it('receiveBatch handles every entry in a batch', () => {
     const batch = Array.from({ length: 100 }, (_, i) => ({
       lsn: i + 1,
       payload: `batch-${i + 1}`,
@@ -91,36 +91,36 @@ describe('EdgeReplica', () => {
     expect(edge.getSyncStatus().receivedCount).toBe(100);
   });
 
-  // ── 网络分区恢复 ───────────────────────────────────────────────
+  // ── Network partition recovery ─────────────────────────────────
 
-  it('网络分区后数据不丢失（断点续传）', async () => {
-    // 1. 同步前 500 条
+  it('no data is lost after a network partition (resume from the cut-off point)', async () => {
+    // 1. Sync the first 500 entries
     for (let i = 1; i <= 500; i++) {
       edge.receive(i, `data-${i}`);
     }
     expect(edge.getAllData()).toHaveLength(500);
 
-    // 2. 断开连接（模拟网络分区）
+    // 2. Disconnect (simulates a network partition)
     await edge.disconnect();
 
-    // 3. 重新连接
+    // 3. Reconnect
     await edge.connect(DEFAULT_SOURCE);
 
-    // 4. 接收后 500 条（模拟恢复）
+    // 4. Receive the last 500 entries (simulates recovery)
     for (let i = 501; i <= 1000; i++) {
       edge.receive(i, `data-${i}`);
     }
 
-    // 5. 验证：边缘有全部 1000 条
+    // 5. Verify: the edge holds all 1000 entries
     const data = edge.getAllData();
     expect(data).toHaveLength(1000);
     expect(data[0]!.payload).toBe('data-1');
     expect(data[999]!.payload).toBe('data-1000');
   });
 
-  // ── 事件回调 ────────────────────────────────────────────────────
+  // ── Event callbacks ─────────────────────────────────────────────
 
-  it('onEvent 回调接收所有数据事件', () => {
+  it('the onEvent callback receives every data event', () => {
     const events: ReplicationEvent[] = [];
     edge.onEvent((e) => events.push(e));
 
@@ -132,7 +132,7 @@ describe('EdgeReplica', () => {
     expect(events[0]!.lsn).toBe(1);
   });
 
-  it('onSyncComplete 在 lag = 0 时触发', () => {
+  it('onSyncComplete fires when lag = 0', () => {
     const handler = vi.fn();
     edge.onSyncComplete(handler);
 
@@ -141,7 +141,7 @@ describe('EdgeReplica', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('取消注册的回调不再触发', () => {
+  it('an unregistered callback no longer fires', () => {
     const handler = vi.fn();
     const unsub = edge.onEvent(handler);
     unsub();
@@ -150,18 +150,18 @@ describe('EdgeReplica', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('onError 接收错误事件', () => {
+  it('onError receives error events', () => {
     const handler = vi.fn();
     edge.onError(handler);
 
-    // 模拟接收错误
+    // Simulate an intake error
     edge['_emitError'](new Error('Connection refused'));
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
   // ── Backpressure ────────────────────────────────────────────────
 
-  it('Backpressure：receiveBatch 大量数据不丢', () => {
+  it('backpressure: a large receiveBatch loses nothing', () => {
     const batch = Array.from({ length: 10000 }, (_, i) => ({
       lsn: i + 1,
       payload: `high-throughput-${i + 1}`,
@@ -170,21 +170,21 @@ describe('EdgeReplica', () => {
     expect(edge.getAllData()).toHaveLength(10000);
   });
 
-  // ── 有序性 ──────────────────────────────────────────────────────
+  // ── Ordering ────────────────────────────────────────────────────
 
-  it('接收乱序 LSN 时 getAllData 保持接收顺序', () => {
+  it('getAllData keeps intake order when LSNs arrive out of order', () => {
     edge.receive(3, 'c');
     edge.receive(1, 'a');
     edge.receive(2, 'b');
 
     const data = edge.getAllData();
-    // 保持接收顺序（不严格按 LSN 排序，作为边缘记录）
+    // Keeps intake order (no strict sort by LSN; these are edge records)
     expect(data.map((d) => d.lsn)).toEqual([3, 1, 2]);
     expect(data.map((d) => d.payload)).toEqual(['c', 'a', 'b']);
   });
 });
 
-// ── 额外覆盖 connect 边界 ─────────────────────────────────────────
+// ── Extra coverage of connect boundaries ──────────────────────────
 describe('EdgeReplica additional coverage', () => {
   it('destroyed replica rejects connect', async () => {
     const edge = new EdgeReplica();

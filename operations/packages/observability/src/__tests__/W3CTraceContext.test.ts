@@ -8,25 +8,25 @@ describe('W3CTraceContextProvider', () => {
     ctx = new W3CTraceContextProvider();
   });
 
-  it('traceparent 格式符合 W3C 标准', () => {
+  it('traceparent matches the W3C format', () => {
     const tp = ctx.getTraceParent();
     expect(tp).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
   });
 
-  it('traceId 是 32 位 hex 字符串', () => {
+  it('traceId is a 32-character hex string', () => {
     expect(ctx.getTraceId()).toMatch(/^[0-9a-f]{32}$/);
   });
 
-  it('spanId 是 16 位 hex 字符串', () => {
+  it('spanId is a 16-character hex string', () => {
     expect(ctx.getSpanId()).toMatch(/^[0-9a-f]{16}$/);
   });
 
-  it('可指定初始 traceId', () => {
+  it('an initial traceId can be supplied', () => {
     const custom = new W3CTraceContextProvider('a'.repeat(32));
     expect(custom.getTraceId()).toBe('a'.repeat(32));
   });
 
-  it('子 span 共享父 traceId', () => {
+  it('a child span shares the parent traceId', () => {
     const traceId = ctx.getTraceId();
     const span = ctx.createChildSpan('child-op');
     expect(span.getTraceParent().match(/00-([0-9a-f]{32})/)![1]).toBe(traceId);
@@ -41,7 +41,7 @@ describe('W3CTraceContextProvider', () => {
     expect(spans[0]!.errorMessage).toBe('Connection timeout');
   });
 
-  it('traceId 全链路传播 (cluster→federation→operations)', () => {
+  it('traceId propagates through the whole chain (cluster→federation→operations)', () => {
     const clusterCtx = new W3CTraceContextProvider();
     const traceId = clusterCtx.getTraceId();
 
@@ -67,7 +67,7 @@ describe('W3CTraceContextProvider', () => {
     expect(opsCtx.getTraceId()).toBe(traceId);
   });
 
-  it('addEvent 添加事件到 span', () => {
+  it('addEvent appends an event to the span', () => {
     const span = ctx.createChildSpan('test');
     span.addEvent('data-sent', { size: '1024' });
     span.addEvent('ack-received');
@@ -77,7 +77,7 @@ describe('W3CTraceContextProvider', () => {
     expect(spans[0]!.events[0]!.name).toBe('data-sent');
   });
 
-  it('end 设置 span 结束时间', () => {
+  it('end sets the span end time', () => {
     const span = ctx.createChildSpan('quick-op');
     const before = Date.now();
     span.end('ok');
@@ -88,7 +88,7 @@ describe('W3CTraceContextProvider', () => {
     expect(spans[0]!.status).toBe('ok');
   });
 
-  it('重复 end 不改变数据', () => {
+  it('a repeated end does not change the data', () => {
     const span = ctx.createChildSpan('idempotent-end');
     span.end('ok');
     span.end('error');
@@ -96,19 +96,19 @@ describe('W3CTraceContextProvider', () => {
     expect(spans[0]!.status).toBe('ok');
   });
 
-  it('extract 从 valid traceparent 恢复上下文', () => {
+  it('extract restores the context from a valid traceparent', () => {
     const validTP = '00-11aabb22ccdd33ee44ff5566778899aa-bbccddee00112233-01';
     ctx.extract(validTP);
     expect(ctx.getTraceId()).toBe('11aabb22ccdd33ee44ff5566778899aa');
     expect(ctx.getSpanId()).toBe('bbccddee00112233');
   });
 
-  it('extract 对 invalid traceparent 抛出异常', () => {
+  it('extract throws on an invalid traceparent', () => {
     expect(() => ctx.extract('invalid-header')).toThrow('Invalid traceparent format');
     expect(() => ctx.extract('')).toThrow('Invalid traceparent format');
   });
 
-  it('flush 返回并清空所有 span', () => {
+  it('flush returns and clears every span', () => {
     ctx.createChildSpan('a').end();
     ctx.createChildSpan('b').end();
     ctx.createChildSpan('c').end();
@@ -117,7 +117,7 @@ describe('W3CTraceContextProvider', () => {
     expect(ctx.spanCount()).toBe(0);
   });
 
-  it('getActiveSpans 只返回未结束的 span', () => {
+  it('getActiveSpans returns only unfinished spans', () => {
     const s1 = ctx.createChildSpan('active1');
     ctx.createChildSpan('active2');
     s1.end();
@@ -126,7 +126,7 @@ describe('W3CTraceContextProvider', () => {
     expect(active[0]!.name).toBe('active2');
   });
 
-  it('错误场景下 span 状态正确记录 error 和 exception 事件', () => {
+  it('the span records error status and an exception event in a failure scenario', () => {
     const span = ctx.createChildSpan('db.write');
     span.setStatus('error', 'Disk full');
     span.addEvent('exception', { exception: 'Disk full' });

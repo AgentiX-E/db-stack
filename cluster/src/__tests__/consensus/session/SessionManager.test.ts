@@ -1,5 +1,5 @@
 /**
- * SessionManager 测试 — 覆盖 CRUD、TTL、过期回调、并发安全。
+ * SessionManager tests — covers CRUD, TTL, expiry callbacks and concurrency safety.
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { SessionManager, type SessionConfig } from '../../../consensus/session/SessionManager';
@@ -17,7 +17,7 @@ describe('SessionManager', () => {
 
   // ── CRUD ─────────────────────────────────────────────────────────
 
-  it('create 返回正确的 session entry', () => {
+  it('create returns the correct session entry', () => {
     const entry = sm.create('s1', { role: 'admin' });
     expect(entry.id).toBe('s1');
     expect(entry.metadata).toEqual({ role: 'admin' });
@@ -25,18 +25,18 @@ describe('SessionManager', () => {
     expect(entry.expiresAt).toBe(entry.createdAt + 5000);
   });
 
-  it('get 返回已创建的 session', () => {
+  it('get returns an existing session', () => {
     sm.create('s1');
     const entry = sm.get('s1');
     expect(entry).not.toBeNull();
     expect(entry!.id).toBe('s1');
   });
 
-  it('get 返回 null 对于不存在的 session', () => {
+  it('get returns null for a missing session', () => {
     expect(sm.get('nonexistent')).toBeNull();
   });
 
-  it('delete 删除 session 并返回它', () => {
+  it('delete removes the session and returns it', () => {
     sm.create('s1');
     const deleted = sm.delete('s1');
     expect(deleted).not.toBeNull();
@@ -44,12 +44,12 @@ describe('SessionManager', () => {
     expect(sm.get('s1')).toBeNull();
   });
 
-  it('重复创建同一 id 应抛出', () => {
+  it('creating the same id twice throws', () => {
     sm.create('s1');
     expect(() => sm.create('s1')).toThrow("Session 's1' already exists");
   });
 
-  it('activeCount 准确反映活跃数量', () => {
+  it('activeCount reflects the live session count', () => {
     expect(sm.activeCount()).toBe(0);
     sm.create('s1');
     sm.create('s2');
@@ -59,9 +59,9 @@ describe('SessionManager', () => {
     expect(sm.activeCount()).toBe(2);
   });
 
-  // ── TTL 过期 ────────────────────────────────────────────────────
+  // ── TTL expiry ──────────────────────────────────────────────────
 
-  it('过期 session get 返回 null', async () => {
+  it('get returns null for an expired session', async () => {
     const shortSm = new SessionManager({ ttlMs: 10 });
     shortSm.create('s1');
     await new Promise((r) => setTimeout(r, 20));
@@ -69,24 +69,24 @@ describe('SessionManager', () => {
     shortSm.shutdown();
   });
 
-  it('extend 延长过期时间', async () => {
+  it('extend pushes the expiry out', async () => {
     const shortSm = new SessionManager({ ttlMs: 100 });
     shortSm.create('s1');
     await new Promise((r) => setTimeout(r, 50));
     expect(shortSm.extend('s1')).toBe(true);
     await new Promise((r) => setTimeout(r, 60));
-    // 总共 110ms，但 extend 过了，所以未过期
+    // 110ms in total, but extend was used, so the session has not expired
     expect(shortSm.get('s1')).not.toBeNull();
     shortSm.shutdown();
   });
 
-  it('extend 对不存在的 session 返回 false', () => {
+  it('extend returns false for a missing session', () => {
     expect(sm.extend('nonexistent')).toBe(false);
   });
 
   // ── cleanup ────────────────────────────────────────────────────
 
-  it('cleanup 清除过期 session 并返回清理数量', async () => {
+  it('cleanup removes expired sessions and returns how many', async () => {
     const shortSm = new SessionManager({ ttlMs: 10 });
     shortSm.create('s1');
     shortSm.create('s2');
@@ -100,16 +100,16 @@ describe('SessionManager', () => {
     shortSm.shutdown();
   });
 
-  it('cleanup 对未过期 session 不操作', () => {
+  it('cleanup leaves unexpired sessions alone', () => {
     sm.create('s1');
     const cleaned = sm.cleanup();
     expect(cleaned).toBe(0);
     expect(sm.activeCount()).toBe(1);
   });
 
-  // ── 过期回调 ────────────────────────────────────────────────────
+  // ── Expiry callbacks ────────────────────────────────────────────
 
-  it('过期回调 exactly-once 触发', async () => {
+  it('an expiry callback fires exactly once', async () => {
     const handler = vi.fn();
     const shortSm = new SessionManager({ ttlMs: 10 });
     shortSm.onExpiry(handler);
@@ -117,19 +117,19 @@ describe('SessionManager', () => {
     shortSm.create('s1');
     await new Promise((r) => setTimeout(r, 20));
 
-    // cleanup 触发过期
+    // cleanup triggers expiry
     shortSm.cleanup();
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }));
 
-    // 再次 cleanup 不重复触发
+    // a second cleanup does not fire again
     shortSm.cleanup();
     expect(handler).toHaveBeenCalledTimes(1);
 
     shortSm.shutdown();
   });
 
-  it('过期回调异常不影响其他处理器', async () => {
+  it('a throwing expiry callback does not affect the others', async () => {
     const crashHandler = vi.fn(() => {
       throw new Error('handler crashed');
     });
@@ -149,7 +149,7 @@ describe('SessionManager', () => {
     shortSm.shutdown();
   });
 
-  it('取消注册的回调不再触发', async () => {
+  it('an unregistered callback no longer fires', async () => {
     const handler = vi.fn();
     const shortSm = new SessionManager({ ttlMs: 10 });
     const unsub = shortSm.onExpiry(handler);
@@ -163,13 +163,13 @@ describe('SessionManager', () => {
     shortSm.shutdown();
   });
 
-  // ── 滑动过期 ────────────────────────────────────────────────────
+  // ── Sliding expiry ──────────────────────────────────────────────
 
-  it('滑动过期：每次访问重置 TTL', async () => {
+  it('sliding expiry: every access resets the TTL', async () => {
     const shortSm = new SessionManager({ ttlMs: 50, slidingExpiry: true });
     shortSm.create('s1');
 
-    // 访问多次，每次延长 TTL
+    // Access repeatedly; each access extends the TTL
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => setTimeout(r, 10));
       expect(shortSm.get('s1')).not.toBeNull();
@@ -179,9 +179,9 @@ describe('SessionManager', () => {
     shortSm.shutdown();
   });
 
-  // ── 并发容量 ────────────────────────────────────────────────────
+  // ── Concurrent capacity ─────────────────────────────────────────
 
-  it('maxSessions 限制会话数量', () => {
+  it('maxSessions caps the session count', () => {
     const cappedSm = new SessionManager({ ttlMs: 5000, maxSessions: 2 });
     cappedSm.create('s1');
     cappedSm.create('s2');
@@ -189,22 +189,22 @@ describe('SessionManager', () => {
     cappedSm.shutdown();
   });
 
-  it('maxSessions 在清理过期后允许创建', async () => {
+  it('maxSessions allows creation again once expired sessions are cleaned up', async () => {
     const cappedSm = new SessionManager({ ttlMs: 10, maxSessions: 2 });
     cappedSm.create('s1');
     cappedSm.create('s2');
 
     await new Promise((r) => setTimeout(r, 20));
 
-    // 清理后创建新 session
+    // Create a new session after cleanup
     cappedSm.cleanup();
     expect(() => cappedSm.create('s3')).not.toThrow();
     cappedSm.shutdown();
   });
 
-  // ── 10000 会话性能 ─────────────────────────────────────────────
+  // ── 10000-session performance ──────────────────────────────────
 
-  it('10000 并发 sessions 创建和查询', () => {
+  it('10000 concurrent sessions are created and read', () => {
     const start = performance.now();
     for (let i = 0; i < 10000; i++) {
       sm.create(`session-${i}`, { index: i });
@@ -218,14 +218,14 @@ describe('SessionManager', () => {
     }
     const getTime = performance.now() - startGet;
 
-    // O(n) 性能应通过（10000 次操作 < 1s）
+    // O(n) performance should pass (10000 operations < 1s)
     expect(createTime).toBeLessThan(1000);
     expect(getTime).toBeLessThan(1000);
   });
 
   // ── shutdown ────────────────────────────────────────────────────
 
-  it('shutdown 后所有操作返回 null 或抛出', () => {
+  it('after shutdown every operation returns null or throws', () => {
     sm.create('s1');
     sm.shutdown();
     expect(sm.get('s1')).toBeNull();

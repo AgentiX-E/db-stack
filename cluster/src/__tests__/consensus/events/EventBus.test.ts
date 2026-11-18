@@ -1,5 +1,5 @@
 /**
- * EventBus 测试 — 覆盖所有 EventBus 行为和 Disposable 模式。
+ * EventBus tests — covers every EventBus behavior and the Disposable pattern.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
@@ -16,9 +16,9 @@ describe('EventBus', () => {
     bus = new EventBus();
   });
 
-  // ── 基础发布/订阅 ────────────────────────────────────────────────
+  // ── Basic publish/subscribe ──────────────────────────────────────
 
-  it('同步订阅者应立即接收到发布的事件', () => {
+  it('a synchronous subscriber receives an emitted event immediately', () => {
     const handler = vi.fn();
     bus.on('leader.elected', handler);
 
@@ -35,7 +35,7 @@ describe('EventBus', () => {
     expect(handler).toHaveBeenCalledWith(event);
   });
 
-  it('多个订阅者都接收到同一事件', () => {
+  it('every subscriber receives the same event', () => {
     const h1 = vi.fn();
     const h2 = vi.fn();
     const h3 = vi.fn();
@@ -50,7 +50,7 @@ describe('EventBus', () => {
     expect(h3).toHaveBeenCalledTimes(1);
   });
 
-  it('不相关的事件类型不应触发订阅者', () => {
+  it('an unrelated event type does not trigger the subscriber', () => {
     const handler = vi.fn();
     bus.on('leader.elected', handler);
 
@@ -58,9 +58,9 @@ describe('EventBus', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  // ── Disposable 模式 ──────────────────────────────────────────────
+  // ── Disposable pattern ───────────────────────────────────────────
 
-  it('dispose() 后订阅者不再接收事件', () => {
+  it('no events reach the subscriber after dispose()', () => {
     const handler = vi.fn();
     const disposable = bus.on('leader.elected', handler);
 
@@ -72,7 +72,7 @@ describe('EventBus', () => {
     expect(handler).toHaveBeenCalledTimes(1); // no additional call
   });
 
-  it('多次 dispose() 是幂等的（无副作用）', () => {
+  it('repeated dispose() is idempotent (no side effects)', () => {
     const handler = vi.fn();
     const disposable = bus.on('leader.elected', handler);
 
@@ -84,7 +84,7 @@ describe('EventBus', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('所有订阅者 dispose 后事件类型被清理（零泄漏）', () => {
+  it('the event type is cleaned up once every subscriber disposes (zero leak)', () => {
     const d1 = bus.on('leader.elected', vi.fn());
     const d2 = bus.on('leader.elected', vi.fn());
 
@@ -98,9 +98,9 @@ describe('EventBus', () => {
     expect(bus.subscriberCount()).toBe(0);
   });
 
-  // ── once 订阅 ────────────────────────────────────────────────────
+  // ── once subscription ────────────────────────────────────────────
 
-  it('once 订阅在触发一次后自动取消', () => {
+  it('a once subscription cancels itself after one delivery', () => {
     const handler = vi.fn();
     bus.once('leader.elected', handler);
 
@@ -110,7 +110,7 @@ describe('EventBus', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('once 订阅的 dispose 应在触发前有效', () => {
+  it('dispose on a once subscription works before it fires', () => {
     const handler = vi.fn();
     const disposable = bus.once('leader.elected', handler);
     disposable.dispose();
@@ -119,9 +119,9 @@ describe('EventBus', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  // ── 错误隔离 ────────────────────────────────────────────────────
+  // ── Error isolation ─────────────────────────────────────────────
 
-  it('一个订阅者崩溃不影响其他订阅者', () => {
+  it('one crashing subscriber does not affect the others', () => {
     const crashHandler = vi.fn(() => {
       throw new Error('boom');
     });
@@ -138,9 +138,9 @@ describe('EventBus', () => {
     expect(normalHandler).toHaveBeenCalledTimes(1);
   });
 
-  // ── 递归防护 ────────────────────────────────────────────────────
+  // ── Recursion guard ─────────────────────────────────────────────
 
-  it('emit 中再次 emit 同一类型应被阻止（防死循环）', () => {
+  it('re-emitting the same type inside emit is blocked (prevents an infinite loop)', () => {
     const handler = vi.fn(() => {
       bus.emit({ type: 'leader.elected', timestamp: 0, nodeId: 1, term: 99, leaderId: 99 });
     });
@@ -148,12 +148,12 @@ describe('EventBus', () => {
     bus.on('leader.elected', handler);
     bus.emit({ type: 'leader.elected', timestamp: 0, nodeId: 1, term: 1, leaderId: 1 });
 
-    expect(handler).toHaveBeenCalledTimes(1); // 递归 emit 被阻止
+    expect(handler).toHaveBeenCalledTimes(1); // the recursive emit was blocked
   });
 
-  // ── 并发安全 ────────────────────────────────────────────────────
+  // ── Concurrency safety ──────────────────────────────────────────
 
-  it('1000 次快速发布不丢事件', () => {
+  it('1000 rapid emits lose no events', () => {
     const received: number[] = [];
     bus.on('proposal.committed', (e) => {
       received.push((e as ProposalCommittedEvent).index);
@@ -170,7 +170,7 @@ describe('EventBus', () => {
 
   // ── reset ────────────────────────────────────────────────────────
 
-  it('reset() 清空所有订阅', () => {
+  it('reset() clears every subscription', () => {
     bus.on('leader.elected', vi.fn());
     bus.on('proposal.committed', vi.fn());
     bus.on('role.changed', vi.fn());
@@ -181,9 +181,9 @@ describe('EventBus', () => {
     expect(bus.subscriberCount()).toBe(0);
   });
 
-  // ── 异步订阅 ────────────────────────────────────────────────────
+  // ── Async subscription ──────────────────────────────────────────
 
-  it('异步订阅通过 setImmediate 延迟处理', async () => {
+  it('an async subscription is deferred through setImmediate', async () => {
     let processed = false;
     bus.onAsync('leader.elected', async () => {
       await new Promise((r) => setTimeout(r, 5));
@@ -191,10 +191,10 @@ describe('EventBus', () => {
     });
 
     bus.emit({ type: 'leader.elected', timestamp: 0, nodeId: 1, term: 1, leaderId: 1 });
-    // 异步处理器尚未执行
+    // the async handler has not run yet
     expect(processed).toBe(false);
 
-    // 等待微任务 + setImmediate 完成
+    // Wait for the microtask plus setImmediate to complete
     await new Promise((r) => setTimeout(r, 20));
     expect(processed).toBe(true);
   });

@@ -1,5 +1,5 @@
 /**
- * WatchApi 测试 — 覆盖 Watch 语义、前缀匹配、并发安全、清理。
+ * WatchApi tests — covers watch semantics, prefix matching, concurrency safety and cleanup.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EventBus } from '../../../consensus/events/EventBus';
@@ -31,9 +31,9 @@ describe('WatchApi', () => {
     watch = new WatchApi(bus);
   });
 
-  // ── 基础 Watch ──────────────────────────────────────────────────
+  // ── Basic watch ─────────────────────────────────────────────────
 
-  it('精确前缀匹配：watch key prefix 时只收到匹配的事件', () => {
+  it('exact prefix match: watching a key prefix delivers only matching events', () => {
     const results: WatchEvent[] = [];
     watch.watch('users:', (e) => {
       results.push(e);
@@ -47,7 +47,7 @@ describe('WatchApi', () => {
     expect(results.map((r) => r.key)).toEqual(['users:1', 'users:2']);
   });
 
-  it('空字符串前缀匹配所有 key', () => {
+  it('an empty prefix matches every key', () => {
     const results: WatchEvent[] = [];
     watch.watch('', (e) => {
       results.push(e);
@@ -60,7 +60,7 @@ describe('WatchApi', () => {
     expect(results).toHaveLength(3);
   });
 
-  it('非 JSON data 时从 data 中解析 key', () => {
+  it('the key is parsed out of non-JSON data', () => {
     const results: WatchEvent[] = [];
     watch.watch('config:', (e) => {
       results.push(e);
@@ -74,9 +74,9 @@ describe('WatchApi', () => {
     expect(results[0]!.key).toBe('config:timeout');
   });
 
-  // ── Dispose 清理 ────────────────────────────────────────────────
+  // ── Dispose cleanup ─────────────────────────────────────────────
 
-  it('dispose() 后不再接收事件', () => {
+  it('no events arrive after dispose()', () => {
     const received: WatchEvent[] = [];
     const disposable = watch.watch('test:', (e) => {
       received.push(e);
@@ -90,7 +90,7 @@ describe('WatchApi', () => {
     expect(received[0]!.key).toBe('test:1');
   });
 
-  it('shutdown() 后所有 watch 失效', () => {
+  it('every watch stops after shutdown()', () => {
     const r1: WatchEvent[] = [];
     const r2: WatchEvent[] = [];
     watch.watch('a:', (e) => {
@@ -110,14 +110,14 @@ describe('WatchApi', () => {
     expect(r2).toHaveLength(0);
   });
 
-  it('shutdown 后 watch() 应抛出', () => {
+  it('watch() throws after shutdown', () => {
     watch.shutdown();
     expect(() => watch.watch('a:', vi.fn())).toThrow('WatchApi is shut down');
   });
 
-  // ── 并发安全 ────────────────────────────────────────────────────
+  // ── Concurrency safety ──────────────────────────────────────────
 
-  it('1000 个快速 proposals 不丢失事件', () => {
+  it('1000 rapid proposals lose no events', () => {
     const received: WatchEvent[] = [];
     watch.watch('', (e) => {
       received.push(e);
@@ -128,12 +128,12 @@ describe('WatchApi', () => {
     }
 
     expect(received).toHaveLength(1000);
-    // 验证有序
+    // Verify ordering
     expect(received[0]!.index).toBe(1);
     expect(received[999]!.index).toBe(1000);
   });
 
-  it('handler 异常不影响其他 watch', () => {
+  it('a throwing handler does not affect other watches', () => {
     const good: WatchEvent[] = [];
     const crashHandler = vi.fn(() => {
       throw new Error('boom');
@@ -152,9 +152,9 @@ describe('WatchApi', () => {
     expect(good).toHaveLength(1);
   });
 
-  // ── 值解析 ─────────────────────────────────────────────────────
+  // ── Value parsing ──────────────────────────────────────────────
 
-  it('正确解析 JSON data 的 value', () => {
+  it('the value is parsed from JSON data', () => {
     const values: string[] = [];
     watch.watch('', (e) => {
       values.push(e.value);
@@ -169,7 +169,7 @@ describe('WatchApi', () => {
 
   // ── activeWatchCount ────────────────────────────────────────────
 
-  it('activeWatchCount 正确反映活跃 watch 数量', () => {
+  it('activeWatchCount reflects the number of active watches', () => {
     expect(watch.activeWatchCount()).toBe(0);
 
     const d1 = watch.watch('a:', vi.fn());

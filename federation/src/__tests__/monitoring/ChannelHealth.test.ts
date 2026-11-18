@@ -1,5 +1,5 @@
 /**
- * ChannelHealth 测试 — 覆盖健康分计算公式、边界值、批量计算。
+ * ChannelHealth tests — covers the health score formula, boundary values and batch calculation.
  */
 import { describe, it, expect } from 'vitest';
 import { ChannelHealthCalculator, type ChannelHealthMetrics } from '../../monitoring/ChannelHealth';
@@ -15,15 +15,15 @@ const BASE_METRICS: ChannelHealthMetrics = {
 describe('ChannelHealthCalculator', () => {
   const calc = new ChannelHealthCalculator();
 
-  // ── 完美健康 ────────────────────────────────────────────────────
+  // ── Perfect health ──────────────────────────────────────────────
 
-  it('健康分 = 100 当所有指标完美', () => {
+  it('health score = 100 when every metric is perfect', () => {
     const result = calc.calculate(BASE_METRICS);
     expect(result.healthScore).toBe(100);
     expect(result.level).toBe('healthy');
   });
 
-  it('健康分 = 100 当 lag ≤ 100ms 且 errorRate = 0', () => {
+  it('health score = 100 when lag ≤ 100ms and errorRate = 0', () => {
     const result = calc.calculate({
       ...BASE_METRICS,
       lagMs: 50,
@@ -34,9 +34,9 @@ describe('ChannelHealthCalculator', () => {
     expect(result.level).toBe('healthy');
   });
 
-  // ── Lag 惩罚 ────────────────────────────────────────────────────
+  // ── Lag penalty ─────────────────────────────────────────────────
 
-  it('Lag 500ms 应导致部分健康分下降', () => {
+  it('a 500ms lag lowers the health score partially', () => {
     const result = calc.calculate({ ...BASE_METRICS, lagMs: 500 });
     // penalty = 500/1000 * 30 = 15 → score ≈ 85
     expect(result.healthScore).toBeLessThan(100);
@@ -44,21 +44,21 @@ describe('ChannelHealthCalculator', () => {
     expect(result.breakdown.lagPenalty).toBeCloseTo(15, 1);
   });
 
-  it('Lag 1000ms 扣满 30 分', () => {
+  it('a 1000ms lag deducts the full 30 points', () => {
     const result = calc.calculate({ ...BASE_METRICS, lagMs: 1000 });
     expect(result.breakdown.lagPenalty).toBeCloseTo(30, 1);
     expect(result.healthScore).toBeCloseTo(70, 1);
   });
 
-  it('Lag 5000ms 仍最多扣 30 分（cap）', () => {
+  it('a 5000ms lag still deducts at most 30 points (cap)', () => {
     const result = calc.calculate({ ...BASE_METRICS, lagMs: 5000 });
     expect(result.breakdown.lagPenalty).toBe(30);
     expect(result.healthScore).toBe(70);
   });
 
-  // ── ErrorRate 惩罚 ──────────────────────────────────────────────
+  // ── ErrorRate penalty ───────────────────────────────────────────
 
-  it('ErrorRate = 0.1 惩罚比 Lag=500ms 更重', () => {
+  it('ErrorRate = 0.1 weighs more than Lag = 500ms', () => {
     const lagResult = calc.calculate({ ...BASE_METRICS, lagMs: 500 });
     const errorResult = calc.calculate({ ...BASE_METRICS, errorRate: 0.1 });
 
@@ -66,52 +66,52 @@ describe('ChannelHealthCalculator', () => {
     expect(errorResult.healthScore).toBeLessThan(lagResult.healthScore);
   });
 
-  it('ErrorRate = 0 时无惩罚', () => {
+  it('no penalty when ErrorRate = 0', () => {
     const result = calc.calculate({ ...BASE_METRICS, errorRate: 0 });
     expect(result.breakdown.errorPenalty).toBe(0);
   });
 
-  it('ErrorRate = 1.0 时扣分接近 40', () => {
+  it('ErrorRate = 1.0 deducts close to 40', () => {
     const result = calc.calculate({ ...BASE_METRICS, errorRate: 1.0 });
     // 1.0 / (1.0 + 0.01) * 40 ≈ 39.6
     expect(result.breakdown.errorPenalty).toBeGreaterThan(38);
     expect(result.breakdown.errorPenalty).toBeLessThanOrEqual(40);
   });
 
-  // ── Reconnect 惩罚 ──────────────────────────────────────────────
+  // ── Reconnect penalty ───────────────────────────────────────────
 
-  it('ReconnectCount = 0 时无惩罚', () => {
+  it('no penalty when ReconnectCount = 0', () => {
     const result = calc.calculate({ ...BASE_METRICS, reconnectCount: 0 });
     expect(result.breakdown.reconnectPenalty).toBe(0);
   });
 
-  it('ReconnectCount = 5 扣满 25 分', () => {
+  it('ReconnectCount = 5 deducts the full 25 points', () => {
     const result = calc.calculate({ ...BASE_METRICS, reconnectCount: 5 });
     expect(result.breakdown.reconnectPenalty).toBe(25);
   });
 
-  it('ReconnectCount = 10 仍最多扣 25 分（cap）', () => {
+  it('ReconnectCount = 10 still deducts at most 25 points (cap)', () => {
     const result = calc.calculate({ ...BASE_METRICS, reconnectCount: 10 });
     expect(result.breakdown.reconnectPenalty).toBe(25);
   });
 
-  // ── Jitter 惩罚 ─────────────────────────────────────────────────
+  // ── Jitter penalty ──────────────────────────────────────────────
 
-  it('Jitter = 0 时无惩罚', () => {
+  it('no penalty when Jitter = 0', () => {
     const result = calc.calculate({ ...BASE_METRICS, jitterMs: 0 });
     expect(result.breakdown.jitterPenalty).toBe(0);
   });
 
-  it('Jitter = 100ms 时有对数惩罚', () => {
+  it('Jitter = 100ms incurs a logarithmic penalty', () => {
     const result = calc.calculate({ ...BASE_METRICS, jitterMs: 100 });
     // log2(101) * 2 ≈ 13.3 (capped at 10)
     expect(result.breakdown.jitterPenalty).toBeGreaterThan(0);
     expect(result.breakdown.jitterPenalty).toBeLessThanOrEqual(10);
   });
 
-  // ── 综合场景 ────────────────────────────────────────────────────
+  // ── Combined scenario ───────────────────────────────────────────
 
-  it('综合降级场景健康分在 0-100 范围内', () => {
+  it('a combined degraded scenario keeps the health score within 0-100', () => {
     const result = calc.calculate({
       lagMs: 800,
       jitterMs: 50,
@@ -123,7 +123,7 @@ describe('ChannelHealthCalculator', () => {
     expect(result.healthScore).toBeLessThanOrEqual(100);
   });
 
-  it('极端坏情况健康分 = 0', () => {
+  it('the worst case gives a health score of 0', () => {
     const result = calc.calculate({
       lagMs: 5000,
       jitterMs: 5000,
@@ -135,17 +135,17 @@ describe('ChannelHealthCalculator', () => {
     expect(result.level).toBe('critical');
   });
 
-  // ── 健康等级分段 ────────────────────────────────────────────────
+  // ── Health level bands ──────────────────────────────────────────
 
-  it('健康分 ≥ 80 被标记为 healthy', () => {
-    // 只扣 20 分：400ms lag = 12 分
+  it('a health score ≥ 80 is marked healthy', () => {
+    // only 20 points deducted: 400ms lag = 12 points
     const result = calc.calculate({ ...BASE_METRICS, lagMs: 400 });
     expect(result.healthScore).toBeGreaterThanOrEqual(80);
     expect(result.level).toBe('healthy');
   });
 
-  it('健康分 50-79 被标记为 degraded', () => {
-    // lag 800ms + reconnect 2: 24 + 10 = 34 扣分 → 健康分 66
+  it('a health score of 50-79 is marked degraded', () => {
+    // lag 800ms + reconnect 2: 24 + 10 = 34 points deducted → health score 66
     const result = calc.calculate({
       ...BASE_METRICS,
       lagMs: 800,
@@ -156,8 +156,8 @@ describe('ChannelHealthCalculator', () => {
     expect(result.level).toBe('degraded');
   });
 
-  it('健康分 < 50 被标记为 critical', () => {
-    // lag 1000 + reconnect 5 + error 0.5: 30 + 25 + 19.6 = 74.6 扣分
+  it('a health score < 50 is marked critical', () => {
+    // lag 1000 + reconnect 5 + error 0.5: 30 + 25 + 19.6 = 74.6 points deducted
     const result = calc.calculate({
       ...BASE_METRICS,
       lagMs: 1000,
@@ -168,9 +168,9 @@ describe('ChannelHealthCalculator', () => {
     expect(result.level).toBe('critical');
   });
 
-  // ── 批量计算 ────────────────────────────────────────────────────
+  // ── Batch calculation ───────────────────────────────────────────
 
-  it('批量计算正确返回所有通道健康分', () => {
+  it('batch calculation returns the health score of every channel', () => {
     const results = calc.calculateBatch([
       { name: 'us-east', metrics: { ...BASE_METRICS, lagMs: 50 } },
       {

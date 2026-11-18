@@ -1,23 +1,23 @@
 /**
  * Jepsen-style validation tests for the Raft cluster.
  *
- * 双验证策略（按场景区分）：
+ * Two verification strategies (chosen per scenario):
  *
- * 路 1 — Fuzzy Register Checker（J1, J2, J3）
- *   - 使用 LinearizabilityChecker 的 fuzzyCheck
- *   - 允许 write→ok 后值不立即可见
- *   - 只抓"伪造值"——read 返回了从未写入过的值
- *   - 适用于有 leader crash/切换的场景
+ * Path 1 — Fuzzy Register Checker (J1, J2, J3)
+ *   - uses fuzzyCheck from LinearizabilityChecker
+ *   - allows a value to stay invisible for a time after write→ok
+ *   - only catches "forged values" — a read returned a value that was never written
+ *   - applies to scenarios with leader crash/failover
  *
- * 路 2 — 最终状态扫描（J4, J5）
- *   - fault 结束后对所有关键做全节点扫描
- *   - 验证所有 surviving node 的 state machine 一致
- *   - 适用于长时间多 fault 场景
+ * Path 2 — final state scan (J4, J5)
+ *   - after the faults end, scans every key on all nodes
+ *   - verifies every surviving node's state machine agrees
+ *   - applies to long runs with multiple faults
  *
  * Acceptance:
- *   AC-JS.1 — 任何场景下 read 不返回伪造值（路 1）
- *   AC-JS.2 — Multi-fault 后所有节点 state machine 一致（路 2）
- *   AC-JS.3 — 任何场景下系统从 crash 中恢复（路 1 + 2）
+ *   AC-JS.1 — a read never returns a forged value in any scenario (path 1)
+ *   AC-JS.2 — every node's state machine agrees after multiple faults (path 2)
+ *   AC-JS.3 — the system recovers from a crash in any scenario (path 1 + 2)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -31,7 +31,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe('Jepsen-style Validation', () => {
-  // ── J1: Leader crash — 路 1 ─────────────────────────────
+  // ── J1: Leader crash — path 1 ───────────────────────────
   it(
     'J1: should pass fuzzy register check after leader crash',
     async () => {
@@ -75,7 +75,7 @@ describe('Jepsen-style Validation', () => {
     MEDIUM_TIMEOUT,
   );
 
-  // ── J2: Sequential crash — 路 1 ─────────────────────────
+  // ── J2: Sequential crash — path 1 ───────────────────────
   it(
     'J2: should survive sequential crash with no forged values',
     async () => {
@@ -117,7 +117,7 @@ describe('Jepsen-style Validation', () => {
     LONG_TIMEOUT,
   );
 
-  // ── J3: Randomized sweep — 路 1 ─────────────────────────
+  // ── J3: Randomized sweep — path 1 ───────────────────────
   it(
     'J3: should pass fuzzy check through randomized fault schedule',
     async () => {
@@ -158,7 +158,7 @@ describe('Jepsen-style Validation', () => {
     LONG_TIMEOUT,
   );
 
-  // ── J4: Crash + recovery — 路 2 ─────────────────────────
+  // ── J4: Crash + recovery — path 2 ───────────────────────
   it(
     'J4: surviving nodes should have consistent state machine after crash',
     async () => {
@@ -205,7 +205,7 @@ describe('Jepsen-style Validation', () => {
     MEDIUM_TIMEOUT,
   );
 
-  // ── J5: Multi-fault stability — 路 2 ─────────────────────
+  // ── J5: Multi-fault stability — path 2 ───────────────────
   it(
     'J5: should maintain consistent state after multi-fault Jepsen run',
     async () => {

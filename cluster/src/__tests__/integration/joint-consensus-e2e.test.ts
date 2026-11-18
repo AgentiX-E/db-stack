@@ -51,7 +51,7 @@ function createTempDir(prefix: string): string {
 
 // ── Test Suite ─────────────────────────────────────────────────
 
-describe('Joint Consensus — 3 节点集成测试', () => {
+describe('Joint Consensus — 3-node integration test', () => {
   const cluster = new TestCluster({
     nodeCount: 3,
     electionTick: 10,
@@ -68,7 +68,7 @@ describe('Joint Consensus — 3 节点集成测试', () => {
     await cluster.stop();
   }, 30_000);
 
-  it('AC-D1-18: 集群正常形成（3节点，1 leader）', async () => {
+  it('AC-D1-18: cluster forms normally (3 nodes, 1 leader)', async () => {
     const leader = await cluster.findLeader();
     expect(leader).toBeDefined();
 
@@ -78,21 +78,21 @@ describe('Joint Consensus — 3 节点集成测试', () => {
     const status = await leader.adapter.getStatus();
     expect(status.role.toLowerCase()).toBe('leader');
 
-    // 所有节点都在集群中
+    // All nodes are in the cluster
     expect(cluster.nodes.length).toBe(3);
   });
 
-  it('AC-D1-18a: leader 上可执行 propose 并复制到所有节点', async () => {
+  it('AC-D1-18a: propose on the leader replicates to all nodes', async () => {
     const leader = await cluster.findLeader();
 
-    // 在 leader 上 propose 一个值
+    // Propose a value on the leader
     const entry = JSON.stringify({ key: 'test-value', value: Date.now() });
     const result = await leader.adapter.propose(entry);
     expect(result).toBeDefined();
     const proposedIndex = Number(result.index);
     expect(proposedIndex).toBeGreaterThan(0);
 
-    // 等待 leader 提交
+    // Wait for the leader to commit
     let leaderCommitted = false;
     for (let i = 0; i < 50; i++) {
       const progress = await leader.adapter.getProgress();
@@ -104,7 +104,7 @@ describe('Joint Consensus — 3 节点集成测试', () => {
     }
     expect(leaderCommitted).toBe(true);
 
-    // 等待 follower 复制（通过心跳传播，通常 <200ms）
+    // Wait for followers to replicate (propagated by heartbeat, usually <200ms)
     const followers = cluster.nodes.filter((n) => n.id !== leader.id);
     for (const f of followers) {
       let committed = false;
@@ -120,7 +120,7 @@ describe('Joint Consensus — 3 节点集成测试', () => {
     }
   });
 
-  it('AC-D1-18b: 只有 leader 可以 propose', async () => {
+  it('AC-D1-18b: only the leader can propose', async () => {
     const leader = await cluster.findLeader();
     const followers = cluster.nodes.filter((n) => n.id !== leader.id);
 
@@ -130,7 +130,7 @@ describe('Joint Consensus — 3 节点集成测试', () => {
     }
   });
 
-  it('AC-D1-18c: 日志在各个节点上一致', async () => {
+  it('AC-D1-18c: the log is consistent across nodes', async () => {
     const statuses = await Promise.all(cluster.nodes.map((n) => n.adapter.getStatus()));
     const commitIndices = statuses.map((s) => Number(s.commit ?? 0));
     // All nodes should have similar commit indices

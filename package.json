@@ -2,7 +2,7 @@
   "name": "db-stack",
   "version": "1.1.0",
   "private": true,
-  "description": "AgentiX-E database stack \u2014 cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
+  "description": "AgentiX-E database stack — cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
   "license": "MIT",
   "packageManager": "pnpm@10.28.2",
   "engines": {
@@ -23,10 +23,12 @@
     "coverage:gate": "node scripts/coverage-gate.mjs",
     "e2e": "pnpm --filter @agentix-e/db-stack-e2e run test:harness && pnpm --filter @agentix-e/db-stack-e2e run test:cluster && pnpm --filter @agentix-e/db-stack-e2e run test:engine && pnpm --filter @agentix-e/db-stack-e2e run test:federation",
     "bench": "turbo run bench",
-    "verify": "pnpm check:gates && pnpm lint && pnpm format:check && pnpm typecheck && pnpm typecheck:tests && pnpm coverage:all && pnpm coverage:gate && pnpm e2e",
+    "verify": "pnpm check:gates && pnpm check:english && pnpm test:scripts && pnpm lint && pnpm format:check && pnpm typecheck && pnpm typecheck:tests && pnpm coverage:all && pnpm coverage:gate && pnpm e2e",
     "bench:real": "pnpm --filter @agentix-e/db-stack-e2e run bench",
     "check:package": "node scripts/check-package.mjs",
     "check:gates": "node scripts/check-gates.mjs",
+    "check:english": "node scripts/check-english.mjs",
+    "test:scripts": "node --test scripts/*.test.mjs",
     "test:soak": "pnpm --filter @agentix-e/db-cluster run test:soak",
     "test:load": "pnpm --filter @agentix-e/db-cluster run test:load && pnpm --filter @agentix-e/db-federation run test:perf",
     "test:mutation": "node scripts/mutation.mjs all",
@@ -69,7 +71,7 @@
       {
         "advisory": "GHSA-fc5q-39xc-vjpf",
         "package": "picomatch",
-        "reason": "ReDoS through single-branch repeated extglobs; reaches the tree only through vitest/stryker/vite (dev), whose glob input is this repository's own paths \u2014 no patched version has been published (patched: <0.0.0)",
+        "reason": "ReDoS through single-branch repeated extglobs; reaches the tree only through vitest/stryker/vite (dev), whose glob input is this repository's own paths — no patched version has been published (patched: <0.0.0)",
         "reviewed": "2026-11-18"
       }
     ]

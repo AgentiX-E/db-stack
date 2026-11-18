@@ -76,6 +76,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Structural gate check (no orphan configs, no scripts pointing at air)
         run: pnpm check:gates
+      - name: Gate self-tests (a gate that is not tested is a script that prints "passed")
+        run: pnpm test:scripts
+      - name: English-only comments and test titles
+        run: pnpm check:english
       - name: ESLint (one shared config for the whole workspace)
         run: pnpm lint
       - name: Prettier

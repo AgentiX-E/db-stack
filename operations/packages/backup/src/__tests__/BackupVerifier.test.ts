@@ -1,5 +1,5 @@
 /**
- * BackupVerifier 测试 — 覆盖 checksum 计算、完整性验证、流验证。
+ * BackupVerifier tests — covers checksum computation, integrity verification and stream verification.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import crypto from 'crypto';
@@ -12,45 +12,45 @@ describe('BackupVerifier', () => {
     verifier = new BackupVerifier();
   });
 
-  // ── SHA-256 计算 ────────────────────────────────────────────────
+  // ── SHA-256 computation ─────────────────────────────────────────
 
-  it('calculateChecksum 返回正确的 SHA-256', () => {
+  it('calculateChecksum returns the correct SHA-256', () => {
     const data = Buffer.from('hello world');
     const checksum = verifier.calculateChecksum(data);
     const expected = crypto.createHash('sha256').update('hello world').digest('hex');
     expect(checksum).toBe(expected);
   });
 
-  it('相同数据产生相同 checksum', () => {
+  it('identical data produces an identical checksum', () => {
     const d1 = Buffer.from('same data');
     const d2 = Buffer.from('same data');
     expect(verifier.calculateChecksum(d1)).toBe(verifier.calculateChecksum(d2));
   });
 
-  it('不同数据产生不同 checksum（抗碰撞）', () => {
+  it('different data produces a different checksum (collision resistance)', () => {
     const d1 = Buffer.from('data-1');
     const d2 = Buffer.from('data-2');
     expect(verifier.calculateChecksum(d1)).not.toBe(verifier.calculateChecksum(d2));
   });
 
-  it('空 buffer 产生正确的 SHA-256', () => {
+  it('an empty buffer produces the correct SHA-256', () => {
     const checksum = verifier.calculateChecksum(Buffer.alloc(0));
     expect(checksum).toBe(crypto.createHash('sha256').digest('hex'));
   });
 
-  it('大 buffer (1MB) 高效计算', () => {
+  it('a large buffer (1MB) is checksummed efficiently', () => {
     const data = Buffer.alloc(1024 * 1024, 'x');
     const start = performance.now();
     const checksum = verifier.calculateChecksum(data);
     const elapsed = performance.now() - start;
 
     expect(checksum).toHaveLength(64);
-    expect(elapsed).toBeLessThan(500); // 1MB 应在 500ms 内完成
+    expect(elapsed).toBeLessThan(500); // 1MB should finish within 500ms
   });
 
-  // ── verify (完整校验) ───────────────────────────────────────────
+  // ── verify (full check) ─────────────────────────────────────────
 
-  it('verify 通过正确数据', async () => {
+  it('verify accepts correct data', async () => {
     const data = Buffer.from('backup content');
     const checksum = verifier.calculateChecksum(data);
 
@@ -64,7 +64,7 @@ describe('BackupVerifier', () => {
     expect(result.error).toBeUndefined();
   });
 
-  it('verify 检测到 checksum 不匹配', async () => {
+  it('verify detects a checksum mismatch', async () => {
     const data = Buffer.from('original content');
     const wrongChecksum = crypto.createHash('sha256').update('tampered').digest('hex');
 
@@ -76,16 +76,16 @@ describe('BackupVerifier', () => {
     expect(result.error).toContain('Checksum mismatch');
   });
 
-  it('verify 记录耗时', async () => {
+  it('verify records the elapsed time', async () => {
     const data = Buffer.alloc(1024);
     const result = await verifier.verify('bp-1', data);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  // ── 大文件分块验证 ──────────────────────────────────────────────
+  // ── Large-file chunked verification ─────────────────────────────
 
-  it('超过 chunkSize 时触发分块验证', async () => {
-    const data = Buffer.alloc(200 * 1024); // 大于默认 64KB chunkSize
+  it('data above chunkSize is verified in chunks', async () => {
+    const data = Buffer.alloc(200 * 1024); // larger than the default 64KB chunkSize
     const result = await verifier.verify('large-bp', data);
 
     expect(result.valid).toBe(true);
@@ -93,21 +93,21 @@ describe('BackupVerifier', () => {
     expect(result.chunkCount).toBe(4);
   });
 
-  // ── 存储 checksum ───────────────────────────────────────────────
+  // ── Stored checksum ─────────────────────────────────────────────
 
-  it('验证后存储 checksum 供后续比较', async () => {
+  it('the checksum is stored after verification for later comparison', async () => {
     const data = Buffer.from('my backup');
     await verifier.verify('bp-stored', data);
     expect(verifier.getStoredChecksum('bp-stored')).toBe(verifier.calculateChecksum(data));
   });
 
-  it('未验证的 backupId 返回 undefined', () => {
+  it('an unverified backupId returns undefined', () => {
     expect(verifier.getStoredChecksum('unknown')).toBeUndefined();
   });
 
   // ── verifyStream ────────────────────────────────────────────────
 
-  it('verifyStream 从异步迭代器验证', async () => {
+  it('verifyStream verifies data from an async iterator', async () => {
     async function* generateChunks(): AsyncIterable<Buffer> {
       yield Buffer.from('chunk1-');
       yield Buffer.from('chunk2-');
@@ -125,7 +125,7 @@ describe('BackupVerifier', () => {
     expect(result.totalSize).toBe(20);
   });
 
-  it('verifyStream 检测校验和不匹配', async () => {
+  it('verifyStream detects a checksum mismatch', async () => {
     async function* generateChunks(): AsyncIterable<Buffer> {
       yield Buffer.from('tampered data');
     }
@@ -140,14 +140,14 @@ describe('BackupVerifier', () => {
 
   // ── Edge cases ──────────────────────────────────────────────────
 
-  it('verify 单个字节也能正常处理', async () => {
+  it('verify handles a single byte', async () => {
     const data = Buffer.from([0x42]);
     const result = await verifier.verify('single-byte', data);
     expect(result.valid).toBe(true);
     expect(result.totalSize).toBe(1);
   });
 
-  it('verify 不传 expectedChecksum 时直接通过', async () => {
+  it('verify passes when expectedChecksum is omitted', async () => {
     const data = Buffer.from('anything');
     const result = await verifier.verify('no-check', data);
     expect(result.valid).toBe(true);
