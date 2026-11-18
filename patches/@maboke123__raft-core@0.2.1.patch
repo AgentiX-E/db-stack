@@ -1,0 +1,39 @@
+diff --git a/dist/state/LeaderState.js b/dist/state/LeaderState.js
+index efcf7e85ffb00db410638acbafb8cf9ca2562778..42e3b9e3c87136f8f81231592d102b19cd71b055 100644
+--- a/dist/state/LeaderState.js
++++ b/dist/state/LeaderState.js
+@@ -43,8 +43,18 @@ class LeaderState {
+     decrementNextIndex(peerId) {
+         this.ensureValidPeer(peerId);
+         const currentNextIdx = this.getNextIndex(peerId);
+-        const matchIdx = this.matchIndex.get(peerId);
+-        const newNextIdx = Math.max(matchIdx + 1, currentNextIdx - 1);
++        // PATCH(db-stack): a rejection is evidence that matchIndex is wrong.
++        // The invariant "nextIndex > matchIndex" is derived from matchIndex, and a
++        // follower that answered "my log does not match at nextIndex - 1" does not
++        // hold the entries this leader believed it held. Clamping the decrement at
++        // the stale matchIndex pins nextIndex forever: a follower restarted on empty
++        // storage (match 4, log empty) leaves the leader at {next: 5, match: 4} for
++        // as long as it runs, because every rejection resolves back to 5.
++        // Lowering the bound first lets the probe walk back to where the follower
++        // actually is. It never raises matchIndex, so a healthy peer is unaffected.
++        const bound = Math.max(0, currentNextIdx - 2);
++        if (matchIdx > bound) this.matchIndex.set(peerId, bound);
++        const newNextIdx = Math.max(bound + 1, currentNextIdx - 1);
+         this.nextIndex.set(peerId, newNextIdx);
+     }
+     /** Returns current matchIndex for a peer. */
+@@ -150,6 +160,13 @@ class LeaderState {
+      */
+     async updateNextIndexWithConflict(peerId, conflictIndex, conflictTerm, logManager) {
+         this.ensureValidPeer(peerId);
++        // PATCH(db-stack): the conflict hint is the follower telling us where its log
++        // ends. Anything this leader still believes it acknowledged above that point
++        // is wrong, and setNextIndex() refuses to go below matchIndex - so lower the
++        // bound before asking to move. Without this a follower that lost its storage
++        // can never be back-filled (see decrementNextIndex for the same argument).
++        const conflictBound = Math.max(0, conflictIndex - 1);
++        if (this.matchIndex.get(peerId) > conflictBound) this.matchIndex.set(peerId, conflictBound);
+         if (conflictTerm === 0) {
+             this.setNextIndex(peerId, conflictIndex);
+         }

@@ -532,6 +532,33 @@ if (!existsSync(mutationConfigPath)) {
   }
 }
 
+// ── 8. a dependency patch is a gate only if it is still applied ─────
+
+/*
+ * `pnpm.patchedDependencies` in the root manifest points at a file. If that file is
+ * renamed, emptied or dropped from the lockfile, every install quietly reverts to
+ * the upstream behaviour the patch exists to correct — and the only thing that
+ * noticed would be the acceptance case that depends on it, on whichever runner runs
+ * it first. This is the same failure the orphan-tsconfig check exists for, one layer
+ * out: a configuration that promises something no longer true.
+ */
+const rootManifest = readJson(join(root, "package.json"));
+for (const [dependency, patchPath] of Object.entries(rootManifest.pnpm?.patchedDependencies ?? {})) {
+  if (!existsSync(join(root, patchPath))) {
+    failures.push(`patchedDependencies names "${dependency}" but ${patchPath} does not exist`);
+    continue;
+  }
+  const body = readText(join(root, patchPath));
+  if (!body.includes("PATCH(db-stack)")) {
+    failures.push(`${patchPath} carries no PATCH(db-stack) marker, so it does not say why it exists`);
+  }
+  const lock = readText(join(root, "pnpm-lock.yaml"));
+  if (!lock.includes(patchPath)) {
+    failures.push(`${patchPath} is not referenced by pnpm-lock.yaml, so --frozen-lockfile would not apply it`);
+  }
+  notes.push(`patch ${dependency} -> ${patchPath}`);
+}
+
 // ── Report ─────────────────────────────────────────────────────────
 
 if (verbose) for (const note of notes) console.log(`ok   ${note}`);

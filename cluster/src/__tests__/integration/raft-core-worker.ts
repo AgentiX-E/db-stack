@@ -168,6 +168,7 @@ async function main() {
             // being sent anything is visible: from the follower's own side it looks
             // like a healthy node waiting for entries.
             const peers = await raftAdapter.getPeerProgress();
+            const transport = raftAdapter.getTransportStats();
 
             process.send?.({
               type: 'status',
@@ -182,6 +183,7 @@ async function main() {
                 committedLog: [...committedLog],
                 logLength: committedLog.length,
                 peers,
+                transport,
               },
               timestamp: Date.now(),
             });

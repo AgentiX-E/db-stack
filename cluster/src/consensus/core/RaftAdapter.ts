@@ -1269,6 +1269,30 @@ export class RaftAdapter {
   }
 
   /**
+   * What the transport has done per peer: sent, answered, timed out, failed.
+   *
+   * The leader's own `{next, match}` cannot distinguish a peer that answers "no"
+   * from one that never answers — both leave the pair where it was. These counters
+   * can, and they are the difference between a bug in the protocol and a bug in the
+   * link. Walks the wrapper chain for the same reason {@link getConnectedPeers}
+   * does: the object that owns the sockets is the innermost one.
+   */
+  getTransportStats(): Record<string, { sent: number; answered: number; timedOut: number; failed: number }> {
+    for (let cursor: Transport | null = this.transport; cursor; cursor = underlyingOf(cursor)) {
+      const reporter = cursor as unknown as {
+        getStats?: () => Record<string, { sent: number; answered: number; timedOut: number; failed: number }>;
+      };
+      if (typeof reporter.getStats !== 'function') continue;
+      try {
+        return reporter.getStats();
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
+
+  /**
    * How far each peer is replicated, as this node's leader state sees it.
    *
    * Returns an empty object on a follower (it holds no per-peer view) and on any

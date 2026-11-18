@@ -58,8 +58,38 @@ function readSnapshotChunk(message: RPCMessage): SnapshotChunk | null {
  * them.
  */
 
+/**
+ * What a transport has actually done, per peer.
+ *
+ * A peer that never answers looks identical to a peer that answers "no": both
+ * leave the leader's `nextIndex` where it was, and neither is visible from the
+ * cluster's own state. The counters separate them — `timedOut` and `failed` mean
+ * nothing came back, `answered` means something did.
+ */
+export interface TransportPeerStats {
+  /** Requests written to the wire. */
+  sent: number;
+  /** Requests that came back with a response. */
+  answered: number;
+  /** Requests that were still unanswered when the request timeout fired. */
+  timedOut: number;
+  /** Requests whose send threw before an answer could arrive. */
+  failed: number;
+  /** AppendEntries answers that said "my log matches yours". */
+  accepted: number;
+  /** AppendEntries answers that said "it does not" - the only signal that moves `nextIndex`. */
+  rejected: number;
+  /** Answers of any other kind, so the three counters always add up to `answered`. */
+  other: number;
+  /** Answer types as they arrived, for the case where a name is not what it looks like. */
+  byType: Record<string, number>;
+}
+
 export class BatchedRaftTransport implements Transport {
   private transport: RaftTcpTransport;
+
+  /** Per-peer counters; see {@link TransportPeerStats}. */
+  private readonly stats = new Map<string, TransportPeerStats>();
   private handler: MessageHandler | null = null;
   private pendingMap = new Map<string, PendingEntry>();
   private started = false;
@@ -135,9 +165,37 @@ export class BatchedRaftTransport implements Transport {
     this.handler = handler;
   }
 
+  /** Counters for one peer, created on first use. */
+  private statsFor(peerId: string): TransportPeerStats {
+    let entry = this.stats.get(peerId);
+    if (!entry) {
+      entry = {
+        sent: 0,
+        answered: 0,
+        timedOut: 0,
+        failed: 0,
+        accepted: 0,
+        rejected: 0,
+        other: 0,
+        byType: {},
+      };
+      this.stats.set(peerId, entry);
+    }
+    return entry;
+  }
+
+  /** What this transport has done per peer. Safe to call at any time. */
+  getStats(): Record<string, TransportPeerStats> {
+    const out: Record<string, TransportPeerStats> = {};
+    for (const [peer, entry] of this.stats) out[peer] = { ...entry };
+    return out;
+  }
+
   /** Send RPC request and wait for response. */
   async send(peerId: string, message: RPCMessage): Promise<RPCMessage> {
     const requestId = nextRequestId();
+    const counts = this.statsFor(peerId);
+    counts.sent += 1;
     const peerNumId = parseInt(peerId, 10);
     if (isNaN(peerNumId)) throw new Error(`Invalid peer id: ${peerId}`);
 
@@ -148,7 +206,12 @@ export class BatchedRaftTransport implements Transport {
     try {
       const response = await this.sendFrame(peerNumId, requestId, message);
       answered = true;
+      counts.answered += 1;
       return response;
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('request timeout')) counts.timedOut += 1;
+      else counts.failed += 1;
+      throw err;
     } finally {
       if (chunk) this.settleSnapshotTransfer(peerNumId, chunk, answered);
     }
@@ -229,6 +292,16 @@ export class BatchedRaftTransport implements Transport {
       if (pending) {
         clearTimeout(pending.timer);
         this.pendingMap.delete(requestId);
+        const counts = this.statsFor(fromPeerId);
+        const kind = String(inner?.type ?? 'none');
+        counts.byType[kind] = (counts.byType[kind] ?? 0) + 1;
+        if (inner?.type === 'AppendEntries' && inner.direction === 'response') {
+          const payload = (inner as { payload?: { success?: boolean; matchIndex?: number } }).payload;
+          if (payload?.success) counts.accepted += 1;
+          else counts.rejected += 1;
+        } else {
+          counts.other += 1;
+        }
         pending.resolve(inner);
       }
       return;

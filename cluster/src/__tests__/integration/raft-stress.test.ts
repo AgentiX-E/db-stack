@@ -251,6 +251,17 @@ async function awaitLeaderAgreement(nodeList: TestNode[], timeoutMs = LEADER_ELE
 }
 
 /**
+ * The leader's per-peer replication view, as the worker reports it.
+ *
+ * `{next, match}` is the only place a follower that is not being sent anything is
+ * visible: from the follower's own side it looks like a healthy node waiting.
+ */
+async function peerProgress(node: TestNode): Promise<Record<string, { next: number; match: number }>> {
+  const status = (await getStatus(node)) as any;
+  return status?.peers ?? {};
+}
+
+/**
  * Poll one node's applied log until it reaches `target`.
  *
  * Unlike {@link waitForLogLength} this fails instead of returning the last value it
@@ -781,6 +792,53 @@ describe('Raft Transport Stress & Resilience', () => {
       const leaderNew = await findLeader();
       const applied = await awaitApplied(leaderNew, count);
       expect(applied).toBeGreaterThanOrEqual(count);
+    },
+    STRESS_TIMEOUT,
+  );
+
+  // ── AC 8.17: a follower that lost its storage ──────────────────────
+
+  it(
+    'AC 8.17 — a follower restarted on empty storage is back-filled from the leader',
+    async () => {
+      await startCluster(3);
+
+      const leader = await findLeader();
+      for (let i = 0; i < 5; i++) await proposeToLeader(leader, `pre-wipe-${i}`, nodes);
+
+      // The follower dies and its disk goes with it: same id, same port, no log at
+      // all. That is a replaced disk rather than a restart, which `AC 8.13` covers,
+      // and it is the case a leader's in-memory `matchIndex` cannot describe.
+      const follower = nodes.find((n) => n.id !== leader.id)!;
+      const followerPort = follower.port;
+      await gracefulShutdown(follower);
+      cleanupTempDir(follower.dataDir);
+
+      // One entry the lost follower never saw, so the leader has something to send.
+      const currentLeader = await awaitLeaderAgreement(nodes);
+      await proposeToLeader(currentLeader, 'post-wipe', nodes);
+
+      const peerList: PeerInfo[] = nodes
+        .filter((n) => n.id !== follower.id)
+        .map((n) => ({ id: n.id, host: '127.0.0.1', port: n.port }));
+      const wipeDir = createTempDir(`node-${follower.id}-wiped`);
+      const revived = createNode(follower.id, followerPort, peerList, certs[follower.id - 1]!, wipeDir);
+      const idx = nodes.findIndex((n) => n.id === follower.id);
+      nodes[idx] = revived;
+
+      await waitForMessage(revived, 'ready', readyBudgetMs());
+
+      // The leader still believes this peer holds the entries it acknowledged before
+      // the disk was lost. Every rejection used to be clamped back to `matchIndex + 1`
+      // by @maboke123/raft-core's LeaderState, so `{next: 5, match: 4}` was pinned for
+      // 596 polls while the node applied nothing — see the patch in
+      // `patches/@maboke123__raft-core@0.2.1.patch`. The back-fill is the assertion.
+      const applied = await awaitApplied(revived, 6);
+      expect(applied).toBeGreaterThanOrEqual(6);
+
+      // And the leader has learned where the follower actually is.
+      const progress = await peerProgress(currentLeader);
+      expect(progress[follower.id]?.match).toBeGreaterThanOrEqual(6);
     },
     STRESS_TIMEOUT,
   );

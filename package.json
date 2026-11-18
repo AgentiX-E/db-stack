@@ -64,6 +64,9 @@
       "@vitest/mocker": "3.2.6",
       "@vitest/pretty-format": "3.2.6",
       "tinypool": "2.2.0"
+    },
+    "patchedDependencies": {
+      "@maboke123/raft-core@0.2.1": "patches/@maboke123__raft-core@0.2.1.patch"
     }
   },
   "auditPolicy": {

@@ -566,4 +566,46 @@ describe('RaftAdapter — snapshot API & resource teardown', () => {
     const adapter = adapterWithNode(fakeNode({ stateMachine: {} }));
     await expect(adapter.stopHeartbeat()).rejects.toThrow(/timerManager not accessible/);
   });
+
+  // AC 34.50-34.52 — the transport's own counters, through the wrapper chain
+  it('AC 34.50 — getTransportStats() finds the layer that owns the sockets', () => {
+    const stats = { '2': { sent: 3, answered: 2, timedOut: 1, failed: 0 } };
+    const inner = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      send: vi.fn(),
+      onMessage: vi.fn(),
+      getStats: () => stats,
+    };
+    const adapter = new RaftAdapter(minimalConfig());
+    // Two wrappers deep: the seam holds the object, the object exposes the counters.
+    (adapter as any).transportProxy = new SwappableTransport(new SwappableTransport(inner as never) as never);
+
+    expect(adapter.getTransportStats()).toEqual(stats);
+  });
+
+  it('AC 34.51 — getTransportStats() answers {} for a transport that keeps no counters', () => {
+    const inner = { start: vi.fn(), stop: vi.fn(), send: vi.fn(), onMessage: vi.fn() };
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).transportProxy = new SwappableTransport(inner as never);
+
+    expect(adapter.getTransportStats()).toEqual({});
+  });
+
+  it('AC 34.52 — a throwing counter is reported as {}, not as a failed call', () => {
+    const inner = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      send: vi.fn(),
+      onMessage: vi.fn(),
+      getStats: () => {
+        throw new Error('counter exploded');
+      },
+    };
+    const adapter = new RaftAdapter(minimalConfig());
+    (adapter as any).transportProxy = new SwappableTransport(inner as never);
+
+    // Diagnostics must never be the thing that breaks the node they describe.
+    expect(adapter.getTransportStats()).toEqual({});
+  });
 });

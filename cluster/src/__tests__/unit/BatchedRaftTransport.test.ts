@@ -436,4 +436,46 @@ describe('BatchedRaftTransport (Unit)', () => {
     await expect(transport.send('not-a-number', makeMsg())).rejects.toThrow(/invalid peer/i);
     await expect(transport.send('', makeMsg())).rejects.toThrow(/invalid peer/i);
   }, 5000);
+
+  // ── AC 8.18-8.20: per-peer counters ─────────────────────────────────
+  //
+  // A leader's `{next, match}` cannot tell "the peer answered no" from "the peer
+  // never answered": both leave the pair where it was. These counters can, and a
+  // follower that could not be back-filled was diagnosed with them.
+
+  it('AC 8.18 — an answered request is counted, and an accepted AppendEntries is told apart from a rejected one', async () => {
+    const sending = transport.send('2', makeMsg());
+    await new Promise((r) => setImmediate(r));
+    const acceptedId = parseRequestId(mockSendToPeer.mock.calls[0]);
+    simulateIncoming(makeResponseMsg(acceptedId, { success: true }));
+    await sending;
+
+    const rejecting = transport.send('2', makeMsg());
+    await new Promise((r) => setImmediate(r));
+    const rejectedId = parseRequestId(mockSendToPeer.mock.calls[1]);
+    simulateIncoming(makeResponseMsg(rejectedId, { success: false, conflictIndex: 1, conflictTerm: 0 }));
+    await rejecting;
+
+    const stats = transport.getStats()['2'];
+    expect(stats).toMatchObject({ sent: 2, answered: 2, accepted: 1, rejected: 1, timedOut: 0, failed: 0 });
+    expect(stats?.byType).toEqual({ AppendEntries: 2 });
+  }, 10_000);
+
+  it('AC 8.19 — a request that never answers is counted as a timeout, not as an answer', async () => {
+    await expect(transport.send('3', makeMsg())).rejects.toThrow(/request timeout/i);
+
+    const stats = transport.getStats()['3'];
+    expect(stats).toMatchObject({ sent: 1, answered: 0, timedOut: 1, failed: 0 });
+    expect(stats?.byType).toEqual({});
+  }, 10_000);
+
+  it('AC 8.20 — a send that throws before the wire is counted as failed, and the peers stay separate', async () => {
+    mockSendToPeer.mockImplementationOnce(() => {
+      throw new Error('socket gone');
+    });
+    await expect(transport.send('4', makeMsg())).rejects.toThrow(/socket gone/);
+
+    expect(transport.getStats()['4']).toMatchObject({ sent: 1, answered: 0, timedOut: 0, failed: 1 });
+    expect(transport.getStats()['5']).toBeUndefined();
+  }, 10_000);
 });
