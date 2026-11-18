@@ -194,7 +194,7 @@ configuration file that looked like a gate and ran nowhere.
 
 | **Cross-version upgrade path**                           | Partially covered          | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
-| **Quorum-loss step-down**                                | Not covered (P3-20)        | raft-core 0.2.1 has no check-quorum, so a leader that loses its quorum keeps reporting `isLeader() === true` indefinitely while committing nothing (measured: 16 s, commit index frozen, write refused at 5 028 ms). The product's guarantee — no progress without a majority — holds and is asserted; a *step-down* is not implemented, and the `checkQuorum` / `preVote` options are declared without reaching the library. |
+| **Quorum-loss step-down**                                | Covered                    | raft-core 0.2.1 has no check-quorum, so an isolated leader keeps reporting `isLeader() === true` while committing nothing (measured: 16 s, commit index frozen, write refused at 5 028 ms). `checkQuorum` is now real: contact is a completed round trip through the *real* transport, `isLeader()` answers from the role **and** from a majority inside one election timeout, `getLeader()` returns `null` while that is not true, and a write is refused with `QUORUM_FAILED` instead of waiting out the library's commit timeout. Seven cases in `quorum-loss.test.ts` drive it against a real 3-node TLS cluster. |
 | **Harness `.mjs` child programs**                        | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
 
 Each row is tracked in the roadmap in
@@ -726,3 +726,82 @@ this paragraph is the one the gate prints, not the one a reviewer would have ass
 Not covered: fixed sleeps that precede assertions remain in the `raft-stress`, `raft-core` and
 `raft-shared-transport` child-process suites (P3-19). Same defect class, same remedy, but each
 conversion has to be read rather than applied mechanically.
+
+
+**A fault injector installed into a field nobody reads.** With the leader of a real 3-node cluster
+"partitioned" — `ChaosCluster.injectFault('partition', [leader])` — the injector reported
+`{lost: 0, delayed: 0, partitioned: 0, forwarded: 0}` and the isolated leader **committed a write**.
+Not a counting bug: `RaftNode` captures the `Transport` object it is constructed with, and the harness
+assigned the injector to `adapter.transport` *after* construction, so the library kept talking to the
+transport it had. Every partition, loss and latency fault in this repository was applied to a
+transport nobody used, which means the assertions that followed — "no split brain", "converges after
+partition recovery" — were describing a cluster that was never partitioned.
+
+The seam is one object: `SwappableTransport` is what raft-core holds, and `adapter.transport` is now a
+getter/setter over its inside. Two details are the contract rather than the implementation. The
+inbound handler follows every swap, because raft-core registers exactly one handler, once, at start —
+a seam that forwards sends but not the handler produces a node that answers nothing while looking
+correctly wired. And optional transport methods stay *absent* when the wrapped transport cannot do
+them, because raft-core branches on whether `addPeer` exists: a wrapper that always defines it turns
+"this transport cannot add peers" into a failed start, which is how `raft-shared-transport` broke on
+the first attempt.
+
+Making the injection real exposed three more defects in the harness, each of which had been invisible
+for the same reason — nothing ever called it:
+
+| Defect | What it produced | Fix |
+|---|---|---|
+| The injector kept its own `started` flag | every Raft RPC failed with `ChaosInjectingTransport not started` the moment the seam routed through it: an injector installed on a running node had never been started | delegate the lifecycle; a wrapper adopts the state of what it wraps |
+| A dropped request was answered with an `AppendEntries` message whatever it was | a `RequestVote` answered by an append is not a dropped message, it is a malformed one that reads as a rejection by accident | refuse in the request's own kind at term 0, in one shared helper |
+| Isolation only filtered outbound traffic | a "partitioned" follower still answered the leader's heartbeats, so it stayed in sync: a half-open partition | filter inbound as well, and mark the complement on the other side |
+
+Plus a fourth, in the tests themselves: `injectFault('partition', [])` isolated *nobody* and healed
+nothing, and four call sites wrote it meaning "rejoin the cluster". With injection inert that was
+harmless; with injection real, `BP.3` wrote 30 of the 55 entries it asserts and `BP.2` never elected a
+leader again. `injectFault('partition', [])` now heals — isolating nobody *is* healing everyone — and
+`healPartitions()` names it. The same file's `verifyConvergence` used to `console.log('[WARN] …')` and
+return, so every "after healing, all nodes converge" claim in it was unfalsifiable; it throws now.
+
+**The leader that could not serve.** `checkQuorum` was documented as "default: true" and read by
+nothing. It is now a quorum watchdog: `ObservedTransport` sits *innermost* — inside any injector — and
+records the moment the real transport completed a round trip, because that is the only evidence a peer
+answered. A fault layer that answers a message it dropped produces no observation, which is exactly
+what an isolated leader must not mistake for contact. Two runs of the same experiment, one node of
+three isolated, at the four-second mark:
+
+| Configuration | Leadership | The write |
+|---|---|---|
+| `checkQuorum: false` (the old behaviour) | `isLeader()` still `true`, 40 messages blocked, so the isolation was real | refused after **5 035 ms** by the library's commit wait |
+| `checkQuorum: true` (the default) | `false` within one election timeout, and `getQuorumHealth()` names both silent peers | refused with `QUORUM_FAILED` inside **1.5 s**, naming the majority, the window and the silent peers |
+
+The library's own role is left alone: the node stops *claiming* it can serve, which is the part a
+router reads. `getLeader()` returns `null` while that is true — a leader that cannot hear a majority
+does not know who leads, and naming itself would be the claim the mechanism exists to stop making.
+
+Fifty-eight cases pin the contract: `AC 47.1`–`47.10` the seam (inbound handler follows, optional
+methods stay absent, a swap does not stop what it replaced), `AC 48.1`–`48.15` the watchdog
+arithmetic on an injected clock (majorities 1–7, a stale answer, a learner's answer, a backwards
+clock, a member list that repeats this node), `AC 49.1`–`49.9` the observer (a rejected send is not
+contact, an outer layer that fabricates an answer is not contact, a throwing callback cannot fail a
+completed RPC), `AC 50.1`–`50.9` the partition wrapper, `AC 51.1`–`51.7` the real cluster,
+including the opt-out that reports `getQuorumHealth() === null` rather than a health report that
+always says "fine".
+
+**A port that was free for one caller.** The first full run after the seam and the watchdog was green;
+the second failed three cases in `raft-multishard` with `EADDRINUSE 127.0.0.1:46315`, plus two on the
+half-started cluster behind it. `getFreePort` asked the OS for a free port — bind, read, close — which
+answers "free now": the next caller in the same process could be offered the same number. This
+iteration added seven clusters to a suite that already had dozens, which is what finally opened the
+window. Ports are now leased for the run (an atomically created file in a directory keyed by pid, with
+the workers of a thread pool sharing it) and the allocation retries rather than trusting one answer;
+the defect has its own case — fifty simultaneous allocations, fifty distinct ports (`AC 52.1`–`52.6`).
+
+`preVote` is the one option that still cannot be honoured — raft-core pre-votes on every election
+timeout and exposes no flag to skip it — and it is now honest about it: `preVote: false` warns, and
+`getIgnoredSettings()` returns the setting with the reason, so a deployment can assert that its
+configuration is fully in effect instead of trusting a field.
+
+Still not covered: the fixed sleeps that precede assertions in the `raft-stress`, `raft-core` and
+`raft-shared-transport` child-process suites (P3-19), and the fact that `checkQuorum` needs a member
+list — a shared-transport group keeps its members in another manager, so it gets no accounting and
+`getQuorumHealth()` returns `null` (P3-21).
