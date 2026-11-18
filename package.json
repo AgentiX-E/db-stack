@@ -71,13 +71,6 @@
     }
   },
   "auditPolicy": {
-    "allow": [
-      {
-        "advisory": "GHSA-fc5q-39xc-vjpf",
-        "package": "picomatch",
-        "reason": "ReDoS through single-branch repeated extglobs; reaches the tree only through vitest/stryker/vite (dev), whose glob input is this repository's own paths — no patched version has been published (patched: <0.0.0)",
-        "reviewed": "2026-11-18"
-      }
-    ]
+    "allow": []
   }
 }
