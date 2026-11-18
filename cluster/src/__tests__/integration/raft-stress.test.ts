@@ -906,9 +906,21 @@ describe('Raft Transport Stress & Resilience', () => {
       const applied = await awaitApplied(revived, 6);
       expect(applied).toBeGreaterThanOrEqual(6);
 
-      // And the leader has learned where the follower actually is.
-      const progress = await peerProgress(currentLeader);
-      expect(progress[follower.id]?.match).toBeGreaterThanOrEqual(6);
+      // And the leader has learned where the follower actually is. This view lags
+      // the one above: an entry is applied on the revived node before the next
+      // AppendEntries response carries its match index back, so a single read here
+      // measures the scheduler rather than the protocol — it returned 0 on CI run
+      // 44367992093 while `applied` had already reached 6. Wait for the leader's
+      // own report instead of assuming it has caught up with what we just saw.
+      const progress = await pollUntil(
+        () => peerProgress(currentLeader),
+        (reported) => (reported[follower.id]?.match ?? 0) >= 6,
+        {
+          timeoutMs: LOG_REPLICATION_TIMEOUT,
+          label: `leader ${currentLeader.id} reports match >= 6 for node ${follower.id}`,
+        },
+      );
+      expect(progress.value[follower.id]?.match).toBeGreaterThanOrEqual(6);
     },
     STRESS_TIMEOUT,
   );
