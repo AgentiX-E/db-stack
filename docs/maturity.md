@@ -689,9 +689,11 @@ two of three nodes could know nothing and the case still passed.
 
 `@agentix-e/db-cluster/testing` now ships the wait as an object: `pollUntil(read, accept,
 { timeoutMs })` and `awaitAgreement(reads, { timeoutMs, require, equal })`, with
-`TestCluster.awaitLeaderAgreement()` built on them. The contract is pinned by seventeen cases
-(`AC 45.1`–`AC 45.8`, `AC 46.1`–`AC 46.9`) driven by an injected clock, so deadline behaviour is
-tested exactly and in microseconds:
+`TestCluster.awaitLeaderAgreement()` built on them. The contract is pinned by twenty-two cases
+(`AC 45.1`–`AC 45.13`, `AC 46.1`–`AC 46.9`), most of them driven by an injected clock, so deadline
+behaviour is tested exactly and in microseconds — and the three that are not are there on purpose,
+because a primitive whose real clock and real sleep are never executed is a primitive shipping its
+test double:
 
 | Property | Why it is the contract |
 |---|---|
@@ -710,6 +712,16 @@ isolated leader keeps reporting `isLeader() === true` (measured: still true at 1
 frozen at 1, the write refused after 5 028 ms). It asserts the guarantee that exists — a minority
 commits nothing — and the missing step-down is registered as P3-20 alongside the `checkQuorum` and
 `preVote` flags that were declared and never forwarded to the library.
+
+**The per-file floor caught the gap this iteration created, which is the gate doing its job.** The
+first push passed twenty-two CI jobs — including the benchmark that had failed — and failed
+`coverage-gate` with `TestCluster.ts: lines 90.43 %` and `convergence.ts: functions 90.90 %, branches
+91.30 %`. The cause was structural rather than careless: `awaitLeaderAgreement` was exercised only by
+the performance suite, which the coverage configuration excludes, and the new module's real clock and
+real sleep are only reached by a caller that omits them. Both are now measured on their own terms —
+`convergence.ts` at 100 % on all four dimensions from its unit cases alone, `TestCluster.ts` at
+99.2 % lines with an integration case that asserts the agreement from every node — and the number in
+this paragraph is the one the gate prints, not the one a reviewer would have assumed.
 
 Not covered: fixed sleeps that precede assertions remain in the `raft-stress`, `raft-core` and
 `raft-shared-transport` child-process suites (P3-19). Same defect class, same remedy, but each

@@ -55,6 +55,35 @@ describe('TestCluster lifecycle', () => {
     expect(await leader.adapter.isLeader()).toBe(true);
   });
 
+  it('waits until every node names the same leader, and reports what it cost', async () => {
+    const leader = await cluster.findLeader();
+
+    // `findLeader()` resolves the moment a candidate marks *itself* leader, which
+    // raft-core does before it appends the no-op entry and before it sends a single
+    // heartbeat — so a single read across the three nodes is a race, and the one
+    // `AC 29.2` lost on CI 44225232372 (`[ null, 2, null ]`). This is the contract
+    // that replaces that read.
+    const agreed = await cluster.awaitLeaderAgreement();
+
+    expect(agreed.leaderId).toBe(leader.id);
+    expect(agreed.attempts).toBeGreaterThanOrEqual(1);
+    expect(agreed.elapsedMs).toBeGreaterThanOrEqual(0);
+    // Agreement is about the group, so it is checked from every node, twice: once
+    // through what the helper reported and once through what the nodes say.
+    expect(await Promise.all(cluster.nodes.map((node) => node.adapter.getLeader()))).toEqual([
+      agreed.leaderId,
+      agreed.leaderId,
+      agreed.leaderId,
+    ]);
+    expect(await leader.adapter.getTerm()).toBe(agreed.term);
+
+    // A caller that supplies its own budget gets the same answer, with its own
+    // timing rather than the harness defaults.
+    const bounded = await cluster.awaitLeaderAgreement({ timeoutMs: 10_000, intervalMs: 25 });
+    expect(bounded.leaderId).toBe(agreed.leaderId);
+    expect(bounded.term).toBe(agreed.term);
+  }, 60_000);
+
   it('reports the nodes left after excluding one', async () => {
     const leader = await cluster.findLeader();
 

@@ -32,6 +32,9 @@
  *   AC 45.6  a read started inside the budget counts even if it finishes after
  *   AC 45.7  the interval defaults to 50 ms
  *   AC 45.8  the failure names the label, the attempts, the budget and the last sighting
+ *   AC 45.9  a value that cannot be serialised is described, not thrown on
+ *   AC 45.10 a long observation is truncated to one readable line
+ *   AC 45.11 an unserialisable absence is described as its string form
  *   AC 46.1  agreement is returned once every reader reports the same value
  *   AC 46.2  a lagging reader defers acceptance to a later round instead of failing
  *   AC 46.3  a value the caller rejects is not accepted even when all readers agree
@@ -217,6 +220,92 @@ describe('pollUntil', () => {
     expect(error.message).toContain('{"leader":null}');
     expect(error.label).toBe('the cluster to agree');
     expect(error.timeoutMs).toBe(100);
+  });
+
+  it('AC 45.9 — a value that cannot be serialised is described rather than thrown on', async () => {
+    const clock = manualClock();
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    // Building a failure message must not become a second failure: JSON.stringify
+    // throws on a cycle, and a wait that dies while explaining itself reports the
+    // wrong error.
+    const error = (await pollUntil(
+      async () => circular,
+      () => false,
+      { timeoutMs: 0, label: 'a cycle', now: clock.now, sleep: clock.sleep },
+    ).catch((err: unknown) => err)) as ConvergenceTimeoutError;
+
+    expect(error).toBeInstanceOf(ConvergenceTimeoutError);
+    expect(error.message).toContain('[object Object]');
+  });
+
+  it('AC 45.10 — a long observation is truncated to one readable line', async () => {
+    const clock = manualClock();
+
+    const error = (await pollUntil(
+      async () => 'x'.repeat(600),
+      () => false,
+      { timeoutMs: 0, label: 'a long value', now: clock.now, sleep: clock.sleep },
+    ).catch((err: unknown) => err)) as ConvergenceTimeoutError;
+
+    // A state dump belongs in a log, not in an assertion message: the observation is
+    // cut, and the cut is visible.
+    expect(error.message).toContain('…');
+    expect(error.message.length).toBeLessThan(600);
+  });
+
+  it('AC 45.11 — an unserialisable absence is described as its string form', async () => {
+    const clock = manualClock();
+
+    // `JSON.stringify(undefined)` is `undefined`, not a string: the `??` is what keeps
+    // the message from rendering "undefined" by accident of concatenation.
+    const error = (await pollUntil(
+      async () => undefined,
+      () => false,
+      { timeoutMs: 0, label: 'nothing at all', now: clock.now, sleep: clock.sleep },
+    ).catch((err: unknown) => err)) as ConvergenceTimeoutError;
+
+    expect(error).toBeInstanceOf(ConvergenceTimeoutError);
+    expect(error.message).toContain('last observed: undefined');
+  });
+
+  it('AC 45.12 — the real clock and the real sleep are what a caller gets by omission', async () => {
+    let reads = 0;
+
+    // No `now`, no `sleep`: this is the path every production caller takes, and it
+    // has to be a real wait rather than an injected one. A one-millisecond budget with
+    // a zero interval is long enough for at least two attempts and short enough to
+    // keep the suite instant.
+    const error = (await pollUntil(
+      async () => {
+        reads++;
+        return 'no';
+      },
+      () => false,
+      { timeoutMs: 1, intervalMs: 0, label: 'the real clock' },
+    ).catch((err: unknown) => err)) as ConvergenceTimeoutError;
+
+    expect(error).toBeInstanceOf(ConvergenceTimeoutError);
+    expect(reads).toBeGreaterThanOrEqual(2);
+    expect(error.attempts).toBeGreaterThanOrEqual(2);
+  });
+
+  it('AC 45.13 — a reader that throws something other than an Error is still quoted', async () => {
+    const clock = manualClock();
+
+    // Not every rejection is an Error: a transport can reject with a string, and a
+    // failure message that renders "undefined" for it loses the only diagnostic there.
+    const error = (await pollUntil(
+      async () => {
+        throw 'peer 3 is unreachable';
+      },
+      () => true,
+      { timeoutMs: 0, label: 'a string rejection', now: clock.now, sleep: clock.sleep },
+    ).catch((err: unknown) => err)) as ConvergenceTimeoutError;
+
+    expect(error).toBeInstanceOf(ConvergenceTimeoutError);
+    expect(error.message).toContain('peer 3 is unreachable');
   });
 });
 

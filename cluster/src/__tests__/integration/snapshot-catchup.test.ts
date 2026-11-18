@@ -201,8 +201,11 @@ describe('Raft cluster — a restarted follower installs a snapshot', () => {
     // log it would have replayed from was truncated on the leader.
     const revivedSnapshot = await revived.adapter.refreshSnapshotMeta();
     expect(revivedSnapshot?.lastIncludedIndex ?? 0).toBeGreaterThan(0);
-    // And it is still a follower of the same leader, not a new one.
-    expect(await revived.adapter.getLeader()).toBe(leader.id);
+    // And it is still a follower of the same leader, not a new one. Asserted as
+    // agreement rather than as one read: the restarted node has just rejoined, and
+    // "which leader does the cluster name" is a property of the cluster.
+    const agreed = await cluster.awaitLeaderAgreement({ timeoutMs: 20_000, intervalMs: 100 });
+    expect(agreed.leaderId).toBe(leader.id);
 
     // AC 35.3: the point of the whole exercise. Matching applied indexes prove
     // nothing if the bytes behind them were lost, so the state machines are
