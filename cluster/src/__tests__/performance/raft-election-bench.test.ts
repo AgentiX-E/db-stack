@@ -93,17 +93,22 @@ describe('Raft Election Benchmark', () => {
         );
         expect(claims.filter((id) => id !== 0)).toEqual([leader.id]);
 
-        // ...and every node, including the two followers, names it.
-        const named = await Promise.all(cluster.nodes.map((node) => node.adapter.getLeader()));
-        expect(named).toEqual([leader.id, leader.id, leader.id]);
+        // ...and every node, including the two followers, names it. Agreement is a
+        // convergent property: the leader enters `Leader` and records itself before
+        // it sends its first heartbeat, so at the instant `findLeader()` resolves the
+        // followers cannot know yet. Reading once here is a race the runner lost
+        // (`[ null, 2, null ]` on CI 44225232372); waiting on the property with a
+        // deadline is the assertion this criterion always meant.
+        const agreed = await cluster.awaitLeaderAgreement();
+        expect(agreed.leaderId).toBe(leader.id);
 
         // One term, agreed by all three: two leader ids in one term would be the
-        // split brain this criterion exists to rule out.
-        const terms = await Promise.all(cluster.nodes.map((node) => node.adapter.getTerm()));
-        expect(new Set(terms).size).toBe(1);
-
+        // split brain this criterion exists to rule out. The agreement round also
+        // fixed the term, because agreeing on a leader in different terms is not
+        // agreement — it is two nodes describing two different elections.
         process.stdout.write(
-          `\n  [AC 29.2] leader=${leader.id} term=${terms[0]} across ${cluster.nodes.length} nodes\n`,
+          `\n  [AC 29.2] leader=${agreed.leaderId} term=${agreed.term} across ${cluster.nodes.length} nodes` +
+            ` (agreed in ${agreed.attempts} round(s), ${agreed.elapsedMs}ms)\n`,
         );
       } finally {
         await cluster.stop();
@@ -166,8 +171,12 @@ describe('Raft Election Benchmark', () => {
 
         expect(await leader.adapter.isLeader()).toBe(true);
         expect(await leader.adapter.getTerm()).toBe(termBefore);
-        const named = await Promise.all(cluster.nodes.map((node) => node.adapter.getLeader()));
-        expect(named).toEqual([leader.id, leader.id, leader.id]);
+        // Still named by everyone — read as agreement, not as one snapshot: the
+        // criterion is "no new election happened", and a cluster that had held one
+        // would name a different id here.
+        const agreed = await cluster.awaitLeaderAgreement({ timeoutMs: 5_000 });
+        expect(agreed.leaderId).toBe(leader.id);
+        expect(agreed.term).toBe(termBefore);
 
         process.stdout.write(`\n  [AC 29.4] leader=${leader.id} term=${termBefore} stable for ${tenHeartbeatsMs}ms\n`);
       } finally {

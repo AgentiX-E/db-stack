@@ -13,6 +13,7 @@
 import { RaftAdapter } from '../consensus/core/RaftAdapter';
 import { generateClusterCerts, type TestClusterCerts, type CertBundle } from './test-certs';
 import { getFreePorts, createTempDir, cleanupTempDir, isPortFree } from './test-utils';
+import { awaitAgreement } from './convergence';
 import { join } from 'node:path';
 import * as fs from 'node:fs';
 
@@ -34,8 +35,15 @@ export interface TestClusterOptions {
    * magnitude. Tests that want snapshots pass a small value.
    */
   snapshotInterval?: number;
-  preVote?: boolean; // default: true
-  checkQuorum?: boolean; // default: true
+  /** Passed through for compatibility; pre-vote is always on in raft-core 0.2.1. */
+  preVote?: boolean;
+  /**
+   * Passed through for compatibility and read by nothing downstream: raft-core
+   * 0.2.1 has no check-quorum, so an isolated leader keeps claiming leadership
+   * while committing nothing (P3-20). A test that needs "no progress without a
+   * quorum" must assert on commits, not on `isLeader()`.
+   */
+  checkQuorum?: boolean;
   enableInstallSnapshot?: boolean; // default: false
   /**
    * How the cluster picks its ports. Defaults to `getFreePorts`, which asks the OS
@@ -63,6 +71,26 @@ export interface TestNode {
    * serializer.
    */
   applied: string[];
+}
+
+/** How long {@link TestCluster.awaitLeaderAgreement} will wait. */
+export interface LeaderAgreementOptions {
+  /** Budget for the whole wait (default: `leaderTimeoutMs`). */
+  timeoutMs?: number;
+  /** Gap between rounds (default: `pollIntervalMs`). */
+  intervalMs?: number;
+}
+
+/** What {@link TestCluster.awaitLeaderAgreement} observed once it agreed. */
+export interface LeaderAgreement {
+  /** The leader every node named. */
+  leaderId: number;
+  /** The term every node was in. */
+  term: number;
+  /** Rounds it took, including the accepted one. */
+  attempts: number;
+  /** Milliseconds from the first round to agreement. */
+  elapsedMs: number;
 }
 
 // ── Defaults ──────────────────────────────────────────────────────
@@ -278,6 +306,14 @@ export class TestCluster {
 
   /**
    * Wait for a leader to be elected. Throws if timeout reached.
+   *
+   * The moment this resolves is the moment some node reports *itself* leader, which
+   * raft-core enters before it appends the no-op entry and sends the first
+   * heartbeat — so at that instant the followers still hold `leader = null` and a
+   * test that reads `getLeader()` across the cluster is reading a property that
+   * cannot have converged yet. Use {@link awaitLeaderAgreement} when the assertion
+   * is that every node names the same leader; CI run 44225232372 failed exactly
+   * that way (`[ null, 2, null ]` against `[ 2, 2, 2 ]`).
    */
   async findLeader(): Promise<TestNode> {
     this.requireStarted();
@@ -289,6 +325,43 @@ export class TestCluster {
       await this.sleep(this.opts.pollIntervalMs);
     }
     throw new Error(`No leader elected within ${this.opts.leaderTimeoutMs}ms`);
+  }
+
+  /**
+   * Wait until every live node names the same leader in the same term.
+   *
+   * Agreement is a property of the group as of a round, not of any single node, and
+   * it arrives one heartbeat after the election. Reading it with a fixed `sleep`
+   * guesses at that delay; reading it once immediately after {@link findLeader}
+   * cannot succeed. This waits on the property with a deadline, and the deadline is
+   * a bound rather than an expectation: the leader starts its heartbeat timer as it
+   * takes office, so convergence costs at most one heartbeat interval
+   * (`heartbeatTick × tickIntervalMs`, 150 ms by default).
+   */
+  async awaitLeaderAgreement(options: LeaderAgreementOptions = {}): Promise<LeaderAgreement> {
+    this.requireStarted();
+    const agreed = await awaitAgreement(
+      this.nodes.map((node) => async () => ({
+        leader: await node.adapter.getLeader(),
+        term: await node.adapter.getTerm(),
+      })),
+      {
+        timeoutMs: options.timeoutMs ?? this.opts.leaderTimeoutMs,
+        intervalMs: options.intervalMs ?? this.opts.pollIntervalMs,
+        label: `all ${this.nodes.length} nodes to name the same leader`,
+        require: (reading) => reading.leader !== null,
+        equal: (left, right) => left.leader === right.leader && left.term === right.term,
+      },
+    );
+
+    const first = agreed.value[0]!;
+    return {
+      // `require` rejected null for every reading that was accepted, including this one.
+      leaderId: first.leader as number,
+      term: first.term,
+      attempts: agreed.attempts,
+      elapsedMs: agreed.elapsedMs,
+    };
   }
 
   /**

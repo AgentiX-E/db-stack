@@ -61,9 +61,21 @@ export interface RaftConfig {
   tickIntervalMs?: number;
   /** Path to a SQLite file for durable Raft log storage. */
   storagePath?: string;
-  /** Enable pre-vote check (default: true). Disable for InMemoryTransport tests. */
+  /**
+   * Accepted for compatibility, **not forwarded**: raft-core 0.2.1 implements
+   * pre-vote unconditionally and exposes no flag to turn it off, so `false` changes
+   * nothing. Declared here because the harness and the chaos configurations set it;
+   * it is removed — or made real — together with the quorum watchdog (P3-20).
+   */
   preVote?: boolean;
-  /** Enable check quorum (default: true). */
+  /**
+   * Accepted for compatibility, **not forwarded, and not implemented by raft-core
+   * 0.2.1 at all**. An isolated leader keeps answering `isLeader() === true` and
+   * simply cannot commit: measured on 2026-11-18, still leading at 16 s with the
+   * commit index frozen and every write refused after 5 028 ms. Do not read this
+   * flag as a step-down guarantee; P3-20 is the item that has to make it true or
+   * delete it.
+   */
   checkQuorum?: boolean;
   /**
    * Entries between snapshots (default `DEFAULT_SNAPSHOT_INTERVAL` = 200).

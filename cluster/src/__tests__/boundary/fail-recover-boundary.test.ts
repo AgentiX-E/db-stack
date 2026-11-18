@@ -13,7 +13,7 @@
  *   FC.1 — 5 fail-recover cycles, 200 entries each
  *   FC.2 — 10 fail-recover cycles, 100 entries each
  *   FC.3 — 20 fail-recover cycles, 50 entries each (rapid flapping)
- *   FC.4 — Cascade: crash leader before it syncs (network partition)
+ *   FC.4 — Cascade crash: with one node of three left, nothing commits
  *
  * Acceptance:
  *   - No entries lost across any cycle
@@ -176,21 +176,35 @@ describe('Boundary: Fail-Recover Cycles', () => {
   );
 
   it(
-    'FC.4: cascade crash before sync (no entries expected)',
+    'FC.4: cascade crash — a minority accepts no commit',
     async () => {
       // Leave exactly one node alive: kill the two highest ids.
       for (const id of [3, 2]) {
         await cluster.killNode(id);
       }
       expect(cluster.nodes).toHaveLength(1);
+      const survivor = cluster.nodes[0]!;
+      const commitBefore = await survivor.adapter.getCommitIndex();
 
-      // Wait — only 1 node left, Raft requires majority
-      console.log('[FC.4] All nodes crashed except 1 — should not elect leader');
-      await new Promise((r) => setTimeout(r, 15_000));
+      // What a minority guarantees is about progress, not about self-description.
+      //
+      // This case used to assert `findLeader()` rejects, i.e. that no node may claim
+      // leadership with one of three nodes alive. The library never claimed that:
+      // raft-core 0.2.1 implements no check-quorum at all — our `checkQuorum` flag is
+      // declared and never forwarded (P3-20) — so an isolated leader keeps answering
+      // `isLeader() === true` forever. Measured on 2026-11-18: still true at 16 s,
+      // commit index frozen at 1, and the write refused after 5 028 ms with
+      // `Failed to commit command within timeout`. The old assertion therefore passed
+      // or failed on which node happened to hold leadership when the cascade ran, and
+      // a cascade whose survivor is the leader is the case worth testing.
+      await expect(survivor.adapter.proposeAndWait('fc4-after-cascade')).rejects.toThrow(
+        /Failed to commit|not the leader/i,
+      );
 
-      // With a minority of nodes alive, no leader may ever be elected.
-      await expect(cluster.findLeader()).rejects.toThrow(/No leader elected/);
-      console.log('[FC.4] Single survivor has no leader (expected)');
+      // Nothing moved: the entry may sit in the survivor's log, uncommitted.
+      expect(await survivor.adapter.getCommitIndex()).toBe(commitBefore);
+
+      console.log('[FC.4] One node of three alive: nothing commits (expected)');
     },
     FC_TIMEOUT,
   );

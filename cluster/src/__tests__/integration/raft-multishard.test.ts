@@ -18,6 +18,7 @@ import { RaftAdapter } from '../../consensus/core/RaftAdapter';
 import { SqlVecError, SqlVecErrorCode } from '../../interfaces/types';
 import { generateClusterCerts } from './test-certs';
 import { getFreePorts, createTempDir, cleanupTempDir } from './test-utils';
+import { awaitAgreement } from '../../testing/convergence';
 import { join } from 'node:path';
 
 // ──────────────────────────────────────────
@@ -265,21 +266,28 @@ describe('Multi-shard Raft cluster', () => {
     // Leaders must be different ports
     expect(s0Leader.leaderNode.port).not.toBe(s1Leader.leaderNode.port);
 
-    // Verify all nodes in each shard track the same leader
-    // Give some time for leader info to propagate
-    await sleep(2000);
-
-    // Check shard-0 consensus on leader
-    const s0Leaders = await Promise.all(shard0Nodes.map((n) => n.adapter.getLeader()));
-    const uniqueS0Leaders = [...new Set(s0Leaders.filter((l) => l !== null))];
-    expect(uniqueS0Leaders.length).toBe(1);
-    expect(uniqueS0Leaders[0]).toBe(s0Leader.leaderId);
-
-    // Check shard-1 consensus on leader
-    const s1Leaders = await Promise.all(shard1Nodes.map((n) => n.adapter.getLeader()));
-    const uniqueS1Leaders = [...new Set(s1Leaders.filter((l) => l !== null))];
-    expect(uniqueS1Leaders.length).toBe(1);
-    expect(uniqueS1Leaders[0]).toBe(s1Leader.leaderId);
+    // Verify all nodes in each shard track the same leader.
+    //
+    // This used to be `await sleep(2000)` under the comment "give some time for
+    // leader info to propagate", followed by a `filter((l) => l !== null)` before
+    // asserting that one id remained — which passes when two of three nodes know
+    // nothing at all. Leader knowledge arrives with the leader's first heartbeat, so
+    // the honest check is a bounded wait on the property itself, with null rejected.
+    for (const [shardNodes, expected, shardName] of [
+      [shard0Nodes, s0Leader.leaderId, 'shard-0'],
+      [shard1Nodes, s1Leader.leaderId, 'shard-1'],
+    ] as const) {
+      const agreed = await awaitAgreement(
+        shardNodes.map((node) => () => node.adapter.getLeader()),
+        {
+          timeoutMs: 10_000,
+          intervalMs: 100,
+          label: `every ${shardName} node to name leader ${expected}`,
+          require: (leader) => leader !== null,
+        },
+      );
+      expect(agreed.value).toEqual(shardNodes.map(() => expected));
+    }
   }, 40_000);
 
   it('AC 7.3: Entries proposed to each shard commit on all 3 nodes of that shard', async () => {

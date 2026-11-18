@@ -7,7 +7,9 @@
  */
 
 export { TestCluster } from './TestCluster';
-export type { TestClusterOptions, TestNode } from './TestCluster';
+export type { TestClusterOptions, TestNode, LeaderAgreement, LeaderAgreementOptions } from './TestCluster';
+export { pollUntil, awaitAgreement, ConvergenceTimeoutError, DEFAULT_POLL_INTERVAL_MS } from './convergence';
+export type { AgreementOptions, ConvergenceFailure, ConvergeOptions, ConvergeResult } from './convergence';
 export { generateClusterCerts } from './test-certs';
 export type { CertBundle, TestClusterCerts } from './test-certs';
 export { getFreePort, getFreePorts, createTempDir, cleanupTempDir } from './test-utils';
