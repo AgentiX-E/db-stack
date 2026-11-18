@@ -22,14 +22,27 @@ import path from 'node:path';
  * The directory is keyed by pid, so workers in a thread pool — which share a pid —
  * see each other's claims, and a later run starts from an empty directory.
  */
+/**
+ * Where lease directories live.
+ *
+ * `os.tmpdir()` by default — but the test harness redirects `TMPDIR` per worker
+ * thread, and a port pool that is per thread hands the same port to two of them.
+ * `DBSTACK_PORT_LEASE_DIR` therefore points every worker at one directory, and
+ * `pid` keeps one run's claims out of the next.
+ */
+function portLeaseBase(): string {
+  const override = process.env.DBSTACK_PORT_LEASE_DIR;
+  return override !== undefined && override !== '' ? override : os.tmpdir();
+}
+
 export class PortLeases {
   private readonly dir: string;
   private swept = false;
 
   constructor(
-    dir: string = path.join(os.tmpdir(), `db-stack-ports-${process.pid}`),
+    dir: string = path.join(portLeaseBase(), `db-stack-ports-${process.pid}`),
     /** Where lease directories live. A parameter so the sweep can be tested. */
-    private readonly tmpRoot: string = os.tmpdir(),
+    private readonly tmpRoot: string = portLeaseBase(),
   ) {
     this.dir = dir;
   }

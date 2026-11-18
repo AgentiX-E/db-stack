@@ -125,7 +125,7 @@ export { PITRManager } from './pitr/PITRManager';
 
 // ── Observability ─────────────────────────────────────────
 export { HealthProbe } from './observability/HealthProbe';
-export { LoggingAdapter } from './observability/LoggingAdapter';
+export { LoggingAdapter, traceContext } from './observability/LoggingAdapter';
 export { RaftMetricsCollector } from './observability/RaftMetricsCollector';
 
 // ── Storage engines (engine-agnostic SPI) ─────────────────
@@ -159,7 +159,7 @@ export { IHAClientManager } from './interfaces/ha/IHAClientManager';
 export { IHAConsistencyVerifier, IVerificationResult } from './interfaces/ha/IHAConsistencyVerifier';
 export { IFencingManager } from './interfaces/ha/IFencingManager';
 export { ITransportReceiver } from './interfaces/transport/ITransportReceiver';
-export { MerkleTree } from './interfaces/IMerkleTreeSync';
+export { MerkleTree } from './consensus/anti-entropy/MerkleTree';
 export {
   ConsensusRole,
   MembershipChange,

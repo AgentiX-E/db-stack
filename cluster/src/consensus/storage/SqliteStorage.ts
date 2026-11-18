@@ -30,6 +30,7 @@ import { Mutex } from 'async-mutex';
 
 import pino from 'pino';
 import { getErrorMessage } from '../helpers/errorUtils';
+import { describeStorageFailure } from './describeStorageFailure';
 import { resolveLogLevel } from '../../observability/logLevel';
 const logger = pino({ level: resolveLogLevel() });
 
@@ -241,10 +242,14 @@ export class SqliteStorage {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    this.db = new Database(this.filePath);
-    openHandleCount += 1;
-
+    // The constructor is inside the guarded block: "unable to open database file"
+    // is the most common way this fails (a path that is a directory, a read-only
+    // mount, a full filesystem) and it used to escape the block that adds the
+    // path and the free space to the message.
     try {
+      this.db = new Database(this.filePath);
+      openHandleCount += 1;
+
       // Apply PRAGMAs
       this.db.pragma(`journal_mode = ${this.opts.journalMode}`);
       this.db.pragma(`synchronous = ${this.opts.synchronous}`);
@@ -294,13 +299,24 @@ export class SqliteStorage {
       // open, so that a failed `open()` leaves the object exactly as it was.
       const handle = this.db;
       this.db = null;
-      openHandleCount -= 1;
-      this.resetStatements();
+      if (handle) {
+        // Only an open that got as far as a handle owns the counter and the
+        // statements; a constructor failure leaves both untouched.
+        openHandleCount -= 1;
+        this.resetStatements();
+      }
       try {
         handle?.close();
       } catch {
         // The handle may be unusable already; the original error is the one
         // that explains the failure.
+      }
+      // A driver-level I/O failure says "disk I/O error" and nothing else. Every
+      // other error here is the caller's (`onOpen` a hook that threw) and is
+      // rethrown untouched, so its message stays exactly what the caller wrote.
+      const code = (err as { code?: unknown } | null)?.code;
+      if (typeof code === 'string' && code.startsWith('SQLITE_')) {
+        throw new Error(describeStorageFailure(this.filePath, err), { cause: err });
       }
       throw err;
     }

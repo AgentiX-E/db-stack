@@ -177,6 +177,21 @@ await new OnlineShardMigration({ plan, source, target }).execute();
 The migration copies state, replays the tail of the log, and only then switches routing.
 During the copy the source keeps serving; the switch is a routing update, not a restart.
 
+### Write forwarding (optional `pg` dependency)
+
+`RaftGroupManager` can forward a write it receives on a follower to the shard leader over
+the PostgreSQL wire protocol instead of rejecting it. That path needs the optional
+`pg` (node-postgres) dependency; the rest of the package does not.
+
+```ts
+const manager = new RaftGroupManager(config, replicaCount); // no pg required to construct
+manager.autoForwardEnabled = true;                          // forwarding is opt-in
+```
+
+If `pg` is not installed, the first forwarded write fails with an error that names the
+dependency and the feature rather than a bare module-resolution message. Nothing else
+degrades: the forwarding path is the only consumer.
+
 ---
 
 ## 4. Membership changes
@@ -344,6 +359,24 @@ const probe = new HealthProbe({ consensusLayer });
 Events (typed, from `EventBus`): `leader.elected`, `leader.lost`, `leader.step_down`,
 `proposal.committed`, `proposal.applied`, `snapshot.created`, `snapshot.restored`,
 `role.changed`, `membership.changed`.
+
+### 9.1 Trace correlation
+
+Every log line carries a `traceId` field, taken from an `AsyncLocalStorage` scope. Wrap the
+work you want correlated:
+
+```ts
+import { traceContext } from '@agentix-e/db-cluster';
+
+app.use((req, res, next) =>
+  traceContext.runWith(req.headers['x-request-id'] ?? crypto.randomUUID(), () => next()),
+);
+```
+
+The id survives `await`, timers and callbacks, so a proposal logged by the Raft loop and the
+apply logged by the state machine carry the same value. Outside any scope the field is
+`undefined` — there is no ambient default, because a fake id is worse than none when you
+are grepping for one request.
 
 ---
 

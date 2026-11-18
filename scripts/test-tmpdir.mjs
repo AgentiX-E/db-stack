@@ -20,9 +20,27 @@
  *   3. `<cwd>/.tmp` (workspace-local; survives /tmp pruning)
  */
 
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+/**
+ * Which worker thread this process-level root belongs to.
+ *
+ * `TMPDIR` is process-wide, so every worker thread in one vitest process shares
+ * one root — and a directory that one test removes damages whichever test is
+ * running elsewhere. Isolating the root per worker removes that class instead of
+ * documenting it: a scratch directory now belongs to one thread, and a deletion
+ * cannot reach another's.
+ *
+ * The port-lease directory is the exception and is deliberately *not* per worker
+ * (`resolveSharedTempDir`): two threads that leased from separate pools would
+ * hand out the same port.
+ */
+function workerSuffix() {
+  const id = process.env.VITEST_WORKER_ID ?? process.env.VITEST_POOL_ID;
+  return id === undefined || id === "" ? "-w0" : `-w${id}`;
+}
 
 /** @param {string} label @returns {string} */
 export function resolveTestTmpRoot(label) {
@@ -32,13 +50,17 @@ export function resolveTestTmpRoot(label) {
     return override;
   }
 
-  const shm = '/dev/shm';
+  const shm = "/dev/shm";
   if (fs.existsSync(shm)) {
     try {
       const stat = fs.statfsSync(shm);
       const freeBytes = Number(stat.bavail) * Number(stat.bsize);
       if (freeBytes > 512 * 1024 * 1024) {
-        const dir = path.join(shm, 'db-stack-tests', label);
+        const dir = path.join(
+          shm,
+          "db-stack-tests",
+          `${label}${workerSuffix()}`,
+        );
         fs.mkdirSync(dir, { recursive: true });
         return dir;
       }
@@ -47,9 +69,33 @@ export function resolveTestTmpRoot(label) {
     }
   }
 
-  const localTmp = path.join(process.cwd(), '.tmp');
+  const localTmp = path.join(
+    process.cwd(),
+    ".tmp",
+    `${label}${workerSuffix()}`,
+  );
   fs.mkdirSync(localTmp, { recursive: true });
   return localTmp;
+}
+
+/**
+ * A directory shared by every worker of this process, for coordination.
+ *
+ * Ports are the only thing that needs one: a port leased in one thread must be
+ * visible to the others, or the same port is handed out twice.
+ *
+ * @param {string} kind @returns {string}
+ */
+export function resolveSharedTempDir(kind) {
+  const shm = "/dev/shm";
+  if (fs.existsSync(shm)) {
+    const dir = path.join(shm, "db-stack-tests", kind);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  const dir = path.join(process.cwd(), ".tmp", kind);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 /** @param {string} label @returns {string} */
@@ -60,7 +106,7 @@ export function useTestTmpRoot(label) {
   process.env.TEMP = root;
   // `os.tmpdir()` memoises its result on some platforms; reset the cache so
   // later callers see it.
-  if (typeof os.tmpdir.resetCache === 'function') os.tmpdir.resetCache();
+  if (typeof os.tmpdir.resetCache === "function") os.tmpdir.resetCache();
   return root;
 }
 
@@ -85,7 +131,9 @@ export function useTestTmpRoot(label) {
 export function ensureTestTmpRoot() {
   const root = process.env.TMPDIR;
   if (!root || root.length === 0) {
-    throw new Error('ensureTestTmpRoot: TMPDIR is unset — call useTestTmpRoot(label) first');
+    throw new Error(
+      "ensureTestTmpRoot: TMPDIR is unset — call useTestTmpRoot(label) first",
+    );
   }
   if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true });
   return root;

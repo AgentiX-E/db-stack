@@ -8,66 +8,118 @@
  * entry point from `dist/` in a plain Node process (no bundler, no tsx) and
  * asserts the documented exports exist.
  *
+ * Existing is not the same as working, either. A `behaviour` probe goes one step
+ * further and *calls* the entry point: three published features once passed both
+ * the compiler and the whole test suite while throwing
+ * `ReferenceError: require is not defined in ES module scope` (a CommonJS
+ * `require` inside an ESM module) or silently losing their trace ids. The test
+ * transform supplies a `require`; a consumer does not. So the last thing this
+ * script does is run the artefact the way a consumer would.
+ *
  * Usage: node scripts/check-package.mjs
  */
 
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
-const root = resolve(import.meta.dirname, '..');
+const root = resolve(import.meta.dirname, "..");
 
 const TARGETS = [
   {
-    dir: 'cluster',
-    entry: '.',
+    dir: "cluster",
+    entry: ".",
     expect: [
-      'RaftAdapter',
-      'RaftTcpTransport',
-      'SqliteStorage',
-      'RaftGroupManager',
-      'HAFailoverDetector',
-      'FencingManager',
-      'RaftJointConsensusEngine',
-      'MessageCompressor',
-      'EventBus',
-      'SessionManager',
+      "RaftAdapter",
+      "RaftTcpTransport",
+      "SqliteStorage",
+      "RaftGroupManager",
+      "HAFailoverDetector",
+      "FencingManager",
+      "RaftJointConsensusEngine",
+      "MessageCompressor",
+      "EventBus",
+      "SessionManager",
+      "MerkleTree",
+      "traceContext",
+    ],
+    // The digest constant is computed independently, with node:crypto, not by
+    // calling the class: a tree compared with itself agrees with itself whatever
+    // it computes.
+    behaviour: async ({ loaded, assert }) => {
+      const tree = new loaded.MerkleTree();
+      tree.build([
+        { key: "a", hash: "h1" },
+        { key: "b", hash: "h2" },
+      ]);
+      assert.equal(
+        tree.size,
+        2,
+        "MerkleTree.build() must not double the leaf set",
+      );
+      assert.equal(
+        tree.computeRoot(),
+        "b6de7e0c3068589921fcafd415b705feb8e82bd72ce9d92413ef55e659259894",
+        "MerkleTree.computeRoot() must hash the leaves, which a CommonJS require cannot do here",
+      );
+
+      const seen = await loaded.traceContext.runWithAsync(
+        "trace-probe",
+        async () => {
+          await new Promise((done) => setTimeout(done, 1));
+          return loaded.traceContext.getTraceId();
+        },
+      );
+      assert.equal(
+        seen,
+        "trace-probe",
+        "trace ids must survive an async boundary in the published artefact",
+      );
+      assert.equal(
+        loaded.traceContext.getTraceId(),
+        undefined,
+        "trace ids must not leak outside runWithAsync",
+      );
+    },
+  },
+  {
+    dir: "cluster",
+    entry: "./testing",
+    expect: ["TestCluster", "generateClusterCerts", "LinearizabilityChecker"],
+  },
+  { dir: "cluster", entry: "./raft", expect: ["RaftAdapter"] },
+  { dir: "cluster", entry: "./transport", expect: ["RaftTcpTransport"] },
+  { dir: "cluster", entry: "./storage", expect: ["SqliteStorage"] },
+  {
+    dir: "federation",
+    entry: ".",
+    expect: [
+      "FederationManager",
+      "MultiLeaderReplication",
+      "OutboxStore",
+      "TcpSecureTransport",
+      "ExactlyOnceCDCPipeline",
+      "AntiEntropy",
+      "ConflictResolver",
+      "DedupRing",
+      "HLC",
     ],
   },
-  { dir: 'cluster', entry: './testing', expect: ['TestCluster', 'generateClusterCerts', 'LinearizabilityChecker'] },
-  { dir: 'cluster', entry: './raft', expect: ['RaftAdapter'] },
-  { dir: 'cluster', entry: './transport', expect: ['RaftTcpTransport'] },
-  { dir: 'cluster', entry: './storage', expect: ['SqliteStorage'] },
+  { dir: "federation", entry: "./transport", expect: ["TcpSecureTransport"] },
   {
-    dir: 'federation',
-    entry: '.',
+    dir: "operations",
+    entry: ".",
     expect: [
-      'FederationManager',
-      'MultiLeaderReplication',
-      'OutboxStore',
-      'TcpSecureTransport',
-      'ExactlyOnceCDCPipeline',
-      'AntiEntropy',
-      'ConflictResolver',
-      'DedupRing',
-      'HLC',
-    ],
-  },
-  { dir: 'federation', entry: './transport', expect: ['TcpSecureTransport'] },
-  {
-    dir: 'operations',
-    entry: '.',
-    expect: [
-      'core',
-      'health',
-      'metrics',
-      'backup',
-      'audit',
-      'security',
-      'observability',
-      'chaosengine',
-      'slacollector',
+      "core",
+      "health",
+      "metrics",
+      "backup",
+      "audit",
+      "security",
+      "observability",
+      "chaosengine",
+      "slacollector",
     ],
   },
 ];
@@ -76,7 +128,7 @@ let failures = 0;
 
 for (const target of TARGETS) {
   const pkgDir = resolve(root, target.dir);
-  const label = `${target.dir}${target.entry === '.' ? '' : `/${target.entry.slice(2)}`}`;
+  const label = `${target.dir}${target.entry === "." ? "" : `/${target.entry.slice(2)}`}`;
 
   const packageJsonPath = `${pkgDir}/package.json`;
   if (!existsSync(packageJsonPath)) {
@@ -85,7 +137,7 @@ for (const target of TARGETS) {
     continue;
   }
 
-  const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8"));
   const subpath = manifest.exports?.[target.entry];
   if (!subpath) {
     console.error(`\u2717 ${label}: no "exports" entry for "${target.entry}"`);
@@ -109,22 +161,42 @@ for (const target of TARGETS) {
   const script = `
     const expected = ${JSON.stringify(target.expect)};
     const url = ${JSON.stringify(pathToFileURL(entryFile).href)};
+    const probeSource = ${JSON.stringify(target.behaviour ? target.behaviour.toString() : null)};
     const loaded = await import(url);
     const missing = expected.filter((name) => !(name in loaded));
     if (missing.length > 0) {
       console.error('missing exports: ' + missing.join(', '));
       process.exit(1);
     }
-    console.log('ok (' + Object.keys(loaded).length + ' exports)');
+    if (probeSource) {
+      const assert = (await import('node:assert/strict')).default;
+      const probe = new Function('return (' + probeSource + ')')();
+      await probe({ loaded, assert });
+    }
+    console.log('ok (' + Object.keys(loaded).length + ' exports' +
+      (probeSource ? ', behaviour verified' : '') + ')');
   `;
 
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-    cwd: pkgDir,
-    encoding: 'utf8',
-  });
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", script],
+    {
+      cwd: pkgDir,
+      encoding: "utf8",
+    },
+  );
 
   if (result.status !== 0) {
-    console.error(`\u2717 ${label}: ${(result.stderr || result.stdout).split('\n').slice(0, 3).join(' ')}`);
+    // Keep the assertion message: "AssertionError: MerkleTree.build() must not
+    // double the leaf set" is the whole diagnosis, and a stack trace truncated
+    // to three lines is not.
+    const detail = (result.stderr || result.stdout)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .slice(0, 4)
+      .join(" | ");
+    console.error(`\u2717 ${label}: ${detail}`);
     failures += 1;
   } else {
     console.log(`\u2713 ${label} ${result.stdout.trim()}`);
@@ -135,4 +207,6 @@ if (failures > 0) {
   console.error(`\nPackage check FAILED (${failures} entry point(s))`);
   process.exit(1);
 }
-console.log('\nPackage check passed: every published entry point is importable.');
+console.log(
+  "\nPackage check passed: every published entry point is importable, and its probe passes.",
+);

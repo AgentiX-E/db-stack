@@ -15,6 +15,7 @@
  * @module db-cluster/observability
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import pino, { type Logger as PinoLogger } from 'pino';
 import type { ILogger, LogEntry, LogLevel } from './interfaces';
 import { resolveLogLevel } from './logLevel';
@@ -47,42 +48,27 @@ function rootLogger(): PinoLogger {
 
 // Lightweight trace context using Node.js AsyncLocalStorage.
 // No external deps — works with @maboke123/raft-core.
+//
+// `node:async_hooks` is imported statically. It is a core module, present in
+// every Node version this package supports (engines: >=20.11), so there is no
+// "module missing" branch to guard — and the guarded version was worse than
+// dead weight: the guard caught the ReferenceError thrown by the CommonJS
+// `require` inside this ESM module, so the fallback was not a rare path but the
+// only path. Trace ids were silently absent from every production log line
+// while the test suite, which supplies a `require`, asserted they were there.
+const _traceStorage = new AsyncLocalStorage<string>();
 
-// Build the trace-context adapter. The `node:async_hooks` module exists in
-// every supported Node runtime (>= 12); the catch branch only guards a
-// pre-12 environment that the test suite cannot exercise.
-function createTraceContext() {
-  try {
-    const { AsyncLocalStorage } = require('node:async_hooks');
-
-    const storage: any = new (AsyncLocalStorage as any)();
-
-    return {
-      getTraceId(): string | undefined {
-        return storage.getStore();
-      },
-      runWith<T>(traceId: string, fn: () => T): T {
-        return storage.run(traceId, fn);
-      },
-      runWithAsync<T>(traceId: string, fn: () => Promise<T>): Promise<T> {
-        return storage.run(traceId, fn);
-      },
-    };
-    /* c8 ignore start — `node:async_hooks` exists in every supported Node
-       runtime (>= 12); this catch guards a pre-12 environment that the test
-       suite cannot exercise. */
-  } catch {
-    // Fallback: no trace correlation (Node < 12)
-    return {
-      getTraceId: () => undefined,
-      runWith: <T>(_id: string, fn: () => T) => fn(),
-      runWithAsync: <T>(_id: string, fn: () => Promise<T>) => fn(),
-    };
-  }
-  /* c8 ignore stop */
-}
-
-const traceContext = createTraceContext();
+const traceContext = {
+  getTraceId(): string | undefined {
+    return _traceStorage.getStore();
+  },
+  runWith<T>(traceId: string, fn: () => T): T {
+    return _traceStorage.run(traceId, fn);
+  },
+  runWithAsync<T>(traceId: string, fn: () => Promise<T>): Promise<T> {
+    return _traceStorage.run(traceId, fn);
+  },
+};
 
 // ── LoggingAdapter (ILogger-compatible) ─────────────────────
 

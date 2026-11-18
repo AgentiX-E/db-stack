@@ -33,6 +33,7 @@ import { SqliteStorage } from '../storage/SqliteStorage';
 import { performance } from 'node:perf_hooks';
 
 import { getErrorMessage } from '../helpers/errorUtils';
+import { loadPgClientConstructor } from './pgClient';
 
 import { IConsensusLayer, IClusterTopology, TopologyChange } from '../interfaces/interfaces';
 
@@ -810,9 +811,6 @@ export class RaftGroupManager implements IConsensusLayer {
     const isLeader = await group.isLeader();
     const tP2 = performance.now();
     if (!isLeader) {
-      if (group.toString().includes('pgbench') || tP2 - tP1 > 5) {
-      }
-      const tRetryStart = performance.now();
       // Check getLeader() first — has WASM RaftNode.getLeader() fallback,
       // so it returns the authoritative leader even when _manualLead is stale.
       // Only retry if getLeader() returns null (election still in progress).
@@ -844,7 +842,6 @@ export class RaftGroupManager implements IConsensusLayer {
         }
       }
       if (this.autoForwardEnabled) {
-        const tForward = performance.now();
         await this._forwardWriteToLeader(shardId, valueOrEntry);
       } else {
         throw new Error(`This node is not the Raft leader for shard ${shardId}`);
@@ -1078,8 +1075,11 @@ export class RaftGroupManager implements IConsensusLayer {
       return;
     }
 
-    // Forward to leader's PG port with marker to prevent cascade
-    const { Client } = require('pg');
+    // Forward to leader's PG port with marker to prevent cascade.
+    // The constructor is resolved through the optional-dependency seam: `pg` is
+    // not installed everywhere, and this file is ESM, where a bare `require`
+    // throws for every consumer of the published artefact.
+    const Client = loadPgClientConstructor();
 
     // Reuse pooled PG connection (avoids TCP handshake + PG auth per query)
     let poolEntry = this.pgClientPool.get(pgAddr.port);
@@ -1107,11 +1107,7 @@ export class RaftGroupManager implements IConsensusLayer {
         this.pgPoolConnected.delete(pgAddr.port);
       });
 
-      const tConnect = performance.now();
       await client.connect();
-      const tConnected = performance.now();
-      if (tConnected - tConnect > 50) {
-      }
       poolEntry = { client, lastUsed: Date.now() };
       this.pgClientPool.set(pgAddr.port, poolEntry);
       this.pgPoolConnected.add(pgAddr.port);
@@ -1121,15 +1117,11 @@ export class RaftGroupManager implements IConsensusLayer {
     }
 
     try {
-      const t0Pool = performance.now();
       // Embed raft_forward marker IN the SQL so the receiving DDL
       // handler sees it in stmt.originalSql and only proposes to
       // local-leader shards (prevents cascade).
       const markerSql = '-- @raft_forward\n' + sql;
       await poolEntry.client.query(markerSql);
-      const t1Pool = performance.now();
-      if (t1Pool - t0Pool > 10) {
-      }
     } catch (err: unknown) {
       // Connection may be stale — retry once with fresh connection
       try {

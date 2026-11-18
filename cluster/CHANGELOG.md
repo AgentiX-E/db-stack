@@ -118,8 +118,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   8 MB** through this function, which is the difference between "the cluster is filling the
   heap" and "the collector had not run yet".
 
+- **Per-worker scratch roots in the test harness.** `TMPDIR` was one directory for the whole
+  vitest process, shared by every worker thread, so a test that removed a path at or above it damaged
+  whichever test was running elsewhere — reported as `ENOENT` on a database a case had written one
+  statement earlier, or as `disk I/O error` while opening one. The root is now
+  `…/db-stack-tests/<label>-w<workerId>`; the port pool, which must stay shared because two
+  per-thread pools hand out the same port, is pinned through `DBSTACK_PORT_LEASE_DIR` (`AC 33.6`,
+  `AC 52.10`). The three-file combination that failed on every attempt at two threads passed 5/5
+  afterwards.
+- **`describeStorageFailure()`** — a storage failure now names the file, the directory, its free and
+  total space, and the reason, with the original error kept as `cause`. `better-sqlite3` reports every
+  I/O problem as `disk I/O error`, which is the whole diagnosis: two runs on 2026-11-18 failed that way
+  and neither the path nor the filesystem could be recovered from the message. `open()` also had the
+  most common open failure — a path that cannot be opened — outside the block that adds context, so
+  `unable to open database file` arrived bare; the constructor is inside it now (`AC 57.1`–`AC 57.7`).
+- **`pgClient.loadPgClientConstructor()`** — the single place the optional `pg` dependency is
+  loaded, and the only place that has to know how to reach CommonJS from ESM. It returns the
+  `Client` constructor or throws an error that says which optional dependency is missing and which
+  feature needed it; a resolver parameter lets a test exercise both failure modes without
+  uninstalling a package.
+- **`traceContext` is exported from the package root.** Trace correlation existed, was used by every
+  log method, and could not be entered from outside: no consumer could set a trace id, so the field
+  was always absent. An operator can now wrap a request in `traceContext.runWith(id, fn)` and get
+  correlated log lines across async boundaries.
+- **`src/__tests__/unit/MerkleTree.test.ts`** — `AC 54.1`–`AC 54.8`, 8 cases. The root digest is
+  asserted against an independently computed SHA-256 rather than against another call of the class: a
+  tree compared with itself agrees with itself whatever it computes, which is how a doubled leaf set
+  looked correct.
+- **`src/__tests__/unit/pgClient.test.ts`** — `AC 55.1`–`AC 55.6`, 6 cases. The happy path runs
+  against the installed `pg` (constructing a client opens no socket); the failure paths cover a
+  missing module, a module without `Client`, a resolver yielding nothing, and a non-function `Client`.
+- **`scripts/check-esm-require.mjs`** with `scripts/check-esm-require.test.mjs` (12 cases) — a gate
+  that fails when a package declaring `"type": "module"` calls the free identifier `require` in its
+  source. It ignores comments, string literals, `createRequire(import.meta.url)` and member calls, and
+  its self-test asserts it scans more than a hundred real files, because a gate that scans nothing
+  reports perfect compliance.
+- **`check-package.mjs` behaviour probes** — the published-artefact check now *calls* the entry
+  points it loads: the Merkle root must equal a constant computed with `node:crypto`, and a trace id
+  must survive an `await` boundary. Both assertions fail on the artefacts that shipped before this
+  release, in a plain Node process, which is the only place they could have been caught.
+
 ### Fixed
 
+- **Three published features called `require` from an ESM package.** This package ships as
+  `"type": "module"`; a bare `require(...)` does not exist there, and the three call sites did not
+  throw at build time or in the test suite — the test transform supplies a `require` — so the suite
+  reported green while consumers got exceptions:
+  - `RaftGroupManager._execOnLeader` called `require('pg')`, so **forwarding a write to the shard
+    leader threw `ReferenceError: require is not defined in ES module scope`** on the first forwarded
+    write. It now loads through `consensus/core/pgClient.ts`, which uses
+    `createRequire(import.meta.url)` and names the optional dependency when it is absent.
+  - `MerkleTree.computeRoot()` called `require('crypto')`, so the public anti-entropy digest threw
+    the same way. It uses a static `node:crypto` import.
+  - `LoggingAdapter.createTraceContext()` called `require('node:async_hooks')` inside a `try` whose
+    `catch` was documented as a pre-Node-12 guard. The guard caught the `ReferenceError`, so the
+    fallback was not a rare path but **the only path**: every log line silently carried
+    `traceId: undefined`, and the suite asserted trace correlation because it could not fail.
+    `AsyncLocalStorage` is imported statically now, and the unreachable fallback is gone.
+- **`MerkleTree.build()` appended its input twice.** It assigned `this._entries = entries` and then
+  called `this.add(entries)` with the same array, so every leaf was counted twice and the root digest
+  covered a doubled leaf set. Two replicas holding identical data produced identical — and identical
+  is not correct — roots, so comparing replicas could never notice. `build()` replaces, `add()`
+  appends, and `size` reports how many leaves there are.
 - **A CONFIG log entry lost its configuration on the way to disk.** `SqliteLogStorage.append` persisted
   `entry.command` and nothing else, so a configuration entry was read back with `config: undefined` —
   and the leader replicates by re-reading its own log. `validateLogEntry` rejected the AppendEntries on
@@ -133,6 +193,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`MerkleTree` moved to `consensus/anti-entropy/MerkleTree.ts`.** It was a class among
+  declarations in `src/interfaces/`, which the coverage gate skips by design (declarations have no
+  statements to cover) — so executable code sat where nothing measured it, and it kept two defects for
+  a release. The package export is unchanged.
+- **The unit-test bootstrap no longer writes to `node_modules`.** It materialised a fake `pg` package
+  under `node_modules/pg` so that a CommonJS `require('pg')` inside the source would resolve to a
+  controllable stub. `setupFiles` runs once per worker *thread*, so up to four threads truncated and
+  rewrote the same two files; a worker that required `pg` inside that window got an empty module and
+  failed with `TypeError: Client is not a constructor` (CI run 44323059769, three cases) — and because
+  `node_modules/pg` is a symlink into the pnpm store, the write replaced the real `pg` for the whole
+  workspace for the rest of the run. The fake is now injected at the `pgClient` seam through the module
+  graph.
 - **`_initialized` is gone; `stats()` has one guard instead of two.** The flag distinguished "handle
   open" from "open finished", a state only a throwing `onOpen` could produce — and that now rolls back,
   so the second guard was unreachable by construction. Its only test manufactured the state by writing

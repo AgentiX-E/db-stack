@@ -12,10 +12,38 @@ import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vites
 
 const mockGroups = new Map<number, any>();
 
-// `pg` is aliased to src/__tests__/fixtures/pg.ts (see vitest.config.ts), so
-// the production `require('pg')` inside _execOnLeader resolves to the stub.
-// Behaviour is driven per-test via globalThis.__pgActions, read dynamically.
 const createClient = vi.fn();
+
+// The optional `pg` dependency is faked at the seam the production code loads it
+// through (`consensus/core/pgClient`), so nothing under node_modules is
+// rewritten. Per-test behaviour arrives through globalThis.__pgActions, which
+// the fake reads on every call instead of capturing at construction time.
+// This file's globalThis is its own (one environment per test file).
+vi.mock('../../consensus/core/pgClient', () => ({
+  loadPgClientConstructor: () =>
+    class FakePgClient {
+      private readonly cfg: any;
+      constructor(cfg: any) {
+        this.cfg = cfg;
+        (globalThis as any).__pgActions?.onCreate?.(cfg);
+      }
+      on(event: string, fn: (...args: any[]) => void) {
+        (globalThis as any).__pgActions?.onEvent?.(event, fn);
+      }
+      connect() {
+        const actions = (globalThis as any).__pgActions;
+        return actions?.onConnect ? actions.onConnect(this.cfg) : Promise.resolve();
+      }
+      query(sql: string) {
+        const actions = (globalThis as any).__pgActions;
+        return actions?.onQuery ? actions.onQuery(sql, this.cfg) : Promise.resolve({ rows: [] });
+      }
+      end() {
+        const actions = (globalThis as any).__pgActions;
+        return actions?.onEnd ? actions.onEnd(this.cfg) : Promise.resolve();
+      }
+    },
+}));
 
 vi.mock('../../consensus/core/RaftGroup', () => ({
   RaftGroup: class MockRaftGroup {

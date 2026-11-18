@@ -18,6 +18,7 @@ Legend for the coverage column — test types actually executed against the feat
 | **P** | Performance: a benchmark that runs on a GitHub runner and fails on regression |
 | **R** | Recovery: crash, restart, snapshot install, log truncation                    |
 | **M** | Mutation: the source is altered on purpose and the suite must notice          |
+| **A** | Artefact: the **built** package is loaded and *called* in a plain Node process — no bundler, no test transform |
 
 **What "resource limits" means in a B row.** Heap assertions here sample *after a forced collection*,
 so the number is what the workload still holds rather than what the collector had not got to yet.
@@ -51,6 +52,9 @@ number and the instrument that produced it are stated together.
 | Point-in-time recovery                        | U · I         | Records are positioned by Raft index                                                                                          |
 | Session and watch APIs                        | U · I · E     | Reads-your-writes, change notification                                                                                        |
 | Event bus                                     | U · I · B     | Ordered delivery, backpressure                                                                                                |
+| Write forwarding to the shard leader          | U · A         | `pg` is optional; a missing driver is a named error, not a module-resolution trace (`AC 55.1`–`AC 55.7`)                     |
+| Trace correlation across async boundaries     | U · A         | `traceContext.runWith` survives `await` and timers (`OBS4.1`–`OBS4.5`); the id is verified in the **built** package         |
+| Merkle anti-entropy digest                    | U · A         | Root asserted against an independent SHA-256 of the ordered leaves (`AC 54.1`–`AC 54.8`)                                      |
 
 ### 1.2 Transport and security
 
@@ -83,6 +87,7 @@ number and the instrument that produced it are stated together.
 | Serializable applies                     | C · B         | Concurrent submission stays ordered                                                       |
 | Snapshot framing, CRC, shard binding     | C · U · R · E | Truncated / corrupt / foreign snapshots rejected; the frame carries Raft's boundary index |
 | Reference engine (`MemoryStorageEngine`) | C · U · E     | Shipped as the adapter template                                                           |
+| A storage failure names its file and free space | U | `disk I/O error` became a message with the path, the directory and its free space (`AC 57.1`–`AC 57.7`) |
 
 ---
 
@@ -848,3 +853,37 @@ Still not covered: quorum accounting for a shared-transport group, whose members
 manager, so `getQuorumHealth()` returns `null` (P3-21); and a membership change while the cluster is
 already missing a voter, which the library's single-step configuration cannot commit — the adapter
 reports `rejected` after its commit timeout rather than pretending otherwise (P3-28).
+
+**A `require` that only the test runner had.** Three published features called the CommonJS `require`
+from a package that ships as ESM. None of them failed to compile, and none of them failed a test: the
+test transform supplies a `require`, so the suite exercised code that no consumer could run. In the
+built artefact — loaded in a plain Node process, which is what `check-package` now does — the same
+three lines behave as follows. `RaftGroupManager`'s write forwarding threw
+`ReferenceError: require is not defined in ES module scope` on the first forwarded write.
+`MerkleTree.computeRoot()` threw the same way, so the public anti-entropy digest could not hash
+anything; it also appended its input twice in `build()`, which two replicas holding identical data
+could never detect, because they were wrong identically. And `LoggingAdapter`'s trace context loaded
+`node:async_hooks` inside a `try` whose `catch` was documented as a pre-Node-12 guard — the guard
+caught the `ReferenceError`, so the fallback was the only branch production ever took and every log
+line carried `traceId: undefined` while a test asserted correlation. Coverage had not noticed any of
+it: `MerkleTree` lived in `src/interfaces/`, which the coverage configuration skips as
+declaration-only.
+
+The three are fixed at the root (a static `node:crypto` import, a static `node:async_hooks` import, and
+`consensus/core/pgClient` using `createRequire(import.meta.url)`), the class is closed by a gate —
+`pnpm check:esm-require` fails on a bare `require` in any package declaring `"type": "module"`, with
+twelve tests of its own — and the artefact is now *called* rather than merely imported: `check-package`
+probes the Merkle root against a constant computed with `node:crypto` and a trace id across an `await`
+boundary, both of which fail on the previous artefacts. `AC 54.1`–`AC 54.8` and `AC 55.1`–`AC 55.7` are
+the cases; the digest is asserted against an independent SHA-256, never against another call of the
+class.
+
+The same run turned up a test-harness defect worth recording, because it was the apology for the
+product one: to make a CommonJS `require('pg')` resolvable from the test transform, the cluster suite
+materialised a fake `pg` package at `node_modules/pg` in `setupFiles`. That runs once per worker
+*thread*, so four threads truncated and rewrote the same two files, and a worker that required `pg`
+inside that window got an empty module — `TypeError: Client is not a constructor`, three cases, CI run
+44323059769, pointing at a file that was correct. Worse, `node_modules/pg` is a symlink into the pnpm
+store, so the stub replaced the real `pg` for the whole workspace for the rest of the run. The fake is
+now injected at the `pgClient` seam through the module graph, and nothing under `node_modules` is
+written by a test run.

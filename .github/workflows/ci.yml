@@ -80,6 +80,8 @@ jobs:
         run: pnpm test:scripts
       - name: English-only comments and test titles
         run: pnpm check:english
+      - name: No CommonJS require() in ESM packages (it passes tests, fails consumers)
+        run: pnpm check:esm-require
       - name: ESLint (one shared config for the whole workspace)
         run: pnpm lint
       - name: Prettier

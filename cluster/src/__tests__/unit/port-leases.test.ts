@@ -24,6 +24,8 @@
  *   AC 52.7  a lease directory left by an older run is swept; a recent one is left alone
  *   AC 52.8  a sweep that cannot read its directory is housekeeping, not a failure
  *   AC 52.9  allocation gives up with a named error when every answer is already claimed
+ *   AC 52.10 the lease base honours `DBSTACK_PORT_LEASE_DIR`, because the harness
+ *            redirects `TMPDIR` per worker thread
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -130,10 +132,31 @@ describe('PortLeases', () => {
     // without outliving the run. The default directory is deliberately *not*
     // released here — other files in this run hold leases in it.
     const leases = new PortLeases();
-    const expected = path.join(os.tmpdir(), `db-stack-ports-${process.pid}`);
+    const base = process.env.DBSTACK_PORT_LEASE_DIR ?? os.tmpdir();
+    const expected = path.join(base, `db-stack-ports-${process.pid}`);
 
     expect(leases.claim(20040)).toBe(true);
     expect(fs.existsSync(path.join(expected, '20040'))).toBe(true);
     expect(path.basename(expected)).toBe(`db-stack-ports-${process.pid}`);
+  });
+
+  it('AC 52.10 — the lease base follows DBSTACK_PORT_LEASE_DIR', () => {
+    // The harness gives every worker thread its own TMPDIR so that one test's
+    // deletion cannot damage another's scratch space. A port pool with the same
+    // treatment would hand the same port to two threads, so the base is pinned
+    // through the environment instead.
+    const base = scratchDir('env-base');
+    created.push(base);
+    const saved = process.env.DBSTACK_PORT_LEASE_DIR;
+    try {
+      process.env.DBSTACK_PORT_LEASE_DIR = base;
+      const leases = new PortLeases();
+      expect(leases.claim(20050)).toBe(true);
+      const dir = path.join(base, `db-stack-ports-${process.pid}`);
+      expect(fs.existsSync(path.join(dir, '20050'))).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.DBSTACK_PORT_LEASE_DIR;
+      else process.env.DBSTACK_PORT_LEASE_DIR = saved;
+    }
   });
 });

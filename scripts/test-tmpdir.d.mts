@@ -15,3 +15,11 @@ export declare function useTestTmpRoot(label: string): string;
 
 /** Re-create `TMPDIR` if it was removed; returns the path that now exists. */
 export declare function ensureTestTmpRoot(): string;
+
+/**
+ * A directory shared by every worker thread of this process, created if missing.
+ *
+ * Coordination, not scratch: the port pool must be visible to every thread, or
+ * two of them lease the same port.
+ */
+export declare function resolveSharedTempDir(kind: string): string;
