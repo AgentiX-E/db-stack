@@ -274,16 +274,16 @@ describe('pollUntil', () => {
     let reads = 0;
 
     // No `now`, no `sleep`: this is the path every production caller takes, and it
-    // has to be a real wait rather than an injected one. A one-millisecond budget with
-    // a zero interval is long enough for at least two attempts and short enough to
-    // keep the suite instant.
+    // has to be a real wait rather than an injected one. Fifty milliseconds with a
+    // zero interval is long enough for several attempts and short enough to keep the
+    // suite instant.
     const error = (await pollUntil(
       async () => {
         reads++;
         return 'no';
       },
       () => false,
-      { timeoutMs: 1, intervalMs: 0, label: 'the real clock' },
+      { timeoutMs: 50, intervalMs: 0, label: 'the real clock' },
     ).catch((err: unknown) => err)) as ConvergenceTimeoutError;
 
     expect(error).toBeInstanceOf(ConvergenceTimeoutError);
@@ -291,17 +291,33 @@ describe('pollUntil', () => {
     expect(error.attempts).toBeGreaterThanOrEqual(2);
   });
 
-  it('AC 45.13 — a reader that throws something other than an Error is still quoted', async () => {
+  it('AC 45.13 — a rejection that is not an Error is described, not rendered as [object Object]', async () => {
     const clock = manualClock();
+    // Not every rejection is an Error: a transport can reject with a record.
+    const rejection = { code: 'ECONNRESET', detail: 'peer 3 is unreachable' };
 
-    // Not every rejection is an Error: a transport can reject with a string, and a
-    // failure message that renders "undefined" for it loses the only diagnostic there.
     const error = (await pollUntil(
       async () => {
-        throw 'peer 3 is unreachable';
+        throw rejection;
       },
       () => true,
-      { timeoutMs: 0, label: 'a string rejection', now: clock.now, sleep: clock.sleep },
+      { timeoutMs: 1, intervalMs: 1, label: 'a record rejection', now: clock.now, sleep: clock.sleep },
+    ).catch((err: unknown) => err)) as ConvergenceTimeoutError;
+
+    expect(error).toBeInstanceOf(ConvergenceTimeoutError);
+    expect(error.message).toContain('ECONNRESET');
+    expect(error.message).toContain('peer 3 is unreachable');
+  });
+
+  it('AC 45.14 — a primitive rejection is quoted as it was thrown', async () => {
+    const clock = manualClock();
+
+    // `Promise.reject('…')` is a rejection without a `throw`, which is how a socket
+    // layer that has no Error to hand actually fails; the message must still name it.
+    const error = (await pollUntil(
+      () => Promise.reject('peer 3 is unreachable'),
+      () => true,
+      { timeoutMs: 1, intervalMs: 1, label: 'a primitive rejection', now: clock.now, sleep: clock.sleep },
     ).catch((err: unknown) => err)) as ConvergenceTimeoutError;
 
     expect(error).toBeInstanceOf(ConvergenceTimeoutError);

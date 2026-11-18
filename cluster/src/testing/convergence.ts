@@ -232,5 +232,10 @@ function describe(value: unknown): string {
 
 /** The message of a thrown value, whatever was thrown. */
 function errorMessage(value: unknown): string {
-  return value instanceof Error ? value.message : String(value);
+  if (value instanceof Error) return value.message;
+  // A rejection is not always an Error: a transport can reject with a record
+  // carrying `code` and `detail`, and rendering that as `[object Object]` throws
+  // away the only diagnostic there was.
+  if (typeof value === 'object' && value !== null) return describe(value);
+  return String(value);
 }

@@ -689,8 +689,8 @@ two of three nodes could know nothing and the case still passed.
 
 `@agentix-e/db-cluster/testing` now ships the wait as an object: `pollUntil(read, accept,
 { timeoutMs })` and `awaitAgreement(reads, { timeoutMs, require, equal })`, with
-`TestCluster.awaitLeaderAgreement()` built on them. The contract is pinned by twenty-two cases
-(`AC 45.1`–`AC 45.13`, `AC 46.1`–`AC 46.9`), most of them driven by an injected clock, so deadline
+`TestCluster.awaitLeaderAgreement()` built on them. The contract is pinned by twenty-three cases
+(`AC 45.1`–`AC 45.14`, `AC 46.1`–`AC 46.9`), most of them driven by an injected clock, so deadline
 behaviour is tested exactly and in microseconds — and the three that are not are there on purpose,
 because a primitive whose real clock and real sleep are never executed is a primitive shipping its
 test double:
