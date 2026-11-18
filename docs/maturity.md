@@ -801,7 +801,25 @@ timeout and exposes no flag to skip it — and it is now honest about it: `preVo
 `getIgnoredSettings()` returns the setting with the reason, so a deployment can assert that its
 configuration is fully in effect instead of trusting a field.
 
-Still not covered: the fixed sleeps that precede assertions in the `raft-stress`, `raft-core` and
-`raft-shared-transport` child-process suites (P3-19), and the fact that `checkQuorum` needs a member
-list — a shared-transport group keeps its members in another manager, so it gets no accounting and
-`getQuorumHealth()` returns `null` (P3-21).
+**A pause where the claim was a bound.** Fifteen fixed sleeps sat in the child-process suites, and
+three of them were labelled "allow log catch-up" followed by an assertion on a node that had never
+left the cluster: `AC 8.13`, `AC 8.14` and `AC 8.15` passed while the restarted node replayed
+nothing. They are waits on the property in the title now — `pollUntil` for "this node applied N
+entries", `awaitAgreement` for "these nodes name one leader" — and the file that carried twelve of
+them went from 160 s to 12.4 s, because the pauses were 90 % of its wall clock. Reading the three
+assertions rather than translating them also turned up a follower that cannot be recovered at all
+after losing its disk: restarted on a wiped directory it reports `lastLog: 0` for 30 s and 596 polls
+while the leader's own view of it stays frozen at `{next: 5, match: 4}`, and the same node restarted
+on its own storage catches up in 1.7 s. That is filed as P3-24 with the trace, not papered over.
+
+Only English prose is English, and now the build says so. "Comments and titles are English" had no
+gate, and 321 lines across ten files had drifted — including every title in the W3C trace-context
+suite. `pnpm check:english` reads comments and title strings, deliberately ignores CJK in data
+literals (several suites feed multi-byte payloads through the code on purpose), reports the line
+inside a block comment rather than its opener, and has ten tests of its own. It runs in
+`Quality (lint + format)` beside the structural gate.
+
+Still not covered: quorum accounting for a shared-transport group, whose members live in another
+manager, so `getQuorumHealth()` returns `null` (P3-21); the backfill of a follower that lost its
+storage (P3-24); and a real membership change through the multi-process harness, which has no
+`addLearner` command, so "a node joined" remains a claim only the in-process suite can make (P3-25).
