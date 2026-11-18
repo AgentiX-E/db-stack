@@ -33,6 +33,10 @@
  *   AC 31.33: _onDisconnect reconnects when no incoming latch exists
  *   AC 31.34: _waitForConnection resolves to the eventual connection
  *   AC 31.35: a breaker reset re-arms the connection it stopped
+ *   AC 31.36: removeNode forgets a peer (info, breaker, retry, queue, socket)
+ *   AC 31.37: removeNode is idempotent for an unknown peer
+ *   AC 31.38: removeNode survives a connection whose close throws
+ *   AC 31.39: no retry is armed for a peer the pool no longer holds
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -431,6 +435,65 @@ describe('ConnectionPool addNode', () => {
     pool.addNode({ id: 9, host: 'peer-9.local', port: 5009 });
     expect((pool as any)._peerInfo.has(9)).toBe(true);
     expect(tlsConnectMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConnectionPool removeNode', () => {
+  it('forgets a peer: no peer info, no breaker, no retry, socket closed', async () => {
+    const pool = new ConnectionPool(makeConfig());
+    const socket = createMockSocket();
+    const conn = new PeerConnection(2, socket);
+    (pool as any)._connections.set(2, conn);
+    (pool as any)._retryTimers.set(
+      2,
+      setTimeout(() => {}, 60_000),
+    );
+    (pool as any)._retryAttempts.set(2, 4);
+    (pool as any)._pending.set(2, [{ msg: Buffer.from('x'), resolved: false }]);
+
+    const closeSpy = vi.spyOn(conn, 'close');
+    pool.removeNode(2);
+
+    expect((pool as any)._peerInfo.has(2)).toBe(false);
+    expect((pool as any)._circuitBreakers.has(2)).toBe(false);
+    expect((pool as any)._retryTimers.has(2)).toBe(false);
+    expect((pool as any)._retryAttempts.has(2)).toBe(false);
+    expect((pool as any)._pending.has(2)).toBe(false);
+    expect((pool as any)._connections.has(2)).toBe(false);
+    expect(closeSpy).toHaveBeenCalled();
+    await pool.stop();
+  });
+
+  it('is idempotent: removing an unknown peer changes nothing and does not throw', async () => {
+    const pool = new ConnectionPool(makeConfig());
+    expect(() => pool.removeNode(77)).not.toThrow();
+    expect(() => pool.removeNode(77)).not.toThrow();
+    expect((pool as any)._peerInfo.size).toBe(2);
+    await pool.stop();
+  });
+
+  it('survives a connection whose close throws', async () => {
+    const pool = new ConnectionPool(makeConfig());
+    const conn = new PeerConnection(2, createMockSocket());
+    vi.spyOn(conn, 'close').mockImplementation(() => {
+      throw new Error('socket already gone');
+    });
+    (pool as any)._connections.set(2, conn);
+
+    expect(() => pool.removeNode(2)).not.toThrow();
+    expect((pool as any)._connections.has(2)).toBe(false);
+    await pool.stop();
+  });
+
+  it('refuses to arm a retry for a peer it no longer knows', async () => {
+    // The retry loop is the thing that would keep dialling a removed member for the
+    // life of the process: `_scheduleRetry` is reached from `_connect`'s failure path,
+    // including the failure "this peer was removed while connecting".
+    const pool = new ConnectionPool(makeConfig());
+    pool.removeNode(2);
+    (pool as any)._scheduleRetry(2, 0);
+    expect((pool as any)._retryTimers.has(2)).toBe(false);
+    await pool.stop();
   });
 });
 

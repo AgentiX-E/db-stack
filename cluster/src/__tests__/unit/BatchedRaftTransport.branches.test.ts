@@ -4,19 +4,25 @@
  * Complements BatchedRaftTransport.test.ts with the request-direction
  * fallbacks: waitForConnections delegation, the no-requestId / no-handler /
  * falsy-response / no-requestId-response / non-numeric-from-peer branches,
- * and the (empty) removePeer method.
+ * and peer registration on the wire (which used to be an empty method: see
+ * `BatchedRaftTransport.test.ts` AC 8.23–8.28 for the full behaviour).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MessageHandler, RPCMessage } from '@maboke123/raft-core';
 
 const mockSendToPeer = vi.fn();
+const mockRegister = vi.fn();
+const mockUnregister = vi.fn();
 const mockWaitForConnections = vi.fn().mockResolvedValue(undefined);
 let mockHandlers: Array<(msg: any, fromPeerId: string) => void> = [];
 
 vi.mock('../../consensus/transport/RaftTcpTransport', () => ({
   RaftTcpTransport: class {
     sendToPeer = mockSendToPeer;
+    register = mockRegister;
+    unregister = mockUnregister;
+    awaitPeerConnection = vi.fn().mockResolvedValue(true);
     on(event: string, cb: any) {
       if (event === 'message') mockHandlers.push(cb);
     }
@@ -37,6 +43,8 @@ describe('BatchedRaftTransport — branch completion', () => {
 
   beforeEach(() => {
     mockSendToPeer.mockReset();
+    mockRegister.mockReset();
+    mockUnregister.mockReset();
     mockHandlers = [];
     transport = new BatchedRaftTransport({} as any, 15000);
   });
@@ -46,12 +54,16 @@ describe('BatchedRaftTransport — branch completion', () => {
     expect(mockWaitForConnections).toHaveBeenCalled();
   });
 
-  it('removePeer is callable (no-op placeholder)', () => {
-    expect(() => (transport as any).removePeer('99')).not.toThrow();
+  it('removePeer unregisters the peer with the wire', () => {
+    transport.removePeer('99');
+
+    expect(mockUnregister).toHaveBeenCalledWith(99);
   });
 
-  it('addPeer is callable (no-op placeholder)', async () => {
-    await expect((transport as any).addPeer('99', '127.0.0.1:1')).resolves.toBeUndefined();
+  it('addPeer registers the peer with the wire', async () => {
+    await expect(transport.addPeer('99', '127.0.0.1:1')).resolves.toBeUndefined();
+
+    expect(mockRegister).toHaveBeenCalledWith({ id: 99, host: '127.0.0.1', port: 1 });
   });
 
   it('underlying getter returns the transport instance', () => {

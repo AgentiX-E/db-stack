@@ -16,7 +16,14 @@
 
 // ── Consensus ─────────────────────────────────────────────
 export { RaftAdapter } from './consensus/core/RaftAdapter';
-export type { RaftConfig, CommittedEntry, QuorumHealth } from './consensus/core/RaftAdapter';
+export type {
+  RaftConfig,
+  CommittedEntry,
+  QuorumHealth,
+  Membership,
+  MembershipChangeReason,
+  MembershipChangeResult,
+} from './consensus/core/RaftAdapter';
 export { RaftGroup } from './consensus/core/RaftGroup';
 export type { RaftGroupQuorumResult } from './consensus/core/RaftGroup';
 export { RaftGroupManager } from './consensus/core/RaftGroupManager';

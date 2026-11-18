@@ -133,8 +133,23 @@ export class SqliteLogStorage implements LogStorage {
     try {
       for (const entry of entries) {
         const typeNum = this.entryTypeToNumber(entry.type);
+        // A CONFIG entry *is* its configuration. The row has one payload column, and
+        // this wrote only `entry.command` — which a CONFIG entry does not have — so
+        // every configuration entry came back from storage with `config: undefined`.
+        // The consequence was not a missing detail: raft-core validates the entry on
+        // the receiving side, so the follower rejected the whole AppendEntries with
+        // `Invalid config: undefined`, answered nothing, and the leader timed out.
+        // No membership change could replicate, on any cluster, ever.
         let data: Buffer | null = null;
-        if (entry.command) {
+        if (entry.type === CoreLogEntryType.CONFIG) {
+          if (!entry.config) {
+            throw new Error(
+              `Refusing to persist a CONFIG entry at index ${entry.index} without its configuration: ` +
+                'the row would be unreadable, and a log that cannot be replayed is worse than a failed append.',
+            );
+          }
+          data = Buffer.from(JSON.stringify({ config: entry.config }), 'utf-8');
+        } else if (entry.command) {
           const payload = JSON.stringify({ ...entry.command });
           data = Buffer.from(payload, 'utf-8');
         }
@@ -197,11 +212,40 @@ export class SqliteLogStorage implements LogStorage {
       }
     }
 
+    let config: LogEntry['config'];
+    if (row.type === 1) {
+      // A configuration row written before this column carried CONFIG payloads has
+      // nothing to read, and a fabricated empty configuration would be *applied*: a
+      // node would rewrite its membership to nobody. Naming the row is the only
+      // honest answer — the node has to rejoin, because the entry was never
+      // replicated anywhere either.
+      if (!row.data) {
+        throw new Error(
+          `Log entry ${row.index} is a CONFIG entry with no configuration stored. ` +
+            'This row predates configuration payloads being persisted and cannot be replayed; ' +
+            'restore the node from a snapshot or wipe its storage and rejoin the cluster.',
+        );
+      }
+      try {
+        const parsed = JSON.parse(row.data.toString('utf-8'));
+        config = parsed?.config ?? parsed;
+      } catch {
+        throw new Error(`Log entry ${row.index} is a CONFIG entry whose payload is not valid JSON`);
+      }
+      if (!config || !Array.isArray(config.voters) || !Array.isArray(config.learners)) {
+        throw new Error(
+          `Log entry ${row.index} is a CONFIG entry whose payload is not a configuration ` +
+            '(expected voters and learners arrays)',
+        );
+      }
+    }
+
     return {
       index: row.index,
       term: row.term,
       type: logType,
       command,
+      ...(config ? { config } : {}),
     };
   }
 }

@@ -159,6 +159,25 @@ async function main() {
             return;
           }
 
+          case 'add-server':
+          case 'promote-server':
+          case 'remove-server': {
+            const targetId = Number(msg.data?.nodeId);
+            const result =
+              msg.command === 'add-server'
+                ? await raftAdapter.addServer(targetId, String(msg.data?.address ?? ''), msg.data?.asLearner !== false)
+                : msg.command === 'promote-server'
+                  ? await raftAdapter.promoteServer(targetId)
+                  : await raftAdapter.removeServer(targetId);
+            process.send?.({
+              type: 'membership',
+              nodeId: nodeConfig.id,
+              data: { command: msg.command, request: msg.data, ...result },
+              timestamp: Date.now(),
+            });
+            return;
+          }
+
           case 'get-status': {
             const isLeader = await raftAdapter.isLeader();
             const leader = await raftAdapter.getLeader();
@@ -169,6 +188,10 @@ async function main() {
             // like a healthy node waiting for entries.
             const peers = await raftAdapter.getPeerProgress();
             const transport = raftAdapter.getTransportStats();
+            // What this node believes the committed configuration is. A membership
+            // change is only real when every node's own answer changed, so the claim
+            // has to be readable from each process rather than inferred from a leader.
+            const membership = await raftAdapter.getMembership();
 
             process.send?.({
               type: 'status',
@@ -184,6 +207,7 @@ async function main() {
                 logLength: committedLog.length,
                 peers,
                 transport,
+                membership,
               },
               timestamp: Date.now(),
             });

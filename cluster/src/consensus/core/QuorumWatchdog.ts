@@ -15,10 +15,13 @@
  * for, so there is nothing to leak, nothing to restart, and no clock drift between a
  * watchdog and the clock that reads it.
  *
- * The member set is fixed at construction, which matches raft-core's static
- * configuration in this package: a node that is added to a running group is not
- * counted until the adapter is rebuilt. That is conservative for availability (an
- * expanded cluster needs the old majority) and never unsafe for consistency.
+ * The member set is a constructor argument and can be replaced afterwards with
+ * {@link setMembers}, because a cluster can change while a leader is serving. The
+ * direction matters: counting **fewer** members than the configuration holds makes
+ * the majority smaller than reality, so the node claims a quorum it does not have —
+ * the hazard this class exists to prevent. Counting **more** is merely conservative.
+ * A caller that changes membership therefore has to call `setMembers` with the
+ * configuration raft actually committed, not with what it hoped to commit.
  */
 
 export interface QuorumWatchdogOptions {
@@ -100,6 +103,24 @@ export class QuorumWatchdog {
   /** Forget every observation, so a restarted node inherits no stale evidence. */
   reset(): void {
     this.lastHeard.clear();
+  }
+
+  /**
+   * Replace the member set, keeping the observations of members that stayed.
+   *
+   * Called after a configuration change commits, and after a restart reads its
+   * persisted configuration. Observations of members that left are dropped: they
+   * would otherwise keep counting toward a majority those nodes are no longer part
+   * of — an answer from a removed peer is not evidence about the current cluster.
+   */
+  setMembers(peers: readonly number[]): void {
+    this.members.clear();
+    for (const peer of peers) {
+      if (peer !== this.selfId) this.members.add(peer);
+    }
+    for (const peer of [...this.lastHeard.keys()]) {
+      if (!this.members.has(peer)) this.lastHeard.delete(peer);
+    }
   }
 
   /** This node's id, for messages that name the observer. */

@@ -520,6 +520,43 @@ export class ConnectionPool {
   }
 
   /**
+   * Forget a peer completely: stop retrying it, close its socket, drop its queue.
+   *
+   * `addNode` alone cannot undo a peer. A removed cluster member that stayed in
+   * the pool kept its retry loop, so a node that left the configuration went on
+   * being dialled — and, worse, the next `addNode` of a *different* node with the
+   * same id would inherit the dead peer's backoff and circuit state.
+   *
+   * Idempotent: removing a peer that was never added is not an error, because the
+   * caller (a raft configuration change) can be retried and the pool is not the
+   * authority on who is a member.
+   */
+  removeNode(peerId: number): void {
+    const known = this._peerInfo.delete(peerId);
+    const timer = this._retryTimers.get(peerId);
+    if (timer) {
+      clearTimeout(timer);
+      this._retryTimers.delete(peerId);
+    }
+    this._retryAttempts.delete(peerId);
+    this._pending.delete(peerId);
+    this._circuitBreakers.delete(peerId);
+
+    const connection = this._connections.get(peerId) ?? this._incoming.get(peerId);
+    this._connections.delete(peerId);
+    this._incoming.delete(peerId);
+    try {
+      connection?.close();
+    } catch {
+      // A socket that is already gone is the state we are asking for. This runs on
+      // the membership path, where a throw would turn a successful removal into a
+      // failed one.
+    }
+
+    if (known) logger.info(`[ConnectionPool] Removed peer ${peerId}`);
+  }
+
+  /**
    * Get or create a connection to the given peer.
    * If the connection is lost, it automatically reconnects
    * with exponential backoff.
@@ -869,6 +906,16 @@ export class ConnectionPool {
       const newEpoch = (this._connectionEpoch.get(peerId) || 0) + 1;
       const conn = new PeerConnection(peerId, socket, newEpoch);
 
+      // A dial that was already in flight when the peer was removed must not
+      // resurrect it: the configuration no longer contains this member, and a
+      // socket registered for it would keep a removed node's link open until the
+      // next idle timeout. `_peerInfo` is the record of who belongs here.
+      if (!this._peerInfo.has(peerId)) {
+        socket.destroy();
+        this._connecting.delete(peerId);
+        throw new Error(`Peer ${peerId} was removed while connecting`);
+      }
+
       // A dial can finish after the peer's own dial was accepted, so check under
       // the mutex instead of overwriting: adopting the entry that is already
       // there keeps both ends on one socket, and the losing socket is destroyed
@@ -1092,6 +1139,10 @@ export class ConnectionPool {
 
   private _scheduleRetry(peerId: number, backoffMs: number): void {
     if (this._stopped) return;
+    // A peer the pool no longer holds has no connection to restore. Retrying it
+    // would dial an address the configuration has already removed, once per backoff
+    // step, for the life of the process.
+    if (!this._peerInfo.has(peerId)) return;
 
     // Cancel existing retry timer
     const existing = this._retryTimers.get(peerId);

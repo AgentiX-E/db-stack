@@ -130,6 +130,52 @@ export class RaftTcpTransport extends EventEmitter {
   }
 
   /**
+   * Forget a peer: stop routing to it, stop dialling it, close its socket.
+   *
+   * The counterpart of {@link register}. Without it a node removed from the raft
+   * configuration stayed in `_registeredNodes`, so `send()` kept encoding frames
+   * for it — cheap, but the pool also kept reconnecting, which is a removed member
+   * being dialled forever. Registering self is refused: a node that unregisters
+   * itself is asking the wrong object.
+   */
+  unregister(nodeId: number): void {
+    if (nodeId === this.config.node.id) return;
+    const known = this._registeredNodes.delete(nodeId);
+    this._pendingMessages.delete(nodeId);
+    this._buffers.delete(`peer:${nodeId}`);
+    this.pool?.removeNode(nodeId);
+    if (known) logger.info(`[RaftTcpTransport] Unregistered peer ${nodeId}`);
+  }
+
+  /**
+   * Wait until a dial to `peerId` succeeds, bounded by `timeoutMs`.
+   *
+   * `send()` is deliberately non-blocking, so "the peer was added" and "there is a
+   * socket to it" are different facts and only the second one means the node can be
+   * replicated to. A membership change has to answer the second: adding a member
+   * whose address nobody can reach commits a configuration with a member that will
+   * never receive an entry.
+   *
+   * Connection failures are retried inside the budget because a joining node may
+   * still be binding its listener when the leader is told to add it.
+   */
+  async awaitPeerConnection(peerId: number, timeoutMs: number): Promise<boolean> {
+    if (!this.pool) return false;
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    for (;;) {
+      try {
+        const conn = await this.pool.getConnection(peerId);
+        if (conn.connected) return true;
+      } catch {
+        // Refused, timed out, or circuit-open: all mean "no socket yet", and the
+        // next iteration is the retry the budget allows.
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(1, deadline - Date.now()))));
+    }
+  }
+
+  /**
    * Start physical transport layer: start TLS server + initialize ConnectionPool.
    */
   async start(): Promise<void> {

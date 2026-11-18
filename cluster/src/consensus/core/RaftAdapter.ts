@@ -193,6 +193,52 @@ export interface SnapshotMeta {
   timestamp: number;
 }
 
+/**
+ * The cluster this node believes is committed, as ids.
+ *
+ * `bootstrap` means raft-core has never persisted a configuration on this node, so
+ * the membership is the one the process was started with (`id` + `peers`). That is
+ * the truth for a freshly created cluster and for a node that has just joined but
+ * not yet received the entry that admits it — which is exactly the moment a caller
+ * is most likely to ask.
+ */
+export interface Membership {
+  /** Voting members, ascending. */
+  voters: number[];
+  /** Members that replicate the log but cannot vote, ascending. */
+  learners: number[];
+  /** Whether the answer is the persisted committed configuration or the bootstrap one. */
+  source: 'persisted' | 'bootstrap';
+}
+
+/**
+ * Why a membership change did not happen.
+ *
+ * A boolean is not an answer: "the leader refused" and "the leader could not reach
+ * the node you named" call for different actions, and the second one used to be
+ * indistinguishable from the first because the transport dropped the address on the
+ * floor.
+ */
+export type MembershipChangeReason =
+  'not-started' | 'not-leader' | 'no-quorum' | 'unreachable' | 'rejected' | 'unsupported';
+
+/** Outcome of a membership change. `changed` is true only when the entry committed. */
+export interface MembershipChangeResult {
+  changed: boolean;
+  reason?: MembershipChangeReason;
+}
+
+/**
+ * How long a node named in a membership change gets to answer on the wire.
+ *
+ * A member that cannot be reached in this budget is not a member this leader can
+ * replicate to, and committing the configuration anyway would produce a cluster
+ * that believes it has a replica it has never sent an entry to. Three seconds is
+ * several order of magnitudes more than a localhost handshake and comfortably less
+ * than the five seconds raft-core spends waiting for a commit that cannot happen.
+ */
+const MEMBER_REACHABILITY_MS = 3000;
+
 // ──────────────────────────────────────────
 //  RaftAdapter
 // ──────────────────────────────────────────
@@ -640,15 +686,22 @@ export class RaftAdapter {
     // accept the entry, append it, and wait for a commit that cannot arrive: measured
     // at 5 028 ms before the refusal. Refusing here is the same answer, delivered
     // while the caller still cares, and it names the reason instead of a timeout.
-    if (!this._forceLeader && this.node?.isLeader() && !this.hasQuorum()) {
-      const health = this.getQuorumHealth();
-      const heard = health ? health.size - health.unheardPeers.length : 0;
-      throw new SqlVecError(
-        `write refused: this node is raft's leader but has lost its quorum — heard from ` +
-          `${heard} of ${health?.size ?? 0} members within ${health?.windowMs ?? 0}ms, ` +
-          `${health?.majority ?? 0} needed (silent: ${health?.unheardPeers.join(',') || 'none'})`,
-        SqlVecErrorCode.QUORUM_FAILED,
-      );
+    if (!this._forceLeader && this.node?.isLeader()) {
+      // Follow the configuration before judging quorum: this node may have learned
+      // about a promotion only by applying the entry, and a majority computed over
+      // the previous voter set is smaller than the real one — a quorum this leader
+      // does not have would be reported as one it does.
+      if (this.watchdog) await this.refreshMembership();
+      if (!this.hasQuorum()) {
+        const health = this.getQuorumHealth();
+        const heard = health ? health.size - health.unheardPeers.length : 0;
+        throw new SqlVecError(
+          `write refused: this node is raft's leader but has lost its quorum — heard from ` +
+            `${heard} of ${health?.size ?? 0} members within ${health?.windowMs ?? 0}ms, ` +
+            `${health?.majority ?? 0} needed (silent: ${health?.unheardPeers.join(',') || 'none'})`,
+          SqlVecErrorCode.QUORUM_FAILED,
+        );
+      }
     }
     if (this._inFlight >= RaftAdapter.CONCURRENCY_MAX) {
       return new Promise<{ index: string; term: string }>((resolve, reject) => {
@@ -909,6 +962,10 @@ export class RaftAdapter {
       // wrapping it may answer with a promise, and a promise is always truthy -- the
       // difference between "not the leader" and "asked the wrong question".
       if (!(await this.node.isLeader())) return false;
+      // The member set decides what a majority is, and it changes while a leader
+      // serves. Refreshing here is what keeps this answer about the cluster that
+      // exists rather than the one that existed at `init()`.
+      if (this.watchdog) await this.refreshMembership();
       return this.hasQuorum();
     } catch {
       return false;
@@ -1320,6 +1377,187 @@ export class RaftAdapter {
     } catch {
       return {};
     }
+  }
+
+  // ──────────────────────────────────────────
+  //  Membership
+  // ──────────────────────────────────────────
+
+  /**
+   * The cluster configuration this node believes is committed.
+   *
+   * Read from the store raft-core writes on commit, so it answers the same on a
+   * leader, a follower and a node that has just restarted — and it answers
+   * `bootstrap` rather than inventing a configuration when nothing has been
+   * persisted yet.
+   */
+  async getMembership(): Promise<Membership> {
+    const persisted = await this.readPersistedMembership();
+    return persisted ?? this.bootstrapMembership();
+  }
+
+  /**
+   * Re-read the configuration and point quorum accounting at its voters.
+   *
+   * Quorum is arithmetic over the *current* voter set, so a watchdog built at
+   * `init()` describes a cluster that may no longer exist. The dangerous direction
+   * is growth: after a learner is promoted, the real majority is larger than the
+   * one the watchdog holds, and a leader that hears from the old majority would
+   * claim a quorum raft cannot commit with — the exact false positive P3-20 closed.
+   */
+  async refreshMembership(): Promise<Membership> {
+    const persisted = await this.readPersistedMembership();
+    // Only a persisted configuration may replace the watchdog's member set. The
+    // bootstrap fallback is what `init()` already used, and a storage that could not
+    // be read says nothing about who votes — the last real answer is the better one.
+    if (persisted) this.watchdog?.setMembers(persisted.voters);
+    return persisted ?? this.bootstrapMembership();
+  }
+
+  /** The configuration the process was started with, used before anything is persisted. */
+  private bootstrapMembership(): Membership {
+    const voters = [...new Set([this.config.id, ...(this.config.peers ?? [])])]
+      .filter((id) => Number.isFinite(id))
+      .sort((a, b) => a - b);
+    return { voters, learners: [], source: 'bootstrap' };
+  }
+
+  /** The persisted committed configuration, or null when this node has none. */
+  private async readPersistedMembership(): Promise<Membership | null> {
+    const storage = this.nodeStorage;
+    if (!storage || typeof storage.config?.read !== 'function') return null;
+
+    let stored: Awaited<ReturnType<NodeStorage['config']['read']>>;
+    try {
+      stored = await storage.config.read();
+    } catch {
+      // A configuration that cannot be read is not a configuration of zero voters:
+      // falling back to the bootstrap set keeps the node's own belief intact instead
+      // of telling callers the cluster is empty.
+      return null;
+    }
+    if (!stored) return null;
+
+    const toIds = (list: ReadonlyArray<unknown> | undefined): number[] => {
+      const ids: number[] = [];
+      for (const entry of list ?? []) {
+        const raw = entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : entry;
+        const id = Number(raw);
+        // `Number(null)` and `Number('')` are both 0: a malformed row would otherwise
+        // contribute a phantom voter 0 to every majority this node computes.
+        if (Number.isInteger(id) && id > 0) ids.push(id);
+      }
+      return [...new Set(ids)].sort((a, b) => a - b);
+    };
+
+    const voters = toIds(stored.voters as ReadonlyArray<unknown>);
+    // An empty voter set is a corrupt row, not a cluster: reporting it would make
+    // `hasQuorum()` a division by zero and `isLeader()` a lie in the other
+    // direction. The bootstrap set is the last configuration known to be real.
+    if (voters.length === 0) return null;
+    return { voters, learners: toIds(stored.learners as ReadonlyArray<unknown>), source: 'persisted' };
+  }
+
+  /**
+   * Add a node to the cluster, as a learner by default.
+   *
+   * The order is the point. raft-core asks the transport to add the peer and then
+   * appends the configuration entry; if the transport cannot reach the node, the
+   * entry still commits (the old majority is unchanged for a learner) and the
+   * cluster gains a member nobody can send to. So reachability is decided here,
+   * before the entry exists, and a node that does not answer within
+   * {@link MEMBER_REACHABILITY_MS} is not added at all.
+   */
+  async addServer(nodeId: number, address: string, asLearner: boolean = true): Promise<MembershipChangeResult> {
+    const refusal = await this.refuseToChangeMembership(nodeId);
+    if (refusal) return { changed: false, reason: refusal };
+    const id = Number(nodeId);
+
+    const transport = this.batchedTransport();
+    if (!transport) return { changed: false, reason: 'unsupported' };
+
+    const before = await this.getMembership();
+    const alreadyMember = before.voters.includes(id) || before.learners.includes(id);
+
+    await transport.addPeer(String(id), address);
+    if (!alreadyMember && !(await transport.awaitPeer(String(id), MEMBER_REACHABILITY_MS))) {
+      // Nothing was committed, so nothing should be left pointing at the address:
+      // a registration that stays behind keeps the connection pool dialling a node
+      // that is not a member, once per backoff step, for the life of the process.
+      transport.removePeer(String(id));
+      return { changed: false, reason: 'unreachable' };
+    }
+
+    const changed = await this.node!.addServer(String(id), address, asLearner);
+    if (!changed) {
+      if (!alreadyMember) transport.removePeer(String(id));
+      return { changed: false, reason: 'rejected' };
+    }
+    await this.refreshMembership();
+    return { changed: true };
+  }
+
+  /**
+   * Promote a learner to voter.
+   *
+   * raft-core appends a single-step configuration, not a joint one: the new voter
+   * count is in force for the commit that admits it. A promotion therefore requires
+   * the existing voters to be reachable; with one of them down the entry cannot
+   * commit and the call reports `rejected` after raft-core's commit timeout rather
+   * than leaving the caller to guess.
+   */
+  async promoteServer(nodeId: number): Promise<MembershipChangeResult> {
+    const refusal = await this.refuseToChangeMembership(nodeId);
+    if (refusal) return { changed: false, reason: refusal };
+    const id = Number(nodeId);
+
+    const changed = await this.node!.promoteServer(String(id));
+    if (!changed) return { changed: false, reason: 'rejected' };
+    await this.refreshMembership();
+    return { changed: true };
+  }
+
+  /**
+   * Remove a node from the cluster.
+   *
+   * The transport forgets the peer only after the configuration entry commits, which
+   * is raft-core's own order — closing the socket first would take away the acks the
+   * entry may still need.
+   */
+  async removeServer(nodeId: number): Promise<MembershipChangeResult> {
+    const refusal = await this.refuseToChangeMembership(nodeId);
+    if (refusal) return { changed: false, reason: refusal };
+    const id = Number(nodeId);
+
+    const changed = await this.node!.removeServer(String(id));
+    if (!changed) return { changed: false, reason: 'rejected' };
+    await this.refreshMembership();
+    return { changed: true };
+  }
+
+  /**
+   * Whether a membership change may be attempted at all, and if not, why.
+   *
+   * Leadership is not enough. raft-core keeps reporting a leader that has lost its
+   * majority, and a configuration entry appended by such a node is a five-second
+   * timeout with a half-applied configuration behind it — the reason is named here
+   * rather than discovered by the caller an RPC later.
+   */
+  private async refuseToChangeMembership(nodeId: number): Promise<MembershipChangeReason | null> {
+    if (!this.node) return 'not-started';
+    const id = Number(nodeId);
+    if (!Number.isInteger(id) || id <= 0) return 'unsupported';
+    if (!(await this.node.isLeader())) return 'not-leader';
+    if (this.watchdog) {
+      await this.refreshMembership();
+      if (!this.hasQuorum()) return 'no-quorum';
+    }
+    return null;
+  }
+
+  /** The batched TCP transport, when this node was built with one. */
+  private batchedTransport(): BatchedRaftTransport | null {
+    return this.rawTransport instanceof BatchedRaftTransport ? this.rawTransport : null;
   }
 
   /**

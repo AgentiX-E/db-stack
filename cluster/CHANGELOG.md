@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Membership changes over a live cluster** — `RaftAdapter.addServer(nodeId, address, asLearner)`,
+  `promoteServer(nodeId)`, `removeServer(nodeId)`, `getMembership()` and `refreshMembership()`.
+  Each change answers `{ changed, reason }` where `reason` is one of `not-leader`, `no-quorum`,
+  `unreachable`, `rejected`, `unsupported`: a bare `false` cannot tell a caller whether to retry,
+  re-route or start a node. `addServer` registers the peer, waits up to 3 s for a socket, and only
+  then appends the configuration entry, so a member that cannot be reached is not added at all.
+- **`QuorumWatchdog.setMembers(peers)`** — quorum accounting follows the committed configuration.
+  Counting fewer voters than the configuration holds makes a majority smaller than reality, and a
+  leader that has lost contact would claim a quorum raft cannot commit with.
+- **`BatchedRaftTransport.addPeer / removePeer / awaitPeer`** — raft-core asks the transport to
+  register a new peer; until now it was answered by an empty method, so the configuration changed and
+  the peer was never sent an entry.
+- **`ConnectionPool.removeNode(peerId)`** and **`RaftTcpTransport.unregister(peerId)`** — a removed
+  member is forgotten completely: retry loop, socket, queue, circuit breaker. A dial that lands after
+  the removal is discarded rather than resurrecting the peer.
+- **`RaftTcpTransport.awaitPeerConnection(peerId, timeoutMs)`** — whether a socket exists within a
+  budget, so "added" can be decided on evidence rather than on a registration that only records intent.
+- **`RAFT_TEST_LOG=1`** in the multi-process harness forwards the workers' stdout. pino writes there
+  and the harness never read it, which is why every failure in that suite was diagnosed by patching the
+  line in temporarily.
 - **`SqliteStorage.durability.test.ts`** — `AC 38.1`–`AC 38.13`, 43 cases covering what the AC 32
   suite cannot see because it asserts return values: which file descriptor a sync opens, when a batch
   defers one, whether the native handle is released, whether a database written before the checksum
@@ -97,6 +117,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same 96 MB of dropped allocation that a `heapUsed` delta reports as **117.7 MB** is **under
   8 MB** through this function, which is the difference between "the cluster is filling the
   heap" and "the collector had not run yet".
+
+### Fixed
+
+- **A CONFIG log entry lost its configuration on the way to disk.** `SqliteLogStorage.append` persisted
+  `entry.command` and nothing else, so a configuration entry was read back with `config: undefined` —
+  and the leader replicates by re-reading its own log. `validateLogEntry` rejected the AppendEntries on
+  the follower, the follower answered nothing, the leader timed out, and **no configuration change
+  could replicate on any cluster**. The payload column now carries `{ config }` for a CONFIG entry, a
+  CONFIG entry without one is refused at write time, and a legacy row that has neither fails loudly
+  instead of being read as an empty voter set (which would have been *applied*, rewriting a node's
+  membership to nobody).
+- **A malformed member row could contribute a phantom voter 0.** `Number(null)` and `Number('')` are
+  both `0`; member ids are now required to be positive integers.
 
 ### Changed
 

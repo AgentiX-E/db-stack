@@ -13,6 +13,10 @@
  *   AC 32.5: sendToPeer() is no-op when stopped
  *   AC 32.6: send() is no-op when stopped
  *   AC 32.10: TLS config validation (start() throws)
+ *   AC 32.11: unregister() forgets a peer, its queue and its socket
+ *   AC 32.12: unregister() refuses to forget this node itself
+ *   AC 32.13: awaitPeerConnection() answers from the pool, within its budget
+ *   AC 32.14: awaitPeerConnection() is false without a pool or when dials keep failing
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -122,5 +126,61 @@ describe('AC 32.10: TLS config validation', () => {
     await expect(new RaftTcpTransport(validConfig({ tls: { cert: 'c', key: 'k', ca: '' } })).start()).rejects.toThrow(
       /mTLS/,
     );
+  });
+});
+
+describe('AC 32.11–32.14: peer lifecycle', () => {
+  function withPool(t: RaftTcpTransport, pool: any): RaftTcpTransport {
+    (t as any).pool = pool;
+    return t;
+  }
+
+  it('AC 32.11 — unregister forgets the peer, its buffered frames and its socket', () => {
+    const t = new RaftTcpTransport(validConfig());
+    const removeNode = vi.fn();
+    withPool(t, { removeNode });
+    (t as any)._pendingMessages.set(2, [Buffer.from('queued')]);
+
+    t.unregister(2);
+
+    expect(t.getStatus().totalPeers).toBe(1);
+    expect(removeNode).toHaveBeenCalledWith(2);
+    expect((t as any)._pendingMessages.has(2)).toBe(false);
+  });
+
+  it('AC 32.12 — unregister refuses to forget this node itself', () => {
+    const t = new RaftTcpTransport(validConfig());
+    const removeNode = vi.fn();
+    withPool(t, { removeNode });
+
+    t.unregister(1);
+
+    // Forgetting self would make `_getPeerList()` list the node as its own peer.
+    expect(removeNode).not.toHaveBeenCalled();
+    expect(t.getStatus().totalPeers).toBe(2);
+  });
+
+  it('AC 32.13 — awaitPeerConnection answers from the pool', async () => {
+    const t = new RaftTcpTransport(validConfig());
+    withPool(t, { getConnection: vi.fn(async () => ({ connected: true })) });
+
+    await expect(t.awaitPeerConnection(2, 50)).resolves.toBe(true);
+  });
+
+  it('AC 32.14 — awaitPeerConnection is false without a pool, and after the budget on failures', async () => {
+    const noPool = new RaftTcpTransport(validConfig());
+    await expect(noPool.awaitPeerConnection(2, 50)).resolves.toBe(false);
+
+    const t = new RaftTcpTransport(validConfig());
+    const getConnection = vi.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    });
+    withPool(t, { getConnection });
+    const startedAt = Date.now();
+
+    await expect(t.awaitPeerConnection(2, 120)).resolves.toBe(false);
+    // It retried inside the budget instead of trusting one refusal.
+    expect(getConnection.mock.calls.length).toBeGreaterThan(1);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(100);
   });
 });

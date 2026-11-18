@@ -283,6 +283,77 @@ describe('SqliteLogStorage', () => {
     const e2 = await log.getEntry(2);
     expect(e2!.type).toBe(LogEntryType.CONFIG);
   });
+
+  it('AC 33.40 — a CONFIG entry keeps its configuration through storage', async () => {
+    // Asserting only the type is what let this pass while the payload was dropped:
+    // raft-core validates the configuration on the *receiving* side, so an entry that
+    // came back as `config: undefined` made every AppendEntries carrying it fail, and
+    // no membership change could ever replicate.
+    const config = {
+      voters: [
+        { id: '1', address: '10.0.0.1:7001' },
+        { id: '2', address: '10.0.0.2:7002' },
+      ],
+      learners: [{ id: '3', address: '10.0.0.3:7003' }],
+    };
+    await log.append([{ index: 1, term: 1, type: LogEntryType.CONFIG, config }]);
+
+    const read = await log.getEntry(1);
+
+    expect(read!.config).toEqual(config);
+  });
+
+  it('AC 33.41 — the range read the leader replicates with carries the configuration too', async () => {
+    const config = { voters: [{ id: '1', address: 'a:1' }], learners: [] };
+    await log.append([
+      { index: 1, term: 1, type: LogEntryType.COMMAND, command: { type: 'SET', payload: { k: 1 } } },
+      { index: 2, term: 1, type: LogEntryType.CONFIG, config },
+    ]);
+
+    const entries = await log.getEntries(1, 2);
+
+    expect(entries).toHaveLength(2);
+    expect(entries[1]!.config).toEqual(config);
+    // The command beside it is untouched: one payload column, two shapes.
+    expect(entries[0]!.command).toMatchObject({ type: 'SET' });
+    expect(entries[0]!.config).toBeUndefined();
+  });
+
+  it('AC 33.42 — a CONFIG entry without a configuration is refused, not persisted unreadable', async () => {
+    await expect(log.append([{ index: 1, term: 1, type: LogEntryType.CONFIG } as any])).rejects.toThrow(
+      /CONFIG entry at index 1 without its configuration/,
+    );
+
+    // Nothing was written: an unreadable row would be worse than a failed append.
+    expect(await log.getEntry(1)).toBeNull();
+  });
+
+  it('AC 33.43 — a legacy CONFIG row with no payload fails loudly on read', async () => {
+    // Rows written before the payload was persisted cannot be replayed. Fabricating an
+    // empty configuration would be *applied* — a node would rewrite its membership to
+    // nobody — so the read names the row and says what to do about it.
+    sqlite.appendLogEntry(1, 1, 1, null);
+
+    await expect(log.getEntry(1)).rejects.toThrow(/CONFIG entry with no configuration stored/);
+  });
+
+  it('AC 33.44 — a CONFIG row whose payload is not a configuration is refused', async () => {
+    sqlite.appendLogEntry(1, 1, 1, Buffer.from('not json'));
+    await expect(log.getEntry(1)).rejects.toThrow(/payload is not valid JSON/);
+
+    sqlite.appendLogEntry(2, 1, 1, Buffer.from(JSON.stringify({ config: { voters: 'nope' } })));
+    await expect(log.getEntry(2)).rejects.toThrow(/not a configuration/);
+  });
+
+  it('AC 33.45 — a configuration stored without the envelope is still readable', async () => {
+    // The reader accepts both shapes, so a row written by hand (or by an older writer
+    // that wrapped nothing) is not silently a corrupt entry.
+    sqlite.appendLogEntry(1, 1, 1, Buffer.from(JSON.stringify({ voters: [{ id: '1' }], learners: [] })));
+
+    const read = await log.getEntry(1);
+
+    expect(read!.config).toEqual({ voters: [{ id: '1' }], learners: [] });
+  });
 });
 
 describe('SqliteSnapshotStorage', () => {

@@ -15,6 +15,9 @@
  *   AC 8.14 — Log catch-up (start 2 nodes, propose 100, add 3rd)
  *   AC 8.15 — Partition scenario (isolate one node, heal, catch up)
  *   AC 8.16 — requestId collision under high PID counter
+ *   AC 8.17 — a follower restarted on empty storage is back-filled from the leader
+ *   AC 8.21 — a fourth node joins as a learner, is promoted, and then carries quorum
+ *   AC 8.22 — a node nobody can reach is refused, and the cluster is unchanged
  */
 
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
@@ -152,9 +155,25 @@ function createNode(
     if (msg && msg.type) messages.push(msg as WorkerMessage);
   });
 
+  // A child whose IPC channel closes while a message is in flight emits 'error' on
+  // the ChildProcess, and an 'error' with no listener is thrown at process level:
+  // vitest reported `ERR_IPC_CHANNEL_CLOSED` as an unhandled error attributed to
+  // whichever test was running. Shutting a node down is expected to race with its own
+  // channel closing, so the event is absorbed here and the exit is observed instead.
+  cp.on('error', () => {});
+
   cp.stderr?.on('data', (d: Buffer) => {
     process.stderr.write(`[node-${id}] ${d}`);
   });
+
+  // pino writes to stdout, and this harness used to leave that pipe unread: the
+  // diagnostics that would explain a failure were written into a pipe nobody
+  // drained, which is why every investigation here started by patching this line in
+  // temporarily. Off by default — a stress run emits a line per applied entry — and
+  // switched on with RAFT_TEST_LOG=1 when something needs explaining.
+  if (process.env.RAFT_TEST_LOG === '1') {
+    cp.stdout?.on('data', (d: Buffer) => process.stdout.write(`[node-${id}:out] ${d}`));
+  }
 
   return { id, process: cp, messages, port, dataDir };
 }
@@ -259,6 +278,50 @@ async function awaitLeaderAgreement(nodeList: TestNode[], timeoutMs = LEADER_ELE
 async function peerProgress(node: TestNode): Promise<Record<string, { next: number; match: number }>> {
   const status = (await getStatus(node)) as any;
   return status?.peers ?? {};
+}
+
+/** What one node believes the committed configuration is, as the worker reports it. */
+async function membershipOf(node: TestNode): Promise<{ voters: number[]; learners: number[]; source: string }> {
+  const status = (await getStatus(node)) as any;
+  return status?.membership ?? { voters: [], learners: [], source: 'unknown' };
+}
+
+/**
+ * Ask a node to change the cluster's membership, and read its answer.
+ *
+ * The answer is a result, not an exception: "not the leader", "no quorum" and "the
+ * address does not answer" are three different facts, and a caller that only sees
+ * `false` cannot tell which of them it has to act on.
+ */
+async function membershipCommand(
+  node: TestNode,
+  command: 'add-server' | 'promote-server' | 'remove-server',
+  data: Record<string, unknown>,
+  timeoutMs = 30_000,
+): Promise<{ changed: boolean; reason?: string }> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      node.process.removeListener('message', handler);
+      reject(new Error(`membership ${command} timed out on node ${node.id} (${timeoutMs}ms)`));
+    }, timeoutMs);
+
+    const handler = (msg: any) => {
+      if (msg?.type === 'membership' && msg.data?.command === command) {
+        clearTimeout(timer);
+        node.process.removeListener('message', handler);
+        resolve({ changed: Boolean(msg.data.changed), reason: msg.data.reason });
+      }
+    };
+
+    node.process.on('message', handler);
+    try {
+      node.process.send?.({ command, data });
+    } catch (err) {
+      clearTimeout(timer);
+      node.process.removeListener('message', handler);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
 }
 
 /**
@@ -397,10 +460,14 @@ async function gracefulShutdown(node: TestNode): Promise<void> {
       clearTimeout(timer);
       resolve();
     });
-    try {
-      node.process.send?.({ command: 'shutdown' });
-    } catch {
-      /* ignore */
+    // A node whose channel is already closed has nothing to receive the command; the
+    // kill below is the whole shutdown.
+    if (node.process.connected) {
+      try {
+        node.process.send?.({ command: 'shutdown' });
+      } catch {
+        /* ignore */
+      }
     }
     // If process is already dead, resolve immediately
     setTimeout(() => {
@@ -473,7 +540,10 @@ describe('Raft Transport Stress & Resilience', () => {
   }
 
   beforeAll(async () => {
-    const clusterCerts = generateClusterCerts(NODE_COUNT);
+    // One identity more than the cluster has: `AC 8.21` starts a fourth process to
+    // join an existing three-node cluster, and mTLS verifies the peer id against the
+    // certificate's SAN, so it needs a certificate of its own.
+    const clusterCerts = generateClusterCerts(NODE_COUNT + 1);
     certs = clusterCerts.nodes;
   });
 
@@ -839,6 +909,140 @@ describe('Raft Transport Stress & Resilience', () => {
       // And the leader has learned where the follower actually is.
       const progress = await peerProgress(currentLeader);
       expect(progress[follower.id]?.match).toBeGreaterThanOrEqual(6);
+    },
+    STRESS_TIMEOUT,
+  );
+  // ── AC 8.21: a node joins, is promoted, and then carries quorum ────
+
+  it(
+    'AC 8.21 — a fourth node joins as a learner, is promoted, and then carries quorum',
+    async () => {
+      await startCluster(3);
+
+      const leader = await findLeader();
+      for (let i = 0; i < 5; i++) await proposeToLeader(leader, `pre-join-${i}`, nodes);
+
+      // A node addresses a cluster by being given its peers; it *becomes* a member
+      // only when the leader appends a configuration that names it. This process is
+      // started the way an operator starts one — own TLS identity, own disk, peers of
+      // the cluster it wants to join — and is a stranger until the next step.
+      const joinerPort = await getFreePort();
+      const joinerPeers: PeerInfo[] = nodes.map((n) => ({ id: n.id, host: '127.0.0.1', port: n.port }));
+      const joiner = createNode(4, joinerPort, joinerPeers, certs[3]!, createTempDir('node-4'));
+      // Registered with the file's node list immediately, so a failure below still
+      // kills the process in `afterAll` instead of leaving a child dialling a cluster
+      // that is gone.
+      nodes.push(joiner);
+      await waitForMessage(joiner, 'ready', readyBudgetMs());
+
+      expect(await membershipOf(leader)).toMatchObject({ voters: [1, 2, 3], learners: [] });
+
+      const added = await membershipCommand(leader, 'add-server', {
+        nodeId: 4,
+        address: `127.0.0.1:${joinerPort}`,
+        asLearner: true,
+      });
+      expect(added).toEqual({ changed: true, reason: undefined });
+
+      // The claim "a node joined" is about every node's own view, not the leader's.
+      // A configuration entry that reached nobody but the leader would still leave it
+      // reporting a member, which is how this stayed invisible before.
+      const agreed = await awaitAgreement(
+        nodes.map((n) => async () => JSON.stringify(await membershipOf(n))),
+        {
+          timeoutMs: LOG_REPLICATION_TIMEOUT,
+          label: 'every node naming the joined learner',
+          require: (reported) => JSON.parse(reported).learners.includes(4),
+        },
+      );
+      expect(JSON.parse(agreed.value[0]!)).toMatchObject({ voters: [1, 2, 3], learners: [4] });
+
+      // And the newcomer holds the log that existed before it was a member: a
+      // configuration is a promise that the member has the data, not that it will.
+      const backfilled = await awaitApplied(joiner, 5);
+      expect(backfilled).toBeGreaterThanOrEqual(5);
+
+      const promoted = await membershipCommand(leader, 'promote-server', { nodeId: 4 });
+      expect(promoted).toEqual({ changed: true, reason: undefined });
+
+      await awaitAgreement(
+        nodes.map((n) => async () => JSON.stringify(await membershipOf(n))),
+        {
+          timeoutMs: LOG_REPLICATION_TIMEOUT,
+          label: 'every node naming the promoted voter',
+          require: (reported) => {
+            const membership = JSON.parse(reported);
+            return membership.voters.includes(4) && membership.learners.length === 0;
+          },
+        },
+      );
+
+      // A voter is a voter only if a majority needs it. With four voters one of them
+      // is killed, so three acknowledgements are required and the newcomer is one of
+      // them: these proposals cannot commit unless it really counts.
+      const casualty = nodes.find((n) => n.id !== leader.id && n.id !== 4)!;
+      await gracefulShutdown(casualty);
+      const survivors = () => nodes.filter((n) => n.id !== casualty.id);
+      await awaitLeaderAgreement(survivors());
+
+      const before = Number(((await getStatus(joiner)) as any).logLength ?? 0);
+      for (let i = 0; i < 3; i++) await proposeToLeader(leader, `post-promotion-${i}`, nodes);
+
+      const { value: carried } = await pollUntil(
+        async () => Number(((await getStatus(joiner)) as any).logLength ?? 0),
+        (length) => length >= before + 3,
+        { timeoutMs: LOG_REPLICATION_TIMEOUT, label: `node 4 applying 3 entries as a voter (from ${before})` },
+      );
+      expect(carried).toBeGreaterThanOrEqual(before + 3);
+
+      // Removing the dead member is a configuration change too, and it must commit
+      // with the voters that are left.
+      const removed = await membershipCommand(leader, 'remove-server', { nodeId: casualty.id });
+      expect(removed).toEqual({ changed: true, reason: undefined });
+
+      const { value: withoutCasualty } = await pollUntil(
+        async () => JSON.stringify(await membershipOf(leader)),
+        (reported) => !JSON.parse(reported).voters.includes(casualty.id),
+        { timeoutMs: LOG_REPLICATION_TIMEOUT, label: `the leader forgetting node ${casualty.id}` },
+      );
+      expect(JSON.parse(withoutCasualty).voters).toEqual([1, 2, 3, 4].filter((id) => id !== casualty.id));
+
+      // Three voters again, so two acknowledgements suffice — and the cluster serves.
+      await proposeToLeader(leader, 'post-removal', nodes);
+    },
+    STRESS_TIMEOUT,
+  );
+
+  // ── AC 8.22: a member nobody can reach ─────────────────────────────
+
+  it(
+    'AC 8.22 — a node nobody can reach is refused, and the cluster is unchanged',
+    async () => {
+      await startCluster(3);
+
+      const leader = await findLeader();
+      for (let i = 0; i < 3; i++) await proposeToLeader(leader, `pre-refusal-${i}`, nodes);
+
+      // A port the kernel just handed out and nothing is listening on: the address is
+      // syntactically perfect and nobody answers. That is the case a transport which
+      // silently accepts `addPeer` turns into a member the cluster can never send to.
+      const unreachablePort = await getFreePort();
+      const before = await membershipOf(leader);
+
+      const refused = await membershipCommand(leader, 'add-server', {
+        nodeId: 9,
+        address: `127.0.0.1:${unreachablePort}`,
+        asLearner: true,
+      });
+
+      expect(refused).toEqual({ changed: false, reason: 'unreachable' });
+      expect(await membershipOf(leader)).toEqual(before);
+
+      // Nothing half-applied is left behind: the leader still commits, and the
+      // address it refused is not dialled for the rest of the run.
+      await proposeToLeader(leader, 'after-refusal', nodes);
+      const applied = await awaitApplied(leader, 4);
+      expect(applied).toBeGreaterThanOrEqual(4);
     },
     STRESS_TIMEOUT,
   );

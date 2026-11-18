@@ -85,6 +85,30 @@ export interface TransportPeerStats {
   byType: Record<string, number>;
 }
 
+/**
+ * Split a `host:port` transport address, or answer `null` when it is not one.
+ *
+ * Membership changes carry an address as a string (`RaftNode.addServer(nodeId,
+ * address)`), and the transport needs a host and a port. Parsing is strict on
+ * purpose: a silent fallback to a default port would dial a different node than the
+ * one the operator named, which is worse than refusing the change.
+ *
+ * IPv6 literals are accepted in the bracketed form (`[::1]:7000`), because that is
+ * the only form in which the last colon is not ambiguous.
+ */
+function parsePeerAddress(address: string): { host: string; port: number } | null {
+  if (typeof address !== 'string') return null;
+  const trimmed = address.trim();
+  const separator = trimmed.lastIndexOf(':');
+  if (separator <= 0) return null;
+  const rawHost = trimmed.slice(0, separator);
+  const host = rawHost.startsWith('[') && rawHost.endsWith(']') ? rawHost.slice(1, -1) : rawHost;
+  const port = Number(trimmed.slice(separator + 1));
+  if (host.length === 0) return null;
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  return { host, port };
+}
+
 export class BatchedRaftTransport implements Transport {
   private transport: RaftTcpTransport;
 
@@ -134,8 +158,43 @@ export class BatchedRaftTransport implements Transport {
     return this.transport;
   }
 
-  async addPeer?(_peerId: string, _address: string): Promise<void> {}
-  removePeer?(_peerId: string): void {}
+  async addPeer(peerId: string, address: string): Promise<void> {
+    const id = Number(peerId);
+    if (!Number.isInteger(id) || id <= 0) {
+      // raft-core identifies peers by string; a non-numeric id cannot be a member of
+      // this cluster, whose membership is numeric. Registering it would dial an
+      // address that no frame can ever carry a sane id for.
+      console.warn(`[BatchedRaftTransport] Ignoring peer with non-numeric id ${JSON.stringify(peerId)}`);
+      return;
+    }
+    const parsed = parsePeerAddress(address);
+    if (!parsed) {
+      console.warn(`[BatchedRaftTransport] Ignoring peer ${id}: address ${JSON.stringify(address)} is not host:port`);
+      return;
+    }
+    this.transport.register({ id, host: parsed.host, port: parsed.port });
+  }
+
+  removePeer(peerId: string): void {
+    const id = Number(peerId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    this.transport.unregister(id);
+  }
+
+  /**
+   * Whether a socket to `peerId` exists within `timeoutMs`.
+   *
+   * The membership decision, separated from {@link addPeer}: raft-core calls
+   * `addPeer` without awaiting it and from a hook that would turn a rejection into
+   * an unhandled one, so registration must never fail. Whether a node can actually
+   * be replicated to is a different question, asked by the adapter before it
+   * commits a configuration that names the node.
+   */
+  async awaitPeer(peerId: string, timeoutMs: number): Promise<boolean> {
+    const id = Number(peerId);
+    if (!Number.isInteger(id) || id <= 0) return false;
+    return this.transport.awaitPeerConnection(id, timeoutMs);
+  }
 
   async start(): Promise<void> {
     if (this.started) return;

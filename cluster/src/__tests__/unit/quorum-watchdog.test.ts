@@ -33,6 +33,9 @@
  *   AC 48.13 an observation can be recorded at an explicit moment, and the observer reports its own id
  *   AC 48.14 the window is readable, so a caller can print the budget it is judged against
  *   AC 48.15 a member list that repeats this node does not count it twice
+ *   AC 48.16 a promotion raises the majority, and the same answers stop being a quorum
+ *   AC 48.17 a removal lowers it and drops the departed member's evidence
+ *   AC 48.18 setMembers keeps the observations of members that stayed
  */
 
 import { describe, expect, it } from 'vitest';
@@ -205,5 +208,48 @@ describe('QuorumWatchdog', () => {
     // 1 200 ms after the first answer and 400 ms after the second: still heard.
     expect(subject.hasQuorum()).toBe(true);
     expect(subject.unheardPeers()).toEqual([3]);
+  });
+  it('AC 48.16 — a promotion raises the majority, and the same answers stop being a quorum', () => {
+    // Three voters, one of them answering: a majority of two, so the leader may
+    // serve. Promote a learner and the cluster has four voters, where a majority is
+    // three — the same evidence is no longer enough. A watchdog that kept its
+    // constructor membership would keep answering "yes" here, which is the false
+    // positive the whole class exists to prevent.
+    const { watchdog: subject } = watchdog([2, 3]);
+    subject.observe(2);
+    expect(subject.hasQuorum()).toBe(true);
+
+    subject.setMembers([1, 2, 3, 4]);
+
+    expect(subject.size).toBe(4);
+    expect(subject.majority).toBe(3);
+    expect(subject.hasQuorum()).toBe(false);
+    expect(subject.unheardPeers()).toEqual([3, 4]);
+  });
+
+  it('AC 48.17 — a removal lowers the majority and drops the departed member', () => {
+    const { watchdog: subject } = watchdog([2, 3, 4]);
+    subject.observe(2);
+    expect(subject.hasQuorum()).toBe(false); // 2 of 4 is not a majority of 3
+
+    subject.setMembers([1, 2, 3]);
+
+    // 2 of 3 now suffices, and the removed member is not reported as silent: its
+    // answer would otherwise count toward a majority it is no longer part of.
+    expect(subject.majority).toBe(2);
+    expect(subject.hasQuorum()).toBe(true);
+    expect(subject.unheardPeers()).toEqual([3]);
+  });
+
+  it('AC 48.18 — setMembers keeps what the members that stayed have answered', () => {
+    const { clock, watchdog: subject } = watchdog([2, 3]);
+    subject.observe(2);
+    subject.observe(3);
+
+    subject.setMembers([1, 3, 4]);
+
+    expect(subject.unheardPeers()).toEqual([4]);
+    clock.advance(999);
+    expect(subject.hasQuorum()).toBe(true);
   });
 });

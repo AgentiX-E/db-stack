@@ -20,6 +20,15 @@
  *   AC 8.8 — Response after timeout — ignored (pending already cleaned)
  *   AC 8.9 — isStarted() reflects lifecycle
  *   AC 8.10 — sendToPeer with invalid peerId rejects
+ *   AC 8.18 — a completed AppendEntries answer is counted as accepted or rejected
+ *   AC 8.19 — a request that never answers is counted as a timeout
+ *   AC 8.20 — a send that throws is counted as failed, and peers stay separate
+ *   AC 8.23 — addPeer registers host and port with the wire
+ *   AC 8.24 — addPeer accepts a bracketed IPv6 literal
+ *   AC 8.25 — an address that is not host:port registers nothing and does not reject
+ *   AC 8.26 — a non-numeric peer id registers nothing
+ *   AC 8.27 — removePeer unregisters, and an unusable id is ignored
+ *   AC 8.28 — awaitPeer asks the wire with the budget it was given
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -28,11 +37,17 @@ import type { MessageHandler, RPCMessage } from '@maboke123/raft-core';
 // ── Mock RaftTcpTransport ────────────────────────────────────────────────────
 
 const mockSendToPeer = vi.fn();
+const mockRegister = vi.fn();
+const mockUnregister = vi.fn();
+const mockAwaitPeerConnection = vi.fn(async (_peerId: number, _timeoutMs: number) => true);
 let mockHandlers: Array<(msg: any, fromPeerId: string) => void> = [];
 
 vi.mock('../../consensus/transport/RaftTcpTransport', () => ({
   RaftTcpTransport: class {
     sendToPeer = mockSendToPeer;
+    register = mockRegister;
+    unregister = mockUnregister;
+    awaitPeerConnection = mockAwaitPeerConnection;
     on(event: string, cb: any) {
       if (event === 'message') mockHandlers.push(cb);
     }
@@ -131,6 +146,10 @@ describe('BatchedRaftTransport (Unit)', () => {
   beforeEach(async () => {
     mockHandlers = [];
     mockSendToPeer.mockClear();
+    mockRegister.mockClear();
+    mockUnregister.mockClear();
+    mockAwaitPeerConnection.mockClear();
+    mockAwaitPeerConnection.mockResolvedValue(true);
     transport = createTransport(200);
     await transport.start();
   });
@@ -478,4 +497,54 @@ describe('BatchedRaftTransport (Unit)', () => {
     expect(transport.getStats()['4']).toMatchObject({ sent: 1, answered: 0, timedOut: 0, failed: 1 });
     expect(transport.getStats()['5']).toBeUndefined();
   }, 10_000);
+  // ── Membership: the wire has to be told, or a member exists only on paper ──
+
+  it('AC 8.23 — addPeer registers the address with the wire, host and port split', async () => {
+    await transport.addPeer('7', '10.1.2.3:7100');
+
+    expect(mockRegister).toHaveBeenCalledWith({ id: 7, host: '10.1.2.3', port: 7100 });
+  });
+
+  it('AC 8.24 — addPeer accepts a bracketed IPv6 literal, the only unambiguous form', async () => {
+    await transport.addPeer('8', '[::1]:7200');
+
+    expect(mockRegister).toHaveBeenCalledWith({ id: 8, host: '::1', port: 7200 });
+  });
+
+  it('AC 8.25 — an address that is not host:port registers nothing and does not reject', async () => {
+    // raft-core calls addPeer without awaiting it (its peer-discovery hook), so a
+    // rejection here would surface as an unhandled rejection in the node's process.
+    // Refusing to register is the whole answer; the adapter asks separately whether
+    // the peer is reachable before it commits a configuration naming it.
+    for (const bad of ['', 'no-port', ':7000', 'host:', 'host:0', 'host:70000', 'host:abc']) {
+      await expect(transport.addPeer('9', bad)).resolves.toBeUndefined();
+    }
+
+    expect(mockRegister).not.toHaveBeenCalled();
+  });
+
+  it('AC 8.26 — a non-numeric peer id registers nothing', async () => {
+    await transport.addPeer('node-nine', '10.1.2.3:7100');
+
+    expect(mockRegister).not.toHaveBeenCalled();
+  });
+
+  it('AC 8.27 — removePeer unregisters, and an unusable id is ignored', () => {
+    transport.removePeer('7');
+    transport.removePeer('not-a-number');
+
+    expect(mockUnregister).toHaveBeenCalledTimes(1);
+    expect(mockUnregister).toHaveBeenCalledWith(7);
+  });
+
+  it('AC 8.28 — awaitPeer asks the wire, with the budget it was given', async () => {
+    mockAwaitPeerConnection.mockResolvedValueOnce(false);
+
+    await expect(transport.awaitPeer('7', 250)).resolves.toBe(false);
+    expect(mockAwaitPeerConnection).toHaveBeenCalledWith(7, 250);
+
+    // An id that cannot be a member is answered without a dial.
+    await expect(transport.awaitPeer('nope', 250)).resolves.toBe(false);
+    expect(mockAwaitPeerConnection).toHaveBeenCalledTimes(1);
+  });
 });
