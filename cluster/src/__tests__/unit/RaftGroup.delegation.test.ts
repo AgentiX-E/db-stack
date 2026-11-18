@@ -1,10 +1,12 @@
 /**
- * RaftGroup — pipeline, snapshot, leader-transfer, and quorum completion tests.
+ * RaftGroup — delegation, snapshot, leader-transfer, and quorum completion tests.
  *
  * Complements RaftGroup.more.test.ts (joint consensus + learner). Covers the
- * C5 pipeline flush/buffer machinery, snapshot lifecycle, C4 leader transfer,
- * flexible-quorum accessors, and a set of simple delegation/query methods that
- * RaftGroup.test.ts left unreached.
+ * snapshot lifecycle, C4 leader transfer, flexible-quorum accessors, and the set
+ * of simple delegation/query methods that RaftGroup.test.ts left unreached.
+ *
+ * This file used to carry the C5 pipeline buffer as well. That block went in
+ * iteration 48 with the buffer itself, which had no production writer.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -82,7 +84,7 @@ const MOCK_CONFIG = {
 const MOCK_REPLICA = { apply: vi.fn() };
 const MOCK_OUTBOX = { append: vi.fn() };
 
-describe('RaftGroup — pipeline, snapshot, transfer, quorum', () => {
+describe('RaftGroup — delegation, snapshot, transfer, quorum', () => {
   let RaftGroup: any;
   let group: any;
 
@@ -177,110 +179,6 @@ describe('RaftGroup — pipeline, snapshot, transfer, quorum', () => {
       expect(cfg).toHaveProperty('writeQuorum');
       cfg.writeQuorum = 999;
       expect(group.getFlexQuorumConfig().writeQuorum).not.toBe(999);
-    });
-  });
-
-  describe('pipeline', () => {
-    it('getPipeline returns a shallow copy', () => {
-      expect(group.getPipeline()).toEqual([]);
-      expect(group.getPipelineDepth()).toBe(0);
-      expect(group.getPipelineQueueDepth()).toBe(0);
-    });
-
-    it('getPipelineConfig returns a copy of config', () => {
-      const cfg = group.getPipelineConfig();
-      expect(cfg).toHaveProperty('batchSize');
-      cfg.batchSize = 999;
-      expect(group.getPipelineConfig().batchSize).not.toBe(999);
-    });
-
-    it('setPipelineConfig clamps values and restarts timer', async () => {
-      await group.init();
-      const before = group.pipelineFlushTimer;
-      group.setPipelineConfig({ batchSize: 0, batchIntervalMs: 5 });
-      expect(group.getPipelineConfig().batchSize).toBe(1); // clamped to 1
-      expect(group.getPipelineConfig().batchIntervalMs).toBe(10); // clamped to 10
-      expect(group.pipelineFlushTimer).not.toBe(before);
-    });
-
-    it('appendWithPipeline buffers entries and flushes on batch size', async () => {
-      group.pipelineConfig = { ...group.getPipelineConfig(), batchSize: 2, maxPipelineQueueSize: 100 };
-      mockRaftAdapter.propose.mockResolvedValue({ index: '1', term: '1' });
-      await group.appendWithPipeline([
-        { msgId: 'm1', type: 'exec', data: '{"x":1}' },
-        { msgId: 'm2', type: 'exec', data: '{"y":2}' },
-      ]);
-      expect(mockRaftAdapter.propose).toHaveBeenCalled();
-      expect(group.getPipelineDepth()).toBe(0); // flushed + acknowledged → cleared
-    });
-
-    it('appendWithPipeline throws BACKPRESSURE when exceeding max queue', async () => {
-      group.pipelineConfig = { ...group.getPipelineConfig(), batchSize: 1000, maxPipelineQueueSize: 1 };
-      await expect(
-        group.appendWithPipeline([
-          { msgId: 'm1', type: 'exec', data: '{"x":1}' },
-          { msgId: 'm2', type: 'exec', data: '{"y":2}' },
-        ]),
-      ).rejects.toThrow('BACKPRESSURE');
-    });
-
-    it('flushPipeline flushes pending entries', async () => {
-      group.pipelineConfig = { ...group.getPipelineConfig(), batchSize: 1000 };
-      mockRaftAdapter.propose.mockResolvedValue({ index: '1', term: '1' });
-      await group.appendWithPipeline([{ msgId: 'm1', type: 'exec', data: '{"x":1}' }]);
-      await group.flushPipeline();
-      expect(group.getPipelineDepth()).toBe(0);
-    });
-
-    it('flushPipeline is a no-op when pipeline is empty', async () => {
-      await group.flushPipeline();
-      expect(mockRaftAdapter.propose).not.toHaveBeenCalled();
-    });
-
-    it('forceFlush delegates to flushPipeline', async () => {
-      await group.forceFlush();
-      expect(mockRaftAdapter.propose).not.toHaveBeenCalled();
-    });
-
-    it('flushPipelineInternal keeps unacknowledged entries when nothing unflushed', async () => {
-      group.pipeline = [{ index: 1, flushed: true, acknowledged: false, data: '{}', term: 1 }];
-      await group.flushPipeline();
-      // No unflushed entries → filter(!acknowledged) keeps the unacknowledged one.
-      expect(group.getPipelineDepth()).toBe(1);
-    });
-
-    it('flushPipelineInternal appends acknowledged entries to outbox', async () => {
-      mockRaftAdapter.propose.mockResolvedValue({ index: '5', term: '1' });
-      group.pipeline = [
-        {
-          index: 5,
-          flushed: false,
-          acknowledged: false,
-          data: JSON.stringify({ msgId: 'm5', type: 'exec', data: '{}' }),
-          term: 1,
-          sentAt: Date.now(),
-        },
-      ];
-      await group.flushPipeline();
-      expect(MOCK_OUTBOX.append).toHaveBeenCalled();
-      expect(group.getPipelineDepth()).toBe(0);
-    });
-
-    it('flushPipelineInternal tolerates a failing propose', async () => {
-      mockRaftAdapter.propose.mockRejectedValueOnce(new Error('raft down'));
-      group.pipeline = [
-        {
-          index: 5,
-          flushed: false,
-          acknowledged: false,
-          data: JSON.stringify({ msgId: 'm5', type: 'exec', data: '{}' }),
-          term: 1,
-          sentAt: Date.now(),
-        },
-      ];
-      await group.flushPipeline();
-      // Failed propose keeps entry unacknowledged → retained for retry.
-      expect(group.getPipelineDepth()).toBe(1);
     });
   });
 

@@ -426,11 +426,11 @@ describe('RaftGroupManager — final branch completion', () => {
       g.getLeader = vi.fn().mockResolvedValue(null);
       g.getTerm = vi.fn().mockResolvedValue(0);
       g.getProgress = vi.fn().mockResolvedValue({ commit: undefined, applied: undefined, lastLog: undefined });
-      g.getPipelineDepth = vi.fn().mockReturnValue(0);
       const results = await manager.getHealthStatus();
       expect(results[0].commitIndex).toBe(0);
       expect(results[0].appliedIndex).toBe(0);
       expect(results[0].lastLogIndex).toBe(0);
+      expect(results[0].applyLag).toBe(0);
       expect(results[0].leaderId).toBeUndefined();
     });
 

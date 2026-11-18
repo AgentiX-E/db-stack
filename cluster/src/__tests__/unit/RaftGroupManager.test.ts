@@ -110,10 +110,6 @@ vi.mock('../../consensus/core/RaftGroup', () => {
         return this._term ?? 1;
       }
 
-      getPipelineDepth() {
-        return 0;
-      }
-
       getLeaderHealthStatus() {
         return [];
       }

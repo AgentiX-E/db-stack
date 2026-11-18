@@ -32,7 +32,6 @@ vi.mock('../../consensus/core/RaftGroup', () => {
       public _phase: string = 'NORMAL';
       public _transferInProgress = false;
       public _health = { healthy: true, lastHeartbeatMs: 50, term: 1, leaderId: '1', leaderMonitorRunning: true };
-      public _pipelineDepth = 3;
       public _readRows: any[] = [{ id: 1 }];
       public _isReadQuorum = vi.fn().mockReturnValue({ required: 2, quorumMet: true, commitQuorum: 2 });
       public _applyFromEventBusResult = true;
@@ -53,7 +52,6 @@ vi.mock('../../consensus/core/RaftGroup', () => {
         replica: any,
         outboxManager: any,
         _snapshotDir?: any,
-        pipelineConfig?: any,
         flexQuorum?: any,
       ) {
         this.shardId = shardId;
@@ -131,11 +129,6 @@ vi.mock('../../consensus/core/RaftGroup', () => {
       async getLeaderHealth() {
         return this._health;
       }
-      getPipelineDepth() {
-        return this._pipelineDepth;
-      }
-      setPipelineConfig(_config: any) {}
-      async forceFlush() {}
       handleRaftMessage(_msg: any) {}
       async applyFromEventBus(_entry: any) {
         return this._applyFromEventBusResult;
@@ -630,19 +623,8 @@ describe('RaftGroupManager — interface/health/topology/learner/transfer/pipeli
     });
   });
 
-  // ── pipeline config / flush ───────────────────────────────────
-  describe('pipeline', () => {
-    it('setGlobalPipelineConfig delegates', () => {
-      registerOne();
-      expect(() => manager.setGlobalPipelineConfig({ batchSize: 10 })).not.toThrow();
-    });
-
-    it('forceGlobalPipelineFlush awaits all groups', async () => {
-      registerOne(1);
-      registerOne(2);
-      await expect(manager.forceGlobalPipelineFlush()).resolves.toBeUndefined();
-    });
-
+  // ── apply queue ───────────────────────────────────────────────
+  describe('apply queue', () => {
     it('flushApplyQueue best-effort per group', () => {
       registerOne();
       expect(() => manager.flushApplyQueue()).not.toThrow();

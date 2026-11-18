@@ -17,13 +17,12 @@
 import { EventEmitter } from 'events';
 import { RaftGroup } from './RaftGroup';
 import { RaftConfig } from './RaftAdapter';
-import { IShardReplica } from '../../interfaces/IShardReplica';
+import { IShardReplica, ApplyEntry } from '../../interfaces/IShardReplica';
 import { IOutboxWriter } from '../../interfaces/IOutboxWriter';
 import {
   MembershipChange,
   RaftConsensusPhase,
   LeaderTransferResult,
-  PipelineConfig,
   FlexibleQuorumConfig,
   SharedTransport,
 } from '../../interfaces/types';
@@ -76,7 +75,16 @@ export interface RaftHealthStatus {
   commitIndex: number;
   appliedIndex: number;
   lastLogIndex: number;
-  pipelineDepth: number;
+  /**
+   * Entries appended but not yet applied by the state machine.
+   *
+   * This replaces `pipelineDepth`, which counted entries in a buffer no writer
+   * ever filled and therefore read `0` on every shard, at every moment, including
+   * while a node was hundreds of entries behind. `applyLag` is derived from the
+   * same three indices a health check already reads, and it is non-zero exactly
+   * when there is something to worry about.
+   */
+  applyLag: number;
   error?: string;
 }
 
@@ -394,7 +402,6 @@ export class RaftGroupManager implements IConsensusLayer {
         config.replica,
         config.peers,
         config.localRaftIndex ?? 0,
-        config.pipelineConfig,
         config.raftConfigOverrides,
       );
     } else {
@@ -410,7 +417,6 @@ export class RaftGroupManager implements IConsensusLayer {
     replica: IShardReplica,
     peers: { nodeId: string; raftIndex: number }[],
     localRaftIndex: number,
-    pipelineConfig?: PipelineConfig,
     raftConfigOverrides?: Partial<RaftConfig>,
   ): void {
     this.shardReplicas.set(shardId, replica);
@@ -462,15 +468,7 @@ export class RaftGroupManager implements IConsensusLayer {
     };
     this.groupConfigs.set(shardId, raftConfig);
 
-    const group = new RaftGroup(
-      shardId,
-      raftConfig,
-      replica,
-      this.outboxManager,
-      undefined,
-      pipelineConfig,
-      this.flexQuorumConfig,
-    );
+    const group = new RaftGroup(shardId, raftConfig, replica, this.outboxManager, undefined, this.flexQuorumConfig);
 
     this.groups.set(shardId, group);
   }
@@ -1333,15 +1331,17 @@ export class RaftGroupManager implements IConsensusLayer {
         const leader = await group.getLeader();
         const term = await group.getTerm();
         const progress = await group.getProgress();
+        const appliedIndex = progress.applied ?? 0;
+        const lastLogIndex = progress.lastLog ?? 0;
         results.push({
           shardId,
           isLeader,
           leaderId: leader ?? undefined,
           term,
           commitIndex: progress.commit ?? 0,
-          appliedIndex: progress.applied ?? 0,
-          lastLogIndex: progress.lastLog ?? 0,
-          pipelineDepth: group.getPipelineDepth(),
+          appliedIndex,
+          lastLogIndex,
+          applyLag: Math.max(0, lastLogIndex - appliedIndex),
         });
       } catch (err: unknown) {
         logger.error({ err }, `[RaftGroupManager] Error collecting health for shard ${shardId}`);
@@ -1353,7 +1353,7 @@ export class RaftGroupManager implements IConsensusLayer {
           commitIndex: 0,
           appliedIndex: 0,
           lastLogIndex: 0,
-          pipelineDepth: 0,
+          applyLag: 0,
           error: getErrorMessage(err),
         });
       }
@@ -1675,22 +1675,37 @@ export class RaftGroupManager implements IConsensusLayer {
   }
 
   /**
-   * Handle a RequestForLearner message for a shard.
+   * Serve a learner's pull for a shard: the entries it is missing, and the window
+   * those entries came from.
+   *
+   * `firstAvailableIndex` is the point below which the log has been compacted, so a
+   * learner that lags further behind than that has to take the snapshot instead.
+   * An unknown shard answers with an empty window rather than throwing: the caller
+   * is a peer comparing shard maps, and a shard this node does not host is a fact,
+   * not an error.
    */
   async requestForLearner(
     shardId: number,
     fromIndex: number,
+    limit?: number,
   ): Promise<{
-    entries: any[];
+    entries: ApplyEntry[];
     snapshotAvailable: boolean;
+    firstAvailableIndex: number;
     lastIndex: number;
     lastTerm: number;
   }> {
     const group = this.groups.get(shardId);
     if (!group) {
-      return { entries: [], snapshotAvailable: false, lastIndex: 0, lastTerm: 0 };
+      return {
+        entries: [],
+        snapshotAvailable: false,
+        firstAvailableIndex: 0,
+        lastIndex: 0,
+        lastTerm: 0,
+      };
     }
-    return group.requestForLearner(fromIndex);
+    return group.requestForLearner(fromIndex, limit);
   }
 
   /**
@@ -1941,29 +1956,5 @@ export class RaftGroupManager implements IConsensusLayer {
    */
   emitHealthChange(nodeId: string, healthy: boolean, shardId: number): void {
     this.eventEmitter.emit('health-change', nodeId, healthy, shardId);
-  }
-
-  // ════════════════════════════════════════════════════════════
-  //  C5: Pipeline Configuration
-  // ════════════════════════════════════════════════════════════
-
-  /**
-   * Update pipeline configuration for all groups.
-   */
-  setGlobalPipelineConfig(config: { batchSize?: number; batchIntervalMs?: number }): void {
-    for (const [, group] of this.groups) {
-      group.setPipelineConfig(config);
-    }
-  }
-
-  /**
-   * Force a pipeline flush for all groups.
-   */
-  async forceGlobalPipelineFlush(): Promise<void> {
-    const promises: Promise<void>[] = [];
-    for (const [, group] of this.groups) {
-      promises.push(group.forceFlush());
-    }
-    await Promise.all(promises);
   }
 }

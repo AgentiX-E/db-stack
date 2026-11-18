@@ -21,6 +21,8 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
+  getLogBounds: vi.fn().mockResolvedValue(null),
+  getLogEntries: vi.fn().mockResolvedValue([]),
   getSnapshotMeta: vi.fn().mockReturnValue(null),
   requestSnapshot: vi.fn().mockResolvedValue(null),
   stop: vi.fn(),
@@ -49,6 +51,8 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
+    getLogBounds = mockRaftAdapter.getLogBounds;
+    getLogEntries = mockRaftAdapter.getLogEntries;
     getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
     requestSnapshot = mockRaftAdapter.requestSnapshot;
     stop = mockRaftAdapter.stop;
@@ -213,21 +217,6 @@ describe('RaftGroup — final branch completion', () => {
       group._activePeerTimestamps = new Map([['2', Date.now() - 10_000_000]]);
       (group as any)._cleanupActivePeers();
       expect(group._activePeers.size).toBe(0);
-    });
-  });
-
-  describe('pipeline flush timer error', () => {
-    it('catches a flush error inside the timer callback', async () => {
-      // Force flushPipeline to reject by making outbox.append throw during
-      // the acknowledgement write, then invoke the timer callback directly.
-      (group as any).startPipelineFlushTimer = vi.fn();
-      await group.init();
-      const flushSpy = vi.spyOn(group, 'flushPipeline').mockRejectedValue(new Error('flush boom'));
-      // Start a real timer with a tiny interval; the catch should swallow.
-      group.pipelineConfig = { ...group.getPipelineConfig(), batchIntervalMs: 10 };
-      (group as any).startPipelineFlushTimer();
-      await new Promise((r) => setTimeout(r, 30));
-      flushSpy.mockRestore();
     });
   });
 });

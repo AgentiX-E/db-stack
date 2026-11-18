@@ -22,6 +22,8 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
+  getLogBounds: vi.fn().mockResolvedValue(null),
+  getLogEntries: vi.fn().mockResolvedValue([]),
   getSnapshotMeta: vi.fn().mockReturnValue(null),
   requestSnapshot: vi.fn().mockResolvedValue(null),
   stop: vi.fn(),
@@ -50,6 +52,8 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
+    getLogBounds = mockRaftAdapter.getLogBounds;
+    getLogEntries = mockRaftAdapter.getLogEntries;
     getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
     requestSnapshot = mockRaftAdapter.requestSnapshot;
     stop = mockRaftAdapter.stop;
@@ -120,7 +124,7 @@ describe('RaftGroup — constructor/fallback/membership-timeout branches', () =>
   describe('applyHandler with index/term + pitr hook', () => {
     it('forwards index/term to pitr hook and applies to replica', async () => {
       const onApply = vi.fn();
-      const g = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, undefined, undefined, undefined, {
+      const g = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, undefined, undefined, {
         onApply,
       } as any);
       (g.raft as any).config = { enableInstallSnapshot: false };
@@ -174,23 +178,30 @@ describe('RaftGroup — constructor/fallback/membership-timeout branches', () =>
       group._transitionalConfig = null;
       await expect((group as any)._transitionToCNew({ changeId: 'x' }, 5)).resolves.toBeUndefined();
     });
-  });
 
-  describe('pipeline parse fallbacks', () => {
-    it('defaults msgId and type in pipeline apply', async () => {
-      mockRaftAdapter.getProgress.mockResolvedValue({ lastLog: 0 });
-      group.pipeline = [{ index: 1, flushed: false, acknowledged: true, data: '{}', term: 0, sentAt: Date.now() }];
-      mockRaftAdapter.propose.mockResolvedValue({ index: '1', term: '0' });
-      await group.flushPipeline();
-      expect(mockRaftAdapter.propose).toHaveBeenCalled();
+    it('_transitionToCNew keeps the transition open when C_NEW cannot be proposed', async () => {
+      // The C_JOINT entry is already committed at this point, so a failed C_NEW
+      // cannot be undone: the transitional config has to survive so an operator (or
+      // a retry) can finish the change. Dropping it would leave the group running a
+      // membership nobody voted for and no record that a change was in flight.
+      group._transitionalConfig = { newEntryIndex: 5 };
+      mockRaftAdapter.propose.mockRejectedValueOnce(new Error('quorum lost'));
+
+      await expect(
+        (group as any)._transitionToCNew({ changeId: 'c-new-fail', type: 'add', nodeId: 4 }, 5),
+      ).resolves.toBeUndefined();
+
+      expect(group._transitionalConfig).not.toBeNull();
+      expect(group._transitionalConfig.newEntryIndex).toBe(5);
     });
 
-    it('tolerates non-JSON pipeline entry parse', async () => {
-      group.pipeline = [
-        { index: 1, flushed: false, acknowledged: true, data: 'not-json', term: 1, sentAt: Date.now() },
-      ];
-      mockRaftAdapter.propose.mockResolvedValue({ index: '1', term: '1' });
-      await expect(group.flushPipeline()).resolves.toBeUndefined();
+    it('_transitionToCNew clears the transition once C_NEW commits', async () => {
+      group._transitionalConfig = { newEntryIndex: 5 };
+      mockRaftAdapter.propose.mockResolvedValueOnce({ index: '9', term: '2' });
+
+      await (group as any)._transitionToCNew({ changeId: 'c-new-ok', type: 'add', nodeId: 4 }, 5);
+
+      expect(group._transitionalConfig).toBeNull();
     });
   });
 
@@ -205,17 +216,7 @@ describe('RaftGroup — constructor/fallback/membership-timeout branches', () =>
       // entries the WAL duplicates — so it cannot be skipped by a snapshot that
       // raft-core triggers on its own threshold.
       const flushHook = vi.fn().mockResolvedValue(undefined);
-      const g = new RaftGroup(
-        0,
-        MOCK_CONFIG,
-        MOCK_REPLICA,
-        MOCK_OUTBOX,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        flushHook,
-      );
+      const g = new RaftGroup(0, MOCK_CONFIG, MOCK_REPLICA, MOCK_OUTBOX, undefined, undefined, undefined, flushHook);
       await g.init();
       const handlers = mockRaftAdapter.setApplicationSnapshotHandlers.mock.calls.at(-1)![0];
       await handlers.takeSnapshot(7);

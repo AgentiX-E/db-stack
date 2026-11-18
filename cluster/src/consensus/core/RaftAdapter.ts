@@ -25,11 +25,38 @@ import { BatchedRaftTransport } from '../transport/BatchedRaftTransport';
 import { RaftTcpTransport as OriginalRaftTcpTransport } from '../transport/RaftTcpTransport';
 import { SqlVecError, SqlVecErrorCode } from '../../interfaces/types';
 import type { SharedTransport } from '../../interfaces/types';
+import type { ApplyEntry } from '../../interfaces/IShardReplica';
 import { getErrorMessage } from '../helpers/errorUtils';
 import pino from 'pino';
 import { resolveLogLevel } from '../../observability/logLevel';
 
 const logger = pino({ level: resolveLogLevel() });
+
+/** Most entries one learner pull carries unless the caller asks for fewer. */
+export const DEFAULT_LOG_SLICE = 128;
+
+/** The subset of raft-core's `LogEntry` a reader needs to hand an entry back. */
+interface LogEntryRecord {
+  index: number;
+  term: number;
+  type: string;
+  command?: { type: string; payload?: unknown };
+}
+
+/**
+ * raft-core's log manager, as far as this adapter uses it.
+ *
+ * `getFirstIndex` and `getLastIndex` are the minimum: they answer "what is still
+ * retained". `getLastTerm` and `getEntries` are optional so that a caller reading
+ * only the bounds (as `getRetainedLogLength` does) keeps working against a log
+ * stub that never had them.
+ */
+interface RaftLogReader {
+  getFirstIndex(): number;
+  getLastIndex(): number;
+  getLastTerm?: () => number;
+  getEntries?: (fromIndex: number, toIndex: number) => Promise<LogEntryRecord[]>;
+}
 
 /**
  * The transport a wrapper delegates to, when it says so.
@@ -42,6 +69,44 @@ const logger = pino({ level: resolveLogLevel() });
 function underlyingOf(transport: Transport): Transport | null {
   const candidate = (transport as { underlying?: unknown }).underlying;
   return candidate && typeof candidate === 'object' ? (candidate as Transport) : null;
+}
+
+/**
+ * Turn a replicated log entry back into the record the replica applies.
+ *
+ * The payload raft-core stores is whatever `RaftAdapter.propose` was handed, which
+ * in this package is always the JSON text of an `ApplyEntry`. Decoding it is not a
+ * guess: it recovers the `msgId` a learner needs to make its replay idempotent. A
+ * payload that is not ours — a log written by an older build, a NOOP, a term
+ * marker — simply carries no key, which is the honest answer rather than a
+ * fabricated one.
+ */
+function toApplyEntry(entry: LogEntryRecord): ApplyEntry {
+  const payload = entry.command?.payload;
+  const data = typeof payload === 'string' ? payload : JSON.stringify(payload ?? null);
+  return {
+    index: entry.index,
+    term: entry.term,
+    command: entry.command?.type ?? entry.type.toLowerCase(),
+    data,
+    ...decodeApplyKeys(data),
+  };
+}
+
+/** The idempotency fields an apply record may carry, when the payload is ours. */
+function decodeApplyKeys(data: string): { msgId?: string; type?: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const record = parsed as { msgId?: unknown; type?: unknown };
+  const keys: { msgId?: string; type?: string } = {};
+  if (typeof record.msgId === 'string') keys.msgId = record.msgId;
+  if (typeof record.type === 'string') keys.type = record.type;
+  return keys;
 }
 
 // ──────────────────────────────────────────
@@ -1068,26 +1133,88 @@ export class RaftAdapter {
    * every "the log stays bounded" assertion built on it passed without measuring.
    */
   async getRetainedLogLength(): Promise<number> {
-    const logManager = (
-      this.node as unknown as {
-        logManager?: { getFirstIndex?: () => number; getLastIndex?: () => number };
-      } | null
-    )?.logManager;
-    if (
-      !logManager ||
-      typeof logManager.getFirstIndex !== 'function' ||
-      typeof logManager.getLastIndex !== 'function'
-    ) {
-      return 0;
-    }
+    const bounds = await this.getLogBounds();
+    return bounds ? bounds.lastIndex - bounds.firstIndex + 1 : 0;
+  }
+
+  /**
+   * The window of the replicated log this node can still serve.
+   *
+   * `null` means "nothing to serve" — no node, no log manager, a manager that has
+   * not finished initialising, or a log with no retained entry. A caller therefore
+   * cannot confuse an empty log with a range that was compacted away; when the
+   * answer is non-null, `firstIndex` is the floor the caller must respect and
+   * `lastTerm` is the term of the entry at `lastIndex`.
+   */
+  async getLogBounds(): Promise<{ firstIndex: number; lastIndex: number; lastTerm: number } | null> {
+    const reader = this.raftLogReader();
+    if (!reader) return null;
     try {
-      const first = logManager.getFirstIndex();
-      const last = logManager.getLastIndex();
-      // An empty log reports first=1, last=0 (and a compacted one starts above 1).
-      return last < first ? 0 : last - first + 1;
+      const lastIndex = reader.getLastIndex();
+      // An empty log reports last=0 (and a fully compacted one keeps first above it).
+      if (!(lastIndex > 0)) return null;
+      const firstIndex = reader.getFirstIndex();
+      if (lastIndex < firstIndex) return null;
+      const lastTerm = typeof reader.getLastTerm === 'function' ? reader.getLastTerm() : 0;
+      return { firstIndex, lastIndex, lastTerm };
     } catch {
-      return 0;
+      // A log manager that has not initialised (or whose storage closed) throws
+      // rather than answering; "no window" is the honest translation.
+      return null;
     }
+  }
+
+  /**
+   * Read a contiguous slice of the replicated log as applyable entries.
+   *
+   * A learner asks for entries from `fromIndex` onward, and the floor is not the
+   * caller's to choose: compaction moves it, so a `fromIndex` below the retained
+   * window is clamped up rather than rejected. The ceiling is the head of the log.
+   * `limit` bounds one pull — a learner that needs more asks again from the index
+   * after the last entry it received.
+   *
+   * Every entry is returned in the shape `IShardReplica.apply()` takes, including
+   * the `msgId` idempotency key when the payload carries one, so a learner can
+   * replay the slice without re-deriving any of it.
+   *
+   * Failures return an empty slice instead of throwing: the caller is a peer on
+   * the other side of a socket, and a compaction that lands between the bounds
+   * read and the slice read must produce "ask again", not a broken connection.
+   */
+  async getLogEntries(fromIndex: number, limit: number = DEFAULT_LOG_SLICE): Promise<ApplyEntry[]> {
+    const reader = this.raftLogReader();
+    if (!reader || typeof reader.getEntries !== 'function') return [];
+
+    const bounds = await this.getLogBounds();
+    if (!bounds) return [];
+
+    const span = Math.max(1, Math.trunc(limit) || 1);
+    const floor = Math.max(Math.trunc(fromIndex) || 0, bounds.firstIndex);
+    if (floor > bounds.lastIndex) return [];
+
+    const ceiling = Math.min(bounds.lastIndex, floor + span - 1);
+    try {
+      const entries = await reader.getEntries(floor, ceiling);
+      return entries.map(toApplyEntry);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * raft-core's log manager for this node, or null when there is none to read.
+   *
+   * Only the two bounds methods are required here; `getLogEntries` checks for the
+   * slice method itself, because a reader that can say "how much is retained" but
+   * cannot hand back entries is still useful to `getRetainedLogLength`.
+   */
+  private raftLogReader(): RaftLogReader | null {
+    const reader = (this.node as unknown as { logManager?: RaftLogReader } | null)?.logManager;
+    if (!reader) return null;
+    if (typeof reader.getFirstIndex !== 'function' || typeof reader.getLastIndex !== 'function') {
+      return null;
+    }
+    return reader;
   }
 
   /**

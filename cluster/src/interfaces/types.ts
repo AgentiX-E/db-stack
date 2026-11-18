@@ -165,40 +165,6 @@ export interface LeaderTransferResult {
   durationMs: number;
 }
 
-export interface PipelineConfig {
-  enabled: boolean;
-  maxDepth: number;
-  batchSize: number;
-  flushIntervalMs: number;
-  minBatchSize: number;
-  timeoutMs: number;
-  /** Additional fields used by ReplicationPipeline */
-  batchIntervalMs?: number;
-  maxPipelineQueueSize?: number;
-}
-
-export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
-  enabled: true,
-  maxDepth: 1000,
-  batchSize: 100,
-  flushIntervalMs: 10,
-  minBatchSize: 1,
-  timeoutMs: 5000,
-};
-
-export interface PipelinedEntry {
-  index: number;
-  term: number;
-  data: string | Buffer;
-  timestamp: number;
-  /** Whether the entry has been flushed to the wire */
-  flushed?: boolean;
-  /** Whether the peer has acknowledged reception */
-  acknowledged?: boolean;
-  /** Timestamp when the entry was sent */
-  sentAt?: number;
-}
-
 export interface FlexibleQuorumConfig {
   writeQuorum: number;
   readQuorum: number;

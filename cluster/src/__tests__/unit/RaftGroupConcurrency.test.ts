@@ -2,19 +2,20 @@
  * RaftGroup Concurrency Model Tests
  *
  * Iteration 26 — Verifies RaftGroup's concurrency behavior under parallel
- * propose, pipeline flush, read-only mode, and membership changes.
+ * propose, read-only mode, and membership changes.
  *
  * Key Architecture Findings:
- * - propose() does NOT acquire _pipelineMutex — only flushPipeline() does.
  * - propose() relies on @maboke123/raft-core's internal serialization.
  * - propose() is lock-free at the RaftGroup layer.
- * - flushPipeline() acquires _pipelineMutex to prevent concurrent flushes.
+ *
+ * AC 26.4 was withdrawn in iteration 48 together with the pipeline window it
+ * measured: the mutex it asserted on guarded a buffer no writer ever filled.
  *
  * Acceptance Criteria:
  *   AC 26.1: Concurrent propose calls all eventually commit to outbox
  *   AC 26.2: Batch propose serializes entries into single raft.propose call
  *   AC 26.3: Read-only mode rejects propose immediately
- *   AC 26.4: Pipeline flush serializes with itself (prevents dual flush)
+ *   ~~AC 26.4~~: withdrawn — the pipeline window it measured was removed in iteration 48
  *   AC 26.5: Leader health check does not deadlock
  *   AC 26.6: Stop during active propose completes cleanly
  *   AC 26.7: Concurrent propose flood does not lose entries
@@ -28,7 +29,6 @@ import { RaftGroup } from '../../consensus/core/RaftGroup';
 import type { IShardReplica } from '../../interfaces/IShardReplica';
 import type { IOutboxWriter } from '../../interfaces/IOutboxWriter';
 import type { ApplyEntry } from '../../interfaces/IShardReplica';
-import { DEFAULT_PIPELINE_CONFIG } from '../../interfaces/types';
 
 // ── Mock RaftAdapter ─────────────────────────────────────────
 const mockRaftAdapter: any = {
@@ -114,7 +114,6 @@ function createGroup(
     r,
     o,
     '/tmp/snap',
-    { ...DEFAULT_PIPELINE_CONFIG, batchSize: 10, batchIntervalMs: 5000 },
   );
   return { group, outbox: o, replica: r };
 }
@@ -187,36 +186,6 @@ describe('RaftGroup Concurrency Model', () => {
     // Verify: propose still works at RaftGroup level
     await expect(group.propose(makeEntry('data'))).resolves.toBeUndefined();
     expect(mockRaftAdapter.propose).toHaveBeenCalledTimes(1);
-  });
-
-  //
-  // AC 26.4: Pipeline flush serializes (prevents dual concurrent flush)
-  //
-  it('AC 26.4: Pipeline flush acquires mutex (prevents concurrent flush)', async () => {
-    const { group } = createGroup();
-
-    let flushActiveCount = 0;
-    let maxConcurrentFlush = 0;
-
-    // The _pipelineMutex prevents two flushPipeline calls from running concurrently
-    // We can observe this by calling flushPipeline twice rapidly
-    const flushPipeline = async () => {
-      const release = await (group as any)._pipelineMutex.acquire();
-      try {
-        flushActiveCount++;
-        maxConcurrentFlush = Math.max(maxConcurrentFlush, flushActiveCount);
-        await new Promise((r) => setTimeout(r, 5));
-      } finally {
-        flushActiveCount--;
-        release();
-      }
-    };
-
-    // Concurrent flushes — mutex should serialize
-    await Promise.all([flushPipeline(), flushPipeline(), flushPipeline()]);
-
-    // maxConcurrentFlush should be 1 if _pipelineMutex works
-    expect(maxConcurrentFlush).toBe(1);
   });
 
   //

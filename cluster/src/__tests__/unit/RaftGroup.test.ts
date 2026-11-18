@@ -218,12 +218,16 @@ describe('RaftGroup — Unit', () => {
   //
   // AC 15.9: stop cleans up timers and stops raft
   //
-  it('AC 15.9: stop cleans up timer and stops raft', async () => {
+  // The pipeline flush timer this case used to assert on belonged to a buffer no
+  // writer ever filled; `stop()` now stops the leader monitor and raft, and the
+  // assertion is that nothing keeps proposing on a stopped group.
+  it('AC 15.9: stop releases the group and refuses further proposals', async () => {
     await group.init();
-    expect(group.pipelineFlushTimer).not.toBeNull();
     group.stop();
-    expect(group.pipelineFlushTimer).toBeNull();
     expect(mockRaftAdapter.stop).toHaveBeenCalled();
+    await expect(group.propose({ msgId: 'after-stop', type: 'exec', data: '{}' } as never)).rejects.toThrow(
+      /already stopped/,
+    );
   });
 
   //

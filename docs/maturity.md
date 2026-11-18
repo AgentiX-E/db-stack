@@ -43,6 +43,7 @@ number and the instrument that produced it are stated together.
 | Entry position forwarded to the application   | U · I · C · E | `index`/`term` reach the engine; asserted end-to-end                                                                          |
 | Joint consensus membership change             | U · I · E     | C_old,new → C_new, rollback on failure                                                                                        |
 | Learner (non-voting) catch-up                 | U · I · E     | Promoted only after catching up; a fourth process joins a live 3-node TLS cluster and holds the log before it is promoted (`AC 8.21`) |
+| Learner log pull (`requestForLearner`)         | U · I         | Serves the leader's **real** retained log, not an empty buffer: window, contiguous ascending entries and recovered `msgId`s asserted against a 3-node mTLS cluster (`AC 58.14`–`AC 58.19`); a cursor below the window is clamped, one past the head is empty |
 | Leader transfer                               | U · I · E     | Target confirmed as leader before success is reported                                                                         |
 | ReadIndex and lease reads                     | U · I · P     | Leader-lease expiry and stepping down; p50 0.001 ms over 1 000 reads (`AC 41.3`, `AC 41.4`)                                   |
 | Snapshots: take, frame, install, compact      | U · I · R · E | 30-byte envelope, CRC32, position, cross-shard rejection                                                                      |
@@ -55,6 +56,7 @@ number and the instrument that produced it are stated together.
 | Write forwarding to the shard leader          | U · A         | `pg` is optional; a missing driver is a named error, not a module-resolution trace (`AC 55.1`–`AC 55.7`)                     |
 | Trace correlation across async boundaries     | U · A         | `traceContext.runWith` survives `await` and timers (`OBS4.1`–`OBS4.5`); the id is verified in the **built** package         |
 | Merkle anti-entropy digest                    | U · A         | Root asserted against an independent SHA-256 of the ordered leaves (`AC 54.1`–`AC 54.8`)                                      |
+| Apply lag in health status                    | U             | `applyLag` replaces `pipelineDepth`, which read `0` on every shard at every moment because nothing wrote the buffer it counted |
 
 ### 1.2 Transport and security
 

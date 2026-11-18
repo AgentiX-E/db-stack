@@ -10,14 +10,12 @@
  *   C2: Joint Consensus — TRANSITIONAL/NORMAL phase transitions
  *   C3: Learner (Read Replica) — non-voting followers
  *   C4: Leader Transfer — graceful leadership handoff
- *   C5: Pipeline Replication — batching log entry replication
  */
 
 import { RaftAdapter, RaftConfig, SnapshotMeta } from './RaftAdapter';
 import { IShardReplica, ApplyEntry } from '../../interfaces/IShardReplica';
 import { IOutboxWriter, OutboxRecord } from '../../interfaces/IOutboxWriter';
 import { SqliteStorage } from '../storage/SqliteStorage';
-import { Mutex } from 'async-mutex';
 import { getErrorMessage } from '../helpers/errorUtils';
 import {
   RaftConsensusPhase,
@@ -25,9 +23,6 @@ import {
   TransitionalConfig,
   LearnerInfo,
   LeaderTransferResult,
-  PipelineConfig,
-  PipelinedEntry,
-  DEFAULT_PIPELINE_CONFIG,
   FlexibleQuorumConfig,
   resolveFlexibleQuorumConfig,
   type majorityQuorum,
@@ -78,13 +73,6 @@ export class RaftGroup {
   // ── C4: Leader Transfer ─────────────────────────────────
   private leaderTransferInProgress: boolean = false;
 
-  // ── C5: Pipeline Replication ────────────────────────────
-  private pipeline: PipelinedEntry[] = [];
-  private pipelineConfig: PipelineConfig;
-  private pipelineFlushTimer: ReturnType<typeof setInterval> | null = null;
-  /** M-01: Mutex to ensure pipeline operations are serialized. */
-  private _pipelineMutex = new Mutex();
-
   // ── Stop guard ──────────────────────────────────────────
   /** Set to true when stop() is called. Guards against propose() after stop. */
   private _stopped = false;
@@ -131,7 +119,6 @@ export class RaftGroup {
     replica: IShardReplica,
     outboxManager: IOutboxWriter,
     snapshotDir?: string,
-    pipelineConfig?: PipelineConfig,
     flexQuorumConfig?: Partial<FlexibleQuorumConfig>,
     pitrHook?: IPITRHook,
     pitrFlushHook?: () => Promise<void>,
@@ -147,7 +134,6 @@ export class RaftGroup {
     // engine adapters may export backups there; this package no longer writes a
     // second, competing snapshot file into it.
     this.snapshotDir = snapshotDir || './data';
-    this.pipelineConfig = pipelineConfig || { ...DEFAULT_PIPELINE_CONFIG };
     this.flexQuorum = resolveFlexibleQuorumConfig(flexQuorumConfig, raftConfig.peers.length);
     this.pitrHook = pitrHook;
     this.pitrFlushHook = pitrFlushHook;
@@ -174,7 +160,6 @@ export class RaftGroup {
     outboxManager: IOutboxWriter,
     sqliteStorageConfig: { file: string },
     snapshotDir?: string,
-    pipelineConfig?: PipelineConfig,
     flexQuorumConfig?: Partial<FlexibleQuorumConfig>,
     pitrHook?: IPITRHook,
     pitrFlushHook?: () => Promise<void>,
@@ -185,7 +170,6 @@ export class RaftGroup {
       replica,
       outboxManager,
       snapshotDir,
-      pipelineConfig,
       flexQuorumConfig,
       pitrHook,
       pitrFlushHook,
@@ -266,9 +250,6 @@ export class RaftGroup {
     } else {
       await this.raft.init(applyHandler);
     }
-
-    // Start pipeline flush timer
-    this.startPipelineFlushTimer();
   }
 
   // ════════════════════════════════════════════════════════════
@@ -628,38 +609,41 @@ export class RaftGroup {
   }
 
   /**
-   * Handle a RequestForLearner message.
-   * A learner calls this to pull the latest log entries.
-   * Returns the log entries from `fromIndex` onward (or empty array).
+   * Serve a learner with the log entries it is missing.
+   *
+   * Log shipping is raft-core's job: a learner catches up through the leader's own
+   * replication, and through a snapshot when its gap is older than the retained
+   * log. What this endpoint adds is a pull a caller can drive itself — a read
+   * replica, a migration tool, an operator asking what a node actually holds — so
+   * it answers from the log this group really has.
+   *
+   * The window matters as much as the entries: `firstAvailableIndex` is the floor
+   * compaction has left behind, so a caller whose cursor is below it knows to take
+   * the snapshot instead of asking forever for entries that no longer exist.
+   *
+   * The previous implementation read from a buffer nothing wrote to, so it
+   * returned an empty array for every shard at every index, while its own
+   * documentation promised "the log entries from `fromIndex` onward".
    */
-  async requestForLearner(fromIndex: number): Promise<{
-    entries: PipelinedEntry[];
+  async requestForLearner(
+    fromIndex: number,
+    limit?: number,
+  ): Promise<{
+    entries: ApplyEntry[];
     snapshotAvailable: boolean;
+    firstAvailableIndex: number;
     lastIndex: number;
     lastTerm: number;
   }> {
-    const progress = await this.raft.getProgress();
-    const lastIndex = progress.lastLog || 0;
-    const lastTerm = await this.raft.getTerm();
-
-    // For single-node InMemoryStorage, we can't actually pull historical
-    // log entries. Return what we know and let the learner catch up
-    // via the next pipeline flush.
-    const entries: PipelinedEntry[] = [];
-
-    // If the learner needs entries that we've already committed but
-    // aren't in the pipeline, return recent entries from our pipeline
-    for (const entry of this.pipeline) {
-      if (entry.index >= fromIndex && !entry.acknowledged) {
-        entries.push(entry);
-      }
-    }
+    const bounds = await this.raft.getLogBounds();
+    const entries = await this.raft.getLogEntries(fromIndex, limit);
 
     return {
       entries,
       snapshotAvailable: this.snapshotExists(),
-      lastIndex,
-      lastTerm,
+      firstAvailableIndex: bounds?.firstIndex ?? 0,
+      lastIndex: bounds?.lastIndex ?? 0,
+      lastTerm: bounds?.lastTerm ?? 0,
     };
   }
 
@@ -816,196 +800,6 @@ export class RaftGroup {
         error: `Campaign transfer failed: ${getErrorMessage(err)}`,
       };
     }
-  }
-
-  // ════════════════════════════════════════════════════════════
-  //  C5: Pipeline Replication
-  // ════════════════════════════════════════════════════════════
-
-  /**
-   * Get the current pipeline state.
-   */
-  getPipeline(): ReadonlyArray<PipelinedEntry> {
-    return [...this.pipeline];
-  }
-
-  /**
-   * Get the number of entries pending in the pipeline.
-   */
-  getPipelineDepth(): number {
-    return this.pipeline.length;
-  }
-
-  /**
-   * Get the current pipeline queue depth (alias of getPipelineDepth).
-   */
-  getPipelineQueueDepth(): number {
-    return this.pipeline.length;
-  }
-
-  /**
-   * Get pipeline configuration.
-   */
-  getPipelineConfig(): PipelineConfig {
-    return { ...this.pipelineConfig };
-  }
-
-  /**
-   * Update pipeline configuration at runtime.
-   */
-  setPipelineConfig(config: Partial<PipelineConfig>): void {
-    if (config.batchSize !== undefined) this.pipelineConfig.batchSize = Math.max(1, config.batchSize);
-    if (config.batchIntervalMs !== undefined)
-      this.pipelineConfig.batchIntervalMs = Math.max(10, config.batchIntervalMs);
-
-    // Restart flush timer with new interval
-    this.restartPipelineFlushTimer();
-  }
-
-  /**
-   * Start the pipeline flush timer.
-   */
-  private startPipelineFlushTimer(): void {
-    if (this.pipelineFlushTimer) {
-      clearInterval(this.pipelineFlushTimer);
-    }
-    this.pipelineFlushTimer = setInterval(() => {
-      this.flushPipeline().catch((err) => {
-        logger.error(`[RaftGroup] Pipeline flush error: ${getErrorMessage(err)}`);
-      });
-    }, this.pipelineConfig.batchIntervalMs);
-  }
-
-  /**
-   * Restart the pipeline flush timer (after config change).
-   */
-  private restartPipelineFlushTimer(): void {
-    if (this.pipelineFlushTimer) {
-      clearInterval(this.pipelineFlushTimer);
-    }
-    this.startPipelineFlushTimer();
-  }
-
-  /**
-   * Append entries to the pipeline buffer.
-   * Flushes when batch size is reached.
-   * @throws Error with 'BACKPRESSURE' when pipeline queue exceeds maxPipelineQueueSize.
-   */
-  async appendWithPipeline(entries: ApplyEntry[]): Promise<void> {
-    const release = await this._pipelineMutex.acquire();
-    try {
-      const maxSize = this.pipelineConfig.maxPipelineQueueSize ?? 1000;
-
-      // 3d: Check pipeline queue depth before appending — backpressure enforcement
-      if (this.pipeline.length + entries.length > maxSize) {
-        throw new Error(
-          `BACKPRESSURE: RaftGroup[${this.shardId}] pipeline queue depth ${this.pipeline.length} + ${entries.length} exceeds max ${maxSize}`,
-        );
-      }
-
-      const progress = await this.raft.getProgress();
-      const term = await this.raft.getTerm();
-
-      for (const entry of entries) {
-        (this.pipeline as any).push({
-          index: (progress.lastLog || 0) + 1,
-          term: term || 1,
-          data: JSON.stringify(entry),
-          flushed: false,
-          acknowledged: false,
-          sentAt: Date.now(),
-        });
-      }
-
-      // Flush if batch size reached
-      if (this.pipeline.length >= this.pipelineConfig.batchSize) {
-        // Use internal flush — we already hold _pipelineMutex
-        await this.flushPipelineInternal();
-      }
-    } finally {
-      release();
-    }
-  }
-
-  /**
-   * Flush all pending entries in the pipeline as a single batch.
-   *
-   * Sends each buffered entry through the Raft propose mechanism.
-   * Entries are marked as flushed and acknowledged after successful proposoal.
-   *
-   * NOTE: acquires _pipelineMutex before flushing.
-   */
-  async flushPipeline(): Promise<void> {
-    const release = await this._pipelineMutex.acquire();
-    try {
-      await this.flushPipelineInternal();
-    } finally {
-      release();
-    }
-  }
-
-  /**
-   * Internal flush — same logic as flushPipeline but does NOT acquire
-   * the mutex.  Callers MUST already hold _pipelineMutex.
-   */
-  private async flushPipelineInternal(): Promise<void> {
-    if (this.pipeline.length === 0) return;
-
-    const pendingEntries = [...this.pipeline];
-    const unflushed = pendingEntries.filter((e) => !e.flushed);
-
-    if (unflushed.length === 0) {
-      // All entries are flushed but unacknowledged — clear if acknowledged
-      this.pipeline = this.pipeline.filter((e) => !e.acknowledged);
-      return;
-    }
-
-    // Mark entries as flushed
-    for (const entry of unflushed) {
-      entry.flushed = true;
-    }
-
-    // Propose each entry through Raft (they'll be batched on the Raft side too)
-    let successCount = 0;
-    for (const entry of unflushed) {
-      try {
-        await this.raft.propose(String(entry.data));
-        entry.acknowledged = true;
-        successCount++;
-
-        // Also append to outbox
-        try {
-          const parsedData = JSON.parse(String(entry.data));
-          this.outboxManager.append(
-            this.buildOutboxRecord(
-              { msgId: parsedData.msgId || `pipeline-${entry.index}`, type: parsedData.type },
-              entry.data,
-              entry.index,
-              entry.term,
-              entry.sentAt,
-            ),
-          );
-        } catch {
-          // Outbox append is non-critical
-        }
-      } catch (err: unknown) {
-        logger.error(`[RaftGroup] Pipeline entry ${entry.index} failed: ${getErrorMessage(err)}`);
-      }
-    }
-
-    // Clean up acknowledged entries
-    this.pipeline = this.pipeline.filter((e) => !e.acknowledged);
-
-    if (successCount > 0) {
-      logger.info(`[RaftGroup] Pipeline flush: ${successCount}/${unflushed.length} entries committed`);
-    }
-  }
-
-  /**
-   * Force an immediate flush of all pending pipeline entries.
-   */
-  async forceFlush(): Promise<void> {
-    await this.flushPipeline();
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1717,9 +1511,5 @@ export class RaftGroup {
     this._stopped = true;
     this.stopLeaderMonitor();
     this.raft.stop();
-    if (this.pipelineFlushTimer) {
-      clearInterval(this.pipelineFlushTimer);
-      this.pipelineFlushTimer = null;
-    }
   }
 }

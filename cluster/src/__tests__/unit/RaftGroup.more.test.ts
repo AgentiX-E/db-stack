@@ -21,6 +21,8 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
+  getLogBounds: vi.fn().mockResolvedValue(null),
+  getLogEntries: vi.fn().mockResolvedValue([]),
   getSnapshotMeta: vi.fn().mockReturnValue(null),
   requestSnapshot: vi.fn().mockResolvedValue(null),
   stop: vi.fn(),
@@ -46,6 +48,8 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
+    getLogBounds = mockRaftAdapter.getLogBounds;
+    getLogEntries = mockRaftAdapter.getLogEntries;
     getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
     requestSnapshot = mockRaftAdapter.requestSnapshot;
     stop = mockRaftAdapter.stop;
@@ -272,17 +276,31 @@ describe('RaftGroup — joint consensus, learner, and query completion', () => {
       expect(group.removeLearner('n4')).toBe(false);
     });
 
-    it('requestForLearner returns pipeline entries from fromIndex', async () => {
-      group.pipeline = [
-        { index: 5, acknowledged: false },
-        { index: 6, acknowledged: false },
-        { index: 7, acknowledged: true },
-      ];
-      mockRaftAdapter.getProgress.mockResolvedValue({ lastLog: 7 });
+    it('requestForLearner serves the retained window and the entries inside it', async () => {
+      mockRaftAdapter.getLogBounds.mockResolvedValue({ firstIndex: 5, lastIndex: 7, lastTerm: 2 });
+      mockRaftAdapter.getLogEntries.mockResolvedValue([
+        { index: 6, term: 2, command: 'command', data: '{}', msgId: 'm6', type: 'exec' },
+        { index: 7, term: 2, command: 'command', data: '{}', msgId: 'm7', type: 'exec' },
+      ]);
+
       const res = await group.requestForLearner(6);
+
+      expect(mockRaftAdapter.getLogEntries).toHaveBeenCalledWith(6, undefined);
+      expect(res.entries).toHaveLength(2);
+      expect(res.entries[0]!.index).toBe(6);
+      expect(res.entries[1]!.index).toBe(7);
+      expect(res.firstAvailableIndex).toBe(5);
       expect(res.lastIndex).toBe(7);
-      expect(res.entries).toHaveLength(1); // only index 6 (>= 6 and not acknowledged)
-      expect(res.entries[0].index).toBe(6);
+      expect(res.lastTerm).toBe(2);
+    });
+
+    it('requestForLearner reports an empty window when the log cannot be read', async () => {
+      mockRaftAdapter.getLogBounds.mockResolvedValue(null);
+      mockRaftAdapter.getLogEntries.mockResolvedValue([]);
+
+      const res = await group.requestForLearner(1);
+
+      expect(res).toMatchObject({ entries: [], firstAvailableIndex: 0, lastIndex: 0, lastTerm: 0 });
     });
 
     it('updateLearnerProgress updates match/next/heartbeat', async () => {

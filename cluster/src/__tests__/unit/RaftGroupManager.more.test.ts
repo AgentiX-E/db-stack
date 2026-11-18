@@ -29,7 +29,6 @@ vi.mock('../../consensus/core/RaftGroup', () => {
       public _phase: string = 'NORMAL';
       public _transferInProgress = false;
       public _health = { healthy: true, lastHeartbeatMs: 100, term: 1, leaderId: '1', leaderMonitorRunning: true };
-      public _pipelineDepth = 0;
       public _readRows: any[] = [];
       public _applyFromEventBusResult = true;
 
@@ -39,7 +38,6 @@ vi.mock('../../consensus/core/RaftGroup', () => {
         replica: any,
         outboxManager: any,
         _snapshotDir?: any,
-        pipelineConfig?: any,
         flexQuorum?: any,
       ) {
         this.shardId = shardId;
@@ -110,11 +108,6 @@ vi.mock('../../consensus/core/RaftGroup', () => {
       async getLeaderHealth() {
         return this._health;
       }
-      getPipelineDepth() {
-        return this._pipelineDepth;
-      }
-      setPipelineConfig(_config: any) {}
-      async forceFlush() {}
       handleRaftMessage(_msg: any) {}
       async applyFromEventBus(_entry: any) {
         return this._applyFromEventBusResult;

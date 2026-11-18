@@ -252,6 +252,40 @@ Two things are worth knowing before you use it in production:
 persisted. That is the honest answer for a freshly started node: it is running the
 membership it was launched with, and nothing has confirmed anything else yet.
 
+### Serving a learner that pulls
+
+A learner normally catches up through the leader's own replication. When you drive
+the pull yourself — a read replica you schedule, a migration tool, an operator
+asking what a node really holds — ask the group for a slice of its log:
+
+```ts
+const { entries, firstAvailableIndex, lastIndex, lastTerm, snapshotAvailable } =
+  await group.requestForLearner(cursor, 256);
+
+for (const entry of entries) await replica.apply(entry);   // same shape apply() takes
+cursor = entries.length > 0 ? entries[entries.length - 1].index + 1 : cursor;
+if (cursor < firstAvailableIndex) {
+  // The gap is older than the retained log: take the snapshot instead of asking
+  // again for entries that compaction has already removed.
+}
+```
+
+Three properties are worth relying on:
+
+* **The window is reported, not implied.** `firstAvailableIndex` is the floor
+  compaction has left behind. A cursor below it is a signal to switch to the
+  snapshot, not an error, and `snapshotAvailable` says whether that is possible.
+* **Entries arrive applyable.** Each one carries `index`, `term`, `command`, `data`,
+  and — when the payload was written by this package — the `msgId` that makes a
+  replay idempotent. You can hand them straight to `IShardReplica.apply()`.
+* **Pulls are bounded and cheap to resume.** `limit` defaults to 128 entries; the
+  slice is contiguous and ascending, so the next pull continues from the index after
+  the last entry you received. A cursor past the head returns an empty slice.
+
+`RaftAdapter.getLogEntries(fromIndex, limit)` and `getLogBounds()` expose the same
+window without a group, which is what the cluster harness and the federation layer
+use.
+
 ---
 
 ## 5. High availability, fencing, failover

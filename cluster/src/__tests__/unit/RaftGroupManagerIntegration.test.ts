@@ -70,7 +70,6 @@ vi.mock('../../consensus/core/RaftGroup', () => {
         public replica: IShardReplica,
         public outboxManager: IOutboxWriter,
         public snapshotDir?: string,
-        public pipelineConfig?: any,
         public flexQuorumConfig?: any,
       ) {
         mockGroupId = shardId;

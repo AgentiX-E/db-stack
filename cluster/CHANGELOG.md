@@ -158,6 +158,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   must survive an `await` boundary. Both assertions fail on the artefacts that shipped before this
   release, in a plain Node process, which is the only place they could have been caught.
 
+- **`RaftAdapter.getLogBounds()` and `RaftAdapter.getLogEntries(fromIndex, limit)`** — the replicated
+  log as a readable window. `getLogBounds()` reports `{ firstIndex, lastIndex, lastTerm }`, or `null`
+  for "nothing to serve", so an empty log is distinguishable from a range that was compacted away.
+  `getLogEntries()` clamps a floor below the window instead of rejecting it, bounds one pull (`limit`,
+  default 128) and returns an empty slice instead of throwing when compaction moves the floor
+  mid-read. Every entry comes back in the shape `IShardReplica.apply()` takes, with the `msgId`
+  idempotency key recovered from the payload so a learner's replay stays idempotent.
+  `getRetainedLogLength()` now derives from `getLogBounds()` instead of reading the two bounds itself.
+
 ### Fixed
 
 - **Three published features called `require` from an ESM package.** This package ships as
@@ -426,6 +435,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`bench:ycsb` pointed at `bench/ycsb/run-ycsb.ts`**, which does not exist. It now runs the
   package's own YCSB entry point (`bench/raft-ycsb.ts`).
 
+- **`requestForLearner()` returned an empty array for every shard, at every index, forever.** It read
+  from the pipeline buffer removed below, so the documented contract — "the log entries from
+  `fromIndex` onward" — was never once satisfied: a learner that asked for entry 5 got nothing, and
+  the suite passed only because the buffer was equally empty in every case it constructed. It now
+  reads the log raft-core actually holds, through `RaftAdapter.getLogEntries()`. The response also
+  gained `firstAvailableIndex` — the floor compaction has left behind — because a caller whose cursor
+  is below it must take the snapshot instead of asking again for entries that no longer exist.
+
 ### Removed
 
 - **`RaftTransportAdapter` is gone, and with it the pipeline window nothing ever fed.** The class
@@ -445,6 +462,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   class duplicated. Consumers that imported the type must use the transports above.
 
 ---
+
+- **The group's pipeline buffer, and every way of asking about it.** `RaftGroup` kept a
+  `pipeline: PipelinedEntry[]`, a flush timer armed in `init()`, a mutex, a `BACKPRESSURE` guard and
+  the accessors for them. Nothing outside the tests ever put an entry in: the production batch path is
+  `proposeBatch()`, which packs entries into one `__batch` command and proposes it directly, and
+  `appendWithPipeline()` — the only writer — had no caller in the package. The timer therefore woke
+  every `batchIntervalMs` to find an empty array, `forceFlush()` at shutdown flushed nothing, the
+  queue-depth guard guarded an always-empty queue, and `requestForLearner()`'s fallback branch could
+  never be taken. Wiring it was the wrong repair: `flushPipeline()` proposes each entry separately, so
+  it would turn one commit into N and change the latency the throughput suite measures.
+  Removed with it: `RaftGroup.appendWithPipeline`, `flushPipeline`, `forceFlush`, `getPipeline`,
+  `getPipelineDepth`, `getPipelineQueueDepth`, `getPipelineConfig`, `setPipelineConfig`, the
+  `pipelineConfig` constructor argument, `RaftGroupManager.setGlobalPipelineConfig`,
+  `RaftGroupManager.forceGlobalPipelineFlush`, the `PipelineConfig`, `DEFAULT_PIPELINE_CONFIG` and
+  `PipelinedEntry` types, and the `pipelineDepth` field of `RaftHealthStatus`. Callers passing
+  `pipelineConfig` positionally to `new RaftGroup(...)` or `registerShardWithReplica(...)` drop the
+  argument; callers reading `pipelineDepth` read `applyLag` instead.
 
 ## [1.2.0] — 2026-11-15
 

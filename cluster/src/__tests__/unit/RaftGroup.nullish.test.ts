@@ -21,6 +21,8 @@ const mockRaftAdapter: any = {
   setApplicationSnapshotHandlers: vi.fn(),
   getStatus: vi.fn().mockResolvedValue({ term: '1', lead: '1' }),
   getRetainedLogLength: vi.fn().mockResolvedValue(0),
+  getLogBounds: vi.fn().mockResolvedValue(null),
+  getLogEntries: vi.fn().mockResolvedValue([]),
   getSnapshotMeta: vi.fn().mockReturnValue(null),
   requestSnapshot: vi.fn().mockResolvedValue(null),
   stop: vi.fn(),
@@ -49,6 +51,8 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     setApplicationSnapshotHandlers = mockRaftAdapter.setApplicationSnapshotHandlers;
     getStatus = mockRaftAdapter.getStatus;
     getRetainedLogLength = mockRaftAdapter.getRetainedLogLength;
+    getLogBounds = mockRaftAdapter.getLogBounds;
+    getLogEntries = mockRaftAdapter.getLogEntries;
     getSnapshotMeta = mockRaftAdapter.getSnapshotMeta;
     requestSnapshot = mockRaftAdapter.requestSnapshot;
     stop = mockRaftAdapter.stop;
@@ -90,24 +94,15 @@ describe('RaftGroup — nullish fallback completion', () => {
     if (group && typeof group.stop === 'function') group.stop();
   });
 
-  describe('requestForLearner lastLog fallback', () => {
-    it('defaults lastIndex to 0 when lastLog is 0', async () => {
-      mockRaftAdapter.getProgress.mockResolvedValue({ lastLog: 0 });
-      mockRaftAdapter.getTerm.mockResolvedValue(0);
+  describe('requestForLearner on a node with no readable log', () => {
+    it('reports a zero window rather than a fabricated one', async () => {
+      mockRaftAdapter.getLogBounds.mockResolvedValue(null);
+      mockRaftAdapter.getLogEntries.mockResolvedValue([]);
       const res = await group.requestForLearner(1);
       expect(res.lastIndex).toBe(0);
-    });
-  });
-
-  describe('appendWithPipeline lastLog/term fallback', () => {
-    it('computes index from lastLog=0 and term=0', async () => {
-      mockRaftAdapter.getProgress.mockResolvedValue({ lastLog: 0 });
-      mockRaftAdapter.getTerm.mockResolvedValue(0);
-      mockRaftAdapter.propose.mockResolvedValue({ index: '1', term: '0' });
-      // batchSize=1 forces an immediate flush after buffering.
-      group.pipelineConfig = { ...group.getPipelineConfig(), batchSize: 1 };
-      await group.appendWithPipeline([{ msgId: 'm', type: 'exec', data: '{}' }]);
-      expect(mockRaftAdapter.propose).toHaveBeenCalled();
+      expect(res.lastTerm).toBe(0);
+      expect(res.firstAvailableIndex).toBe(0);
+      expect(res.entries).toEqual([]);
     });
   });
 
@@ -131,6 +126,21 @@ describe('RaftGroup — nullish fallback completion', () => {
       await vi.waitFor(() => expect(receiveHeartbeat).toHaveBeenCalled());
       expect(receiveHeartbeat).toHaveBeenCalledWith(0, 0, '9');
       group.stopLeaderMonitor();
+    });
+  });
+
+  describe('leader monitor survives a failing status read', () => {
+    it('logs the failure and keeps the timer running', async () => {
+      // A monitor that dies on the first error stops watching the leader for the
+      // rest of the process's life, silently — and the symptom of that is a node
+      // that never campaigns when it should.
+      mockRaftAdapter.getStatus.mockRejectedValue(new Error('status unavailable'));
+      group.startLeaderMonitor(20);
+      await new Promise((r) => setTimeout(r, 70));
+
+      expect((group as any)._leaderMonitorTimer).toBeTruthy();
+      group.stopLeaderMonitor();
+      expect((group as any)._leaderMonitorTimer).toBeNull();
     });
   });
 
