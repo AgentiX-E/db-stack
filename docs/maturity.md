@@ -819,7 +819,19 @@ literals (several suites feed multi-byte payloads through the code on purpose), 
 inside a block comment rather than its opener, and has ten tests of its own. It runs in
 `Quality (lint + format)` beside the structural gate.
 
+**A follower that lost its disk can rejoin.** Wiping a follower's storage left it at `lastLog: 0` for
+30 s and 596 polls while the leader's view of it stayed frozen at `{next: 5, match: 4}`. The leader was
+replicating to its healthy peer in the same interval, the transport counted 47 answers from the wiped
+peer with no timeout, and splitting those by outcome showed **20 rejections** — the follower was
+rejecting correctly and the leader was discarding the evidence. `LeaderState.setNextIndex` in
+`@maboke123/raft-core` 0.2.1 clamps every backtrack to `matchIndex + 1`, and `matchIndex` is exactly
+the belief a rejection disproves. One patch (`patches/@maboke123__raft-core@0.2.1.patch`, with the
+argument beside the code and a `check-gates` rule that fails when it stops being applied) and the
+wiped follower catches up in **2 s** with a single rejection. `AC 8.17` is the case; the per-peer
+counters `sent / answered / accepted / rejected / timedOut / failed` are the instrument, now on
+`getTransportStats()`.
+
 Still not covered: quorum accounting for a shared-transport group, whose members live in another
-manager, so `getQuorumHealth()` returns `null` (P3-21); the backfill of a follower that lost its
-storage (P3-24); and a real membership change through the multi-process harness, which has no
-`addLearner` command, so "a node joined" remains a claim only the in-process suite can make (P3-25).
+manager, so `getQuorumHealth()` returns `null` (P3-21); and a real membership change through the
+multi-process harness, which has no `addLearner` command, so "a node joined" remains a claim only the
+in-process suite can make (P3-25).
