@@ -142,12 +142,13 @@ so it works with any engine that registers the providers it needs.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-The gate covers four packages, not three: the end-to-end harness is measured as well,
+The `cluster` row is from the iteration-48 run; the other rows are unchanged because neither
+package was touched by it. The gate covers four packages, not three: the end-to-end harness is measured as well,
 because a harness bug produces confident, meaningless acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
-| `cluster`       | 99.34% | 99.34%     | 99.68%    | 98.24%   |
+| `cluster`       | 99.47% | 99.47%     | 99.70%    | 98.22%   |
 | `federation`    | 99.19% | 99.19%     | 99.76%    | 98.52%   |
 | `operations`    | 99.46% | 99.46%     | 99.87%    | 98.49%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
