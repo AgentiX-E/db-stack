@@ -194,6 +194,7 @@ configuration file that looked like a gate and ran nowhere.
 
 | **Cross-version upgrade path**                           | Partially covered          | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
+| **Quorum-loss step-down**                                | Not covered (P3-20)        | raft-core 0.2.1 has no check-quorum, so a leader that loses its quorum keeps reporting `isLeader() === true` indefinitely while committing nothing (measured: 16 s, commit index frozen, write refused at 5 028 ms). The product's guarantee — no progress without a majority — holds and is asserted; a *step-down* is not implemented, and the `checkQuorum` / `preVote` options are declared without reaching the library. |
 | **Harness `.mjs` child programs**                        | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
 
 Each row is tracked in the roadmap in
@@ -671,3 +672,45 @@ is not measuring the middleware. Representative numbers from this machine:
 | Retained log after 300 proposals (default threshold) | 21 entries |
 | Retained heap per proposal | 1.0–1.4 KB |
 | Concurrent (8 in flight) versus sequential | 0.42–0.43× — see P1-5 in the roadmap |
+
+**A convergent property cannot be read at an instant.** CI run `44225232372` failed the benchmark
+job on `AC 29.2`: `expected [ null, 2, null ] to deeply equal [ 2, 2, 2 ]`. That is neither a flake
+nor a product bug. raft-core's `becomeLeaderUnlocked` sets `state = Leader` and
+`currentLeader = self`, *then* appends the no-op entry, *then* starts the heartbeat timer — and
+`TestCluster.findLeader()` polls `isLeader()`, so it resolves inside that window. A test that reads
+`getLeader()` on all three nodes immediately afterwards is reading a property that cannot have
+converged yet. Measured on a workstation: **six of six** trials returned `[ 1, null, null ]` right
+after `findLeader()`, converging 54–68 ms later — one heartbeat. The assertion was wrong on every
+run and passed only when unrelated work happened to buy a heartbeat.
+
+The same defect appeared a second time as `await sleep(2000)`, commented "give some time for leader
+info to propagate", followed by `filter((l) => l !== null)` before asserting that one id remained:
+two of three nodes could know nothing and the case still passed.
+
+`@agentix-e/db-cluster/testing` now ships the wait as an object: `pollUntil(read, accept,
+{ timeoutMs })` and `awaitAgreement(reads, { timeoutMs, require, equal })`, with
+`TestCluster.awaitLeaderAgreement()` built on them. The contract is pinned by seventeen cases
+(`AC 45.1`–`AC 45.8`, `AC 46.1`–`AC 46.9`) driven by an injected clock, so deadline behaviour is
+tested exactly and in microseconds:
+
+| Property | Why it is the contract |
+|---|---|
+| The deadline bounds waiting, not looking | a check skipped for want of time reports "not converged" about a property nobody read |
+| A read started inside the budget counts | an RPC that returns late still answered the question that was asked in time; discarding it makes the outcome a function of scheduler latency |
+| A throwing read is retried, and remembered | during an election a peer may not answer; "timed out" must not hide a broken transport |
+| The failure carries the observation | `attempts=2 last observed: [null,2,null]` separates a lagging follower from a cluster that never elected anyone |
+| Readers of a round are read concurrently | three sequential reads observe three moments and call the difference a fault |
+
+Three consequences, each measured rather than argued. `AC 29.2` now agrees in two rounds (54–68 ms),
+which is one heartbeat and exactly what the protocol implies. `AC 7.2` dropped its 2 000 ms sleep for
+a bounded agreement, runs in **502 ms**, and asserts something stricter than before. And `FC.4` —
+which had asserted that no node may *claim* leadership when one of three survives — turned out to
+assert a property the library never claimed: raft-core 0.2.1 implements no check-quorum, so an
+isolated leader keeps reporting `isLeader() === true` (measured: still true at 16 s, commit index
+frozen at 1, the write refused after 5 028 ms). It asserts the guarantee that exists — a minority
+commits nothing — and the missing step-down is registered as P3-20 alongside the `checkQuorum` and
+`preVote` flags that were declared and never forwarded to the library.
+
+Not covered: fixed sleeps that precede assertions remain in the `raft-stress`, `raft-core` and
+`raft-shared-transport` child-process suites (P3-19). Same defect class, same remedy, but each
+conversion has to be read rather than applied mechanically.
