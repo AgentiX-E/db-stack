@@ -31,7 +31,7 @@
  *
  *   // Each RaftGroup gets a per-shard wrapper
  *   const shardTp = nodeTransport.forShard(shardId);
- *   // shardTp can be passed as `transport` to RaftTransportAdapter
+ *   // shardTp can be handed to the batched transport that raft-core drives
  *   // Messages are automatically tagged with shardId
  *
  *   // Handle incoming messages
@@ -197,8 +197,8 @@ export class NodeTransport extends EventEmitter implements SharedTransport {
    * message with the given shardId.
    *
    * Each RaftGroup should use forShard(this.shardId) to get its
-   * own send wrapper, which can be passed to RaftTransportAdapter
-   * in place of the raw transport.
+   * own send wrapper, which is handed to the batched transport that
+   * raft-core drives in place of the raw transport.
    */
   forShard(shardId: number): { send(fromId: string | number, msgs: any[]): Promise<void> } {
     return new ShardTransportWrapper(this, shardId);

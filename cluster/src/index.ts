@@ -81,7 +81,6 @@ export type { RaftTcpTransportConfig, RaftNodeConfig } from './consensus/transpo
 export { BatchedRaftTransport } from './consensus/transport/BatchedRaftTransport';
 export { SharedBatchedTransport } from './consensus/transport/SharedBatchedTransport';
 export { NodeTransport } from './consensus/transport/NodeTransport';
-export { RaftTransportAdapter } from './consensus/transport/RaftTransportAdapter';
 export { MessageCodec } from './consensus/transport/MessageCodec';
 export { ConnectionPool, PeerConnection } from './consensus/transport/ConnectionPool';
 export type { PeerInfo, PeerTlsVerifyOptions } from './consensus/transport/ConnectionPool';

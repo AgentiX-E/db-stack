@@ -54,7 +54,7 @@ applications and never imported by the other two at runtime.
 | Consensus core | `RaftAdapter`, `RaftGroup`, `RaftGroupManager`, `ShardStateMachine` | One log per shard; leader election; commit + apply; multi-shard orchestration |
 | Membership | `RaftJointConsensusEngine` | Two-phase, rollback-safe membership change |
 | Extensions | `LeaderTransferHandler`, `ReadIndexManager`, `LeaseReadManager`, `SessionManager`, `WatchApi` | Graceful handoff, linearizable reads, idempotent sessions, change notification. Snapshot transfer is not here: raft-core owns it (§2.1.1) |
-| Transport | `RaftTcpTransport`, `BatchedRaftTransport`, `SharedBatchedTransport`, `NodeTransport`, `RaftTransportAdapter`, `ConnectionPool`, `MessageCodec`, `MessageCompressor` | TLS 1.3 + mTLS framing, batching, compression, reconnection with backoff, per-peer circuit breaking |
+| Transport | `RaftTcpTransport`, `BatchedRaftTransport`, `SharedBatchedTransport`, `NodeTransport`, `ConnectionPool`, `MessageCodec`, `MessageCompressor` | TLS 1.3 + mTLS framing, batching, compression, reconnection with backoff, per-peer circuit breaking |
 | Storage | `SqliteStorage`, `SqliteNodeStorage` (+ meta/log/snapshot/config splits), `WAL` streaming, `PITRManager` | Durable log, compaction, snapshot persistence, point-in-time recovery |
 | Sharding | `ShardManager`, `ReshardPlanner`, `OnlineShardMigration`, `HashShardStrategy`, `RangeShardStrategy`, `ConsistentHashStrategy` | Key→shard routing, online migration |
 | High availability | `HAFailoverDetector`, `HAFailoverCoordinator`, `HAClientManager`, `HAConsistencyVerifier`, `FencingManager`, `ClockCompensator` | Failure detection, automated failover, fencing, post-failover verification |

@@ -426,6 +426,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`bench:ycsb` pointed at `bench/ycsb/run-ycsb.ts`**, which does not exist. It now runs the
   package's own YCSB entry point (`bench/raft-ycsb.ts`).
 
+### Removed
+
+- **`RaftTransportAdapter` is gone, and with it the pipeline window nothing ever fed.** The class
+  bridged raft-core's transport interface to the wire and kept per-peer replication state: `nextIndex`,
+  `matchIndex`, an `inFlight` map, serial fallback after rejections, and a `canSendTo()` window that was
+  meant to apply backpressure. Nothing constructed it — production drives `BatchedRaftTransport` and
+  `SharedBatchedTransport`, and only two unit-test files ever called `new` on it — and nothing consumed
+  the state: `acknowledgeEntry()`, `rejectEntry()` and `canSendTo()` had no caller outside those tests,
+  while `send()` registered every entry of every `AppendEntries` as in-flight and never removed one.
+  Measured: 5 000 entries → 5 000 in-flight / +1.7 MB, 50 000 → 45 000 / +9.2 MB, 200 000 → 195 000 /
+  +24.5 MB, with `matchIndex` still 0, `caughtUp` still `true` and `canSendTo()` `false` — an unwindable
+  map, a backpressure signal that could only ever say no, and a "caught up" flag that measured nothing.
+  Replication concurrency belongs to raft-core, whose single pipeline the throughput tests already
+  describe; a transport cannot withhold an `AppendEntries` to honour a window, so the window could not
+  have been wired without losing messages. `RaftTcpTransport`, `BatchedRaftTransport`,
+  `SharedBatchedTransport`, `NodeTransport` and `MessageCodec` keep the conversion and routing work the
+  class duplicated. Consumers that imported the type must use the transports above.
+
 ---
 
 ## [1.2.0] — 2026-11-15

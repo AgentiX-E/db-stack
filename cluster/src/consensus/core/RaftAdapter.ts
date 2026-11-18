@@ -629,17 +629,8 @@ export class RaftAdapter {
     }
   }
 
-  /**
-   * Build a transport bridge wrapping SharedTransport.
-   *
-   * SharedTransport is used by NodeTransport which routes messages between
-   * RaftGroups within the same process. We use the existing RaftTransportAdapter
-   * pattern: the adapter wires messages from the TCP transport (or shared transport)
-   * into the Raft layer. For SharedTransport, messages come from inter-group routing.
-   *
-   */
-  // Removed: buildSharedTransportBridge — replaced by SharedBatchedTransport above.
-  // private async buildSharedTransportBridge(...): Promise<BatchedRaftTransport> { ... }
+  // The shared-transport bridge is `SharedBatchedTransport`, built in `init()`.
+  // It replaced an earlier bridge that wrapped messages one at a time.
 
   /**
    * Register the application-state snapshot hooks.
