@@ -24,7 +24,7 @@
  *   SC.7  a segment an earlier run left open is continued, not claimed
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { closeSync, mkdtempSync, openSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -95,23 +95,37 @@ describe('AC 85 — one name, one writer', () => {
     // so the refusal is simulated by creating the file and then failing the claim.
     // The loser must move on, and the assertion that matters is not that it picked a
     // different number but that it wrote nothing into `…-0001`.
+    //
+    // The names below carry a date, and the store takes that date from the clock.
+    // Asserting on it without freezing the clock made this case pass until the first
+    // UTC midnight after the name was typed and fail forever after — which is what
+    // happened on 2026-11-18. Only `Date` is faked: the store flushes through
+    // `setImmediate`, and faking that would hold the flush open.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-17T12:00:00.000Z'));
     let refusals = 0;
-    const store = new FileAuditStore({
-      dataDir: dir,
-      claim: (path) => {
-        if (refusals === 0) {
-          refusals += 1;
+    try {
+      const store = new FileAuditStore({
+        dataDir: dir,
+        claim: (path) => {
+          if (refusals === 0) {
+            refusals += 1;
+            realClaim(path);
+            throw errno('EEXIST');
+          }
           realClaim(path);
-          throw errno('EEXIST');
-        }
-        realClaim(path);
-      },
-    });
+        },
+      });
 
-    await store.write(entry('AFTER_A_REFUSAL'));
-    await store.close();
+      await store.write(entry('AFTER_A_REFUSAL'));
+      await store.close();
 
-    expect(refusals).toBe(1);
+      expect(refusals).toBe(1);
+      expect(await store.count()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+
     const segments = readdirSync(dir)
       .filter((f) => f.endsWith('.ndjson'))
       .sort();
@@ -119,7 +133,6 @@ describe('AC 85 — one name, one writer', () => {
     // The name that beat it is still empty, because somebody else owns it.
     expect(statSync(join(dir, 'audit-20261117-0001.ndjson')).size).toBe(0);
     expect(statSync(join(dir, 'audit-20261117-0002.ndjson')).size).toBeGreaterThan(0);
-    expect(await store.count()).toBe(1);
   });
 
   it('SC.4: a directory where nothing can be claimed says so, and names the directory', async () => {
