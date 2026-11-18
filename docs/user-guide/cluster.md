@@ -195,8 +195,47 @@ The engine performs `C_old → C_old,new → C_new` with retries and rollback:
 * refuses to shrink a cluster below a quorum,
 * emits `membership.changed` events for observers.
 
-Adding a read-only replica? Use a learner (`addLearner`), let it catch up, then promote.
-Learners never vote, so a slow region cannot stall your commits.
+Adding a read-only replica? Use a learner, let it catch up, then promote it. Learners
+replicate the log but never vote, so a slow region cannot stall your commits.
+
+### Growing the cluster from the consensus layer
+
+`RaftAdapter` drives the same operation over a live cluster, one node at a time:
+
+```ts
+const added = await adapter.addServer(4, '10.0.0.4:7001', /* asLearner */ true);
+if (!added.changed) console.error(`not added: ${added.reason}`);   // e.g. 'unreachable'
+
+await adapter.promoteServer(4);        // learner -> voter
+await adapter.removeServer(3);         // and forget the peer on the wire
+const { voters, learners, source } = await adapter.getMembership();
+```
+
+The three methods answer with a result rather than a bare `false`, because the
+reasons need different responses:
+
+| `reason` | Meaning | What to do |
+|---|---|---|
+| `not-leader` | This node is not the leader | Send the request to the leader |
+| `no-quorum` | Leader without a majority | Wait for contact; a change now would half-apply |
+| `unreachable` | The named node did not answer | Start it, check its certificate, then retry |
+| `rejected` | Raft refused or the commit timed out | Read the membership before retrying |
+| `unsupported` | The transport cannot add peers dynamically | Use a transport that can (TCP/mTLS) |
+
+Two things are worth knowing before you use it in production:
+
+* **The address must answer before the change is committed.** `addServer` registers
+  the peer, waits up to 3 s for a socket, and only then appends the configuration
+  entry. Without that order the cluster gains a member it has never sent an entry
+  to — a replica that looks healthy and holds nothing.
+* **One entry at a time.** The library appends a single-step configuration, not a
+  joint one, so a promotion or a removal needs the existing voters to be reachable
+  at that moment. With a voter down, the change reports `rejected` after the commit
+  timeout rather than leaving you to guess.
+
+`getMembership()` reports `source: 'bootstrap'` until the first configuration is
+persisted. That is the honest answer for a freshly started node: it is running the
+membership it was launched with, and nothing has confirmed anything else yet.
 
 ---
 

@@ -41,7 +41,7 @@ number and the instrument that produced it are stated together.
 | Log replication, commit index, apply ordering | U · I · L · E · P · M | Every entry applied in index order on every node; latency and throughput measured through `RaftAdapter` (`AC 29.6`, `AC 41.1`) |
 | Entry position forwarded to the application   | U · I · C · E | `index`/`term` reach the engine; asserted end-to-end                                                                          |
 | Joint consensus membership change             | U · I · E     | C_old,new → C_new, rollback on failure                                                                                        |
-| Learner (non-voting) catch-up                 | U · I · E     | Promoted only after catching up                                                                                               |
+| Learner (non-voting) catch-up                 | U · I · E     | Promoted only after catching up; a fourth process joins a live 3-node TLS cluster and holds the log before it is promoted (`AC 8.21`) |
 | Leader transfer                               | U · I · E     | Target confirmed as leader before success is reported                                                                         |
 | ReadIndex and lease reads                     | U · I · P     | Leader-lease expiry and stepping down; p50 0.001 ms over 1 000 reads (`AC 41.3`, `AC 41.4`)                                   |
 | Snapshots: take, frame, install, compact      | U · I · R · E | 30-byte envelope, CRC32, position, cross-shard rejection                                                                      |
@@ -831,7 +831,20 @@ wiped follower catches up in **2 s** with a single rejection. `AC 8.17` is the c
 counters `sent / answered / accepted / rejected / timedOut / failed` are the instrument, now on
 `getTransportStats()`.
 
+**A member that only existed on paper.** The multi-process harness could not perform a membership
+change at all — no command reached the library's `addServer` — so "a node joined" was a claim only the
+in-process suite could make. Making it reachable found the reason nobody had missed it: the storage
+adapter persisted `entry.command` and nothing else, so a CONFIG entry came back with `config:
+undefined`, and raft-core's `validateLogEntry` rejected every AppendEntry carrying it. The follower
+answered nothing, the leader timed out, and **no configuration change could replicate on any cluster**.
+With the payload persisted, a fourth process joins a live three-node TLS cluster as a learner, holds
+the log that existed before it joined, is promoted, and then carries quorum: with one of the original
+voters killed, a majority of the four is three, and three entries commit that the newcomer has to
+acknowledge. `AC 8.21` is the whole lifecycle; `AC 8.22` is a node nobody can reach, refused before an
+entry exists and absent from the configuration afterwards (`addServer` waits for a socket, up to 3 s,
+before it appends).
+
 Still not covered: quorum accounting for a shared-transport group, whose members live in another
-manager, so `getQuorumHealth()` returns `null` (P3-21); and a real membership change through the
-multi-process harness, which has no `addLearner` command, so "a node joined" remains a claim only the
-in-process suite can make (P3-25).
+manager, so `getQuorumHealth()` returns `null` (P3-21); and a membership change while the cluster is
+already missing a voter, which the library's single-step configuration cannot commit — the adapter
+reports `rejected` after its commit timeout rather than pretending otherwise (P3-28).
