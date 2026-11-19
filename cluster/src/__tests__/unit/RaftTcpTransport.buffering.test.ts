@@ -420,3 +420,33 @@ describe('AC 34.79: the failure paths around delivery are reported, not swallowe
     await t.stop();
   });
 });
+
+describe('AC 34.80: a stop releases what it can no longer deliver', () => {
+  it('clears the per-peer buffers and the failure counters, and keeps the drop record', async () => {
+    const t = await transport();
+    for (let i = 0; i < CAP + 2; i++) {
+      priv(t)._doSendFrame(2, frame(`f${i}`), false);
+    }
+    priv(t)._flushAttempts.set(3, 2);
+
+    await t.stop();
+
+    expect(priv(t)._pendingMessages.size).toBe(0);
+    expect(priv(t)._flushAttempts.size).toBe(0);
+    // A counter is a record of what happened, not state to resume from.
+    expect(t.getStatus().droppedFrames).toBe(2);
+  });
+
+  it('forgets a peer’s failure count when the peer is unregistered', async () => {
+    const t = await transport();
+    priv(t)._flushAttempts.set(3, 2);
+    priv(t)._pendingMessages.set(3, [frame('x')]);
+
+    t.unregister(3);
+
+    expect(priv(t)._flushAttempts.has(3)).toBe(false);
+    expect(priv(t)._pendingMessages.has(3)).toBe(false);
+
+    await t.stop();
+  });
+});

@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against a peer that accepts dials and refuses writes.
 - **The pending buffer is bounded per peer (1024 frames).** The cap used to live on the pool's
   queue, which nothing ever filled, while the buffer that is actually written grew without limit.
+- **`stop()` releases the buffers it can no longer flush**, and `unregister()` forgets the peer's
+  failure count as well as its frames. A stopped transport has no socket left to drain a queue, and a
+  re-registered peer inheriting a removed peer's retry budget is the same defect `removeNode()` fixed
+  for backoff.
 
 - **`RaftTcpTransportConfig` has one declaration.** `RaftAdapter` carried a second one, structurally
   a subset of the transport's, and copied it field by field when it built the transport. The copy

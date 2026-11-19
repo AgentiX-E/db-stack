@@ -180,6 +180,7 @@ export class RaftTcpTransport extends EventEmitter {
     if (nodeId === this.config.node.id) return;
     const known = this._registeredNodes.delete(nodeId);
     this._pendingMessages.delete(nodeId);
+    this._flushAttempts.delete(nodeId);
     this._buffers.delete(`peer:${nodeId}`);
     this.pool?.removeNode(nodeId);
     if (known) logger.info(`[RaftTcpTransport] Unregistered peer ${nodeId}`);
@@ -384,6 +385,13 @@ export class RaftTcpTransport extends EventEmitter {
   async stop(): Promise<void> {
     this._stopped = true;
     this._started = false;
+
+    // A stopped transport has no socket left that could flush these, and a
+    // restart is Raft's to re-drive: keeping a peer's queue across a stop is a
+    // hold on memory with no schedule to release it. Counters are kept — they
+    // are a record of what happened, not state to resume from.
+    this._pendingMessages.clear();
+    this._flushAttempts.clear();
 
     if (this._healthCheckTimer) {
       clearInterval(this._healthCheckTimer);
