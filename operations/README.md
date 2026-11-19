@@ -155,9 +155,9 @@ architecture that 21 packages deliver as a cohesive whole.
 
 **Total: `pnpm coverage` reports 147 files and 3 155 tests, 0 failures** (`test:unit`: 128 files /
 2 824; `test:integration`: 19 files / 331). Each row above is that package's contribution, so the
-column adds up to the total. The counts were recounted from the test runner's JSON report in
-iteration 54 — the table before it had drifted by an order of magnitude in both directions, and no
-gate compares a table to a test run.
+column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
+any of these numbers disagrees with it — the table before iteration 54 had drifted by an order of
+magnitude in both directions, and nothing compared it to a test run.
 
 ---
 

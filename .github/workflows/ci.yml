@@ -231,6 +231,8 @@ jobs:
             cp -r "$artifact/." "$pkg/coverage/"
           done
       - run: node scripts/coverage-gate.mjs 95
+      - name: The page's test counts are the counts the run produced
+        run: node scripts/check-test-counts.mjs
 
   # ── End-to-end: real multi-process clusters over mTLS ────────────
   #
