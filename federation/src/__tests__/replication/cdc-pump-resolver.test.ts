@@ -124,7 +124,13 @@ describe('CDC delivery composition — AC 48.24', () => {
       oldValues: null,
       newValues: { id: 5 },
     });
-    for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    // Polled to a deadline rather than drained for a fixed number of turns: the
+    // drain used to be eight `setTimeout(0)` rounds, which is a bet on how many
+    // turns the delivery takes on an idle machine. The observation is the pump's
+    // own counter, and the sink is read after it says the change landed.
+    for (let i = 0; i < 200 && pump.getStatus().delivered === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
 
     expect(sink.getEvents()).toHaveLength(1);
     expect(sink.getEvents()[0]).toMatchObject({

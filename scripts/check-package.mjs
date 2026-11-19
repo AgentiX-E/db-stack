@@ -187,7 +187,7 @@ const TARGETS = [
       let refused = false;
       try {
         await injector.emit([
-          { id: "e1", table: "t", operation: "insert", data: {}, timestamp: 1, lsn: "0/1" },
+          { id: "e1", type: "insert", table: "t", key: "k1", data: {}, timestamp: 1n },
         ]);
       } catch {
         refused = true;

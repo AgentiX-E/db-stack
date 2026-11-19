@@ -7,20 +7,20 @@ is. A capability with a gap is more useful to you than a claim without one.
 
 Legend for the coverage column — test types actually executed against the feature:
 
-| Code  | Meaning                                                                       |
-| ----- | ----------------------------------------------------------------------------- |
-| **U** | Unit: the component in isolation, branches and error paths included           |
-| **I** | Integration: real components wired together, in-process                       |
-| **C** | Conformance: the published contract suite (`runEngineConformance`)            |
-| **B** | Boundary: concurrency, storms, 5 000-entry floods, resource limits            |
-| **L** | Linearizability: history checked with a Wing-Gong style register model        |
-| **E** | End-to-end: **separate OS processes over TLS 1.3 with mutual authentication** |
-| **P** | Performance: a benchmark that runs on a GitHub runner and fails on regression |
-| **R** | Recovery: crash, restart, snapshot install, log truncation                    |
-| **M** | Mutation: the source is altered on purpose and the suite must notice          |
-| **A** | Artefact: the **built** package is loaded and *called* in a plain Node process — no bundler, no test transform |
+| Code  | Meaning                                                                                                        |
+| ----- | -------------------------------------------------------------------------------------------------------------- |
+| **U** | Unit: the component in isolation, branches and error paths included                                            |
+| **I** | Integration: real components wired together, in-process                                                        |
+| **C** | Conformance: the published contract suite (`runEngineConformance`)                                             |
+| **B** | Boundary: concurrency, storms, 5 000-entry floods, resource limits                                             |
+| **L** | Linearizability: history checked with a Wing-Gong style register model                                         |
+| **E** | End-to-end: **separate OS processes over TLS 1.3 with mutual authentication**                                  |
+| **P** | Performance: a benchmark that runs on a GitHub runner and fails on regression                                  |
+| **R** | Recovery: crash, restart, snapshot install, log truncation                                                     |
+| **M** | Mutation: the source is altered on purpose and the suite must notice                                           |
+| **A** | Artefact: the **built** package is loaded and _called_ in a plain Node process — no bundler, no test transform |
 
-**What "resource limits" means in a B row.** Heap assertions here sample *after a forced collection*,
+**What "resource limits" means in a B row.** Heap assertions here sample _after a forced collection_,
 so the number is what the workload still holds rather than what the collector had not got to yet.
 Each case is bounded by `8 MB + 2 KB per proposal` — about four times the measured cost — and every
 case reports its own number: 5.7 MB over 10 000 proposals, 2.9 over 5 000, 1.2 over 1 000, 9.8 over
@@ -36,38 +36,38 @@ number and the instrument that produced it are stated together.
 
 ### 1.1 Consensus core
 
-| Capability                                    | Verification  | Notes                                                                                                                         |
-| --------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Leader election, pre-vote, check-quorum       | U · I · E · P | Real elections in 3- and 5-node TLS clusters; median and p95 over five trials on a real cluster (`AC 29.1`)                    |
-| Log replication, commit index, apply ordering | U · I · L · E · P · M | Every entry applied in index order on every node; latency and throughput measured through `RaftAdapter` (`AC 29.6`, `AC 41.1`) |
-| Entry position forwarded to the application   | U · I · C · E | `index`/`term` reach the engine; asserted end-to-end                                                                          |
-| Joint consensus membership change             | U · I · E     | C_old,new → C_new, rollback on failure                                                                                        |
-| Learner (non-voting) catch-up                 | U · I · E     | Promoted only after catching up; a fourth process joins a live 3-node TLS cluster and holds the log before it is promoted (`AC 8.21`) |
-| Learner log pull (`requestForLearner`)         | U · I         | Serves the leader's **real** retained log, not an empty buffer: window, contiguous ascending entries and recovered `msgId`s asserted against a 3-node mTLS cluster (`AC 58.14`–`AC 58.19`); a cursor below the window is clamped, one past the head is empty |
-| Leader transfer                               | U · I · E     | Target confirmed as leader before success is reported                                                                         |
-| ReadIndex and lease reads                     | U · I · P     | Leader-lease expiry and stepping down; p50 0.001 ms over 1 000 reads (`AC 41.3`, `AC 41.4`)                                   |
-| Snapshots: take, frame, install, compact      | U · I · R · E | 30-byte envelope, CRC32, position, cross-shard rejection                                                                      |
-| Restart from a snapshot, single node          | R · E         | The engine, not the log, is the recovery source                                                                               |
-| Restart from a snapshot, **whole cluster**    | R · E         | Three processes, snapshots every 15 entries, all killed and restarted: every key returns and the cluster accepts writes again |
-| Log compaction and retention limits           | U · I · B · P · M | Enforced bounds, no unbounded growth; retained log 21 → 21 across 300 proposals and 1.0–1.4 KB retained per proposal (`AC 41.5`, `AC 41.6`) |
-| Point-in-time recovery                        | U · I         | Records are positioned by Raft index                                                                                          |
-| Session and watch APIs                        | U · I · E     | Reads-your-writes, change notification                                                                                        |
-| Event bus                                     | U · I · B     | Ordered delivery, backpressure                                                                                                |
-| Write forwarding to the shard leader          | U · A         | `pg` is optional; a missing driver is a named error, not a module-resolution trace (`AC 55.1`–`AC 55.7`)                     |
-| Trace correlation across async boundaries     | U · A         | `traceContext.runWith` survives `await` and timers (`OBS4.1`–`OBS4.5`); the id is verified in the **built** package         |
-| Merkle anti-entropy digest                    | U · A         | Root asserted against an independent SHA-256 of the ordered leaves (`AC 54.1`–`AC 54.8`)                                      |
-| Apply lag in health status                    | U             | `applyLag` replaces `pipelineDepth`, which read `0` on every shard at every moment because nothing wrote the buffer it counted |
+| Capability                                    | Verification          | Notes                                                                                                                                                                                                                                                        |
+| --------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Leader election, pre-vote, check-quorum       | U · I · E · P         | Real elections in 3- and 5-node TLS clusters; median and p95 over five trials on a real cluster (`AC 29.1`)                                                                                                                                                  |
+| Log replication, commit index, apply ordering | U · I · L · E · P · M | Every entry applied in index order on every node; latency and throughput measured through `RaftAdapter` (`AC 29.6`, `AC 41.1`)                                                                                                                               |
+| Entry position forwarded to the application   | U · I · C · E         | `index`/`term` reach the engine; asserted end-to-end                                                                                                                                                                                                         |
+| Joint consensus membership change             | U · I · E             | C_old,new → C_new, rollback on failure                                                                                                                                                                                                                       |
+| Learner (non-voting) catch-up                 | U · I · E             | Promoted only after catching up; a fourth process joins a live 3-node TLS cluster and holds the log before it is promoted (`AC 8.21`)                                                                                                                        |
+| Learner log pull (`requestForLearner`)        | U · I                 | Serves the leader's **real** retained log, not an empty buffer: window, contiguous ascending entries and recovered `msgId`s asserted against a 3-node mTLS cluster (`AC 58.14`–`AC 58.19`); a cursor below the window is clamped, one past the head is empty |
+| Leader transfer                               | U · I · E             | Target confirmed as leader before success is reported                                                                                                                                                                                                        |
+| ReadIndex and lease reads                     | U · I · P             | Leader-lease expiry and stepping down; p50 0.001 ms over 1 000 reads (`AC 41.3`, `AC 41.4`)                                                                                                                                                                  |
+| Snapshots: take, frame, install, compact      | U · I · R · E         | 30-byte envelope, CRC32, position, cross-shard rejection                                                                                                                                                                                                     |
+| Restart from a snapshot, single node          | R · E                 | The engine, not the log, is the recovery source                                                                                                                                                                                                              |
+| Restart from a snapshot, **whole cluster**    | R · E                 | Three processes, snapshots every 15 entries, all killed and restarted: every key returns and the cluster accepts writes again                                                                                                                                |
+| Log compaction and retention limits           | U · I · B · P · M     | Enforced bounds, no unbounded growth; retained log 21 → 21 across 300 proposals and 1.0–1.4 KB retained per proposal (`AC 41.5`, `AC 41.6`)                                                                                                                  |
+| Point-in-time recovery                        | U · I                 | Records are positioned by Raft index                                                                                                                                                                                                                         |
+| Session and watch APIs                        | U · I · E             | Reads-your-writes, change notification                                                                                                                                                                                                                       |
+| Event bus                                     | U · I · B             | Ordered delivery, backpressure                                                                                                                                                                                                                               |
+| Write forwarding to the shard leader          | U · A                 | `pg` is optional; a missing driver is a named error, not a module-resolution trace (`AC 55.1`–`AC 55.7`)                                                                                                                                                     |
+| Trace correlation across async boundaries     | U · A                 | `traceContext.runWith` survives `await` and timers (`OBS4.1`–`OBS4.5`); the id is verified in the **built** package                                                                                                                                          |
+| Merkle anti-entropy digest                    | U · A                 | Root asserted against an independent SHA-256 of the ordered leaves (`AC 54.1`–`AC 54.8`)                                                                                                                                                                     |
+| Apply lag in health status                    | U                     | `applyLag` replaces `pipelineDepth`, which read `0` on every shard at every moment because nothing wrote the buffer it counted                                                                                                                               |
 
 ### 1.2 Transport and security
 
-| Capability                                        | Verification | Notes                                     |
-| ------------------------------------------------- | ------------ | ----------------------------------------- |
-| TLS 1.3 with mutual authentication                | I · E        | Real sockets, real certificates           |
-| Rogue-certificate rejection                       | I · E        | Handshake refused before any Raft traffic |
-| Message framing, CRC, compression                 | U · B        | Corrupt frame is dropped, not misparsed   |
-| Connection pool, reconnect storm, circuit breaker | U · B        | 50-proposer storms, pool exhaustion       |
+| Capability                                        | Verification | Notes                                                                                                                                       |
+| ------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| TLS 1.3 with mutual authentication                | I · E        | Real sockets, real certificates                                                                                                             |
+| Rogue-certificate rejection                       | I · E        | Handshake refused before any Raft traffic                                                                                                   |
+| Message framing, CRC, compression                 | U · B        | Corrupt frame is dropped, not misparsed                                                                                                     |
+| Connection pool, reconnect storm, circuit breaker | U · B        | 50-proposer storms, pool exhaustion                                                                                                         |
 | Frame buffering, its cap, and its retry           | U · B        | Frames survive a failed flush and are re-sent; a batch no fresh socket will take is dropped in the open (`droppedFrames`, `frames-dropped`) |
-| Shared transport for many shards per node         | U · I        | Per-shard tagging and routing             |
+| Shared transport for many shards per node         | U · I        | Per-shard tagging and routing                                                                                                               |
 
 ### 1.3 Sharding and high availability
 
@@ -81,12 +81,12 @@ number and the instrument that produced it are stated together.
 
 ### 1.4 Published test harness
 
-| Capability                                | Verification | Notes                                                                                      |
-| ----------------------------------------- | ------------ | ------------------------------------------------------------------------------------------ |
-| Real multi-node cluster, partition and kill | I · E       | `TestCluster` starts real nodes on real ports over mutual TLS; `PartitionTransport` models a silent partition rather than a dead node |
-| Agreement waiting                         | U · I        | `awaitAgreement`, `pollUntil`, `ConvergenceTimeoutError` with the last observation and the round count |
-| Linearizability checking                  | U · I · B    | Bounded search returning `'unknown'` when the bound is hit; `fuzzyCheck` for the long runs where the full checker cannot finish |
-| Engine conformance suite                  | C            | `runEngineConformance` registers into any framework and injects its own failure, so the engine under test needs no test hooks |
+| Capability                                  | Verification | Notes                                                                                                                                 |
+| ------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Real multi-node cluster, partition and kill | I · E        | `TestCluster` starts real nodes on real ports over mutual TLS; `PartitionTransport` models a silent partition rather than a dead node |
+| Agreement waiting                           | U · I        | `awaitAgreement`, `pollUntil`, `ConvergenceTimeoutError` with the last observation and the round count                                |
+| Linearizability checking                    | U · I · B    | Bounded search returning `'unknown'` when the bound is hit; `fuzzyCheck` for the long runs where the full checker cannot finish       |
+| Engine conformance suite                    | C            | `runEngineConformance` registers into any framework and injects its own failure, so the engine under test needs no test hooks         |
 
 The subpath is published, so it is documented like one: `docs/testing.md`, and the docs gate
 now reads every entry point in each package's `exports` map rather than only `src/index.ts`
@@ -94,37 +94,37 @@ now reads every entry point in each package's `exports` map rather than only `sr
 
 ### 1.5 Storage engine SPI
 
-| Capability                               | Verification  | Notes                                                                                     |
-| ---------------------------------------- | ------------- | ----------------------------------------------------------------------------------------- |
-| `IStorageEngine` contract                | C             | 23 checks, run against two structurally different engines                                 |
-| Idempotent replay across restarts        | C · R · E     | Duplicate indexes never reach the engine                                                  |
-| Forward jumps, no replays                | C · R · E     | Raft skips non-command entries; a jump is applied, a duplicate index is dropped           |
-| Apply failure propagates to Raft         | C · U         | Fail-stop rather than silent divergence                                                   |
-| Serializable applies                     | C · B         | Concurrent submission stays ordered                                                       |
-| Snapshot framing, CRC, shard binding     | C · U · R · E | Truncated / corrupt / foreign snapshots rejected; the frame carries Raft's boundary index |
-| Reference engine (`MemoryStorageEngine`) | C · U · E     | Shipped as the adapter template                                                           |
-| A storage failure names its file and free space | U | `disk I/O error` became a message with the path, the directory and its free space (`AC 57.1`–`AC 57.7`) |
+| Capability                                      | Verification  | Notes                                                                                                   |
+| ----------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------- |
+| `IStorageEngine` contract                       | C             | 23 checks, run against two structurally different engines                                               |
+| Idempotent replay across restarts               | C · R · E     | Duplicate indexes never reach the engine                                                                |
+| Forward jumps, no replays                       | C · R · E     | Raft skips non-command entries; a jump is applied, a duplicate index is dropped                         |
+| Apply failure propagates to Raft                | C · U         | Fail-stop rather than silent divergence                                                                 |
+| Serializable applies                            | C · B         | Concurrent submission stays ordered                                                                     |
+| Snapshot framing, CRC, shard binding            | C · U · R · E | Truncated / corrupt / foreign snapshots rejected; the frame carries Raft's boundary index               |
+| Reference engine (`MemoryStorageEngine`)        | C · U · E     | Shipped as the adapter template                                                                         |
+| A storage failure names its file and free space | U             | `disk I/O error` became a message with the path, the directory and its free space (`AC 57.1`–`AC 57.7`) |
 
 ---
 
 ## 2. Federation (`@agentix-e/db-federation`)
 
-| Capability                                 | Verification | Notes                                             |
-| ------------------------------------------ | ------------ | ------------------------------------------------- |
-| CDC capture (engine-agnostic)              | U · I        | `ICDCEngine` with a monotonic LSN — a counter, not a clock reading, so two changes in the same millisecond still have an order. The engine shipped here **simulates** WAL (`appendChange`); a deployment supplies an engine that decodes a real log |
-| Publication/subscription catalogue         | U            | Keeps the two maps and watches their tables, and records each subscription's `targetDsn` verbatim. It delivers nothing; a slot-invalid event is **not** observed here, because nothing in this package reads PostgreSQL slots |
+| Capability                                 | Verification | Notes                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CDC capture (engine-agnostic)              | U · I        | `ICDCEngine` with a monotonic LSN — a counter, not a clock reading, so two changes in the same millisecond still have an order. The engine shipped here **simulates** WAL (`appendChange`); a deployment supplies an engine that decodes a real log                                                        |
+| Publication/subscription catalogue         | U            | Keeps the two maps and watches their tables, and records each subscription's `targetDsn` verbatim. It delivers nothing; a slot-invalid event is **not** observed here, because nothing in this package reads PostgreSQL slots                                                                              |
 | Subscription delivery to a sink            | U · I        | `CDCSubscriptionPump` resolves the DSN through a caller-supplied factory and delivers per subscription: one FIFO queue, one `emit()` per change, retry then a bounded failure log, a queue cap that reports the change it could not hold. `CDCSinkResolver` wraps any sink with retry, batching and health |
-| Fault injection for sink delivery          | U            | `CDCFailureInjector`, published from `./testing`: five fault types, per-entry budgets, refusals that report instead of passing. It is both the tool a consumer checks their sink with and the instrument the pump's retry cases use |
-| Outbox-before-send delivery                | U · I · E    | Durable enqueue, then send                        |
-| Exactly-once application                   | U · I · E    | Dedup ring keyed by `(origin, lsn)`               |
-| Hybrid logical clocks                      | U · I        | Monotonic across skew                             |
-| Conflict resolution: LWW, CRDT, custom     | U · I        | Deterministic, tested against divergent histories |
-| Multi-leader replication                   | U · I        | Loop suppression, causal ordering                 |
-| Merkle anti-entropy repair                 | U · I · B    | Divergence detected and repaired                  |
-| Topology epochs and split-brain detection  | U · I        | Fencing old epochs                                |
-| Cross-cluster transport over TLS           | I · E        | Two real clusters, real certificates              |
-| Channel health, backpressure, pause/resume | U · I · B    | Stalled peer does not stall the cluster           |
-| Query routing to a serving cluster         | U · I        | Locality-aware, failure-aware                     |
+| Fault injection for sink delivery          | U            | `CDCFailureInjector`, published from `./testing`: five fault types, per-entry budgets, refusals that report instead of passing. It is both the tool a consumer checks their sink with and the instrument the pump's retry cases use                                                                        |
+| Outbox-before-send delivery                | U · I · E    | Durable enqueue, then send                                                                                                                                                                                                                                                                                 |
+| Exactly-once application                   | U · I · E    | Dedup ring keyed by `(origin, lsn)`                                                                                                                                                                                                                                                                        |
+| Hybrid logical clocks                      | U · I        | Monotonic across skew                                                                                                                                                                                                                                                                                      |
+| Conflict resolution: LWW, CRDT, custom     | U · I        | Deterministic, tested against divergent histories                                                                                                                                                                                                                                                          |
+| Multi-leader replication                   | U · I        | Loop suppression, causal ordering                                                                                                                                                                                                                                                                          |
+| Merkle anti-entropy repair                 | U · I · B    | Divergence detected and repaired                                                                                                                                                                                                                                                                           |
+| Topology epochs and split-brain detection  | U · I        | Fencing old epochs                                                                                                                                                                                                                                                                                         |
+| Cross-cluster transport over TLS           | I · E        | Two real clusters, real certificates                                                                                                                                                                                                                                                                       |
+| Channel health, backpressure, pause/resume | U · I · B    | Stalled peer does not stall the cluster                                                                                                                                                                                                                                                                    |
+| Query routing to a serving cluster         | U · I        | Locality-aware, failure-aware                                                                                                                                                                                                                                                                              |
 
 ---
 
@@ -133,25 +133,25 @@ now reads every entry point in each package's `exports` map rather than only `sr
 21 engine-agnostic packages. Every one is bound to an engine only through a provider token,
 so it works with any engine that registers the providers it needs.
 
-| Package          | Capability                                            | Verification |
-| ---------------- | ----------------------------------------------------- | ------------ |
-| `health`         | Liveness/readiness orchestration, dependency graph    | U · I        |
-| `metrics`        | Counters, gauges, histograms, sink fan-out            | U · I        |
-| `monitor`        | Alert rules, thresholds, de-duplication               | U · I        |
-| `backup`         | Full/incremental backup, verification, restore drills | U · I        |
-| `security`       | Key rotation, envelope encryption, tamper-evident audit chain | U · I · M |
+| Package          | Capability                                                           | Verification  |
+| ---------------- | -------------------------------------------------------------------- | ------------- |
+| `health`         | Liveness/readiness orchestration, dependency graph                   | U · I         |
+| `metrics`        | Counters, gauges, histograms, sink fan-out                           | U · I         |
+| `monitor`        | Alert rules, thresholds, de-duplication                              | U · I         |
+| `backup`         | Full/incremental backup, verification, restore drills                | U · I         |
+| `security`       | Key rotation, envelope encryption, tamper-evident audit chain        | U · I · M     |
 | `audit`          | Append-only audit storage, query, verification, read and write ports | U · I · M · P |
-| `maintenance`    | Maintenance windows, occurrence projection            | U · I        |
-| `rollingupgrade` | Rolling upgrade orchestration, health gates           | U · I        |
-| `autoscaler`     | Predictive and reactive scaling                       | U · I        |
-| `configwatcher`  | Config watching, hot reload, validation               | U · I        |
-| `slacollector`   | SLA recording, compliance, violation log, uptime      | U · I        |
-| `observability`  | W3C trace context, OpenTelemetry export               | U · I        |
-| `circuitbreaker` | Per-dependency breakers                               | U · I · B    |
-| `memoryguard`    | Heap pressure, eviction, OOM avoidance                | U · I        |
-| `chaosengine`    | Fault injection schedules                             | U · I        |
-| `federation`     | Schema federation, repair execution                   | U · I        |
-| …and 5 more      | See the operations guide                              | U · I        |
+| `maintenance`    | Maintenance windows, occurrence projection                           | U · I         |
+| `rollingupgrade` | Rolling upgrade orchestration, health gates                          | U · I         |
+| `autoscaler`     | Predictive and reactive scaling                                      | U · I         |
+| `configwatcher`  | Config watching, hot reload, validation                              | U · I         |
+| `slacollector`   | SLA recording, compliance, violation log, uptime                     | U · I         |
+| `observability`  | W3C trace context, OpenTelemetry export                              | U · I         |
+| `circuitbreaker` | Per-dependency breakers                                              | U · I · B     |
+| `memoryguard`    | Heap pressure, eviction, OOM avoidance                               | U · I         |
+| `chaosengine`    | Fault injection schedules                                            | U · I         |
+| `federation`     | Schema federation, repair execution                                  | U · I         |
+| …and 5 more      | See the operations guide                                             | U · I         |
 
 ---
 
@@ -197,12 +197,43 @@ test trees were the only unverified code in the repository — and they drifted.
 - a reference engine adapter that did not satisfy the interfaces it claimed to implement;
 - module specifiers that resolved to nothing.
 
+Iteration 53 re-learned it a third time, in the file it was writing at that moment. A new
+fixture described a sink event as `{ id, table, operation, data, timestamp: 1, lsn }`; the
+contract is `{ id, type, table, key, data, timestamp: bigint }`. Vitest ran all eleven cases
+green, because a sink here only counts what it is handed — and CI's `Typecheck (federation)`
+failed on the first push with six errors, the first of them `number` against `bigint`. A fixture
+that describes an object the contract does not have is a test that passes while measuring
+something else, and only the compiler can see it.
+
 Both directions are now gated: `pnpm typecheck` proves the published surface compiles,
 `pnpm typecheck:tests` proves that what tests it compiles under the _same_ compiler options
 (including `noUncheckedIndexedAccess`, which the operations test config used to switch off).
 A structural check, `pnpm check:gates`, fails the build if any `tsconfig` in the workspace is
 referenced by no script — the exact shape of the defect that hid those 1 192 errors: a
 configuration file that looked like a gate and ran nowhere.
+
+### 4.1.1 A test that cannot fail for the right reason
+
+Two cases in the federation suite failed in CI while passing locally, and both were wrong in a
+way that no amount of re-running fixes.
+
+- `InProcessTransport — should delay delivery when latency is set` waited a fixed 100 ms for a
+  `setTimeout(50)` and then asserted the message had arrived. A timer is a request, not a
+  promise: under a loaded event loop the callback can be later than the whole margin, so the
+  assertion was a bet on the scheduler. It now waits on the callback itself with a deadline, and
+  asserts the property that matters — delivery is not immediate, is not earlier than the
+  configured latency, and happens once.
+- `BM6b: addBatch should not regress vs serial add` asserted `serialElapsed / batchElapsed >
+0.2`. It was measuring two wrong things at once: a wall-clock ratio between two
+  single-transaction paths (which BM6a had already replaced with an absolute budget, for exactly
+  this reason), and a serial side written as `for (…) store.add(…)` with no `await`, so the
+  denominator was the cost of creating five hundred promises rather than of inserting five
+  hundred entries. It now awaits the serial path, compares the two queues entry for entry, and
+  holds each to the same 5 ms-per-entry budget BM6a uses.
+
+Both passed every run on an idle machine, which is what a flaky test does. That is the
+definition of a test that cannot fail for the right reason, and the fix is to assert the
+property rather than the timing.
 
 The same applied to the API references. `cluster/docs/api-reference.md` opened with four classes
 that were never written (`RaftCluster`, `ClusterConfig`, `FencingToken`, `ITransport`), and
@@ -230,21 +261,21 @@ gate that only ever prints "passed" is the same defect one layer out.
 
 ## 5. What is **not** covered
 
-| Area                                                     | Status                     | Why it matters to you                                                                                                                                                                              |
-| -------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
-| **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
-| **Operations process-level acceptance**                  | Partially covered (iteration 35) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. Batching did not widen that gap: a burst of concurrent writes is acknowledged by **one** sync, and `GC.8` pins the case with one caller at a time to the same one-sync-per-write it always paid, so the throughput gain is concurrency and not a weaker promise. No other operations package has an out-of-process case yet. |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (**94.26 %**, **94.10 %**, **98.09 %** as reported, gates at 70, 70 and 86). In operations thirteen of 21 *modules* are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. In cluster and federation one module each is mutated — the SQLite log and the TLS wire — because those are the two places a green suite can be green for the wrong reason. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. Iteration 52 hand-checked `CDCSubscriptionPump` against five mutations — the queue cap, the retry budget, the operation filter, the table filter, and the post-close accounting — and every one of them failed at least one named case, so it is the next entry in that queue. Iteration 53 did the same to `CDCFailureInjector`: a global instead of a per-entry budget (two cases), no duplicate-entry check, no injection-point filter, a swallowed disconnect, and a budget spent by a fault that could not fire — five edits, five named failures. |
-| **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
-| **Dependency advisories**                              | Covered                    | `pnpm audit:policy` holds the *production* tree to zero high and critical advisories with no allowlist that can reach it, and requires a named, dated entry for anything in the dev tree — the test toolchain, which cannot always be fixed on the day an advisory lands because a transitive dependency may have no patched release. An entry that matches no advisory fails the gate, so the list cannot rot into an exemption nobody re-read; the two failure modes were checked by removing the entry and by adding a bogus one. |
+| Area                                                     | Status                           | Why it matters to you                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Per-file coverage floor**                              | Gated (from iteration 25)        | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)           | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Operations process-level acceptance**                  | Partially covered (iteration 35) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. Batching did not widen that gap: a burst of concurrent writes is acknowledged by **one** sync, and `GC.8` pins the case with one caller at a time to the same one-sync-per-write it always paid, so the throughput gain is concurrency and not a weaker promise. No other operations package has an out-of-process case yet.                                                                                                                                                                                                                                                                                                                             |
+| **Mutation testing over the rest of operations**         | Partially covered                | All three packages are gated by Stryker in CI (**94.26 %**, **94.10 %**, **98.09 %** as reported, gates at 70, 70 and 86). In operations thirteen of 21 _modules_ are mutated, chosen by the selection rule _mutate what decides deletion, durability, or when work runs_; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. In cluster and federation one module each is mutated — the SQLite log and the TLS wire — because those are the two places a green suite can be green for the wrong reason. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. Iteration 52 hand-checked `CDCSubscriptionPump` against five mutations — the queue cap, the retry budget, the operation filter, the table filter, and the post-close accounting — and every one of them failed at least one named case, so it is the next entry in that queue. Iteration 53 did the same to `CDCFailureInjector`: a global instead of a per-entry budget (two cases), no duplicate-entry check, no injection-point filter, a swallowed disconnect, and a budget spent by a fault that could not fire — five edits, five named failures. |
+| **TLA+ model checking**                                  | Manual                           | The specs exist and run locally; they are not part of CI.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Dependency advisories**                                | Covered                          | `pnpm audit:policy` holds the _production_ tree to zero high and critical advisories with no allowlist that can reach it, and requires a named, dated entry for anything in the dev tree — the test toolchain, which cannot always be fixed on the day an advisory lands because a transitive dependency may have no patched release. An entry that matches no advisory fails the gate, so the list cannot rot into an exemption nobody re-read; the two failure modes were checked by removing the entry and by adding a bogus one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
-| **Cross-version upgrade path**                           | Partially covered          | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
-| **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
-| **Quorum-loss step-down**                                | Covered                    | raft-core 0.2.1 has no check-quorum, so an isolated leader keeps reporting `isLeader() === true` while committing nothing (measured: 16 s, commit index frozen, write refused at 5 028 ms). `checkQuorum` is now real: contact is a completed round trip through the *real* transport, `isLeader()` answers from the role **and** from a majority inside one election timeout, `getLeader()` returns `null` while that is not true, and a write is refused with `QUORUM_FAILED` instead of waiting out the library's commit timeout. Seven cases in `quorum-loss.test.ts` drive it against a real 3-node TLS cluster. |
-| **Documentation fidelity**                               | Covered (iteration 50)     | `pnpm check:docs-api` fails the build when an API heading names a symbol the package does not export, and when `api-reference.md` omits an exported value. `pnpm check:public-types` closes the other half: every type a public signature names must be importable from the package root, which is how the two `CDCManager` classes and forty-three unnameable cluster types were found. `pnpm check:script-bins` fails a script whose command is not installed — that is how the three `docs` scripts running an absent TypeDoc were found, and they are gone rather than fixed: the curated pages are compiler-checked now, so a generated second surface would only be a second thing to keep honest. Not covered: the prose around a signature, and the field-level detail of a config interface — a page can name the right class and describe the wrong default. |
-| **CDC delivery over a network**                          | Not covered                | The pump hands events to an `ICDCSink` the deployment supplies; the sinks exercised in CI are in-process (a recording sink, `InMemoryCDCSink`, the resolver, the failure injector). A webhook or Kafka sink is application code, and no suite here drives one over a real socket. The ordering, retry and loss properties are measured against the sink contract; a sink that lies about accepting a batch is outside it, and the contract says so. |
-| **Harness `.mjs` child programs**                        | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
+| **Cross-version upgrade path** | Partially covered | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
+| **Sustained soak beyond CI limits** | Scheduled only | Multi-hour runs exist (`test:soak`) but do not gate a pull request. |
+| **Quorum-loss step-down** | Covered | raft-core 0.2.1 has no check-quorum, so an isolated leader keeps reporting `isLeader() === true` while committing nothing (measured: 16 s, commit index frozen, write refused at 5 028 ms). `checkQuorum` is now real: contact is a completed round trip through the _real_ transport, `isLeader()` answers from the role **and** from a majority inside one election timeout, `getLeader()` returns `null` while that is not true, and a write is refused with `QUORUM_FAILED` instead of waiting out the library's commit timeout. Seven cases in `quorum-loss.test.ts` drive it against a real 3-node TLS cluster. |
+| **Documentation fidelity** | Covered (iteration 50) | `pnpm check:docs-api` fails the build when an API heading names a symbol the package does not export, and when `api-reference.md` omits an exported value. `pnpm check:public-types` closes the other half: every type a public signature names must be importable from the package root, which is how the two `CDCManager` classes and forty-three unnameable cluster types were found. `pnpm check:script-bins` fails a script whose command is not installed — that is how the three `docs` scripts running an absent TypeDoc were found, and they are gone rather than fixed: the curated pages are compiler-checked now, so a generated second surface would only be a second thing to keep honest. Not covered: the prose around a signature, and the field-level detail of a config interface — a page can name the right class and describe the wrong default. |
+| **CDC delivery over a network** | Not covered | The pump hands events to an `ICDCSink` the deployment supplies; the sinks exercised in CI are in-process (a recording sink, `InMemoryCDCSink`, the resolver, the failure injector). A webhook or Kafka sink is application code, and no suite here drives one over a real socket. The ordering, retry and loss properties are measured against the sink contract; a sink that lies about accepting a batch is outside it, and the contract says so. |
+| **Harness `.mjs` child programs** | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
 
 Each row is tracked in the roadmap in
 [`db-stack-docs`](https://github.com/AgentiX-E/db-stack-docs/blob/main/plan/ROADMAP.md) with
@@ -288,7 +319,7 @@ same suite runs on every pull request as the `benchmark` job in `ci.yml`, becaus
 nobody calls is a benchmark that stays broken.
 
 **How the mutation score is produced.** Fourteen modules are under mutation testing, chosen by one
-rule — *mutate what decides deletion, durability, or when work runs*: durable state
+rule — _mutate what decides deletion, durability, or when work runs_: durable state
 (`cluster/.../SqliteStorage.ts`), the wire (`federation/.../TcpSecureTransport.ts`), what gets
 deleted (`operations/.../RetentionPolicyEvaluator.ts`, `operations/.../FileAuditStore.ts`), whether
 a backup can be replayed at all (`operations/.../backupChain.ts`,
@@ -309,7 +340,7 @@ iteration 30 proved it the hard way.
 **There is exactly one instrument, and it lives at the root.** Stryker copies `process.cwd()` into a
 sandbox and runs the suite inside the copy; that single fact decides where the configuration may live.
 Until iteration 36 each package carried its own `stryker.config.json`, so the sandbox was a copy of
-*one package* — and both things every test file needs (`tsconfig.base.json`, which Vite reads while
+_one package_ — and both things every test file needs (`tsconfig.base.json`, which Vite reads while
 transforming, and `scripts/test-tmpdir.mjs`, which every `vitest.setup.ts` imports) live one directory
 above it. The run died on `TSConfckParseError: failed to resolve "extends"` rather than producing a
 wrong number, which is the only reason the arrangement survived review as long as it did. There is now
@@ -325,23 +356,23 @@ Stryker directly instead of delegating to the root. CI runs the three targets as
 `pnpm run test:mutation:<target>` and then asserts that `git status --porcelain` is empty — an
 in-place edit that leaked out of a sandbox would otherwise be committed by the next person.
 
-| Package | Module | Mutants | Killed | Survived | Score | Threshold |
-|---|---|---:|---:|---:|---:|---:|
-| cluster | `SqliteStorage.ts` | 507 | 476 | 29 (+1 ignored, 1 runner error) | **94.26 %** | break 70 |
-| federation | `TcpSecureTransport.ts` | 271 | 254 (+1 timeout) | 16 | **94.10 %** | break 70 |
-| operations | `backupChain.ts` | 66 | 59 (+7 timeout) | 0 | **100 %** | break 86 |
-| operations | `InMemoryBackupManager.ts` | 95 | 93 | 1 | **98.94 %** | break 86 |
-| operations | `RetentionPolicyEvaluator.ts` | 196 | 172 (+2 timeout) | 0 | **100 %** | break 86 |
-| operations | `cron.ts` | 87 | 81 (+6 timeout) | 0 | **100 %** | break 86 |
-| operations | `MaintenanceWindowScheduler.ts` | 622 | 602 (+13 timeout) | 6 | **99.03 %** | break 86 |
-| operations | `FileAuditStore.ts` | 704 | 664 (+8 timeout) | 21 (+1 error) | **96.97 %** | break 86 |
-| operations | `DurableFileSystem.ts` | 74 | 73 | 0 | **100 %** | break 86 |
-| operations | `KeyRotationManager.ts` | 239 | 236 | 2 | **99.16 %** | break 86 |
-| operations | `RotationAuditor.ts` | 286 | 275 | 7 | **97.52 %** | break 86 |
-| operations | `AuditLogManager.ts` | 343 | 323 (+2 timeout) | 10 (+2 no coverage) | **96.44 %** | break 86 |
-| operations | `KeyManager.ts` | 139 | 125 (+3 timeout) | 7 (+1 no coverage) | **94.12 %** | break 86 |
-| operations | `EnvelopeEncryptionProvider.ts` | 111 | 108 | 2 | **98.18 %** | break 86 |
-| operations | `AES256GCMEncryptionProvider.ts` | 81 | 79 | 2 | **97.53 %** | break 86 |
+| Package    | Module                           | Mutants |            Killed |                        Survived |       Score | Threshold |
+| ---------- | -------------------------------- | ------: | ----------------: | ------------------------------: | ----------: | --------: |
+| cluster    | `SqliteStorage.ts`               |     507 |               476 | 29 (+1 ignored, 1 runner error) | **94.26 %** |  break 70 |
+| federation | `TcpSecureTransport.ts`          |     271 |  254 (+1 timeout) |                              16 | **94.10 %** |  break 70 |
+| operations | `backupChain.ts`                 |      66 |   59 (+7 timeout) |                               0 |   **100 %** |  break 86 |
+| operations | `InMemoryBackupManager.ts`       |      95 |                93 |                               1 | **98.94 %** |  break 86 |
+| operations | `RetentionPolicyEvaluator.ts`    |     196 |  172 (+2 timeout) |                               0 |   **100 %** |  break 86 |
+| operations | `cron.ts`                        |      87 |   81 (+6 timeout) |                               0 |   **100 %** |  break 86 |
+| operations | `MaintenanceWindowScheduler.ts`  |     622 | 602 (+13 timeout) |                               6 | **99.03 %** |  break 86 |
+| operations | `FileAuditStore.ts`              |     704 |  664 (+8 timeout) |                   21 (+1 error) | **96.97 %** |  break 86 |
+| operations | `DurableFileSystem.ts`           |      74 |                73 |                               0 |   **100 %** |  break 86 |
+| operations | `KeyRotationManager.ts`          |     239 |               236 |                               2 | **99.16 %** |  break 86 |
+| operations | `RotationAuditor.ts`             |     286 |               275 |                               7 | **97.52 %** |  break 86 |
+| operations | `AuditLogManager.ts`             |     343 |  323 (+2 timeout) |             10 (+2 no coverage) | **96.44 %** |  break 86 |
+| operations | `KeyManager.ts`                  |     139 |  125 (+3 timeout) |              7 (+1 no coverage) | **94.12 %** |  break 86 |
+| operations | `EnvelopeEncryptionProvider.ts`  |     111 |               108 |                               2 | **98.18 %** |  break 86 |
+| operations | `AES256GCMEncryptionProvider.ts` |      81 |                79 |                               2 | **97.53 %** |  break 86 |
 
 Operations overall: **97.96 %** — 2 890 killed, 41 timed out, 58 survived, 3 with no coverage and one
 that crashes the runner rather than failing a test, out of the 2 992 mutants the instrument judges (it
@@ -354,7 +385,7 @@ report attributed to it, and `mutation/timeouts.json` records what those tests s
 36 report nothing at all and the run does not finish. None of the 41 passes, which is the question the
 column could not answer before: a `Timeout` counted towards the score without any test having been
 asked. The gate now reads what the file does not already answer, on the spot, and fails only when the
-suite *passes* an abort — a score that counted a detection nobody made. See
+suite _passes_ an abort — a score that counted a detection nobody made. See
 `docs/maturity.md#the-timeout-column`.
 
 The overall figure is a share of a larger denominator than iteration 37's 98.09 %: `FileAuditStore.ts`
@@ -366,22 +397,22 @@ the two reconciliation calls are removed, which is what makes the argument about
 reading.
 
 **The twenty-six survivors of `FileAuditStore.ts` were read one by one, and ten of them were real
-gaps.** Every one was applied *exactly as the report printed it* and run against the whole audit
+gaps.** Every one was applied _exactly as the report printed it_ and run against the whole audit
 suite: all twenty-six stayed green, which is what a survivor means — the suite did not make the
 distinction, the instrument did not miss a failure. Each of the ten now has the case it lacked in
 `AC 89`, and each of those cases was then re-checked the other way round: put the mutant back and the
 named case fails. They are one family in seven shapes, and every shape is a boundary nobody had asked
 about:
 
-| Mutant | The observation that was missing | Case |
-| --- | --- | --- |
-| `typeof error !== 'object'` → `false` in `isAlreadyExists` | `undefined` is the only input where reading `.code` off it throws instead of answering `false`; `null` is caught by the second disjunct and a string answers `undefined` | `SV.1` |
-| `retentionDays ?? DEFAULT` → `&&` | a window given as `2`: the suite had only ever passed `0` (disables) or `90` (the default), and `??` and `&&` agree on both | `SV.2` |
-| the default `claim` → `() => undefined` | the claim was only ever observed *after* the append that followed it — a store that claimed nothing passed `SC.5`, because the file the second store found was the one the first store's append had just created | `SV.3` |
-| `activeSegmentClaimed && needsSeparator(...)` → `true` (and → `\|\|`) | a separator owed by an *adopted* segment that ends cleanly: `DW.8` asserts the owed case and `DW.3` the store's own segment, and the parser skips a blank line, so only the bytes can tell | `SV.4` |
-| `attempt < CLAIM_ATTEMPTS` → `<=`, and the second half of the failure message → `''` | the eighth attempt, counted; and the sentence that says what eight means — a loop that ran nine times and a message that stopped explaining the bound both passed | `SV.5` |
-| `i < covered && …` → `true` (and `i <` → `i <=`) | a failure on the *first* sync of a batch: `GC.5` fails the second, where the generation test rejects the rest on its own, so the count of covered commits was never load-bearing | `SV.6` |
-| `mtime === null` → `false` in `pruneOlderThan` | a segment name the prune cannot date — the rule `EX.1` states for the retention sweep, at the boundary a caller chooses | `SV.7` |
+| Mutant                                                                               | The observation that was missing                                                                                                                                                                                 | Case   |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `typeof error !== 'object'` → `false` in `isAlreadyExists`                           | `undefined` is the only input where reading `.code` off it throws instead of answering `false`; `null` is caught by the second disjunct and a string answers `undefined`                                         | `SV.1` |
+| `retentionDays ?? DEFAULT` → `&&`                                                    | a window given as `2`: the suite had only ever passed `0` (disables) or `90` (the default), and `??` and `&&` agree on both                                                                                      | `SV.2` |
+| the default `claim` → `() => undefined`                                              | the claim was only ever observed _after_ the append that followed it — a store that claimed nothing passed `SC.5`, because the file the second store found was the one the first store's append had just created | `SV.3` |
+| `activeSegmentClaimed && needsSeparator(...)` → `true` (and → `\|\|`)                | a separator owed by an _adopted_ segment that ends cleanly: `DW.8` asserts the owed case and `DW.3` the store's own segment, and the parser skips a blank line, so only the bytes can tell                       | `SV.4` |
+| `attempt < CLAIM_ATTEMPTS` → `<=`, and the second half of the failure message → `''` | the eighth attempt, counted; and the sentence that says what eight means — a loop that ran nine times and a message that stopped explaining the bound both passed                                                | `SV.5` |
+| `i < covered && …` → `true` (and `i <` → `i <=`)                                     | a failure on the _first_ sync of a batch: `GC.5` fails the second, where the generation test rejects the rest on its own, so the count of covered commits was never load-bearing                                 | `SV.6` |
+| `mtime === null` → `false` in `pruneOlderThan`                                       | a segment name the prune cannot date — the rule `EX.1` states for the retention sweep, at the boundary a caller chooses                                                                                          | `SV.7` |
 
 Two survivors were not gaps at all, they were **dead assignments**, and they were deleted rather than
 defended: `rotate()` reset `currentSize`, `currentCreatedAt` and `separatorOwed`, and the claim that
@@ -392,19 +423,19 @@ remained are now killed.
 
 The other fourteen are **equivalent**, and each has an argument rather than a test:
 
-| Survivor | Why nothing can distinguish it |
-| --- | --- |
-| `name > newest` → `>=` in `newestOpenSegment` | `readdir` cannot return a name twice; when the strings are equal the assignment writes the value already there |
-| `?? []` in `sweepAbandonedArchives` → a foreign name | the loop keeps names that start with `<prefix>-` and end with `.ndjson.gz.part`; a foreign name removes nothing and the count is `0`, exactly as for an empty list |
-| `?? []` in `getNextSequence` → a foreign name | the regex cannot match it, so `maxSeq` stays `0` and the answer is `0001` — the same as for an empty list |
+| Survivor                                                                                 | Why nothing can distinguish it                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name > newest` → `>=` in `newestOpenSegment`                                            | `readdir` cannot return a name twice; when the strings are equal the assignment writes the value already there                                                                                                                                                                                                     |
+| `?? []` in `sweepAbandonedArchives` → a foreign name                                     | the loop keeps names that start with `<prefix>-` and end with `.ndjson.gz.part`; a foreign name removes nothing and the count is `0`, exactly as for an empty list                                                                                                                                                 |
+| `?? []` in `getNextSequence` → a foreign name                                            | the regex cannot match it, so `maxSeq` stays `0` and the answer is `0001` — the same as for an empty list                                                                                                                                                                                                          |
 | `if (!this.activeSegmentClaimed) return false` in `shouldRotate` → `true`, and → `false` | `rotate()` reads no file when the store has no name: `fileIdentity('')` throws `ENOENT`, which it catches. The two smaller tests would then be asked with `currentSize === 0` and an age measured from construction, and both can only answer true for a zero threshold — after which `rotate()` is the same no-op |
-| `this.activeFilePath = ''` in `rotate` → any name | every read of it is guarded by `activeSegmentClaimed`: `appendLine` claims before it appends, `shouldRotate` returns on the unclaimed state, and the next claim overwrites it. There is no suspension point in between |
-| `if (!fileIdentity(oldPath)) return` in `rotate` → `false` | `archiveSegment` opens with the identical check and returns before it compresses, so the only difference is a scheduled job that does nothing |
-| `if (this.flushScheduled) return` → `false`, and `this.flushScheduled = true` → `false` | a second schedule in one turn produces a second `setImmediate` that calls `flush()` on an empty queue, which returns at its first line. The flag's entire effect is the absence of a no-op |
-| `if (this.pendingCommits.length === 0) return` → `false` | an empty batch syncs nothing: `highest` is `-1`, `durableDirectoryGeneration` starts at `-1` and only rises, and both loops are over an empty array |
-| `let synced = ''` → any name | the initial value is compared with an absolute path inside the data directory, so the first commit of a batch syncs either way and `synced` is overwritten immediately |
-| `let highest = -1` → `+1` | a commit's generation *is* its segment's generation, so the newest commit in a batch is always at least the current one and the initial value cannot be the maximum |
-| `?? ''` in `readSegment`, and `return ''` in its `catch` → any text | the text reaches a parser that accepts nothing but NDJSON, so every alternative contributes zero entries — which is the property that let the `null` sentinel be deleted in iteration 34 |
+| `this.activeFilePath = ''` in `rotate` → any name                                        | every read of it is guarded by `activeSegmentClaimed`: `appendLine` claims before it appends, `shouldRotate` returns on the unclaimed state, and the next claim overwrites it. There is no suspension point in between                                                                                             |
+| `if (!fileIdentity(oldPath)) return` in `rotate` → `false`                               | `archiveSegment` opens with the identical check and returns before it compresses, so the only difference is a scheduled job that does nothing                                                                                                                                                                      |
+| `if (this.flushScheduled) return` → `false`, and `this.flushScheduled = true` → `false`  | a second schedule in one turn produces a second `setImmediate` that calls `flush()` on an empty queue, which returns at its first line. The flag's entire effect is the absence of a no-op                                                                                                                         |
+| `if (this.pendingCommits.length === 0) return` → `false`                                 | an empty batch syncs nothing: `highest` is `-1`, `durableDirectoryGeneration` starts at `-1` and only rises, and both loops are over an empty array                                                                                                                                                                |
+| `let synced = ''` → any name                                                             | the initial value is compared with an absolute path inside the data directory, so the first commit of a batch syncs either way and `synced` is overwritten immediately                                                                                                                                             |
+| `let highest = -1` → `+1`                                                                | a commit's generation _is_ its segment's generation, so the newest commit in a batch is always at least the current one and the initial value cannot be the maximum                                                                                                                                                |
+| `?? ''` in `readSegment`, and `return ''` in its `catch` → any text                      | the text reaches a parser that accepts nothing but NDJSON, so every alternative contributes zero entries — which is the property that let the `null` sentinel be deleted in iteration 34                                                                                                                           |
 
 **The previous version of this paragraph said all 27 were killed. That was wrong, and the way it was
 wrong is the point.** The tool used to verify them, `operations/scripts/replay-mutant.mjs`, resolved
@@ -420,16 +451,16 @@ A `Timeout` is not a verdict: it says the runner stopped, not that a test object
 different things under that status, and the operations target has 41 of them — every one read on
 2026-11-18, by replaying the edit against the tests the report attributed to it:
 
-| What the runner did | Count | What it means |
-|---|---:|---|
-| Hit-limit abort (`statusReason: Hit limit reached (n/100×m)`) | 33 | the vitest runner counts how often a mutant executes and abandons the run at a hundred times the original's count — a *guess* at non-termination made from an execution count |
-| Wall-clock timeout | 8 | `timeoutFactor × netTime + 30 s` elapsed |
+| What the runner did                                           | Count | What it means                                                                                                                                                                 |
+| ------------------------------------------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hit-limit abort (`statusReason: Hit limit reached (n/100×m)`) |    33 | the vitest runner counts how often a mutant executes and abandons the run at a hundred times the original's count — a _guess_ at non-termination made from an execution count |
+| Wall-clock timeout                                            |     8 | `timeoutFactor × netTime + 30 s` elapsed                                                                                                                                      |
 
-| What the suite said when it was asked again | operations | federation | cluster |
-|---|---:|---:|---:|
-| `failed` — vitest reported a failing test | 5 | 0 | 0 |
-| `stuck` — nothing reported, the run never finished | 36 | 1 | 0 |
-| `survived` — the suite passed it | **0** | **0** | **0** |
+| What the suite said when it was asked again        | operations | federation | cluster |
+| -------------------------------------------------- | ---------: | ---------: | ------: |
+| `failed` — vitest reported a failing test          |          5 |          0 |       0 |
+| `stuck` — nothing reported, the run never finished |         36 |          1 |       0 |
+| `survived` — the suite passed it                   |      **0** |      **0** |   **0** |
 
 The third row is the one that mattered. Had any of them passed, the score would have counted a mutant
 no test noticed, and 97.96 % would have been wrong by that much. None did: every abort is either a
@@ -443,18 +474,18 @@ a mutant at about 31 s, so no test timeout could ever fire. The values are now d
 target's own measurement, four times its slowest case, rounded up to the next second and kept below the
 runner's cap:
 
-| Target | Slowest case | Where it comes from | Budget |
-|---|---:|---:|---:|
-| cluster | 2 120 ms | `SqliteStorage.handle-lifecycle` | 9 s |
-| federation | 2 479 ms | `chaos/tls-fault-injection` (a delay, injected on purpose) | 10 s |
-| operations | 3 665 ms | `AC75-work-factor` (scrypt at four work factors, on purpose) | 15 s |
+| Target     | Slowest case |                                          Where it comes from | Budget |
+| ---------- | -----------: | -----------------------------------------------------------: | -----: |
+| cluster    |     2 120 ms |                             `SqliteStorage.handle-lifecycle` |    9 s |
+| federation |     2 479 ms |   `chaos/tls-fault-injection` (a delay, injected on purpose) |   10 s |
+| operations |     3 665 ms | `AC75-work-factor` (scrypt at four work factors, on purpose) |   15 s |
 
 Eighteen of the 59 aborts this target used to report are now kills: the budget expires before the
 runner's cap, so the test is the party that fails. The cluster config's justification said "its slowest
 case is under 100 ms", which had stopped being true — the number was 2 120 ms — and the gate now fails
 when a mutation config inherits a budget instead of declaring one, or declares one at or above the cap.
 
-`check:gates` cannot check a *measurement*, so the derived numbers live in the configs with the
+`check:gates` cannot check a _measurement_, so the derived numbers live in the configs with the
 measurement recorded beside them, and the relationship it can check is the one that broke: a test
 timeout below the runner's cap, on every target, declared explicitly.
 
@@ -500,19 +531,19 @@ read the replacement, not the line:
 
 What the 166 killed mutants were, in families — and every family is a question a caller asks:
 
-| The observation that was missing | Where it is now |
-| --- | --- |
-| **When the bytes are forced out.** Three writes inside `beginBatch` opened zero descriptors; `endBatch` opened one; batch mode ended with the batch; `persistReady`'s three-entry transaction synced once, not three times; every truncation path and `setKv` forced its own | `AC 38.3` |
-| **Which file a sync touches.** `fsync` truncates the WAL, syncs the main file, closes its descriptor and nothing else; `fsyncWAL` opens `-wal` and never the main file; a refused sync is logged with its own name rather than thrown | `AC 38.4`, `AC 38.5` |
-| **What a failed open leaves behind.** A throwing `onOpen` used to leave a handle nobody could reach, `isOpen` answering true and a locked file — now rolled back, with the statements dropped and the error rethrown | `AC 38.1`, `AC 38.6` |
-| **Whether a database from an older build still opens.** The `ALTER TABLE` for the checksum column had never run against a table that predated it, so both the migration and its guard were untested | `AC 38.7` |
-| **What a damaged database reports.** `every` vs `some` over `integrity_check`, the failing rows in the message, the separators between them, and the retry verdict | `AC 38.8` |
-| **Which defaults actually reached SQLite.** `synchronous`, `wal_autocheckpoint`, `foreign_keys`, `busy_timeout` and `maxLogSize` were computed and then never read back — and `pragma(name, value)` was never asserted to have written anything | `AC 38.2` |
-| **The auto-compaction boundary.** A limit of `0` means "no limit" rather than "compact always"; a snapshot index of `0` is not a reason to compact; a log exactly at the limit is not past it | `AC 38.12` |
-| **The wire frame, field by field.** The transport's own suite asserted `send` had been called, not what it carried — the message id, the source peer, the `federation_send` type, the payload bytes and the BigInt wall clock encoded as a string | `AC 47.1` |
-| **A configuration that cannot be addressed.** Two peers sharing a wire id, a peer sharing this node's, an id with no number in it, `peers: []` falling through to the address list, and a legacy address with no host or no port | `AC 47.3`–`AC 47.5` |
-| **The retry schedule as a schedule.** `maxRetries` attempts double, attempt `maxRetries + 1` is capped — asserted on `retryDelayMs()` instead of by timing a timer | `AC 47.6` |
-| **What a refused send costs.** An unknown peer arms no timer, a reachability refusal comes from the live check before the lagging snapshot, and `broadcast` counts deliveries rather than attempts | `AC 47.2`, `AC 47.9`–`AC 47.11` |
+| The observation that was missing                                                                                                                                                                                                                                             | Where it is now                 |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| **When the bytes are forced out.** Three writes inside `beginBatch` opened zero descriptors; `endBatch` opened one; batch mode ended with the batch; `persistReady`'s three-entry transaction synced once, not three times; every truncation path and `setKv` forced its own | `AC 38.3`                       |
+| **Which file a sync touches.** `fsync` truncates the WAL, syncs the main file, closes its descriptor and nothing else; `fsyncWAL` opens `-wal` and never the main file; a refused sync is logged with its own name rather than thrown                                        | `AC 38.4`, `AC 38.5`            |
+| **What a failed open leaves behind.** A throwing `onOpen` used to leave a handle nobody could reach, `isOpen` answering true and a locked file — now rolled back, with the statements dropped and the error rethrown                                                         | `AC 38.1`, `AC 38.6`            |
+| **Whether a database from an older build still opens.** The `ALTER TABLE` for the checksum column had never run against a table that predated it, so both the migration and its guard were untested                                                                          | `AC 38.7`                       |
+| **What a damaged database reports.** `every` vs `some` over `integrity_check`, the failing rows in the message, the separators between them, and the retry verdict                                                                                                           | `AC 38.8`                       |
+| **Which defaults actually reached SQLite.** `synchronous`, `wal_autocheckpoint`, `foreign_keys`, `busy_timeout` and `maxLogSize` were computed and then never read back — and `pragma(name, value)` was never asserted to have written anything                              | `AC 38.2`                       |
+| **The auto-compaction boundary.** A limit of `0` means "no limit" rather than "compact always"; a snapshot index of `0` is not a reason to compact; a log exactly at the limit is not past it                                                                                | `AC 38.12`                      |
+| **The wire frame, field by field.** The transport's own suite asserted `send` had been called, not what it carried — the message id, the source peer, the `federation_send` type, the payload bytes and the BigInt wall clock encoded as a string                            | `AC 47.1`                       |
+| **A configuration that cannot be addressed.** Two peers sharing a wire id, a peer sharing this node's, an id with no number in it, `peers: []` falling through to the address list, and a legacy address with no host or no port                                             | `AC 47.3`–`AC 47.5`             |
+| **The retry schedule as a schedule.** `maxRetries` attempts double, attempt `maxRetries + 1` is capped — asserted on `retryDelayMs()` instead of by timing a timer                                                                                                           | `AC 47.6`                       |
+| **What a refused send costs.** An unknown peer arms no timer, a reachability refusal comes from the live check before the lagging snapshot, and `broadcast` counts deliveries rather than attempts                                                                           | `AC 47.2`, `AC 47.9`–`AC 47.11` |
 
 Three of those turned into product fixes rather than tests, because the observation showed the
 behaviour was wrong:
@@ -527,36 +558,36 @@ behaviour was wrong:
 
 The leftovers are equivalent, in eight families for `SqliteStorage` and eight for `TcpSecureTransport`:
 
-| Survivor(s) | Why nothing can distinguish it |
-| --- | --- |
-| `if (!fs.existsSync(dir))` → `true` | `mkdirSync(recursive: true)` on an existing directory is a no-op |
-| `handle?.close()` → `handle.close()` | `handle` is the value assigned one statement earlier, so it is never nullish |
-| the `checkpoint('PASSIVE')` guard and its mode in `close()` | the handle is closed either way, and SQLite checkpoints on close; `wal_checkpoint()` with no argument is `PASSIVE` |
-| `if (!this.db) return` in `initStatements` | every call is inside `open()`, after the handle is set |
-| `queue.length >= maxBatch` → `true`, `if (this.groupCommitTimer)` → `true`/`false`/`{}`, `clearTimeout` → `;`, `if (!this.groupCommitTimer)` → `true` | a flush of an empty queue returns at its first line, so a surplus timer or a surplus flush syncs nothing; `clearTimeout(null)` and `Map.delete` of an absent key are no-ops |
-| `unref()` → `;` | it changes whether the event loop stays alive, which no test observes and the runner decides |
-| `let batch = []` → a foreign element, `queue = []` → a foreign element | the initial value is overwritten by the mutex callback before it is read; the queue variant replaced by a foreign element throws inside a timer callback, which is the runner error this file records rather than a verdict |
-| `if (batch.length === 0) return` → `false` | an empty batch syncs a database that has nothing to sync — same bytes, one extra call |
-| `?.minIndex`, `?.count`, `countRow?.count`, `row?.minIndex`, `row?.count` | `MIN`, `COUNT` and `LIMIT 1` over a non-empty table always return a row; over an empty one `MIN` answers `null`, which the `?? 0` behind it handles |
-| `if (hardStateBuf)`, `if (metaBuf)`, `if (meta.hardState)` → `true` | `JSON.parse(buf.toString())` on `null` throws into the `catch` that already exists, leaving the field unset |
-| `ready.entries.length > 0` → `true`/`>= 0`, same for `committedEntries` | the `ready.entries &&` in front of the operand still guards the loop; an empty list iterates zero times |
-| `this._batchMode = true` → `false` in `persistReady` | inside a `better-sqlite3` transaction every `fsync()` fails with `SQLITE_BUSY` and is caught by its own handler, so the per-entry syncs the flag suppresses would not have reached the file anyway |
-| `if (fromIndex > lastIndex) return []` → `false` | the range query answers `[]` for the same input, which is what the guard was returning |
-| `if (existing)` → `true`, `_retryTimers.delete()` → `;` | `clearTimeout(undefined)` is a no-op, and the entry is overwritten by the `set` two lines later |
-| `getStatus?.()?.connectedPeers.includes(id)` variants | the refusal below it reads the same snapshot directly, so a wrong `reachable` is corrected one statement later |
-| `if (peers.length === 0) return 0` → `false` | `allSettled([])` is `[]`, and the filter of an empty array is `0` |
-| `r.status === 'fulfilled'` → `true` in the broadcast filter | `true && r.value` is `r.value`: a rejected settlement has no `value`, so it is still not counted |
-| `/^\d+$/` → `/\d+$/` and → `/^\d+/` | `Number('abc12')` and `Number('12abc')` are `NaN`, and `logicalByNumeric.has(NaN)` is false, so both fall through to the string form |
-| `messageHandlers.clear()` → `;` in `destroy()` | `destroy()` calls `stop()` first, which detaches the bridge; there is no subscriber left to iterate |
-| `if (digits.length === 0) return null` → `false`, and `?? ''` → any text in `extractPort` | `parseInt('')` and `parseInt('Stryker was here!')` are both `NaN`, which the `Number.isNaN` behind them maps to the same `null` / `7000` |
-| `host && host.length > 0` → `host || …`, `> 0` → `>= 0`, `?:` → `true` | the `host &&` outside the comparison already rejects the empty string, so the condition is never the only thing standing between `''` and the answer |
+| Survivor(s)                                                                                                                                           | Why nothing can distinguish it                                                                                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `if (!fs.existsSync(dir))` → `true`                                                                                                                   | `mkdirSync(recursive: true)` on an existing directory is a no-op                                                                                                                                                            |
+| `handle?.close()` → `handle.close()`                                                                                                                  | `handle` is the value assigned one statement earlier, so it is never nullish                                                                                                                                                |
+| the `checkpoint('PASSIVE')` guard and its mode in `close()`                                                                                           | the handle is closed either way, and SQLite checkpoints on close; `wal_checkpoint()` with no argument is `PASSIVE`                                                                                                          |
+| `if (!this.db) return` in `initStatements`                                                                                                            | every call is inside `open()`, after the handle is set                                                                                                                                                                      |
+| `queue.length >= maxBatch` → `true`, `if (this.groupCommitTimer)` → `true`/`false`/`{}`, `clearTimeout` → `;`, `if (!this.groupCommitTimer)` → `true` | a flush of an empty queue returns at its first line, so a surplus timer or a surplus flush syncs nothing; `clearTimeout(null)` and `Map.delete` of an absent key are no-ops                                                 |
+| `unref()` → `;`                                                                                                                                       | it changes whether the event loop stays alive, which no test observes and the runner decides                                                                                                                                |
+| `let batch = []` → a foreign element, `queue = []` → a foreign element                                                                                | the initial value is overwritten by the mutex callback before it is read; the queue variant replaced by a foreign element throws inside a timer callback, which is the runner error this file records rather than a verdict |
+| `if (batch.length === 0) return` → `false`                                                                                                            | an empty batch syncs a database that has nothing to sync — same bytes, one extra call                                                                                                                                       |
+| `?.minIndex`, `?.count`, `countRow?.count`, `row?.minIndex`, `row?.count`                                                                             | `MIN`, `COUNT` and `LIMIT 1` over a non-empty table always return a row; over an empty one `MIN` answers `null`, which the `?? 0` behind it handles                                                                         |
+| `if (hardStateBuf)`, `if (metaBuf)`, `if (meta.hardState)` → `true`                                                                                   | `JSON.parse(buf.toString())` on `null` throws into the `catch` that already exists, leaving the field unset                                                                                                                 |
+| `ready.entries.length > 0` → `true`/`>= 0`, same for `committedEntries`                                                                               | the `ready.entries &&` in front of the operand still guards the loop; an empty list iterates zero times                                                                                                                     |
+| `this._batchMode = true` → `false` in `persistReady`                                                                                                  | inside a `better-sqlite3` transaction every `fsync()` fails with `SQLITE_BUSY` and is caught by its own handler, so the per-entry syncs the flag suppresses would not have reached the file anyway                          |
+| `if (fromIndex > lastIndex) return []` → `false`                                                                                                      | the range query answers `[]` for the same input, which is what the guard was returning                                                                                                                                      |
+| `if (existing)` → `true`, `_retryTimers.delete()` → `;`                                                                                               | `clearTimeout(undefined)` is a no-op, and the entry is overwritten by the `set` two lines later                                                                                                                             |
+| `getStatus?.()?.connectedPeers.includes(id)` variants                                                                                                 | the refusal below it reads the same snapshot directly, so a wrong `reachable` is corrected one statement later                                                                                                              |
+| `if (peers.length === 0) return 0` → `false`                                                                                                          | `allSettled([])` is `[]`, and the filter of an empty array is `0`                                                                                                                                                           |
+| `r.status === 'fulfilled'` → `true` in the broadcast filter                                                                                           | `true && r.value` is `r.value`: a rejected settlement has no `value`, so it is still not counted                                                                                                                            |
+| `/^\d+$/` → `/\d+$/` and → `/^\d+/`                                                                                                                   | `Number('abc12')` and `Number('12abc')` are `NaN`, and `logicalByNumeric.has(NaN)` is false, so both fall through to the string form                                                                                        |
+| `messageHandlers.clear()` → `;` in `destroy()`                                                                                                        | `destroy()` calls `stop()` first, which detaches the bridge; there is no subscriber left to iterate                                                                                                                         |
+| `if (digits.length === 0) return null` → `false`, and `?? ''` → any text in `extractPort`                                                             | `parseInt('')` and `parseInt('Stryker was here!')` are both `NaN`, which the `Number.isNaN` behind them maps to the same `null` / `7000`                                                                                    |
+| `host && host.length > 0` → `host                                                                                                                     |                                                                                                                                                                                                                             | …`, `> 0`→`>= 0`, `?:`→`true` | the `host &&` outside the comparison already rejects the empty string, so the condition is never the only thing standing between `''` and the answer |
 
-The previous version of *this* section also said every number here was a floor. That claim is
+The previous version of _this_ section also said every number here was a floor. That claim is
 withdrawn for a different reason, and the way it was withdrawn matters: iteration 35 argued that
 `--inPlace` let four workers share one source tree, so a worker's vitest could read a file another
-worker had already restored. The *symptom* was real, but the hand application was not the edit the
+worker had already restored. The _symptom_ was real, but the hand application was not the edit the
 report printed — the report said `false || mtime >= cutoff` and what was applied was
-`if (false) continue;`, which is a *stronger* change. Applying the printed replacement left all 162
+`if (false) continue;`, which is a _stronger_ change. Applying the printed replacement left all 162
 tests green: the `mtime === null` arm had never been tested. The rule that came out of it is now part
 of the review habit: **apply the replacement the report prints, never a stronger one.** A survivor is
 either a missing assertion or an equivalent mutant, and both are provable; "the runner is wrong" is
@@ -565,7 +596,7 @@ not a third option. The headline moved for reasons that are worth separating: mo
 the weakest improved because their defects were fixed rather than excused —
 `EnvelopeEncryptionProvider` 90.38 → 98.18 %, `KeyManager` 86.60 → 94.12 %, and `FileAuditStore`
 97.05 → 98.85 % when its durable-write recipe stopped being unobservable. Every one of the fourteen mutants that changed verdict
-in those two files was a *behaviour* the suite did not constrain, and reading them produced the four
+in those two files was a _behaviour_ the suite did not constrain, and reading them produced the four
 concurrency defects recorded in the changelog: a version number that two mints could share, eight
 keys minted for eight concurrent first writes, a header naming a version the payload was not sealed
 with, and a wipe that an in-flight mint undid.
@@ -573,7 +604,7 @@ with, and a wipe that an in-flight mint undid.
 The composition of what remains is now almost entirely two families: memory wipes (nine mutants) and
 encoding and separator defaults (`'utf-8'` → `''`, `'|'` → `''`, `?? ''` → any text). The third family
 — the durability recipe in `FileAuditStore.writeLine`, five mutants that no test could reach — is
-gone: iteration 34 put the recipe behind a four-operation port, which made the *order* assertable, and
+gone: iteration 34 put the recipe behind a four-operation port, which made the _order_ assertable, and
 the survivors it left are enumerated below. Two
 survivors are in none of those families and are recorded as equivalent with a proof rather than as
 gaps: the `err` branch of the PBKDF2 callback (Node throws synchronously for an unusable digest, so
@@ -591,39 +622,39 @@ assertion, and the argument for the family does not. Each family names the prope
 invisible to any in-process assertion; the reasons are grouped, because one property often explains
 several mutants:
 
-| Module | Surviving mutant | Why no test can distinguish it |
-| --- | --- | --- |
-| `InMemoryBackupManager` | `state: 'in-progress'` → `state: ''` | the same method sets `completed` before it returns, so the interim value is never observable |
-| `MaintenanceWindowScheduler` | `cursor.setUTCHours(...)` → `setUTCMinutes(...)` | the cursor's *month* is what drives the loop; every candidate is built from explicit year/month/day and `startTime`, and the ones the moved cursor would skip have already failed `candidateMs >= fromMs` |
-| `MaintenanceWindowScheduler` | `cursor.setUTCDate(1)` → `cursor.setTime(1)` | the cursor jumps to 1970 and walks every month to the range; all those candidates are before `fromMs`, so the answer is the same and only the walking is wasted |
-| `MaintenanceWindowScheduler` | `while (cursorMs < toMs)` → `<=` (monthly) | at equality no candidate is `< toMs`, so the extra month contributes nothing |
-| `MaintenanceWindowScheduler` | `day > lastDay` → `day >= lastDay` | at `day === lastDay` both branches produce `lastDay` |
-| `MaintenanceWindowScheduler` | `while (cursor.getTime() < toMs …)` → `<=` (cron) | as above, for the minute scan |
-| `MaintenanceWindowScheduler` | `iterations < maxIterations` → `<=` | one extra minute inside a 100 000-minute safety bound; only an expression that matches every minute for 69 days could see it, and that projection allocates 100 000 instances |
-| `KeyRotationManager` | `success: false` → `true` in the event template | every exit assigns it: the success path sets `true`, the `catch` sets `false`, and there is no third way out |
-| `KeyRotationManager` | `default:` arm of `_isDue` removed | the fall-through returns `undefined`, and the caller asks a yes/no question — `undefined` is not due, which is what `return false` says |
-| `FileAuditStore` | `name > newest` → `>=` | `readdir` cannot return the same name twice, so the two comparisons select the same name |
-| `FileAuditStore` | `?? ''` in `readSegment`, and the `return ''` in its `catch` → any text (two mutants) | the replacement text reaches a parser that accepts nothing but NDJSON, so every alternative contributes zero entries — which is the property that let the `null` sentinel be deleted this iteration |
-| `FileAuditStore` | `isUnlinkRefusal(error)` → `true` | no runner can make `unlink` fail for a reason outside the four listed codes — a process running as root is never refused — and the rule itself is asserted by `DW.12`, which is why it is a predicate rather than a list inside a `catch` |
-| `FileAuditStore` | `rmSync(gzPath, { force: false })` | detected as a **crash**, not as a failing test: without `force` the cleanup rejects inside a `catch` whose promise nothing awaits, and the runner dies with it — which is the unhandled rejection the flag prevents |
-| `FileAuditStore` | `'at-rest'` → `''` on the reconciliation's call to `repairFor` | the function asks `when === 'live'`, so every value that is not `'live'` takes the at-rest path — the parameter is a union of two names for readability, and the distinction it encodes is one predicate |
-| `FileAuditStore` | `else if (repair === 'promote')` → `else if (true)` in the sweep | the only verdicts that reach that branch are `none`, `release` and `promote`, and on a runner that reads as root a name that exists and yields no text cannot be produced — the cell is asserted through `repairFor`'s table (`SH.21`) rather than through a directory |
-| `FileAuditStore` | `if (repair === 'promote')` → `if (true)` in the live path | as above: with an archive present, `none` and `plain-unreadable` are the only other verdicts, and the second one is unreachable without a file the runner cannot read |
-| `FileAuditStore` | `if (!isRegularFile(archivePath)) return` in the live path → `false` | `relateTwin` answers `no-twin` for an archive that is not there, so the guard changes only how many bytes are read — and the bytes it prevents reading are the *whole active segment*, which is why it stays |
-| `FileAuditStore` | `this.activeFilePath = ''` in `releaseActiveFile` and in `rotate` → any string | the name is re-derived by the claim that the next append makes before it uses one; both assignments exist to keep "an unclaimed store names nothing" true, and no reader observes the intermediate value |
-| `RotationAuditor` | `hash: ''` placeholder → any string | the placeholder is overwritten by `_hashEntry` before the entry is stored, and `hash` is not part of the hashed content |
-| `RotationAuditor` | `firstCompletedAt !== null && lastCompletedAt !== null` → `\|\|`, or → `true` (three mutants) | both are derived from the same list, so they are null together and non-null together; with neither, `null - null` is `0`, which is what the ternary returns |
-| `RotationAuditor` | the `\|` separator in `_hashEntry` → `''` | the separator is a free choice: any fixed string produces the same chain. Only a deliberate concatenation collision could tell them apart, and `seq` is a number between two fixed-width fields |
-| `AuditLogManager` | `'utf-8'` in `createHash().update()` and in `appendFileSync` → `''` (two mutants) | `''` is falsy, so Node falls back to the same default encoding |
-| `AuditLogManager` | `sortBy ?? 'timestamp'` → `''`, `sortDir ?? 'asc'` → `''` | the default only matters when the field is absent, and `''` matches none of the other branches, so it takes the same `timestamp` / `cmp` path |
-| `AuditLogManager` | `a.seq - b.seq` → `a.seq + b.seq` | the event log is append-only, so it is always already in sequence order; a comparator that returns a consistent positive sign cannot reorder it, in either direction |
-| `AuditLogManager` | `if (limit <= 0) return []` → `limit < 0` | for `limit === 0` the `slice` below returns the same empty array |
-| `AuditLogManager` | `events.length - drop > maxEvents` → `>=` | the assignment that follows sets `drop` to `events.length - maxEvents`, which at equality is the value it already has |
-| `AuditLogManager` | `if (this.flushTimer)` in `destroy()` → `true` | `clearInterval(null)` is a no-op and the field is nulled either way |
-| `KeyManager` | `existing.key.length === dek.length &&` → `true` | `Buffer.equals` compares lengths itself, so the test could not be told from its absence — the line was deleted rather than excused |
-| `KeyManager` | `if (err) reject(err)` → `if (false)` (and the `reject` call itself, which no test covers) | the branch is **unreachable**: `crypto.pbkdf2` reports an unusable digest or work factor by throwing synchronously, and the promise executor turns that into the rejection. AC 75.21 observes the rejection from `generateKey` — with the branch present and with it disabled — so the two verdicts are the same rejection from different frames. Kept because the callback signature can report an error in principle, and resolving with `undefined` would fail one frame later with a message nobody could act on |
-| `KeyManager` | `this.kekCache.get(oldest)?.fill(0)` → `.fill(0)` | the entry was read from the same map one statement earlier and nothing between them can remove it |
-| `KeyManager`, `EnvelopeEncryptionProvider`, `AES256GCMEncryptionProvider` | every `fill(0)` on key material, and the `try`/`finally` blocks that hold them (nine mutants) | wiping a buffer cannot be observed by an assertion inside the same process (P2-19). Every one of these buffers has exactly one reference — the history, map or local being cleared on the next line — and the accessors (`getKey`, `getCurrentKey`) hand out copies, so no caller holds the buffer being wiped. It is a *testability* limit, not a permission to stop wiping |
+| Module                                                                    | Surviving mutant                                                                              | Why no test can distinguish it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `InMemoryBackupManager`                                                   | `state: 'in-progress'` → `state: ''`                                                          | the same method sets `completed` before it returns, so the interim value is never observable                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `MaintenanceWindowScheduler`                                              | `cursor.setUTCHours(...)` → `setUTCMinutes(...)`                                              | the cursor's _month_ is what drives the loop; every candidate is built from explicit year/month/day and `startTime`, and the ones the moved cursor would skip have already failed `candidateMs >= fromMs`                                                                                                                                                                                                                                                                                                            |
+| `MaintenanceWindowScheduler`                                              | `cursor.setUTCDate(1)` → `cursor.setTime(1)`                                                  | the cursor jumps to 1970 and walks every month to the range; all those candidates are before `fromMs`, so the answer is the same and only the walking is wasted                                                                                                                                                                                                                                                                                                                                                      |
+| `MaintenanceWindowScheduler`                                              | `while (cursorMs < toMs)` → `<=` (monthly)                                                    | at equality no candidate is `< toMs`, so the extra month contributes nothing                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `MaintenanceWindowScheduler`                                              | `day > lastDay` → `day >= lastDay`                                                            | at `day === lastDay` both branches produce `lastDay`                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `MaintenanceWindowScheduler`                                              | `while (cursor.getTime() < toMs …)` → `<=` (cron)                                             | as above, for the minute scan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `MaintenanceWindowScheduler`                                              | `iterations < maxIterations` → `<=`                                                           | one extra minute inside a 100 000-minute safety bound; only an expression that matches every minute for 69 days could see it, and that projection allocates 100 000 instances                                                                                                                                                                                                                                                                                                                                        |
+| `KeyRotationManager`                                                      | `success: false` → `true` in the event template                                               | every exit assigns it: the success path sets `true`, the `catch` sets `false`, and there is no third way out                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `KeyRotationManager`                                                      | `default:` arm of `_isDue` removed                                                            | the fall-through returns `undefined`, and the caller asks a yes/no question — `undefined` is not due, which is what `return false` says                                                                                                                                                                                                                                                                                                                                                                              |
+| `FileAuditStore`                                                          | `name > newest` → `>=`                                                                        | `readdir` cannot return the same name twice, so the two comparisons select the same name                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `FileAuditStore`                                                          | `?? ''` in `readSegment`, and the `return ''` in its `catch` → any text (two mutants)         | the replacement text reaches a parser that accepts nothing but NDJSON, so every alternative contributes zero entries — which is the property that let the `null` sentinel be deleted this iteration                                                                                                                                                                                                                                                                                                                  |
+| `FileAuditStore`                                                          | `isUnlinkRefusal(error)` → `true`                                                             | no runner can make `unlink` fail for a reason outside the four listed codes — a process running as root is never refused — and the rule itself is asserted by `DW.12`, which is why it is a predicate rather than a list inside a `catch`                                                                                                                                                                                                                                                                            |
+| `FileAuditStore`                                                          | `rmSync(gzPath, { force: false })`                                                            | detected as a **crash**, not as a failing test: without `force` the cleanup rejects inside a `catch` whose promise nothing awaits, and the runner dies with it — which is the unhandled rejection the flag prevents                                                                                                                                                                                                                                                                                                  |
+| `FileAuditStore`                                                          | `'at-rest'` → `''` on the reconciliation's call to `repairFor`                                | the function asks `when === 'live'`, so every value that is not `'live'` takes the at-rest path — the parameter is a union of two names for readability, and the distinction it encodes is one predicate                                                                                                                                                                                                                                                                                                             |
+| `FileAuditStore`                                                          | `else if (repair === 'promote')` → `else if (true)` in the sweep                              | the only verdicts that reach that branch are `none`, `release` and `promote`, and on a runner that reads as root a name that exists and yields no text cannot be produced — the cell is asserted through `repairFor`'s table (`SH.21`) rather than through a directory                                                                                                                                                                                                                                               |
+| `FileAuditStore`                                                          | `if (repair === 'promote')` → `if (true)` in the live path                                    | as above: with an archive present, `none` and `plain-unreadable` are the only other verdicts, and the second one is unreachable without a file the runner cannot read                                                                                                                                                                                                                                                                                                                                                |
+| `FileAuditStore`                                                          | `if (!isRegularFile(archivePath)) return` in the live path → `false`                          | `relateTwin` answers `no-twin` for an archive that is not there, so the guard changes only how many bytes are read — and the bytes it prevents reading are the _whole active segment_, which is why it stays                                                                                                                                                                                                                                                                                                         |
+| `FileAuditStore`                                                          | `this.activeFilePath = ''` in `releaseActiveFile` and in `rotate` → any string                | the name is re-derived by the claim that the next append makes before it uses one; both assignments exist to keep "an unclaimed store names nothing" true, and no reader observes the intermediate value                                                                                                                                                                                                                                                                                                             |
+| `RotationAuditor`                                                         | `hash: ''` placeholder → any string                                                           | the placeholder is overwritten by `_hashEntry` before the entry is stored, and `hash` is not part of the hashed content                                                                                                                                                                                                                                                                                                                                                                                              |
+| `RotationAuditor`                                                         | `firstCompletedAt !== null && lastCompletedAt !== null` → `\|\|`, or → `true` (three mutants) | both are derived from the same list, so they are null together and non-null together; with neither, `null - null` is `0`, which is what the ternary returns                                                                                                                                                                                                                                                                                                                                                          |
+| `RotationAuditor`                                                         | the `\|` separator in `_hashEntry` → `''`                                                     | the separator is a free choice: any fixed string produces the same chain. Only a deliberate concatenation collision could tell them apart, and `seq` is a number between two fixed-width fields                                                                                                                                                                                                                                                                                                                      |
+| `AuditLogManager`                                                         | `'utf-8'` in `createHash().update()` and in `appendFileSync` → `''` (two mutants)             | `''` is falsy, so Node falls back to the same default encoding                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `AuditLogManager`                                                         | `sortBy ?? 'timestamp'` → `''`, `sortDir ?? 'asc'` → `''`                                     | the default only matters when the field is absent, and `''` matches none of the other branches, so it takes the same `timestamp` / `cmp` path                                                                                                                                                                                                                                                                                                                                                                        |
+| `AuditLogManager`                                                         | `a.seq - b.seq` → `a.seq + b.seq`                                                             | the event log is append-only, so it is always already in sequence order; a comparator that returns a consistent positive sign cannot reorder it, in either direction                                                                                                                                                                                                                                                                                                                                                 |
+| `AuditLogManager`                                                         | `if (limit <= 0) return []` → `limit < 0`                                                     | for `limit === 0` the `slice` below returns the same empty array                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `AuditLogManager`                                                         | `events.length - drop > maxEvents` → `>=`                                                     | the assignment that follows sets `drop` to `events.length - maxEvents`, which at equality is the value it already has                                                                                                                                                                                                                                                                                                                                                                                                |
+| `AuditLogManager`                                                         | `if (this.flushTimer)` in `destroy()` → `true`                                                | `clearInterval(null)` is a no-op and the field is nulled either way                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `KeyManager`                                                              | `existing.key.length === dek.length &&` → `true`                                              | `Buffer.equals` compares lengths itself, so the test could not be told from its absence — the line was deleted rather than excused                                                                                                                                                                                                                                                                                                                                                                                   |
+| `KeyManager`                                                              | `if (err) reject(err)` → `if (false)` (and the `reject` call itself, which no test covers)    | the branch is **unreachable**: `crypto.pbkdf2` reports an unusable digest or work factor by throwing synchronously, and the promise executor turns that into the rejection. AC 75.21 observes the rejection from `generateKey` — with the branch present and with it disabled — so the two verdicts are the same rejection from different frames. Kept because the callback signature can report an error in principle, and resolving with `undefined` would fail one frame later with a message nobody could act on |
+| `KeyManager`                                                              | `this.kekCache.get(oldest)?.fill(0)` → `.fill(0)`                                             | the entry was read from the same map one statement earlier and nothing between them can remove it                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `KeyManager`, `EnvelopeEncryptionProvider`, `AES256GCMEncryptionProvider` | every `fill(0)` on key material, and the `try`/`finally` blocks that hold them (nine mutants) | wiping a buffer cannot be observed by an assertion inside the same process (P2-19). Every one of these buffers has exactly one reference — the history, map or local being cleared on the next line — and the accessors (`getKey`, `getCurrentKey`) hand out copies, so no caller holds the buffer being wiped. It is a _testability_ limit, not a permission to stop wiping                                                                                                                                         |
 
 **P2-18 was withdrawn, and the way it was withdrawn is the useful part.** Iteration 30 reported
 five mutants as "killed by hand, survived according to the runner" and concluded the runner's
@@ -641,17 +672,17 @@ what it inserted, so the operator sees the change before running the tests. The 
 are now five missing assertions (AC 73.1–73.13), each verified by replaying the recorded edit and
 watching the named test fail:
 
-| Recorded survivor | What a caller would have noticed | Killed by |
-| --- | --- | --- |
-| `(stats.eventsBySeverity[s] \|\| 0)` → `false` | every severity bucket reported one event, whatever it held | AC 73.1 |
-| `${expectedSeq + i}` → `${expectedSeq - i}` in the gap message | the second and later gaps blamed the wrong number | AC 73.2 |
-| `flush()`'s empty-buffer guard → `false` | flushing an idle manager appended a blank line to an NDJSON trail | AC 73.3 |
-| `actual.ino !== expected.ino` → `false` | a different file of the same length was deleted as if it were the measured one | AC 73.12 |
-| `[...DATA_KEY_BYTES].join(', ')` (two mutants) | the error message lost the list it exists to state | AC 73.4 |
-| `iterations < 1` → `<= 1` | `iterations: 1` was refused | AC 73.5 |
-| `version > highestVersion` → `true` in `loadKey` | importing an old key lowered the next minted version | AC 73.6 |
-| `ciphertext.length <= HEADER_PREFIX_LENGTH` (two boundaries) | a blob that has a header was reported as short | AC 73.9, 73.10 |
-| `data.length <= 12 + 16` | the only empty ciphertext the provider can produce became undecryptable | AC 73.11 |
+| Recorded survivor                                              | What a caller would have noticed                                               | Killed by      |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------- |
+| `(stats.eventsBySeverity[s] \|\| 0)` → `false`                 | every severity bucket reported one event, whatever it held                     | AC 73.1        |
+| `${expectedSeq + i}` → `${expectedSeq - i}` in the gap message | the second and later gaps blamed the wrong number                              | AC 73.2        |
+| `flush()`'s empty-buffer guard → `false`                       | flushing an idle manager appended a blank line to an NDJSON trail              | AC 73.3        |
+| `actual.ino !== expected.ino` → `false`                        | a different file of the same length was deleted as if it were the measured one | AC 73.12       |
+| `[...DATA_KEY_BYTES].join(', ')` (two mutants)                 | the error message lost the list it exists to state                             | AC 73.4        |
+| `iterations < 1` → `<= 1`                                      | `iterations: 1` was refused                                                    | AC 73.5        |
+| `version > highestVersion` → `true` in `loadKey`               | importing an old key lowered the next minted version                           | AC 73.6        |
+| `ciphertext.length <= HEADER_PREFIX_LENGTH` (two boundaries)   | a blob that has a header was reported as short                                 | AC 73.9, 73.10 |
+| `data.length <= 12 + 16`                                       | the only empty ciphertext the provider can produce became undecryptable        | AC 73.11       |
 
 Iteration 32 closed the two `FileAuditStore` survivors that had been registered as P2-21, and it
 closed them in opposite ways because they turned out to be opposite things. The unreadable-segment
@@ -667,7 +698,7 @@ of a comment (AC 76.6–76.8).
 Reading them was worth doing rather than assuming: iteration 27 turned 38 survivors into 11
 assertions and two defects, iteration 29 turned 100 into eighteen defects and seventy-five
 assertions, and iteration 30 turned 81 into four defects and thirty-two assertions. What is left is
-quieter, and each row above says *why* the mutant cannot be seen rather than *that* it probably
+quieter, and each row above says _why_ the mutant cannot be seen rather than _that_ it probably
 cannot.
 
 A green suite says the assertions pass. It does not say they would fail if the behaviour changed —
@@ -690,7 +721,7 @@ did, and finding out which part was not is worth more than the half point.
 
 **The mutation config for this package was itself flaky, and it was measuring noise.** With
 `fileParallelism: true`, three clean runs of the config — no mutant applied at all — failed a test in
-two of them, with `SqliteError: disk I/O error` from `pragma journal_mode = WAL`, and a *different* test
+two of them, with `SqliteError: disk I/O error` from `pragma journal_mode = WAL`, and a _different_ test
 each time. Replaying the reported survivors made the consequence concrete: 68 of the 133 "survived"
 mutants failed the suite when applied, because a flaky test was failing and the runner attributed it to
 the mutant. A score moved by noise moves in both directions, and neither is evidence.
@@ -705,8 +736,8 @@ inside each of those is sixteen processes for a suite that takes five seconds. T
 went from about an hour to **4 m 15 s** for this target.
 
 That number was a floor, and the iteration after it found out how low: the nineteen timeouts were the
-first hint, and the 132 survivors were the rest. Reading them (see *The two product targets, read the
-same way* above) took the same target to **94.26 %** — 476 killed, 29 equivalent, one runner error — with
+first hint, and the 132 survivors were the rest. Reading them (see _The two product targets, read the
+same way_ above) took the same target to **94.26 %** — 476 killed, 29 equivalent, one runner error — with
 a run time of 1 m 35 s, because a suite that fails fast costs less than one that waits to be killed.
 
 **How the performance numbers are produced.** Every latency case goes through
@@ -716,19 +747,19 @@ rather than a zero. The cluster benchmarks start three real nodes over mTLS and 
 `RaftAdapter`, one file at a time, because a benchmark that shares cores with another benchmark
 is not measuring the middleware. Representative numbers from this machine:
 
-| Metric | Value |
-|---|---|
-| `proposeAndWait` p50 / p99 (n = 200) | 1.09–1.39 ms / 3.5–4.6 ms |
-| Sequential throughput | 712–874 ops/s |
-| `readIndex` / `leaseRead` p50 (n = 1 000) | 0.001 ms |
-| Retained log after 300 proposals (default threshold) | 21 entries |
-| Retained heap per proposal | 1.0–1.4 KB |
-| Concurrent (8 in flight) versus sequential | 0.42–0.43× — see P1-5 in the roadmap |
+| Metric                                               | Value                                |
+| ---------------------------------------------------- | ------------------------------------ |
+| `proposeAndWait` p50 / p99 (n = 200)                 | 1.09–1.39 ms / 3.5–4.6 ms            |
+| Sequential throughput                                | 712–874 ops/s                        |
+| `readIndex` / `leaseRead` p50 (n = 1 000)            | 0.001 ms                             |
+| Retained log after 300 proposals (default threshold) | 21 entries                           |
+| Retained heap per proposal                           | 1.0–1.4 KB                           |
+| Concurrent (8 in flight) versus sequential           | 0.42–0.43× — see P1-5 in the roadmap |
 
 **A convergent property cannot be read at an instant.** CI run `44225232372` failed the benchmark
 job on `AC 29.2`: `expected [ null, 2, null ] to deeply equal [ 2, 2, 2 ]`. That is neither a flake
 nor a product bug. raft-core's `becomeLeaderUnlocked` sets `state = Leader` and
-`currentLeader = self`, *then* appends the no-op entry, *then* starts the heartbeat timer — and
+`currentLeader = self`, _then_ appends the no-op entry, _then_ starts the heartbeat timer — and
 `TestCluster.findLeader()` polls `isLeader()`, so it resolves inside that window. A test that reads
 `getLeader()` on all three nodes immediately afterwards is reading a property that cannot have
 converged yet. Measured on a workstation: **six of six** trials returned `[ 1, null, null ]` right
@@ -747,18 +778,18 @@ behaviour is tested exactly and in microseconds — and the three that are not a
 because a primitive whose real clock and real sleep are never executed is a primitive shipping its
 test double:
 
-| Property | Why it is the contract |
-|---|---|
-| The deadline bounds waiting, not looking | a check skipped for want of time reports "not converged" about a property nobody read |
-| A read started inside the budget counts | an RPC that returns late still answered the question that was asked in time; discarding it makes the outcome a function of scheduler latency |
-| A throwing read is retried, and remembered | during an election a peer may not answer; "timed out" must not hide a broken transport |
-| The failure carries the observation | `attempts=2 last observed: [null,2,null]` separates a lagging follower from a cluster that never elected anyone |
-| Readers of a round are read concurrently | three sequential reads observe three moments and call the difference a fault |
+| Property                                   | Why it is the contract                                                                                                                       |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| The deadline bounds waiting, not looking   | a check skipped for want of time reports "not converged" about a property nobody read                                                        |
+| A read started inside the budget counts    | an RPC that returns late still answered the question that was asked in time; discarding it makes the outcome a function of scheduler latency |
+| A throwing read is retried, and remembered | during an election a peer may not answer; "timed out" must not hide a broken transport                                                       |
+| The failure carries the observation        | `attempts=2 last observed: [null,2,null]` separates a lagging follower from a cluster that never elected anyone                              |
+| Readers of a round are read concurrently   | three sequential reads observe three moments and call the difference a fault                                                                 |
 
 Three consequences, each measured rather than argued. `AC 29.2` now agrees in two rounds (54–68 ms),
 which is one heartbeat and exactly what the protocol implies. `AC 7.2` dropped its 2 000 ms sleep for
 a bounded agreement, runs in **502 ms**, and asserts something stricter than before. And `FC.4` —
-which had asserted that no node may *claim* leadership when one of three survives — turned out to
+which had asserted that no node may _claim_ leadership when one of three survives — turned out to
 assert a property the library never claimed: raft-core 0.2.1 implements no check-quorum, so an
 isolated leader keeps reporting `isLeader() === true` (measured: still true at 16 s, commit index
 frozen at 1, the write refused after 5 028 ms). It asserts the guarantee that exists — a minority
@@ -779,12 +810,11 @@ Not covered: fixed sleeps that precede assertions remain in the `raft-stress`, `
 `raft-shared-transport` child-process suites (P3-19). Same defect class, same remedy, but each
 conversion has to be read rather than applied mechanically.
 
-
 **A fault injector installed into a field nobody reads.** With the leader of a real 3-node cluster
 "partitioned" — `ChaosCluster.injectFault('partition', [leader])` — the injector reported
 `{lost: 0, delayed: 0, partitioned: 0, forwarded: 0}` and the isolated leader **committed a write**.
 Not a counting bug: `RaftNode` captures the `Transport` object it is constructed with, and the harness
-assigned the injector to `adapter.transport` *after* construction, so the library kept talking to the
+assigned the injector to `adapter.transport` _after_ construction, so the library kept talking to the
 transport it had. Every partition, loss and latency fault in this repository was applied to a
 transport nobody used, which means the assertions that followed — "no split brain", "converges after
 partition recovery" — were describing a cluster that was never partitioned.
@@ -793,7 +823,7 @@ The seam is one object: `SwappableTransport` is what raft-core holds, and `adapt
 getter/setter over its inside. Two details are the contract rather than the implementation. The
 inbound handler follows every swap, because raft-core registers exactly one handler, once, at start —
 a seam that forwards sends but not the handler produces a node that answers nothing while looking
-correctly wired. And optional transport methods stay *absent* when the wrapped transport cannot do
+correctly wired. And optional transport methods stay _absent_ when the wrapped transport cannot do
 them, because raft-core branches on whether `addPeer` exists: a wrapper that always defines it turns
 "this transport cannot add peers" into a failed start, which is how `raft-shared-transport` broke on
 the first attempt.
@@ -801,32 +831,32 @@ the first attempt.
 Making the injection real exposed three more defects in the harness, each of which had been invisible
 for the same reason — nothing ever called it:
 
-| Defect | What it produced | Fix |
-|---|---|---|
-| The injector kept its own `started` flag | every Raft RPC failed with `ChaosInjectingTransport not started` the moment the seam routed through it: an injector installed on a running node had never been started | delegate the lifecycle; a wrapper adopts the state of what it wraps |
-| A dropped request was answered with an `AppendEntries` message whatever it was | a `RequestVote` answered by an append is not a dropped message, it is a malformed one that reads as a rejection by accident | refuse in the request's own kind at term 0, in one shared helper |
-| Isolation only filtered outbound traffic | a "partitioned" follower still answered the leader's heartbeats, so it stayed in sync: a half-open partition | filter inbound as well, and mark the complement on the other side |
+| Defect                                                                         | What it produced                                                                                                                                                       | Fix                                                                 |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| The injector kept its own `started` flag                                       | every Raft RPC failed with `ChaosInjectingTransport not started` the moment the seam routed through it: an injector installed on a running node had never been started | delegate the lifecycle; a wrapper adopts the state of what it wraps |
+| A dropped request was answered with an `AppendEntries` message whatever it was | a `RequestVote` answered by an append is not a dropped message, it is a malformed one that reads as a rejection by accident                                            | refuse in the request's own kind at term 0, in one shared helper    |
+| Isolation only filtered outbound traffic                                       | a "partitioned" follower still answered the leader's heartbeats, so it stayed in sync: a half-open partition                                                           | filter inbound as well, and mark the complement on the other side   |
 
-Plus a fourth, in the tests themselves: `injectFault('partition', [])` isolated *nobody* and healed
+Plus a fourth, in the tests themselves: `injectFault('partition', [])` isolated _nobody_ and healed
 nothing, and four call sites wrote it meaning "rejoin the cluster". With injection inert that was
 harmless; with injection real, `BP.3` wrote 30 of the 55 entries it asserts and `BP.2` never elected a
-leader again. `injectFault('partition', [])` now heals — isolating nobody *is* healing everyone — and
+leader again. `injectFault('partition', [])` now heals — isolating nobody _is_ healing everyone — and
 `healPartitions()` names it. The same file's `verifyConvergence` used to `console.log('[WARN] …')` and
 return, so every "after healing, all nodes converge" claim in it was unfalsifiable; it throws now.
 
 **The leader that could not serve.** `checkQuorum` was documented as "default: true" and read by
-nothing. It is now a quorum watchdog: `ObservedTransport` sits *innermost* — inside any injector — and
+nothing. It is now a quorum watchdog: `ObservedTransport` sits _innermost_ — inside any injector — and
 records the moment the real transport completed a round trip, because that is the only evidence a peer
 answered. A fault layer that answers a message it dropped produces no observation, which is exactly
 what an isolated leader must not mistake for contact. Two runs of the same experiment, one node of
 three isolated, at the four-second mark:
 
-| Configuration | Leadership | The write |
-|---|---|---|
-| `checkQuorum: false` (the old behaviour) | `isLeader()` still `true`, 40 messages blocked, so the isolation was real | refused after **5 035 ms** by the library's commit wait |
-| `checkQuorum: true` (the default) | `false` within one election timeout, and `getQuorumHealth()` names both silent peers | refused with `QUORUM_FAILED` inside **1.5 s**, naming the majority, the window and the silent peers |
+| Configuration                            | Leadership                                                                           | The write                                                                                           |
+| ---------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `checkQuorum: false` (the old behaviour) | `isLeader()` still `true`, 40 messages blocked, so the isolation was real            | refused after **5 035 ms** by the library's commit wait                                             |
+| `checkQuorum: true` (the default)        | `false` within one election timeout, and `getQuorumHealth()` names both silent peers | refused with `QUORUM_FAILED` inside **1.5 s**, naming the majority, the window and the silent peers |
 
-The library's own role is left alone: the node stops *claiming* it can serve, which is the part a
+The library's own role is left alone: the node stops _claiming_ it can serve, which is the part a
 router reads. `getLeader()` returns `null` while that is true — a leader that cannot hear a majority
 does not know who leads, and naming itself would be the claim the mechanism exists to stop making.
 
@@ -919,7 +949,7 @@ declaration-only.
 The three are fixed at the root (a static `node:crypto` import, a static `node:async_hooks` import, and
 `consensus/core/pgClient` using `createRequire(import.meta.url)`), the class is closed by a gate —
 `pnpm check:esm-require` fails on a bare `require` in any package declaring `"type": "module"`, with
-twelve tests of its own — and the artefact is now *called* rather than merely imported: `check-package`
+twelve tests of its own — and the artefact is now _called_ rather than merely imported: `check-package`
 probes the Merkle root against a constant computed with `node:crypto` and a trace id across an `await`
 boundary, both of which fail on the previous artefacts. `AC 54.1`–`AC 54.8` and `AC 55.1`–`AC 55.7` are
 the cases; the digest is asserted against an independent SHA-256, never against another call of the
@@ -928,7 +958,7 @@ class.
 The same run turned up a test-harness defect worth recording, because it was the apology for the
 product one: to make a CommonJS `require('pg')` resolvable from the test transform, the cluster suite
 materialised a fake `pg` package at `node_modules/pg` in `setupFiles`. That runs once per worker
-*thread*, so four threads truncated and rewrote the same two files, and a worker that required `pg`
+_thread_, so four threads truncated and rewrote the same two files, and a worker that required `pg`
 inside that window got an empty module — `TypeError: Client is not a constructor`, three cases, CI run
 44323059769, pointing at a file that was correct. Worse, `node_modules/pg` is a symlink into the pnpm
 store, so the stub replaced the real `pg` for the whole workspace for the rest of the run. The fake is

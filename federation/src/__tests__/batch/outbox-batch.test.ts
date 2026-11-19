@@ -292,53 +292,59 @@ describe('D3.1: OutboxStore Batch Operations', () => {
     }
   }, 15000);
 
-  it('BM6b: addBatch should not regress vs serial add for N=500 on single-core', () => {
+  it('AC 48.44 — a 500-entry batch stays inside a per-entry budget and matches serial add', async () => {
+    // BM6a replaced its speedup ratio with an absolute budget and said why: a
+    // relative comparison between two single-transaction paths measures
+    // scheduler noise, not throughput. BM6b kept the ratio, and CI duly
+    // produced 0.158 against a 0.2 floor — the noise, measured.
+    //
+    // It was measuring something else as well. The serial side was
+    // `for (...) storeSerial.add(...)` with no `await`, so the "serial" elapsed
+    // time was the cost of creating five hundred promises, not of inserting
+    // five hundred entries; the ratio compared a commit against a loop that
+    // never finished. Both halves are fixed here: the serial path is awaited,
+    // the two queues are compared entry for entry, and the timing assertion is
+    // a per-entry budget.
     const dirBatch = tmpDir('bm6b-batch');
     const dirSerial = tmpDir('bm6b-serial');
-    const storeBatch = new OutboxStore({
-      dataDir: dirBatch,
-      ttlMs: 60_000,
-      maxRetries: 3,
-      deadLetterTtlMs: 60_000,
-      mapSize: 16 * 1024 * 1024,
-    });
-    const storeSerial = new OutboxStore({
-      dataDir: dirSerial,
-      ttlMs: 60_000,
-      maxRetries: 3,
-      deadLetterTtlMs: 60_000,
-      mapSize: 16 * 1024 * 1024,
-    });
+    const makeStore = (dataDir: string) =>
+      new OutboxStore({
+        dataDir,
+        ttlMs: 60_000,
+        maxRetries: 3,
+        deadLetterTtlMs: 60_000,
+        mapSize: 16 * 1024 * 1024,
+      });
+    const storeBatch = makeStore(dirBatch);
+    const storeSerial = makeStore(dirSerial);
     const hlc = new HLC('d3-test-node');
     const N = 500;
 
     try {
-      // Benchmark: addBatch
       const batchEntries = Array.from({ length: N }, () => makeEntry(hlc));
       const batchStart = performance.now();
       const created = storeBatch.addBatch(batchEntries);
       const batchElapsed = performance.now() - batchStart;
       expect(created.length).toBe(N);
 
-      // Benchmark: serial add
       const serialStart = performance.now();
       for (let i = 0; i < N; i++) {
-        storeSerial.add(makeEntry(hlc));
+        await storeSerial.add(makeEntry(hlc));
       }
       const serialElapsed = performance.now() - serialStart;
 
-      const ratio = serialElapsed / batchElapsed;
-      console.table({
-        'N=500': '',
-        'addBatch (ms)': batchElapsed.toFixed(2),
-        'serial add x N (ms)': serialElapsed.toFixed(2),
-        'speedup ratio': ratio.toFixed(2) + 'x',
-      });
+      // What both paths have to agree on before their timings mean anything.
+      expect(await storeBatch.getPendingCount()).toBe(N);
+      expect(await storeSerial.getPendingCount()).toBe(N);
+      const batchIds = (await storeBatch.fetchOldestPending(N)).map((e) => e.id).sort();
+      const serialIds = (await storeSerial.fetchOldestPending(N)).map((e) => e.id).sort();
+      expect(batchIds).toEqual(serialIds);
 
-      // On single-core / shared vCPU envs batch may be slower than serial
-      // due to LMDB write transaction fsync. The ratio must not be catastrophically
-      // slow (> 5x worse), which would indicate a write path regression.
-      expect(ratio).toBeGreaterThan(0.2);
+      // An absolute per-entry budget, the same 5 ms BM6a uses: a return to
+      // per-entry fsyncs costs an order of magnitude more than this on any
+      // real volume, and scheduler noise cannot reach it.
+      expect(batchElapsed / N).toBeLessThan(5);
+      expect(serialElapsed / N).toBeLessThan(5);
     } finally {
       storeBatch.close();
       storeSerial.close();

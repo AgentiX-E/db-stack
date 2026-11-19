@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 // barrel is what a consumer resolves, and a barrel that names a file the build
 // did not emit compiles and fails only here.
 import { CDCFailureInjector } from './index';
-import type { FailureType } from './index';
+import type { FailureConfig } from './index';
 import { InMemoryCDCSink } from '../replication/InMemoryCDCSink';
 import { CDCSinkResolver } from '../replication/CDCSinkResolver';
 import { CDCEngine } from '../replication/CDCEngine';
@@ -12,13 +12,16 @@ import { CDCPublicationRegistry } from '../replication/CDCPublicationRegistry';
 import { CDCSubscriptionPump } from '../replication/CDCSubscriptionPump';
 import type { ICDCSink, CDCSinkEvent } from '../interfaces/replication/ICDCSink';
 
+// The real shape: `type`, not `operation`, and an HLC timestamp as a bigint.
+// A fixture that only had an `id` would have passed every assertion here while
+// describing an object the sink contract does not have.
 const evt = (id: string): CDCSinkEvent => ({
   id,
+  type: 'insert',
   table: 'orders',
-  operation: 'insert',
+  key: id,
   data: {},
-  timestamp: 1,
-  lsn: '0/00000001',
+  timestamp: 1n,
 });
 
 const events = (n: number): CDCSinkEvent[] => Array.from({ length: n }, (_, i) => evt(`e${i}`));
@@ -61,8 +64,9 @@ describe('CDCFailureInjector — one budget per configured fault', () => {
     // `find()` returned the first entry of a type, so the second was dead
     // configuration: a test that set `maxFailures: 5` on the second and watched
     // the first (`maxFailures: 1`) decide.
-    const duplicate: Partial<{ type: FailureType }>[] = [{ type: 'duplicate_inject' }, { type: 'duplicate_inject' }];
-    expect(() => new CDCFailureInjector(new InMemoryCDCSink(), duplicate as never)).toThrow(/configured twice/);
+    expect(
+      () => new CDCFailureInjector(new InMemoryCDCSink(), [{ type: 'duplicate_inject' }, { type: 'duplicate_inject' }]),
+    ).toThrow(/configured twice/);
 
     // The same type at two different injection points is two different faults,
     // so that is allowed.
@@ -135,7 +139,7 @@ describe('CDCFailureInjector — where a drop may fire', () => {
 
 describe('CDCFailureInjector — configuration it refuses', () => {
   it('AC 48.36 — a nonsensical number is rejected at construction', () => {
-    const cases: Array<[Partial<never>, RegExp]> = [
+    const cases: Array<[Partial<FailureConfig>, RegExp]> = [
       [{ type: 'latency_spike', probability: 1.5 }, /probability must be within/],
       [{ type: 'latency_spike', probability: Number.NaN }, /probability must be within/],
       [{ type: 'latency_spike', failEveryN: -1 }, /failEveryN must be a non-negative integer/],
