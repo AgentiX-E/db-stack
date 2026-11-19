@@ -195,6 +195,60 @@ describe('CDCEngine — Operation Types', () => {
   });
 });
 
+describe('CDCEngine — AC 48.21: LSN is a sequence, not a clock', () => {
+  it('assigns a distinct, increasing LSN to every change in the same millisecond', () => {
+    // The LSN used to be `0/${(Date.now() * 1000).toString(16)}`. Freeze the
+    // clock and every change in the loop below carried the *same* LSN, which is
+    // how "delivered in LSN order" could be true and meaningless at once.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-19T00:00:00.000Z'));
+      const engine = new CDCEngine({ nodeId: 'n1' });
+      const lsns = Array.from(
+        { length: 500 },
+        () =>
+          engine.appendChange({
+            tableName: 't',
+            operation: 'insert',
+            oldValues: null,
+            newValues: { id: 1 },
+          }).lsn,
+      );
+
+      expect(new Set(lsns).size).toBe(500);
+      // Lexicographic order has to be the numeric order, because
+      // `advanceCheckpoint` compares LSNs with `<` as strings.
+      expect([...lsns].sort()).toEqual(lsns);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps counting across stop() and start()', async () => {
+    const engine = new CDCEngine({ nodeId: 'n1' });
+    const first = engine.appendChange({
+      tableName: 't',
+      operation: 'insert',
+      oldValues: null,
+      newValues: { id: 1 },
+    });
+
+    await engine.stop();
+    await engine.start();
+
+    const second = engine.appendChange({
+      tableName: 't',
+      operation: 'insert',
+      oldValues: null,
+      newValues: { id: 2 },
+    });
+
+    // A restarted engine that reused LSNs would let a checkpoint built before
+    // the restart skip everything produced after it.
+    expect(second.lsn > first.lsn).toBe(true);
+  });
+});
+
 // ── CDCPublicationRegistry Tests ──
 
 describe('CDCPublicationRegistry — AC 45.2: Publications', () => {
