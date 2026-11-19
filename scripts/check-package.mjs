@@ -104,7 +104,59 @@ const TARGETS = [
       "ConflictResolver",
       "DedupRing",
       "HLC",
+      "CDCSubscriptionPump",
+      "CDCPublicationRegistry",
+      "CDCEngine",
+      "InMemoryCDCSink",
+      "CDCSinkResolver",
+      "projectChangeEvent",
     ],
+    // The pump is the one published feature whose job is an edge between two
+    // objects, and an edge cannot be verified by importing it: the probe builds
+    // a catalogue, a sink and a pump from the built artefact and checks that a
+    // change appended to the engine comes out at the sink.
+    behaviour: async ({ loaded, assert }) => {
+      const engine = new loaded.CDCEngine({ nodeId: "probe" });
+      const registry = new loaded.CDCPublicationRegistry({ nodeId: "probe", engine });
+      await registry.createPublication("probe-pub", ["orders"]);
+      await registry.createSubscription("probe-sub", "probe-pub", "memory://probe");
+
+      const sink = new loaded.InMemoryCDCSink("probe");
+      const pump = new loaded.CDCSubscriptionPump({
+        engine,
+        registry,
+        resolveSink: () => new loaded.CDCSinkResolver(sink, { healthCheckIntervalMs: 0 }),
+      });
+      await pump.start();
+
+      const change = engine.appendChange({
+        tableName: "orders",
+        operation: "insert",
+        oldValues: null,
+        newValues: { id: 1 },
+      });
+
+      // Poll on the pump's own count: the sink receives the event inside
+      // emit(), a moment before the pump records the delivery, so a poll on the
+      // sink would read the pair half-finished.
+      for (let i = 0; i < 40 && pump.getStatus().delivered === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+
+      assert.equal(
+        sink.getEvents().length,
+        1,
+        "a change appended to the engine must reach the subscription sink exactly once",
+      );
+      assert.equal(
+        sink.getEvents()[0].id,
+        change.lsn + ":" + change.txId,
+        "the delivered event must carry the LSN the engine assigned",
+      );
+      assert.equal(pump.getStatus().delivered, 1, "the pump must count the delivery");
+
+      await pump.stop();
+    },
   },
   { dir: "federation", entry: "./transport", expect: ["TcpSecureTransport"] },
   {
