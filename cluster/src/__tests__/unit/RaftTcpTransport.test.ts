@@ -70,12 +70,14 @@ describe('AC 32.2: register()', () => {
 });
 
 describe('AC 32.3: getStatus()', () => {
-  it('returns correct initial state', () => {
+  it('returns correct initial state, including the transport’s own counters', () => {
     const t = new RaftTcpTransport(validConfig());
     expect(t.getStatus()).toEqual({
       connectedPeers: [],
       totalPeers: 2,
       started: false,
+      bufferedFrames: {},
+      droppedFrames: 0,
     });
   });
 });

@@ -22,7 +22,7 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 
 import { MessageCodec, type RaftMessage } from './MessageCodec';
-import { ConnectionPool } from './ConnectionPool';
+import { ConnectionPool, type PeerConnection } from './ConnectionPool';
 import type { CircuitBreakerMetric } from '../opt/CircuitBreaker';
 import { MessageCompressor } from '../helpers/MessageCompressor';
 import { getErrorMessage } from '../helpers/errorUtils';
@@ -67,6 +67,40 @@ export interface RaftTcpTransportConfig {
 
 export type MessageHandler = (msg: RaftMessage) => void;
 
+/**
+ * How many frames the transport will hold for one unreachable peer.
+ *
+ * The pool used to carry a capped queue (1024 per peer) that nothing ever filled;
+ * the transport carried an uncapped one that is the only one actually used. A
+ * peer that stays unreachable while a leader keeps proposing therefore grew this
+ * buffer without limit — the cap moved to where the writing happens rather than
+ * being deleted with the queue it belonged to.
+ */
+const MAX_PENDING_FRAMES_PER_PEER = 1024;
+
+/**
+ * How many times a peer's pending batch is retried on a freshly dialled socket
+ * before its frames are given up.
+ *
+ * One failure is a dead socket: the batch goes back in the buffer and the
+ * connection is closed so the pool dials again. A socket that keeps accepting
+ * the dial and rejecting the write is not a transient failure, and retrying it
+ * forever is a loop that keeps a victim's frames in memory for the process's
+ * lifetime. Three attempts is the point where "the peer will not take these" is
+ * a fact; the frames are then counted and discarded in the open.
+ */
+const MAX_FLUSH_ATTEMPTS = 3;
+
+/** Emitted when frames are discarded because they could not be delivered. */
+export interface FramesDroppedEvent {
+  peerId: number;
+  count: number;
+  /** `buffer-full` — the peer's queue hit {@link MAX_PENDING_FRAMES_PER_PEER}; `flush-failed` — {@link MAX_FLUSH_ATTEMPTS} writes on fresh sockets all failed. */
+  reason: 'buffer-full' | 'flush-failed';
+  /** The oldest frame's first bytes, for a log line that can be matched to a message. */
+  head: string;
+}
+
 // ──────────────────────────────────────────
 //  RaftTcpTransport
 // ──────────────────────────────────────────
@@ -85,6 +119,10 @@ export class RaftTcpTransport extends EventEmitter {
    */
   private _buffers: Map<string, Buffer> = new Map();
   private _pendingMessages: Map<number, Buffer[]> = new Map();
+  /** Consecutive failed flush attempts per peer; reset by a write that succeeds. */
+  private _flushAttempts: Map<number, number> = new Map();
+  /** Frames discarded because they could not be delivered. Monotonic. */
+  private _droppedFrames = 0;
   private _outstandingReconnects: Set<number> = new Set();
   private _healthCheckTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -280,16 +318,7 @@ export class RaftTcpTransport extends EventEmitter {
       // connection was being established. This ensures entries proposed before
       // the TLS handshake completes are delivered without waiting for the next
       // tick cycle.
-      const pending = this._pendingMessages.get(peerId);
-      if (pending && pending.length > 0) {
-        this._pendingMessages.delete(peerId);
-        for (const buf of pending) {
-          conn.write(buf).catch((err: unknown) => {
-            console.warn('[RaftTcpTransport] Write pending messages failed, closing connection:', err);
-            conn.close();
-          });
-        }
-      }
+      this._flushPending(peerId, conn);
     };
 
     // 5. Initiate connections to all peers eagerly but non-blocking.
@@ -465,11 +494,31 @@ export class RaftTcpTransport extends EventEmitter {
     return this.pool?.connectedPeers ?? [];
   }
 
-  getStatus(): { connectedPeers: number[]; totalPeers: number; started: boolean } {
+  /**
+   * Snapshot of the transport's own counters.
+   *
+   * `bufferedFrames` is per peer and shrinks as connections come back;
+   * `droppedFrames` only grows. The second number is the one a deployment has to
+   * watch: a dropped Raft frame is a message the leader believes it sent, and
+   * nothing else in the process records that it did not arrive.
+   */
+  getStatus(): {
+    connectedPeers: number[];
+    totalPeers: number;
+    started: boolean;
+    bufferedFrames: Record<number, number>;
+    droppedFrames: number;
+  } {
+    const bufferedFrames: Record<number, number> = {};
+    for (const [peerId, frames] of this._pendingMessages) {
+      bufferedFrames[peerId] = frames.length;
+    }
     return {
       connectedPeers: this.pool?.connectedPeers ?? [],
       totalPeers: this._registeredNodes.size - 1, // Exclude self
       started: this._started,
+      bufferedFrames,
+      droppedFrames: this._droppedFrames,
     };
   }
 
@@ -536,19 +585,119 @@ export class RaftTcpTransport extends EventEmitter {
   }
 
   /**
-   * Fire-and-forget frame delivery.
+   * Drop the pending frame buffer for a peer.
    *
-   * 1) Compress the payload (async, outside the WASM queue critical path).
-   * 2) Delegate to _doSendFrame for the actual connection lookup + write.
-   *    NEVER blocks the caller on TLS handshake or socket write.
-   */
-  /**
-   * Guard: drainAndDrop the pending message buffer for a peer.
-   * Called from _doSendFrame when pool is gone (e.g. stop() during async
-   * compression callback). Prevents unbounded memory growth under burst.
+   * Called from `_doSendFrame` when the pool is gone (e.g. `stop()` during the
+   * async compression callback). Prevents unbounded memory growth under burst.
+   *
+   * Dropping is the correct behaviour here and only here: the transport is
+   * stopping, so there is no connection left that could ever flush these frames.
    */
   private _drainPending(peerId: number): void {
     this._pendingMessages.delete(peerId);
+  }
+
+  /**
+   * Append a frame to a peer's pending buffer, enforcing the per-peer cap.
+   *
+   * The newest frame wins: when the buffer is full the oldest one is discarded.
+   * A peer 1024 frames behind is either gone or will be caught up by the leader
+   * resending what it needs; keeping the frames it has already missed while
+   * refusing the current term would be the worse choice. Every discard is
+   * counted and emitted, because a dropped Raft frame is a fact the cluster
+   * cannot see and an operator has to.
+   */
+  private _bufferFrame(peerId: number, frame: Buffer): void {
+    let queue = this._pendingMessages.get(peerId);
+    if (!queue) {
+      queue = [];
+      this._pendingMessages.set(peerId, queue);
+    }
+    if (queue.length >= MAX_PENDING_FRAMES_PER_PEER) {
+      const evicted = queue.shift();
+      if (evicted) this._dropFrames(peerId, [evicted], 'buffer-full');
+    }
+    queue.push(frame);
+  }
+
+  /**
+   * Put frames back at the head of a peer's buffer, oldest first.
+   *
+   * Used when a flush fails part-way: the frames that never reached the socket
+   * are older than anything buffered since, so they keep their order. The cap
+   * still keeps the newest frames, the same rule `_bufferFrame` applies, because
+   * the newest are the ones a Raft peer is waiting on.
+   */
+  private _prependFrames(peerId: number, frames: Buffer[]): void {
+    const queue = this._pendingMessages.get(peerId) ?? [];
+    const merged = [...frames, ...queue];
+    const overflow = merged.length - MAX_PENDING_FRAMES_PER_PEER;
+    if (overflow > 0) {
+      this._dropFrames(peerId, merged.slice(0, overflow), 'buffer-full');
+      merged.splice(0, overflow);
+    }
+    this._pendingMessages.set(peerId, merged);
+  }
+
+  /** Count discarded frames and say so; a silent drop is a message lost in the dark. */
+  private _dropFrames(peerId: number, frames: Buffer[], reason: FramesDroppedEvent['reason']): void {
+    this._droppedFrames += frames.length;
+    const head = frames[0]!.subarray(0, 8).toString('hex');
+    logger.warn(`[RaftTcpTransport] Dropped ${frames.length} frame(s) for peer ${peerId} (${reason}, head=${head})`);
+    this.emit('frames-dropped', { peerId, count: frames.length, reason, head } satisfies FramesDroppedEvent);
+  }
+
+  /**
+   * Write a peer's buffered frames to a freshly available connection.
+   *
+   * A rejection here used to destroy the frames: the buffer was deleted at the
+   * top of the loop, so a write failure closed the socket and the entries the
+   * leader had proposed before the handshake completed were gone with no record.
+   * Re-buffering them and closing the socket turns that into a retry — the pool's
+   * close handler schedules the dial, `onConnectionCreated` fires again, and the
+   * batch goes out over the new socket. Retries are bounded by
+   * {@link MAX_FLUSH_ATTEMPTS} so a peer that accepts dials and refuses writes
+   * cannot pin one victim's frames forever.
+   *
+   * Writes are issued in order and the first rejection ends the batch: once a
+   * socket rejects one write the frames after it would land on the same dead
+   * socket, so they are re-buffered rather than written and lost.
+   */
+  private _flushPending(peerId: number, conn: PeerConnection): void {
+    const queued = this._pendingMessages.get(peerId);
+    if (!queued || queued.length === 0) return;
+    this._pendingMessages.delete(peerId);
+
+    let failed = false;
+    let settled = 0;
+    // The failure budget is per batch, not per frame: it is cleared only when
+    // every frame of one batch reached the socket. Clearing it on the first
+    // successful write let a peer that fails every other frame retry forever.
+    const onWritten = (): void => {
+      settled += 1;
+      if (settled === queued.length && !failed) this._flushAttempts.delete(peerId);
+    };
+    queued.forEach((frame, index) => {
+      conn.write(frame).then(onWritten, (err: unknown) => {
+        settled += 1;
+        if (failed) return; // One verdict per batch.
+        failed = true;
+        const attempts = (this._flushAttempts.get(peerId) ?? 0) + 1;
+        this._flushAttempts.set(peerId, attempts);
+        const undelivered = queued.slice(index);
+        logger.warn(
+          `[RaftTcpTransport] Flush to peer ${peerId} failed at frame ${index}/${queued.length} ` +
+            `(attempt ${attempts}/${MAX_FLUSH_ATTEMPTS}): ${String(err)}`,
+        );
+        if (attempts >= MAX_FLUSH_ATTEMPTS) {
+          this._flushAttempts.delete(peerId);
+          this._dropFrames(peerId, undelivered, 'flush-failed');
+        } else {
+          this._prependFrames(peerId, undelivered);
+        }
+        conn.close();
+      });
+    });
   }
 
   /**
@@ -609,9 +758,7 @@ export class RaftTcpTransport extends EventEmitter {
       if (isHeartbeat) return; // Idempotent — drop.
       // Buffer critical messages (Append, Vote, PreVote etc.) for delivery
       // when the connection is re-established (flushed in onConnectionCreated).
-      const pending = this._pendingMessages.get(peerId) || [];
-      pending.push(frame);
-      this._pendingMessages.set(peerId, pending);
+      this._bufferFrame(peerId, frame);
       // Fire-and-forget reconnect — only if not already connecting
       if (!this._outstandingReconnects.has(peerId)) {
         this._outstandingReconnects.add(peerId);

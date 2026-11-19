@@ -83,7 +83,11 @@ export type { CircuitBreakerMetric, PeerCircuitBreakerOptions } from './consensu
 
 // ── Transport ─────────────────────────────────────────────
 export { RaftTcpTransport } from './consensus/transport/RaftTcpTransport';
-export type { RaftTcpTransportConfig, RaftNodeConfig } from './consensus/transport/RaftTcpTransport';
+export type {
+  RaftTcpTransportConfig,
+  RaftNodeConfig,
+  FramesDroppedEvent,
+} from './consensus/transport/RaftTcpTransport';
 export { BatchedRaftTransport } from './consensus/transport/BatchedRaftTransport';
 export type { TransportPeerStats } from './consensus/transport/BatchedRaftTransport';
 export { SharedBatchedTransport } from './consensus/transport/SharedBatchedTransport';
@@ -91,12 +95,7 @@ export { NodeTransport } from './consensus/transport/NodeTransport';
 export { MessageCodec } from './consensus/transport/MessageCodec';
 export type { RaftMessage, RaftEntry } from './consensus/transport/MessageCodec';
 export { ConnectionPool, PeerConnection } from './consensus/transport/ConnectionPool';
-export type {
-  PeerInfo,
-  PeerTlsVerifyOptions,
-  ConnectionPoolConfig,
-  OutboundMessage,
-} from './consensus/transport/ConnectionPool';
+export type { PeerInfo, PeerTlsVerifyOptions, ConnectionPoolConfig } from './consensus/transport/ConnectionPool';
 export { MessageCompressor } from './consensus/helpers/MessageCompressor';
 export { crc32 } from './consensus/helpers/crc32';
 

@@ -226,8 +226,12 @@ export class NodeTransport extends EventEmitter implements SharedTransport {
 
   /**
    * Get current transport status.
+   *
+   * The shape is `RaftTcpTransport`'s, not a narrowed copy: a façade that
+   * publishes fewer fields than the object behind it hides exactly the counters
+   * (`droppedFrames`) a deployment needs when messages go missing.
    */
-  getStatus(): { connectedPeers: number[]; totalPeers: number; started: boolean } {
+  getStatus(): ReturnType<RaftTcpTransport['getStatus']> {
     return this.tcpTransport.getStatus();
   }
 

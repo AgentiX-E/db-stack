@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`droppedFrames` and `bufferedFrames` on `RaftTcpTransport.getStatus()`**, plus a
+  `frames-dropped` event. The transport buffers frames for an unreachable peer, and until now
+  nothing said how many it was holding or how many it had given up on: a dropped Raft frame is a
+  message the leader believes it sent, and no other counter in the process moved. `getStatus()`
+  reports the depth per peer and a monotonic drop count; the event carries the reason
+  (`buffer-full`, `flush-failed`) and the first eight bytes of the oldest discarded frame.
+- **`FramesDroppedEvent`** is exported, because it is the payload of a published event.
 - **Forty-four types that appeared in public signatures and could not be imported.**
   `RaftGroup.readSnapshotMeta()`, `RaftGroup.getLearners()`, `RaftGroup.transferLeadership()`,
   `HealthProbe`, `RaftMetricsCollector`, `PitrManager`, `WalStreamer`, `ShardManager`,
@@ -28,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A failed flush keeps its frames.** `onConnectionCreated` deleted a peer's pending buffer and
+  then wrote it; if a write rejected, the handler closed the socket and the frames were gone — the
+  entries the leader had proposed before the handshake completed were lost with no record. The
+  undelivered tail now goes back to the head of the buffer in order and the socket is still closed,
+  so the pool's reconnect flushes it again over a fresh socket. Retries are bounded at three
+  attempts per batch; after that the frames are counted and reported rather than retried forever
+  against a peer that accepts dials and refuses writes.
+- **The pending buffer is bounded per peer (1024 frames).** The cap used to live on the pool's
+  queue, which nothing ever filled, while the buffer that is actually written grew without limit.
+
 - **`RaftTcpTransportConfig` has one declaration.** `RaftAdapter` carried a second one, structurally
   a subset of the transport's, and copied it field by field when it built the transport. The copy
   omitted `compression` and `tls.verify`: a caller who set either through `init(tcpConfig)` got a
@@ -45,6 +62,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`ConnectionPool.sendTo()`, `broadcast()`, `enqueuePending()`, `flushPending()` and the
+  `OutboundMessage` type.** The pool carried a second send path: it serialised messages as JSON,
+  framed them itself, and queued them in its own pending map. `RaftTcpTransport` is the only writer
+  and does none of that — it encodes with `MessageCodec`, compresses, drops heartbeats and buffers
+  against its own drain — so the pool's path had no production caller, and a caller who reached for
+  it would have put JSON where the peer's decoder expects binary frames. The pending map, its
+  writes and its three flush call sites went with it; the transport's buffer took the cap.
+- **`ConnectionPool`'s deprecation notice**, which claimed "existing deployments construct it
+  directly" as the reason to keep the class exported. The pool is the transport's socket layer, not
+  a deprecated API: it is constructed by `RaftTcpTransport.start()` and by nothing else in this
+  repository.
 - **`ITransportReceiver`.** A declaration-only interface for a ZeroMQ transport this package does not
   have, exported from the entry point, implemented by nothing, and covered by one test that listed
   its own method names back at itself. Its `RaftMessage` went with it.

@@ -19,14 +19,18 @@
  * - mTLS (TLS 1.3 with mutual certificate authentication)
  * - Exponential backoff reconnection with 30% jitter
  * - Connection health monitoring (heartbeat, idle timeout)
- * - Outgoing message queue during disconnection
+ *
+ * It owns sockets and nothing else. Frames, buffering and the decision of what
+ * to do when a peer is unreachable belong to `RaftTcpTransport`, which is the
+ * only writer: the pool used to carry a second send path (`sendTo` /
+ * `broadcast`, JSON-framed, with its own pending queue) that no deployment
+ * called and that would have produced frames the peer's `MessageCodec` cannot
+ * decode. Two ways to send is one way to be wrong about which one ran.
  *
  * Usage:
  *   const pool = new ConnectionPool(config);
  *   const conn = await pool.getConnection(peerId);
- *   conn.write(JSON.stringify({ type: 'MsgAppend', ... }));
- *   await pool.sendTo(peerId, message);
- *   await pool.broadcast(fromId, messages);
+ *   conn.write(frame);                       // frame built by the transport
  *   pool.onIncoming(peerId, serverSocket);
  *   await pool.stop();
  */
@@ -87,30 +91,6 @@ export interface ConnectionPoolConfig {
   maxRetries?: number;
   /** Time in ms before the circuit breaker auto-resets after being opened (default: 60000). */
   circuitResetTimeoutMs?: number;
-}
-
-/**
- * A message envelope on its way out, before the pool stamps routing onto it.
- *
- * Not `RaftMessage`: the package already publishes the wire shape of that name
- * (`consensus/transport/MessageCodec`), whose ids are decimal strings. This one
- * carries whatever the caller serialises and is stamped with numeric peer ids by
- * `broadcast()`, so it is a different type with a different contract.
- */
-export interface OutboundMessage {
-  type: string;
-  from?: number;
-  to?: number;
-  term?: number;
-  [key: string]: unknown;
-}
-
-/**
- * Serialized pending message stored when no connection is available.
- */
-export interface PendingMessage {
-  msg: Buffer;
-  resolved: boolean;
 }
 
 // ──────────────────────────────────────────
@@ -427,7 +407,6 @@ export class ConnectionPool {
   private _connMutex = new Mutex();
   private _connections: Map<number, PeerConnection> = new Map();
   private _incoming: Map<number, PeerConnection> = new Map(); // Latch for incoming
-  private _pending: Map<number, PendingMessage[]> = new Map();
   private _retryTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
   private _retryAttempts: Map<number, number> = new Map();
   private _stopped = false;
@@ -528,7 +507,7 @@ export class ConnectionPool {
   }
 
   /**
-   * Forget a peer completely: stop retrying it, close its socket, drop its queue.
+   * Forget a peer completely: stop retrying it and close its socket.
    *
    * `addNode` alone cannot undo a peer. A removed cluster member that stayed in
    * the pool kept its retry loop, so a node that left the configuration went on
@@ -547,7 +526,6 @@ export class ConnectionPool {
       this._retryTimers.delete(peerId);
     }
     this._retryAttempts.delete(peerId);
-    this._pending.delete(peerId);
     this._circuitBreakers.delete(peerId);
 
     const connection = this._connections.get(peerId) ?? this._incoming.get(peerId);
@@ -605,45 +583,6 @@ export class ConnectionPool {
     }
 
     return this._connect(peerId);
-  }
-
-  /**
-   * Broadcast a message to all peers.
-   * This can be called for heartbeat or vote requests.
-   * We serialize to JSON automatically.
-   */
-  async broadcast(fromId: number, msgs: OutboundMessage[]): Promise<void> {
-    if (this._stopped) return;
-
-    const promises: Array<Promise<void>> = [];
-    for (const [peerId] of this._peerInfo) {
-      if (peerId === fromId) continue; // Don't send to self
-      for (const msg of msgs) {
-        msg.from = fromId;
-        msg.to = peerId;
-        promises.push(this.sendTo(peerId, msg));
-      }
-    }
-    await Promise.allSettled(promises);
-  }
-
-  /**
-   * Send a single message to a specific peer.
-   * If the connection is down, the message is queued.
-   */
-  async sendTo(peerId: number, msg: OutboundMessage): Promise<void> {
-    if (this._stopped) return;
-
-    const data = Buffer.from(JSON.stringify(msg), 'utf-8');
-    const frame = encodeFrame(data);
-
-    try {
-      const conn = await this.getConnection(peerId);
-      await conn.write(frame);
-    } catch (err) {
-      // Queue the message on failure
-      this.enqueuePending(peerId, frame);
-    }
   }
 
   /**
@@ -740,9 +679,6 @@ export class ConnectionPool {
       }
     });
 
-    // Flush any pending messages
-    this.flushPending(peerId);
-
     return conn;
   }
 
@@ -787,7 +723,6 @@ export class ConnectionPool {
     }
     await Promise.allSettled(closePromises);
     this._incoming.clear();
-    this._pending.clear();
     this._retryAttempts.clear();
     this._connecting.clear();
 
@@ -826,49 +761,6 @@ export class ConnectionPool {
       metrics.push(breaker.getMetrics());
     }
     return metrics;
-  }
-
-  // ──────────────────────────────────────────
-  //  Pending message management
-  // ──────────────────────────────────────────
-
-  /**
-   * Queue a message for delivery when the connection is restored.
-   */
-  enqueuePending(peerId: number, msg: Buffer): void {
-    if (this._stopped) return;
-    let queue = this._pending.get(peerId);
-    if (!queue) {
-      queue = [];
-      this._pending.set(peerId, queue);
-    }
-    // Limit queue size to prevent memory leak
-    if (queue.length < 1024) {
-      queue.push({ msg, resolved: false });
-    }
-  }
-
-  /**
-   * Flush all pending messages for a peer on reconnection.
-   */
-  async flushPending(peerId: number): Promise<void> {
-    const queue = this._pending.get(peerId);
-    if (!queue || queue.length === 0) return;
-
-    const conn = await this._connMutex.runExclusive(async () => {
-      return this._connections.get(peerId);
-    });
-    if (!conn || !conn.connected) {
-      return; // Not ready yet
-    }
-
-    const pending = queue.splice(0);
-    for (const item of pending) {
-      conn.write(item.msg).catch((err: unknown) => {
-        console.warn('[ConnectionPool] Write failed, re-queuing for peer', peerId, ':', err);
-        this.enqueuePending(peerId, item.msg);
-      });
-    }
   }
 
   // ──────────────────────────────────────────
@@ -976,9 +868,6 @@ export class ConnectionPool {
       // Reset retry count on successful connection
       this._retryAttempts.delete(peerId);
       this._connecting.delete(peerId);
-
-      // Flush pending messages
-      this.flushPending(peerId);
 
       return conn;
     } catch (err) {
@@ -1230,7 +1119,6 @@ export class ConnectionPool {
     });
 
     if (hasIncoming) {
-      this.flushPending(peerId);
       return;
     }
 

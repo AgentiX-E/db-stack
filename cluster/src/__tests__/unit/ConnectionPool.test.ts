@@ -15,25 +15,27 @@
  *   AC 31.15: getConnection reuses an incoming latch connection
  *   AC 31.16: getConnection waits for an in-progress connect
  *   AC 31.17: getConnection throws for an unknown peer
- *   AC 31.18: broadcast skips self and settles all sends
- *   AC 31.19: sendTo queues on failure
+ *   AC 31.18: (withdrawn — `broadcast()` was removed in iteration 51; the pool
+ *             owns sockets, `RaftTcpTransport` owns framing and buffering)
+ *   AC 31.19: (withdrawn — `sendTo()` removed with `broadcast()`, same reason)
  *   AC 31.20: tryGetConnection returns null when nothing is connected
  *   AC 31.21: onIncoming rejects an invalid peer certificate
- *   AC 31.22: onIncoming registers a valid connection and flushes pending
+ *   AC 31.22: onIncoming registers a valid connection
  *   AC 31.23: onIncoming supersedes an existing connection
  *   AC 31.24: markStale emits 'stale' on the active connection
  *   AC 31.25: stop closes connections, cancels retries, shuts breakers
  *   AC 31.26: connectionCount / connectedPeers getters reflect state
  *   AC 31.27: getCircuitBreakerMetrics aggregates per-peer metrics
- *   AC 31.28: enqueuePending caps the queue at 1024 entries
- *   AC 31.29: flushPending no-ops when no connection is ready
+ *   AC 31.28: (withdrawn — the pool's pending queue went with `sendTo()`; the
+ *             cap now lives on the transport's buffer, AC 34.61)
+ *   AC 31.29: (withdrawn — `flushPending()` removed with the queue it drained)
  *   AC 31.30: _connect wraps a failed TLS handshake through the breaker
  *   AC 31.31: _resolveHost caches IPv4 and falls back to hostname
  *   AC 31.32: _scheduleRetry opens the breaker after maxRetries
  *   AC 31.33: _onDisconnect reconnects when no incoming latch exists
  *   AC 31.34: _waitForConnection resolves to the eventual connection
  *   AC 31.35: a breaker reset re-arms the connection it stopped
- *   AC 31.36: removeNode forgets a peer (info, breaker, retry, queue, socket)
+ *   AC 31.36: removeNode forgets a peer (info, breaker, retry, socket)
  *   AC 31.37: removeNode is idempotent for an unknown peer
  *   AC 31.38: removeNode survives a connection whose close throws
  *   AC 31.39: no retry is armed for a peer the pool no longer holds
@@ -46,12 +48,10 @@ import {
   ConnectionPool,
   PeerConnection,
   decodeFrame,
-  encodeFrame,
   type ConnectionPoolConfig,
 } from '../../consensus/transport/ConnectionPool';
 
-// Re-export computeBackoff coverage through a local alias (called below).
-void encodeFrame;
+// Re-export the frame decoder through a local alias (called below).
 void decodeFrame;
 
 // ── Mock socket factory (hoisted reference) ─────────────────────
@@ -449,7 +449,6 @@ describe('ConnectionPool removeNode', () => {
       setTimeout(() => {}, 60_000),
     );
     (pool as any)._retryAttempts.set(2, 4);
-    (pool as any)._pending.set(2, [{ msg: Buffer.from('x'), resolved: false }]);
 
     const closeSpy = vi.spyOn(conn, 'close');
     pool.removeNode(2);
@@ -458,7 +457,6 @@ describe('ConnectionPool removeNode', () => {
     expect((pool as any)._circuitBreakers.has(2)).toBe(false);
     expect((pool as any)._retryTimers.has(2)).toBe(false);
     expect((pool as any)._retryAttempts.has(2)).toBe(false);
-    expect((pool as any)._pending.has(2)).toBe(false);
     expect((pool as any)._connections.has(2)).toBe(false);
     expect(closeSpy).toHaveBeenCalled();
     await pool.stop();
@@ -608,60 +606,7 @@ describe('ConnectionPool getConnection', () => {
   });
 });
 
-describe('ConnectionPool broadcast / sendTo / tryGetConnection', () => {
-  it('broadcast skips self and settles all sends', async () => {
-    const pool = new ConnectionPool(makeConfig());
-    // Pre-wire connected peers so sendTo completes writes without reconnecting.
-    for (const id of [2, 3]) {
-      const conn = new PeerConnection(id, createMockSocket());
-      (pool as any)._connections.set(id, conn);
-    }
-    await expect(
-      pool.broadcast(1, [
-        { type: 'Append', term: 5 },
-        { type: 'Vote', term: 5 },
-      ]),
-    ).resolves.toBeUndefined();
-  });
-
-  it('broadcast no-ops when stopped', async () => {
-    const pool = new ConnectionPool(makeConfig());
-    (pool as any)._stopped = true;
-    const sendSpy = vi.spyOn(pool as any, 'sendTo');
-    await pool.broadcast(1, [{ type: 'Append' }]);
-    expect(sendSpy).not.toHaveBeenCalled();
-    sendSpy.mockRestore();
-  });
-
-  it('broadcast skips the sender id even when it is a peer', async () => {
-    const pool = new ConnectionPool(makeConfig());
-    for (const id of [2, 3]) {
-      const conn = new PeerConnection(id, createMockSocket());
-      (pool as any)._connections.set(id, conn);
-    }
-    const sendSpy = vi.spyOn(pool as any, 'sendTo');
-    await pool.broadcast(2, [{ type: 'Append' }]);
-    // peer 2 (== fromId) is skipped; only peer 3 is sent.
-    expect(sendSpy).not.toHaveBeenCalledWith(2, expect.anything());
-    sendSpy.mockRestore();
-  });
-
-  it('sendTo no-ops when stopped', async () => {
-    const pool = new ConnectionPool(makeConfig());
-    (pool as any)._stopped = true;
-    const getSpy = vi.spyOn(pool as any, 'getConnection');
-    await pool.sendTo(2, { type: 'Append' });
-    expect(getSpy).not.toHaveBeenCalled();
-    getSpy.mockRestore();
-  });
-
-  it('sendTo queues the frame on write failure', async () => {
-    const pool = new ConnectionPool(makeConfig({ peers: [] }));
-    // Unknown peer → getConnection throws → enqueuePending
-    await pool.sendTo(7, { type: 'Append' });
-    expect((pool as any)._pending.get(7)).toHaveLength(1);
-  });
-
+describe('ConnectionPool tryGetConnection', () => {
   it('tryGetConnection returns null when nothing is connected', () => {
     const pool = new ConnectionPool(makeConfig({ peers: [] }));
     expect(pool.tryGetConnection(2)).toBeNull();
@@ -787,9 +732,8 @@ describe('ConnectionPool onIncoming', () => {
     await pool.stop();
   });
 
-  it('registers a valid connection and flushes pending', async () => {
+  it('registers a valid connection', async () => {
     const pool = new ConnectionPool(makeConfig());
-    (pool as any)._pending.set(2, [{ msg: encodeFrame(Buffer.from('x')), resolved: false }]);
     const socket = createMockSocket();
     const conn = await pool.onIncoming(2, socket);
     expect(conn).not.toBeNull();
@@ -904,47 +848,8 @@ describe('ConnectionPool markStale / getters / metrics', () => {
   });
 });
 
-describe('ConnectionPool enqueuePending / flushPending', () => {
-  it('enqueuePending caps the queue at 1024 entries', () => {
-    const pool = new ConnectionPool(makeConfig({ peers: [] }));
-    for (let i = 0; i < 1100; i++) {
-      pool.enqueuePending(2, Buffer.from(String(i)));
-    }
-    expect((pool as any)._pending.get(2)).toHaveLength(1024);
-  });
-
-  it('enqueuePending no-ops when stopped', () => {
-    const pool = new ConnectionPool(makeConfig({ peers: [] }));
-    (pool as any)._stopped = true;
-    pool.enqueuePending(2, Buffer.from('x'));
-    expect((pool as any)._pending.has(2)).toBe(false);
-  });
-
-  it('flushPending no-ops when no queue exists', async () => {
-    const pool = new ConnectionPool(makeConfig({ peers: [] }));
-    await expect(pool.flushPending(2)).resolves.toBeUndefined();
-  });
-
-  it('flushPending no-ops when no connection is ready', async () => {
-    const pool = new ConnectionPool(makeConfig({ peers: [] }));
-    (pool as any)._pending.set(2, [{ msg: Buffer.from('x'), resolved: false }]);
-    await expect(pool.flushPending(2)).resolves.toBeUndefined();
-    expect((pool as any)._pending.get(2)).toHaveLength(1);
-  });
-
-  it('flushPending writes and drains the queue', async () => {
-    const pool = new ConnectionPool(makeConfig());
-    const conn = new PeerConnection(2, createMockSocket());
-    (pool as any)._connections.set(2, conn);
-    const frame = encodeFrame(Buffer.from('pending-msg'));
-    (pool as any)._pending.set(2, [{ msg: frame, resolved: false }]);
-    await pool.flushPending(2);
-    expect((pool as any)._pending.get(2)).toHaveLength(0);
-  });
-});
-
 describe('ConnectionPool _connect', () => {
-  it('creates a connection and flushes any pending messages', async () => {
+  it('creates a connection and registers it', async () => {
     const pool = new ConnectionPool(makeConfig());
     const conn = await (pool as any)._connect(2);
     expect(conn).toBeInstanceOf(PeerConnection);
@@ -1052,33 +957,6 @@ describe('ConnectionPool retry scheduling', () => {
     await vi.waitFor(() => expect(connectSpy).toHaveBeenCalled());
     connectSpy.mockRestore();
     await pool.stop();
-  });
-});
-
-describe('ConnectionPool flushPending write failure', () => {
-  it('re-queues a message when the write fails', async () => {
-    const pool = new ConnectionPool(makeConfig());
-    const conn = new PeerConnection(2, makeMockSocket());
-    // Keep the connection "connected" so flushPending reaches the write path,
-    // but force the underlying socket write to reject.
-    const socket = makeMockSocket();
-    socket.write = vi.fn((_data: Buffer, cb?: (e?: Error | null) => void) => {
-      // Invoke the callback with an error so PeerConnection.write rejects.
-      if (cb) setImmediate(() => cb(new Error('write-dropped')));
-      return true;
-    });
-    (conn as any)._socket = socket;
-    (conn as any)._connected = true;
-    (pool as any)._connections.set(2, conn);
-    const frame = encodeFrame(Buffer.from('pending-msg'));
-    (pool as any)._pending.set(2, [{ msg: frame, resolved: false }]);
-
-    await pool.flushPending(2);
-    // The write rejection re-enqueues asynchronously (fire-and-forget): wait
-    // for the rejection handler to run before asserting.
-    await new Promise((r) => setImmediate(r));
-    await new Promise((r) => setImmediate(r));
-    expect((pool as any)._pending.get(2)).not.toHaveLength(0);
   });
 });
 
@@ -1220,15 +1098,17 @@ describe('ConnectionPool _onDisconnect', () => {
     await pool.stop();
   });
 
-  it('flushes pending messages when an incoming latch is promoted', async () => {
+  it('promotes an incoming latch and does not dial a peer it already holds', async () => {
     const pool = new ConnectionPool(makeConfig());
     const incoming = new PeerConnection(2, makeMockSocket());
     (pool as any)._incoming.set(2, incoming);
-    (pool as any)._pending.set(2, [{ msg: encodeFrame(Buffer.from('x')), resolved: false }]);
-    const flushSpy = vi.spyOn(pool as any, 'flushPending').mockResolvedValue(undefined);
+    const scheduleSpy = vi.spyOn(pool as any, '_scheduleRetry');
     await (pool as any)._onDisconnect(2);
-    expect(flushSpy).toHaveBeenCalledWith(2);
-    flushSpy.mockRestore();
+    expect((pool as any)._connections.get(2)).toBe(incoming);
+    expect((pool as any)._incoming.has(2)).toBe(false);
+    // A latched incoming *is* the connection: scheduling a dial would fight it.
+    expect(scheduleSpy).not.toHaveBeenCalled();
+    scheduleSpy.mockRestore();
   });
 });
 

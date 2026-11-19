@@ -404,6 +404,12 @@ class PeerCircuitBreakerWrapper {
 TCP with mutual TLS for Raft messages: length-framed, one `PeerConnection` per
 peer, reconnection with backoff, and per-peer circuit breakers.
 
+It is the only writer: a frame that cannot go out now is buffered (bounded at
+1024 per peer) and flushed when the socket comes up. A buffered batch that the
+new socket rejects is put back and the socket closed, up to three attempts;
+after that the frames are dropped, counted in `getStatus().droppedFrames` and
+reported through the `frames-dropped` event.
+
 ```typescript
 class RaftTcpTransport {
   constructor(config: RaftTcpTransportConfig);
@@ -418,11 +424,24 @@ class RaftTcpTransport {
   waitForConnections(): Promise<void>;
   getBoundPort(): number;
   getConnectedPeers(): number[];
-  getStatus(): { connectedPeers: number[]; totalPeers: number; started: boolean };
+  getStatus(): {
+    connectedPeers: number[];
+    totalPeers: number;
+    started: boolean;
+    bufferedFrames: Record<number, number>;
+    droppedFrames: number;
+  };
   canReach(peerId: number): boolean;
   getCircuitBreakerMetrics(): CircuitBreakerMetric[];
 }
 ```
+
+### `FramesDroppedEvent`
+
+The payload of the `frames-dropped` event: `{ peerId, count, reason, head }`,
+where `reason` is `buffer-full` (the peer's queue hit its cap) or `flush-failed`
+(three fresh sockets rejected the batch). `head` is the first eight bytes of the
+oldest discarded frame, so a log line can be matched to a message.
 
 ### `BatchedRaftTransport`
 
@@ -490,13 +509,12 @@ the encode/decode pair both sides share.
 
 ### `ConnectionPool`
 
-The mTLS connection pool underneath `RaftTcpTransport`: dial-on-demand, pending
-queues while a dial is in flight, retry with backoff, and a circuit breaker per
-peer.
+The mTLS connection pool underneath `RaftTcpTransport`: dial-on-demand, retry
+with backoff, a circuit breaker per peer, and a non-blocking connection lookup
+so a Raft tick never waits on a TLS handshake.
 
-> Deprecated for new code: `RaftTcpTransport` + `PeerConnection` is the
-> supported path. The pool remains exported because existing deployments
-> construct it directly.
+It owns sockets and nothing else. Framing, buffering and the policy for an
+unreachable peer live in `RaftTcpTransport`, which is the only writer.
 
 ```typescript
 class ConnectionPool {
@@ -504,12 +522,9 @@ class ConnectionPool {
   addNode(peer: PeerInfo): void;
   removeNode(peerId: number): void;
   getConnection(peerId: number): Promise<PeerConnection>;
-  sendTo(peerId: number, msg: OutboundMessage): Promise<void>;
-  broadcast(fromId: number, msgs: OutboundMessage[]): Promise<void>;
+  tryGetConnection(peerId: number): PeerConnection | null;
   onIncoming(peerId: number, socket: TLSSocket): Promise<PeerConnection>;
   markStale(peerId: number): void;
-  enqueuePending(peerId: number, msg: Buffer): void;
-  flushPending(peerId: number): Promise<void>;
   getCircuitBreakerMetrics(): CircuitBreakerMetric[];
   stop(): Promise<void>;
   readonly connectionCount: number;
@@ -1090,7 +1105,7 @@ The three Raft roles: `ConsensusRole.Follower`, `ConsensusRole.Candidate`,
 | `IConsensusLayer` / `IClusterTopology` / `IOutboxWriter` / `IShardReplica` | The seams the HA and consensus layers are built on |
 | `IShardStrategy` / `IShardManager` / `IReshardPlanner` / `IOnlineShardMigration` | The sharding seams |
 | `RaftMessage` / `RaftEntry` | The wire shape a transport sends: numeric `msgType`, decimal-string ids, and the entries it carries |
-| `OutboundMessage` | The envelope `ConnectionPool` stamps numeric peer ids onto before framing it |
+| `FramesDroppedEvent` | Why the transport discarded frames: `buffer-full` or `flush-failed`, with the count and the head of the oldest |
 | `RaftConsensusPhase` | The phase a joint-consensus transition is in: `stable`, `joint`, `transitional` |
 | `SqlVecErrorCode` | The stable codes `SqlVecError` carries across the package boundary |
 | `OperationResult` | `{ success, error? }` — the sharding layer's non-throwing result |
