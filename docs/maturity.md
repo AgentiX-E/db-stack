@@ -66,6 +66,7 @@ number and the instrument that produced it are stated together.
 | Rogue-certificate rejection                       | I · E        | Handshake refused before any Raft traffic |
 | Message framing, CRC, compression                 | U · B        | Corrupt frame is dropped, not misparsed   |
 | Connection pool, reconnect storm, circuit breaker | U · B        | 50-proposer storms, pool exhaustion       |
+| Frame buffering, its cap, and its retry           | U · B        | Frames survive a failed flush and are re-sent; a batch no fresh socket will take is dropped in the open (`droppedFrames`, `frames-dropped`) |
 | Shared transport for many shards per node         | U · I        | Per-shard tagging and routing             |
 
 ### 1.3 Sharding and high availability
@@ -97,7 +98,8 @@ number and the instrument that produced it are stated together.
 
 | Capability                                 | Verification | Notes                                             |
 | ------------------------------------------ | ------------ | ------------------------------------------------- |
-| CDC capture (engine-agnostic)              | U · I        | `ICDCEngine` with a monotonic LSN                 |
+| CDC capture (engine-agnostic)              | U · I        | `ICDCEngine` with a monotonic LSN. The engine shipped here **simulates** WAL (`appendChange`); a deployment supplies an engine that decodes a real log |
+| Publication/subscription catalogue         | U            | Keeps the two maps and watches their tables. Delivery, ordering and checkpoints belong to `ExactlyOnceCDCPipeline`; a slot-invalid event is **not** observed here, because nothing in this package reads PostgreSQL slots |
 | Outbox-before-send delivery                | U · I · E    | Durable enqueue, then send                        |
 | Exactly-once application                   | U · I · E    | Dedup ring keyed by `(origin, lsn)`               |
 | Hybrid logical clocks                      | U · I        | Monotonic across skew                             |
@@ -142,14 +144,14 @@ so it works with any engine that registers the providers it needs.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-All four rows are from the iteration-50 run: `cluster` 99.40/99.40/99.70/98.18,
-`federation` 99.32/99.32/99.76/98.59, `operations` 99.47/99.47/99.87/98.51. The gate covers four packages, not three: the end-to-end harness is measured as well,
+All four rows are from the iteration-51 run: `cluster` 99.42/99.42/99.70/98.17,
+`federation` 99.31/99.31/99.76/98.65, `operations` 99.47/99.47/99.87/98.51. The gate covers four packages, not three: the end-to-end harness is measured as well,
 because a harness bug produces confident, meaningless acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
-| `cluster`       | 99.40% | 99.40%     | 99.70%    | 98.18%   |
-| `federation`    | 99.32% | 99.32%     | 99.76%    | 98.59%   |
+| `cluster`       | 99.42% | 99.42%     | 99.70%    | 98.17%   |
+| `federation`    | 99.31% | 99.31%     | 99.76%    | 98.65%   |
 | `operations`    | 99.47% | 99.47%     | 99.87%    | 98.51%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
