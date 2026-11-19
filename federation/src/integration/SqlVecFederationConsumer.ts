@@ -1,19 +1,26 @@
 /**
  * SqlVecFederationConsumer — db-federation ↔ sqlvec-db adapter.
  *
- * Bridges FederationManager's IFederationConsumer interface with
- * db-cluster's IConsensusLayer + IOutboxWriter.
+ * Bridges FederationManager's IFederationConsumer interface with db-cluster's
+ * `IConsensusLayer` + `IOutboxWriter`.
+ *
+ * The two interfaces are declared here rather than imported so the package keeps
+ * its structural contract: any object with the same two methods works, and a
+ * consumer that does not use db-cluster at all can still use this adapter. They
+ * are exported under names of their own because db-cluster publishes types with
+ * the same names and a reader must be able to tell which one a config field
+ * expects.
  *
  * Integration flow:
- *   1. sqlvec-db writes via IConsensusLayer.propose() → Raft commit
- *   2. Post-commit: IOutboxWriter.write() creates outbox entry
+ *   1. sqlvec-db writes via FederationConsensusLayer.propose() → Raft commit
+ *   2. Post-commit: FederationOutboxWriter.write() creates outbox entry
  *   3. db-federation's OutboxStore captures the entry
  *   4. MultiLeaderReplication fans out to remote DCs
  *   5. Remote DC receives → proposeReplicated() re-enters Raft
  *
- * AC 46.1 — SqlVecFederationConsumer wraps IConsensusLayer
+ * AC 46.1 — SqlVecFederationConsumer wraps FederationConsensusLayer
  * AC 46.2 — Replicated Raft entries respect HLC ordering
- * AC 46.3 — OutboxWriter integration with IOutboxWriter.write()
+ * AC 46.3 — OutboxWriter integration with FederationOutboxWriter.write()
  * AC 46.4 — Propose re-entrant: remote -> propose -> outbox -> replicate
  */
 
@@ -22,27 +29,27 @@ import { HLC } from '../hlc/HLC';
 
 /**
  * Minimal consensus layer interface consumed by SqlVecFederationConsumer.
- * Mirrors the subset of db-cluster's IConsensusLayer used here, avoiding
+ * Mirrors the subset of db-cluster's FederationConsensusLayer used here, avoiding
  * a hard dependency on the db-cluster package.
  */
-interface IConsensusLayer {
+export interface FederationConsensusLayer {
   propose(shardId: string, value: string): Promise<number>;
 }
 
 /**
  * Minimal outbox writer interface consumed by SqlVecFederationConsumer.
- * Mirrors the subset of db-cluster's IOutboxWriter used here.
+ * Mirrors the subset of db-cluster's FederationOutboxWriter used here.
  */
-interface IOutboxWriter {
+export interface FederationOutboxWriter {
   write(shardId: string, index: number, term: number, data: string): Promise<void>;
   getLastWrittenIndex(shardId: string): Promise<number>;
 }
 
 export interface SqlVecFederationConsumerConfig {
-  /** The IConsensusLayer instance from sqlvec-db (db-cluster) */
-  consensusLayer: IConsensusLayer;
+  /** The FederationConsensusLayer instance from sqlvec-db (db-cluster) */
+  consensusLayer: FederationConsensusLayer;
   /** The outbox writer bridge to Raft commit index gating */
-  outboxWriter: IOutboxWriter;
+  outboxWriter: FederationOutboxWriter;
   /** An HLC instance for timestamp generation */
   hlc: HLC;
   /** Local DC/region name */

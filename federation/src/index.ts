@@ -7,9 +7,9 @@ export type { InProcessTransportConfig } from './transport/InProcessTransport';
 
 // Outbox
 export type { IOutboxStore } from './interfaces/outbox/IOutboxStore';
-export type { OutboxEntry, OutboxStatus } from './interfaces/outbox/OutboxEntry';
+export type { OutboxEntry, OutboxEntryInput, OutboxStatus } from './interfaces/outbox/OutboxEntry';
 export { OutboxStore } from './storage/OutboxStore';
-export type { OutboxStoreConfig } from './storage/OutboxStore';
+export type { OutboxStoreConfig, DeadLetterEntry } from './storage/OutboxStore';
 
 // HLC
 export type { IHLCTimestamp } from './interfaces/hlc/IHLCTimestamp';
@@ -53,6 +53,9 @@ export { HealthMonitor } from './monitoring/HealthMonitor';
 export type { HealthMonitorConfig, TargetHealth, FederationHealth } from './monitoring/HealthMonitor';
 
 // FederationManager
+export { DCSplitBrainDetector } from './core/DCSplitBrainDetector';
+export type { DCSplitBrainConfig } from './core/DCSplitBrainDetector';
+export type { DCHeartbeat, SplitBrainEvent } from './core/DCSplitBrainDetector';
 export { FederationManager } from './core/FederationManager';
 export type {
   FederationManagerConfig,
@@ -74,8 +77,14 @@ export type {
 // CDC
 export { CDCEngine } from './replication/CDCEngine';
 export type { CDCEngineConfig } from './replication/CDCEngine';
-export { CDCManager } from './replication/CDCManager';
-export type { CDCManagerConfig } from './replication/CDCManager';
+export { CDCPublicationRegistry } from './replication/CDCPublicationRegistry';
+export type { CDCPublicationRegistryConfig } from './replication/CDCPublicationRegistry';
+// The streaming half of change capture: one engine per remote DC, with lag
+// backpressure. `CDCPublicationRegistry` above keeps publications and
+// subscriptions; this is the manager `FederationManager.getCDC()` returns, and
+// it was the one class in the package that a consumer could not import.
+export { CDCManager } from './core/CDCManager';
+export type { CDCManagerConfig, CDCTarget, CDCEvent, CDCEventHandler } from './core/CDCManager';
 // The exactly-once pipeline was implemented and tested but never re-exported,
 // so consumers could not reach it from the package root.
 export { ExactlyOnceCDCPipeline } from './replication/ExactlyOnceCDCPipeline';
@@ -94,10 +103,19 @@ export type { MerkleNode, DataEntry, DataProvider } from './replication/AntiEntr
 
 // Integration Support
 export { TcpSecureTransport } from './transport/TcpSecureTransport';
-export type { TcpSecureTransportConfig } from './transport/TcpSecureTransport';
+export type {
+  TcpSecureTransportConfig,
+  TcpSecureTransportPeer,
+  FederationEnvelope,
+  IRaftTransport,
+} from './transport/TcpSecureTransport';
 
 export { SqlVecFederationConsumer } from './integration/SqlVecFederationConsumer';
-export type { SqlVecFederationConsumerConfig } from './integration/SqlVecFederationConsumer';
+export type {
+  SqlVecFederationConsumerConfig,
+  FederationConsensusLayer,
+  FederationOutboxWriter,
+} from './integration/SqlVecFederationConsumer';
 
 export { GraphVecFederationConsumer } from './integration/GraphVecFederationConsumer';
 export type {

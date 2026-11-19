@@ -1,19 +1,19 @@
 /**
- * CDCEngine + CDCManager Tests — AC 45.x
+ * CDCEngine + CDCPublicationRegistry Tests — AC 45.x
  *
  * AC 45.1 — CDCEngine watches tables and fires onChange
- * AC 45.2 — CDCManager creates/drops publications
- * AC 45.3 — CDCManager creates/drops subscriptions
+ * AC 45.2 — CDCPublicationRegistry creates/drops publications
+ * AC 45.3 — CDCPublicationRegistry creates/drops subscriptions
  * AC 45.4 — CDC change events carry HLC timestamps
  * AC 45.5 — Subscription filtering by table and operation
  *     — CDCEngine start/stop lifecycle
- *     — CDCManager onSlotInvalid event
+ *     — CDCPublicationRegistry onSlotInvalid event
  *     — Duplicate publication/subscription rejection
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { CDCEngine } from './CDCEngine';
-import { CDCManager } from './CDCManager';
+import { CDCPublicationRegistry } from './CDCPublicationRegistry';
 import type { CDCChangeEvent } from '../interfaces/replication/ICDCManager';
 
 // ── CDCEngine Tests ──
@@ -196,12 +196,12 @@ describe('CDCEngine — Operation Types', () => {
   });
 });
 
-// ── CDCManager Tests ──
+// ── CDCPublicationRegistry Tests ──
 
-describe('CDCManager — AC 45.2: Publications', () => {
+describe('CDCPublicationRegistry — AC 45.2: Publications', () => {
   it('should create a publication with tables', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     const pub = await mgr.createPublication('pub_users', ['users']);
     expect(pub.publicationId).toBe('pub_users');
@@ -214,7 +214,7 @@ describe('CDCManager — AC 45.2: Publications', () => {
 
   it('should reject duplicate publications', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub1', ['users']);
     await expect(mgr.createPublication('pub1', ['orders'])).rejects.toThrow('Publication "pub1" already exists');
@@ -222,7 +222,7 @@ describe('CDCManager — AC 45.2: Publications', () => {
 
   it('should drop a publication', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub1', ['users']);
     await mgr.dropPublication('pub1');
@@ -232,7 +232,7 @@ describe('CDCManager — AC 45.2: Publications', () => {
   });
 
   it('should reject dropping non-existent publication', async () => {
-    const mgr = new CDCManager({
+    const mgr = new CDCPublicationRegistry({
       nodeId: 'n1',
       engine: new CDCEngine({ nodeId: 'n1' }),
     });
@@ -241,7 +241,7 @@ describe('CDCManager — AC 45.2: Publications', () => {
 
   it('should list publications', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub1', ['users']);
     await mgr.createPublication('pub2', ['orders', 'products']);
@@ -252,7 +252,7 @@ describe('CDCManager — AC 45.2: Publications', () => {
 
   it('should unwatch tables only when no other publication needs them', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub_shared', ['users']);
     await mgr.createPublication('pub_other', ['users', 'orders']);
@@ -267,10 +267,10 @@ describe('CDCManager — AC 45.2: Publications', () => {
   });
 });
 
-describe('CDCManager — AC 45.3: Subscriptions', () => {
+describe('CDCPublicationRegistry — AC 45.3: Subscriptions', () => {
   it('should create a subscription from a publication', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub1', ['users']);
     const sub = await mgr.createSubscription('sub1', 'pub1', 'postgres://target/db');
@@ -283,7 +283,7 @@ describe('CDCManager — AC 45.3: Subscriptions', () => {
 
   it('should create a webhook subscription from HTTP DSN', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub1', ['orders']);
     const sub = await mgr.createSubscription('webhook1', 'pub1', 'https://hooks.example.com/cdc');
@@ -292,7 +292,7 @@ describe('CDCManager — AC 45.3: Subscriptions', () => {
 
   it('should reject duplicate subscriptions', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub1', ['users']);
     await mgr.createSubscription('sub1', 'pub1', 'postgres://target/db');
@@ -303,7 +303,7 @@ describe('CDCManager — AC 45.3: Subscriptions', () => {
 
   it('should reject subscription to non-existent publication', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await expect(mgr.createSubscription('sub1', 'nonexistent', 'postgres://target/db')).rejects.toThrow(
       'Publication "nonexistent" not found',
@@ -312,7 +312,7 @@ describe('CDCManager — AC 45.3: Subscriptions', () => {
 
   it('should drop a subscription', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub1', ['users']);
     await mgr.createSubscription('sub1', 'pub1', 'postgres://target/db');
@@ -323,7 +323,7 @@ describe('CDCManager — AC 45.3: Subscriptions', () => {
   });
 
   it('should reject dropping non-existent subscription', async () => {
-    const mgr = new CDCManager({
+    const mgr = new CDCPublicationRegistry({
       nodeId: 'n1',
       engine: new CDCEngine({ nodeId: 'n1' }),
     });
@@ -332,7 +332,7 @@ describe('CDCManager — AC 45.3: Subscriptions', () => {
 
   it('should list subscriptions', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub1', ['users']);
     await mgr.createPublication('pub2', ['orders']);
@@ -344,10 +344,10 @@ describe('CDCManager — AC 45.3: Subscriptions', () => {
   });
 });
 
-describe('CDCManager — AC 45.5: Event Dispatch', () => {
+describe('CDCPublicationRegistry — AC 45.5: Event Dispatch', () => {
   it('should dispatch CDC events to matching subscriptions', async () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     await mgr.createPublication('pub_users', ['users']);
     await mgr.createPublication('pub_orders', ['orders']);
@@ -371,10 +371,10 @@ describe('CDCManager — AC 45.5: Event Dispatch', () => {
   });
 });
 
-describe('CDCManager — onSlotInvalid', () => {
+describe('CDCPublicationRegistry — onSlotInvalid', () => {
   it('should fire onSlotInvalid event', () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     const invalidSlots: string[] = [];
     mgr.onSlotInvalid((subId) => invalidSlots.push(subId));
@@ -385,7 +385,7 @@ describe('CDCManager — onSlotInvalid', () => {
 
   it('should allow unsubscription from onSlotInvalid', () => {
     const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCManager({ nodeId: 'n1', engine });
+    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
 
     const invalidSlots: string[] = [];
     const unsub = mgr.onSlotInvalid((subId) => invalidSlots.push(subId));

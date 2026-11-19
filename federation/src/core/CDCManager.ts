@@ -16,7 +16,6 @@
  *   MA5 — Graceful shutdown stops all workers
  */
 
-import type { ICDCManager, CDCSubscription, ICDCPublication } from '../interfaces/replication/ICDCManager';
 import { CDCEngine } from '../replication/CDCEngine';
 import type { HLC } from '../hlc/HLC';
 import { EventEmitter } from 'events';
@@ -50,7 +49,17 @@ export interface CDCEvent {
 
 export type CDCEventHandler = (event: CDCEvent) => Promise<void>;
 
-export class CDCManager implements ICDCManager {
+/**
+ * Streams local changes to one engine per remote DC, with lag backpressure.
+ *
+ * It used to declare `implements ICDCManager` and satisfy that publication
+ * interface with seven stubs — `getPublications()` returned `[]` for every
+ * caller, forever, and `dropPublication()` did nothing. That interface belongs
+ * to `CDCPublicationRegistry`, which really keeps the maps; a manager that
+ * answers "no publications" to a question it never asked is not an
+ * implementation, it is a name collision with a return value.
+ */
+export class CDCManager {
   private readonly config: Required<CDCManagerConfig>;
   private readonly emitter = new EventEmitter();
   private readonly engines: CDCEngine[] = [];
@@ -196,48 +205,6 @@ export class CDCManager implements ICDCManager {
    */
   isStarted(): boolean {
     return this.started;
-  }
-
-  // ── ICDCManager: Publication / Subscription (PG-compatible) ──
-
-  async createPublication(name: string, tables: string[]): Promise<ICDCPublication> {
-    return {
-      publicationId: name,
-      tables,
-      createdAt: Date.now(),
-    };
-  }
-
-  async dropPublication(_name: string): Promise<void> {
-    // No-op for in-memory implementation
-  }
-
-  async createSubscription(name: string, _publicationName: string, _targetDsn: string): Promise<CDCSubscription> {
-    return {
-      subscriptionId: name,
-      tables: [],
-      operations: ['insert', 'update', 'delete'],
-      createdAt: Date.now(),
-    };
-  }
-
-  async dropSubscription(name: string): Promise<void> {
-    // No-op for in-memory implementation
-  }
-
-  async getSubscriptions(): Promise<CDCSubscription[]> {
-    return [];
-  }
-
-  async getPublications(): Promise<ICDCPublication[]> {
-    return [];
-  }
-
-  onSlotInvalid(callback: (subscriptionId: string) => void): () => void {
-    this.emitter.on('slot-invalid', callback);
-    return () => {
-      this.emitter.off('slot-invalid', callback);
-    };
   }
 
   // ── Private ──────────────────────────────────────────────

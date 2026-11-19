@@ -55,7 +55,8 @@ export interface OutboxStoreConfig {
   mapSize?: number;
 }
 
-type DeadLetterEntry = OutboxEntry & { deadAt?: number };
+/** An outbox entry a target gave up on, with the moment it was parked. */
+export type DeadLetterEntry = OutboxEntry & { deadAt?: number };
 export class OutboxStore implements IOutboxStore {
   /** Single LMDB environment — every index below is a named sub-database. */
   private readonly root: RootDatabase;

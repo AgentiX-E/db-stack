@@ -101,7 +101,8 @@ solves three problems that a single consensus group cannot:
 |--------|------|-------------|
 | **ExactlyOnceCDCPipeline** | `src/replication/` | Primary CDC pipeline with exactly-once guarantees |
 | **CDCEngine** | `src/replication/` | Change data capture engine — table watching, polling |
-| **CDCManager** | `src/replication/` | Lifecycle management for multiple CDC streams |
+| **CDCManager** | `src/core/` | One change-capture engine per remote DC, with lag backpressure |
+| **CDCPublicationRegistry** | `src/replication/` | Publication and subscription bookkeeping, plus the slot-invalid event |
 | **OutboxStore** | `src/replication/` | LMDB-backed outbox with batch read/write |
 | **DedupRing** | `src/replication/` | In-memory deduplication ring with configurable TTL |
 | **MultiLeaderReplication** | `src/replication/` | Multi-leader setup with conflict resolution |

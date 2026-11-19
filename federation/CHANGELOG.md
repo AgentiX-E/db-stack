@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`CDCManager` is now the manager the package actually runs.** `index.ts` exported a different
+  class of that name — `replication/CDCManager`, the publication/subscription bookkeeping — while
+  `FederationManager.getCDC()` returned the streaming manager in `core/`, which no consumer could
+  import. Both classes existed, both implemented `ICDCManager`, and the one the reference page
+  documented was the one that was not exported.
+- **`CDCPublicationRegistry`** — the renamed bookkeeping class, with
+  `CDCPublicationRegistryConfig`. Its job is named after it now, so `CDCManager` means one thing.
+- **Sixteen more types a consumer had to name and could not import.** `OutboxEntryInput`,
+  `DeadLetterEntry`, `CDCTarget`, `CDCEvent`, `DCHeartbeat`, `SplitBrainEvent`, `DCSplitBrainConfig`,
+  `TcpSecureTransportPeer`, `FederationEnvelope`, `IRaftTransport`, `FederationConsensusLayer`,
+  `FederationOutboxWriter` and `DCSplitBrainDetector` appear in the signature of an exported class
+  and were exported by nothing. `pnpm check:public-types` now proves the closure for every package.
+
+### Changed
+
+- **`FederationEnvelope` was called `RaftMessage`.** A second `RaftMessage` in this package — text
+  `type`, numeric `term` — with the same name as the wire type `@agentix-e/db-cluster` publishes
+  under it. The gateway's envelope has its own name.
+- **`FederationConsensusLayer` / `FederationOutboxWriter`** — the structural copies of db-cluster's
+  `IConsensusLayer` and `IOutboxWriter`. They stay copies, so the package keeps working with an
+  object that merely has the same two methods, but they no longer claim the same names as the
+  interfaces a reader would import from the other package.
+
+### Removed
+
+- **Seven `ICDCManager` stubs on the streaming manager.** `getPublications()` returned `[]` for every
+  caller forever, `dropPublication()` did nothing, and `createPublication()` built an object it then
+  discarded. Publishing that class under the name `CDCManager` would have published the fakes, so the
+  class no longer claims the interface; the registry is what implements it.
+
+### Added
+
 - **`TcpSecureTransport.delivery.test.ts`** — `AC 47.1`–`AC 47.15`, 31 cases covering the two
   properties a cross-DC link lives or dies by and a return value cannot express: the wire frame is
   asserted field by field (including the BigInt wall clock that travels as a string), and every

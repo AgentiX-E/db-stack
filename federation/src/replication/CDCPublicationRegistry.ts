@@ -1,5 +1,5 @@
 /**
- * CDCManager — CDC publication & subscription management.
+ * CDCPublicationRegistry — CDC publication & subscription management.
  *
  * Manages the lifecycle of CDC publications and subscriptions:
  *   - createPublication: declare a named set of tables to track
@@ -20,19 +20,19 @@ import type {
   CDCChangeEvent,
 } from '../interfaces/replication/ICDCManager';
 
-export type CDCManagerConfig = {
+export type CDCPublicationRegistryConfig = {
   nodeId: string;
   engine: ICDCEngine;
 };
 
-export class CDCManager implements ICDCManager {
+export class CDCPublicationRegistry implements ICDCManager {
   private readonly engine: ICDCEngine;
   private readonly publications = new Map<string, ICDCPublication>();
   private readonly subscriptions = new Map<string, CDCSubscription>();
   private readonly slotInvalidCallbacks = new Set<(subscriptionId: string) => void>();
   private readonly unsubFromEngine: () => void;
 
-  constructor(config: CDCManagerConfig) {
+  constructor(config: CDCPublicationRegistryConfig) {
     this.engine = config.engine;
 
     // Subscribe to engine changes and dispatch to subscriptions

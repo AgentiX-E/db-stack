@@ -1,5 +1,5 @@
 /**
- * CDCManager Tests — Publication & Subscription lifecycle.
+ * CDCPublicationRegistry Tests — Publication & Subscription lifecycle.
  *
  * Coverage:
  *   - create/drop publication lifecycle
@@ -15,15 +15,15 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { CDCManager } from './CDCManager';
+import { CDCPublicationRegistry } from './CDCPublicationRegistry';
 import { CDCEngine } from './CDCEngine';
 import { HLC, makeHLC, compareHLC } from '../hlc/HLC';
 import type { CDCChangeEvent } from '../interfaces/replication/ICDCManager';
 
-describe('CDCManager — publication lifecycle', () => {
+describe('CDCPublicationRegistry — publication lifecycle', () => {
   it('should create a publication with tables', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     const pub = await manager.createPublication('pub-users', ['users', 'profiles']);
     expect(pub.publicationId).toBe('pub-users');
@@ -33,7 +33,7 @@ describe('CDCManager — publication lifecycle', () => {
 
   it('should register tables with the engine on creation', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub-orders', ['orders', 'order_items']);
 
@@ -43,7 +43,7 @@ describe('CDCManager — publication lifecycle', () => {
 
   it('should drop a publication and unregister tables', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub-a', ['table1', 'table2']);
     await manager.createPublication('pub-b', ['table2', 'table3']);
@@ -63,7 +63,7 @@ describe('CDCManager — publication lifecycle', () => {
 
   it('should get all publications', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub-1', ['t1']);
     await manager.createPublication('pub-2', ['t2']);
@@ -75,7 +75,7 @@ describe('CDCManager — publication lifecycle', () => {
 
   it('should error on duplicate publication', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub', ['t1']);
     await expect(manager.createPublication('pub', ['t2'])).rejects.toThrow('Publication "pub" already exists');
@@ -83,16 +83,16 @@ describe('CDCManager — publication lifecycle', () => {
 
   it('should error on dropping non-existent publication', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await expect(manager.dropPublication('nonexistent')).rejects.toThrow('Publication "nonexistent" not found');
   });
 });
 
-describe('CDCManager — subscription lifecycle', () => {
+describe('CDCPublicationRegistry — subscription lifecycle', () => {
   it('should create a subscription linked to a publication', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub', ['users']);
     const sub = await manager.createSubscription('sub-users', 'pub', 'postgres://...');
@@ -105,7 +105,7 @@ describe('CDCManager — subscription lifecycle', () => {
 
   it('should create a webhook subscription when DSN starts with http', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub', ['events']);
     const sub = await manager.createSubscription('sub-webhook', 'pub', 'https://hooks.example.com/cdc');
@@ -116,7 +116,7 @@ describe('CDCManager — subscription lifecycle', () => {
 
   it('should not set webhookUrl for non-http DSN', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub', ['t']);
     const sub = await manager.createSubscription('sub-db', 'pub', 'postgres://localhost:5432/db');
@@ -126,7 +126,7 @@ describe('CDCManager — subscription lifecycle', () => {
 
   it('should drop a subscription', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub', ['t']);
     await manager.createSubscription('sub', 'pub', 'postgres://...');
@@ -144,7 +144,7 @@ describe('CDCManager — subscription lifecycle', () => {
 
   it('should error on duplicate subscription', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub', ['t']);
     await manager.createSubscription('sub', 'pub', 'postgres://...');
@@ -155,7 +155,7 @@ describe('CDCManager — subscription lifecycle', () => {
 
   it('should error on non-existent publication', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await expect(manager.createSubscription('sub', 'nonexistent-pub', 'postgres://...')).rejects.toThrow(
       'Publication "nonexistent-pub" not found',
@@ -164,16 +164,16 @@ describe('CDCManager — subscription lifecycle', () => {
 
   it('should error on dropping non-existent subscription', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await expect(manager.dropSubscription('nonexistent')).rejects.toThrow('Subscription "nonexistent" not found');
   });
 });
 
-describe('CDCManager — event dispatch', () => {
+describe('CDCPublicationRegistry — event dispatch', () => {
   it('should dispatch events to matching subscriptions by table name', () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
     const hlc = new HLC('test-node');
 
     // Create publication + subscription for "users" table
@@ -198,7 +198,7 @@ describe('CDCManager — event dispatch', () => {
 
   it('should not throw when no subscriptions match', () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     manager.createPublication('pub-orders', ['orders']);
     manager.createSubscription('sub-orders', 'pub-orders', 'postgres://...');
@@ -216,12 +216,12 @@ describe('CDCManager — event dispatch', () => {
 
   it('should filter by operation type', () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     manager.createPublication('pub', ['users']);
     manager.createSubscription('sub', 'pub', 'postgres://...');
 
-    // The CDCManager dispatch is fire-and-forget — current implementation
+    // The CDCPublicationRegistry dispatch is fire-and-forget — current implementation
     // delivers all matching events inline. Verify no error for each op type.
     expect(() => {
       engine.appendChange({
@@ -246,15 +246,15 @@ describe('CDCManager — event dispatch', () => {
   });
 });
 
-describe('CDCManager — onSlotInvalid', () => {
+describe('CDCPublicationRegistry — onSlotInvalid', () => {
   it('should register and fire slotInvalid callbacks', () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     const callback = vi.fn();
     const unsub = manager.onSlotInvalid(callback);
 
-    // The CDCManager has a fireSlotInvalid method for testing
+    // The CDCPublicationRegistry has a fireSlotInvalid method for testing
     manager['fireSlotInvalid']('sub-1');
     manager['fireSlotInvalid']('sub-2');
 
@@ -268,11 +268,11 @@ describe('CDCManager — onSlotInvalid', () => {
   });
 });
 
-describe('CDCManager — HLC timestamp ordering', () => {
+describe('CDCPublicationRegistry — HLC timestamp ordering', () => {
   it('should attach monotonically increasing HLC timestamps to events', () => {
     const hlc = new HLC('test-node');
     const engine = new CDCEngine({ nodeId: 'test-node', hlc });
-    const manager = new CDCManager({ nodeId: 'test-node', engine });
+    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     manager.createPublication('pub', ['events']);
     manager.createSubscription('sub', 'pub', 'postgres://...');

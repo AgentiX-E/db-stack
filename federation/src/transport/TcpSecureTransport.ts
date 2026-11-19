@@ -29,9 +29,16 @@ import { RaftTcpTransport } from '@agentix-e/db-cluster';
 import { makeHLC } from '../hlc/HLC';
 import type { RaftTcpTransportConfig } from '@agentix-e/db-cluster';
 
-// ── Raft message shape used on the wire ──
-
-interface RaftMessage {
+/**
+ * The envelope this gateway puts on the wire around a federation payload.
+ *
+ * Not `FederationEnvelope`: `@agentix-e/db-cluster` publishes a wire type of that name
+ * whose ids are decimal strings and whose discriminator is a numeric `msgType`.
+ * This one is the federation gateway's own frame — a text `type`, numeric `term`,
+ * and an opaque payload — and exporting it under the cluster type's name would
+ * hand a consumer the wrong shape for the wrong transport.
+ */
+export interface FederationEnvelope {
   type: string;
   term: number;
   from: string;
@@ -39,11 +46,11 @@ interface RaftMessage {
   payload: unknown;
 }
 
-type MessageHandler = (msg: RaftMessage) => void;
+type MessageHandler = (msg: FederationEnvelope) => void;
 
 /** Structural subset of `RaftTcpTransport` this class relies on. */
-interface IRaftTransport {
-  send(fromId: number, msgs: RaftMessage[]): Promise<void>;
+export interface IRaftTransport {
+  send(fromId: number, msgs: FederationEnvelope[]): Promise<void>;
   register?(node: { id: number; host: string; port: number }): void;
   onMessage: (handler: MessageHandler) => void;
   start(): Promise<void>;
@@ -326,7 +333,7 @@ export class TcpSecureTransport implements ITransport {
       return false;
     }
 
-    const raftMsg: RaftMessage = {
+    const raftMsg: FederationEnvelope = {
       type: 'federation_send',
       term: 1,
       from: String(this.localId),
