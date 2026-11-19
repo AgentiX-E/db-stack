@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { CDCSinkResolver, type ResolverHealth, type FailureEvent } from '../../replication/CDCSinkResolver';
 import { CDCBenchRunner, type CDCBenchReport } from '../../replication/CDCBenchRunner';
-import { CDCFailureInjector, type FailureConfig } from '../../replication/CDCFailureInjector';
+import { CDCFailureInjector, type FailureConfig } from '../../testing/CDCFailureInjector';
 import { InMemoryCDCSink } from '../../replication/InMemoryCDCSink';
 import type { ICDCSink, CDCSinkEvent } from '../../interfaces/replication/ICDCSink';
 

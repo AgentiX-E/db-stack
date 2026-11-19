@@ -48,9 +48,14 @@
       "default": "./dist/index.js"
     },
     "./transport": {
-      "types": "./dist/transport/TcpSecureTransport.d.ts",
-      "import": "./dist/transport/TcpSecureTransport.js",
-      "default": "./dist/transport/TcpSecureTransport.js"
+      "types": "./dist/transport/index.d.ts",
+      "import": "./dist/transport/index.js",
+      "default": "./dist/transport/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
     },
     "./package.json": "./package.json"
   },

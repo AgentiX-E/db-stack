@@ -39,7 +39,11 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { TcpSecureTransport, retryDelayMs } from './TcpSecureTransport';
+// The class through the published barrel, the schedule helper from the module:
+// `retryDelayMs` is `@internal` and the barrel deliberately does not re-export
+// it, so importing it this way is also the assertion that it stays internal.
+import { TcpSecureTransport } from './index';
+import { retryDelayMs } from './TcpSecureTransport';
 import type { TcpSecureTransportConfig } from './TcpSecureTransport';
 
 const TLS = { cert: 'fake-cert', key: 'fake-key', ca: 'fake-ca' };
