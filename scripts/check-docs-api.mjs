@@ -106,17 +106,46 @@ const INLINE_NAME = /`([A-Za-z_$][A-Za-z0-9_$]*)(?:<[^`]*>)?(?:\([^`]*\))?`/g;
 
 /** The workspace packages that ship a `docs/` tree. */
 export function workspacePackages(root = ROOT) {
-  const packages = ["cluster", "federation", "operations"];
-  const opsRoot = join(root, "operations", "packages");
-  if (existsSync(opsRoot)) {
-    for (const entry of readdirSync(opsRoot, { withFileTypes: true })) {
-      if (entry.isDirectory())
-        packages.push(join("operations", "packages", entry.name));
+  // The three directories this repository happens to have were written here as a
+  // list, which meant a fourth top-level package would be invisible to every rule in
+  // this file — the same shape as the loop that read a package's documents to decide
+  // whether it had any. The workspace file is the list; this reads it.
+  const workspaceFile = join(root, "pnpm-workspace.yaml");
+  if (!existsSync(workspaceFile)) return [];
+  const patterns = [
+    ...readFileSync(workspaceFile, "utf8").matchAll(
+      /^\s*-\s*'?([^'\n#]+?)'?\s*$/gm,
+    ),
+  ].map((match) => match[1].trim());
+
+  const dirs = [];
+  for (const pattern of patterns) {
+    let current = [root];
+    for (const segment of pattern.split("/")) {
+      const next = [];
+      for (const base of current) {
+        if (!existsSync(base)) continue;
+        if (segment === "*" || segment === "**") {
+          for (const entry of readdirSync(base, { withFileTypes: true })) {
+            if (entry.isDirectory() && entry.name !== "node_modules")
+              next.push(join(base, entry.name));
+          }
+        } else {
+          const candidate = join(base, segment);
+          if (existsSync(candidate)) next.push(candidate);
+        }
+      }
+      current = next;
     }
+    dirs.push(...current);
   }
-  return packages
-    .map((dir) => ({ dir, abs: join(root, dir) }))
-    .filter((pkg) => existsSync(join(pkg.abs, "src", "index.ts")));
+
+  // A published surface is what an entry point is: a directory with no
+  // `src/index.ts` publishes nothing to document, and `e2e` is one of those.
+  return dirs
+    .filter((abs) => existsSync(join(abs, "src", "index.ts")))
+    .map((abs) => ({ dir: relative(root, abs).replaceAll("\\", "/"), abs }))
+    .sort((a, b) => a.dir.localeCompare(b.dir));
 }
 
 /**

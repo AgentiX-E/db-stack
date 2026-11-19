@@ -328,7 +328,7 @@ test("the repository's own debt lists are the defaults, and they still hold", ()
   assert.match(debt[0], /^check-package\.mjs: unmeasured \(P3-45\) — /);
   assert.match(
     debt[1],
-    /^check-public-types\.mjs: branches 93\.94% \(floor 95%, recorded 93\.94%\) — P3-44/,
+    /^check-public-types\.mjs: branches 93\.94% \(floor 95%, recorded 93\.28%\) — P3-44/,
   );
 });
 

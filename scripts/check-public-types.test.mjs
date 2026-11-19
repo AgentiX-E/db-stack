@@ -394,6 +394,24 @@ function withPackage(files, body) {
       mkdirSync(join(full, ".."), { recursive: true });
       writeFileSync(full, contents);
     }
+    // Packages are found through the workspace file, so a fixture that means to have
+    // packages has to say so. Every top-level directory carrying a manifest is listed;
+    // a fixture that writes its own workspace file keeps it.
+    if (!("pnpm-workspace.yaml" in files)) {
+      const dirs = [
+        ...new Set(
+          Object.keys(files)
+            .filter((path) => /^[^/]+\/package\.json$/.test(path))
+            .map((path) => path.split("/")[0]),
+        ),
+      ];
+      if (dirs.length > 0) {
+        writeFileSync(
+          join(dir, "pnpm-workspace.yaml"),
+          `packages:\n${dirs.map((name) => `  - ${name}`).join("\n")}\n`,
+        );
+      }
+    }
     return body(dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });

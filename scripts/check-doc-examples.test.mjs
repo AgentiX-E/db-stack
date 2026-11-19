@@ -66,6 +66,9 @@ function fixture(page, { source = SOURCE } = {}) {
   const root = mkdtempSync(join(tmpdir(), "doc-examples-fixture-"));
   const files = {
     "node_modules/@types/.keep": "",
+    // Pages are found through the workspace file, not through a list of directory
+    // names: a package that is not in it is a package the gate does not read.
+    "pnpm-workspace.yaml": "packages:\n  - cluster\n",
     "cluster/package.json": MANIFEST,
     "cluster/src/index.ts": source,
     "cluster/docs/api.md": page,

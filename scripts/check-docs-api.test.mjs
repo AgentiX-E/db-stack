@@ -492,6 +492,7 @@ test("the repository's own documentation is checked too", (t) => {
   // imports did not resolve, in the page a new user is told to start with.
   const build = (importLine) => {
     const root = fixtureTree({
+      "pnpm-workspace.yaml": "packages:\n  - cluster\n",
       "cluster/package.json": MANIFEST,
       "cluster/src/index.ts": "export class RaftGroup {}\n",
       "cluster/docs/api-reference.md": "### `RaftGroup`\n",
@@ -726,6 +727,7 @@ test("a package README is judged like any other page", () => {
       mkdirSync(join(path, ".."), { recursive: true });
       writeFileSync(path, text);
     };
+    write(join(root, "pnpm-workspace.yaml"), "packages:\n  - cluster\n");
     write(
       join(pkg, "package.json"),
       JSON.stringify({
@@ -778,6 +780,10 @@ test("a package that publishes nothing is not judged", () => {
   try {
     const pkg = join(root, "cluster");
     mkdirSync(join(pkg, "src"), { recursive: true });
+    writeFileSync(
+      join(root, "pnpm-workspace.yaml"),
+      "packages:\n  - cluster\n",
+    );
     writeFileSync(join(pkg, "src", "index.ts"), "export const internal = 1;\n");
     writeFileSync(
       join(pkg, "package.json"),
@@ -794,9 +800,13 @@ test("a package that publishes nothing is not judged", () => {
   }
 });
 
-test("the umbrella's own packages are discovered from operations/packages", () => {
+test("packages are discovered from the workspace file, globs and all", () => {
   const root = mkdtempSync(join(tmpdir(), "docs-api-"));
   try {
+    writeFileSync(
+      join(root, "pnpm-workspace.yaml"),
+      "packages:\n  - cluster\n  - operations/packages/*\n",
+    );
     for (const dir of ["core", "health"]) {
       const abs = join(root, "operations", "packages", dir);
       mkdirSync(join(abs, "src"), { recursive: true });
@@ -811,8 +821,8 @@ test("the umbrella's own packages are discovered from operations/packages", () =
       recursive: true,
     });
 
-    // `cluster`, `federation` and `operations` are in the fixed list but have no
-    // `src/index.ts` here, so they are not packages with a surface.
+    // `cluster` is listed in the workspace file and has no `src/index.ts` here, so it
+    // is not a package with a surface; the glob is expanded, not guessed at.
     assert.deepEqual(
       workspacePackages(root).map((entry) => entry.dir),
       ["operations/packages/core", "operations/packages/health"],
@@ -864,5 +874,49 @@ test("an exports map is read in the three shapes it is written in", (t) => {
   assert.deepEqual(
     exportEntries(join(root, "manifest")).map((entry) => entry.key),
     ["."],
+  );
+});
+
+test("a specifier is split at the scope when there is one, and at the first segment when there is not", () => {
+  assert.deepEqual(splitSpecifier("@agentix-e/db-cluster/shard"), {
+    name: "@agentix-e/db-cluster",
+    key: "./shard",
+  });
+  assert.deepEqual(splitSpecifier("@agentix-e/db-cluster"), {
+    name: "@agentix-e/db-cluster",
+    key: ".",
+  });
+  // A package published without a scope is `name`, not `name/segment`: reading the
+  // first two segments would invent a scope it never had.
+  assert.deepEqual(splitSpecifier("left-pad/sub"), {
+    name: "left-pad",
+    key: "./sub",
+  });
+  assert.deepEqual(splitSpecifier("left-pad"), { name: "left-pad", key: "." });
+});
+
+test("a manifest with no name is not an entry in the index, and a default export is not a name", (t) => {
+  const root = fixtureTree({
+    // The workspace file is what makes them packages; a directory is not one.
+    "pnpm-workspace.yaml": "packages:\n  - named\n  - unnamed\n",
+    "named/package.json": JSON.stringify({
+      name: "@agentix-e/db-named",
+      exports: { ".": { types: "./dist/index.d.ts" } },
+    }),
+    "named/src/index.ts":
+      "export class Present {}\nexport default function main() { return 1; }\n",
+    "unnamed/package.json": JSON.stringify({ exports: {} }),
+    "unnamed/src/index.ts": "export const whatever = 1;\n",
+  });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const index = packageIndex(root);
+
+  assert.deepEqual([...index.keys()], ["@agentix-e/db-named"]);
+  // `default` is a name a consumer can write only through the default import form,
+  // so the coverage rule does not require a page to mention it.
+  assert.deepEqual(
+    [...index.get("@agentix-e/db-named").entries.get(".")],
+    ["Present"],
   );
 });

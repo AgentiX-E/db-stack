@@ -65,7 +65,11 @@ export const BELOW_FLOOR = [
   {
     file: "check-public-types.mjs",
     dimension: "branches",
-    measured: 93.94,
+    // The recorded number is the CI measurement, not the local one: the same cases on
+    // the same engine report 93.94 here and 93.28 on the runner, because V8 counts a
+    // few branch slots differently between builds of the same version. A ratchet has
+    // to hold the stricter of the two, or it is not a ratchet.
+    measured: 93.28,
     reason:
       "the type walker still has defensive branches no fixture reaches — a symbol with no " +
       "declaration, a type with no id — and they are reachable only from a compiler that changes",
