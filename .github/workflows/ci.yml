@@ -84,6 +84,10 @@ jobs:
         run: pnpm check:esm-require
       - name: API reference names only symbols the packages export
         run: pnpm check:docs-api
+      - name: Every type a public signature names is importable from the package root
+        run: pnpm check:public-types
+      - name: Every script invokes a binary that is installed
+        run: pnpm check:script-bins
       - name: ESLint (one shared config for the whole workspace)
         run: pnpm lint
       - name: Prettier
