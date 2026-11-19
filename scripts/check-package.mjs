@@ -21,8 +21,9 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { workspacePackages } from "./check-docs-api.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -295,10 +296,62 @@ for (const target of TARGETS) {
   }
 }
 
+/**
+ * The documentation has to be in the tarball as well as in the repository.
+ *
+ * Every package here ships `dist`, `README.md` and `CHANGELOG.md`, and every one
+ * of the fourteen with a `docs/` tree left it out — so the reference pages this
+ * repository gates so carefully (`api-reference.md`, the harness pages, the
+ * engine-adapter guide) were readable on GitHub and absent from
+ * `node_modules`, which is the first place a consumer looks.
+ *
+ * The assertion runs `npm pack`, not the manifest: `files` can name a directory
+ * that a `.npmignore` then empties, and only the tarball knows what a consumer
+ * receives.
+ */
+function checkPublishedDocs() {
+  let missing = 0;
+
+  for (const pkg of workspacePackages(root)) {
+    if (!existsSync(join(pkg.abs, "docs"))) continue;
+
+    const packed = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: pkg.abs,
+      encoding: "utf8",
+    });
+    if (packed.status !== 0) {
+      console.error(`\u2717 ${pkg.dir}: npm pack failed`);
+      missing += 1;
+      continue;
+    }
+
+    let paths = [];
+    try {
+      paths = JSON.parse(packed.stdout)[0].files.map((file) => file.path);
+    } catch {
+      console.error(`\u2717 ${pkg.dir}: could not read the pack manifest`);
+      missing += 1;
+      continue;
+    }
+
+    const pages = paths.filter((path) => path.startsWith("docs/"));
+    if (pages.length === 0) {
+      console.error(`\u2717 ${pkg.dir}: docs/ exists in the repository but not in the tarball`);
+      missing += 1;
+    }
+  }
+
+  return missing;
+}
+
+const undocumented = checkPublishedDocs();
+failures += undocumented;
+
 if (failures > 0) {
-  console.error(`\nPackage check FAILED (${failures} entry point(s))`);
+  console.error(`\nPackage check FAILED (${failures} finding(s))`);
   process.exit(1);
 }
 console.log(
-  "\nPackage check passed: every published entry point is importable, and its probe passes.",
+  "\nPackage check passed: every published entry point is importable, its probe passes, " +
+    "and every package ships its documentation.",
 );

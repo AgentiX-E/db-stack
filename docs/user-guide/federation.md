@@ -12,11 +12,11 @@ npm install @agentix-e/db-federation
 
 Choose your topology before writing code — it determines everything else:
 
-| Topology | Write latency | Cross-DC consistency | Use when |
-|---|---|---|---|
-| Active–passive (single leader DC) | Local in the primary; followers read | Converges quickly, one writer | DR, read scaling |
-| Active–active (multi-leader) | Local everywhere | Converges; conflicts possible | Geographically distributed write traffic |
-| Edge read replica | Local writes in the core | Read-only at the edge | CDN-like read locality |
+| Topology                          | Write latency                        | Cross-DC consistency          | Use when                                 |
+| --------------------------------- | ------------------------------------ | ----------------------------- | ---------------------------------------- |
+| Active–passive (single leader DC) | Local in the primary; followers read | Converges quickly, one writer | DR, read scaling                         |
+| Active–active (multi-leader)      | Local everywhere                     | Converges; conflicts possible | Geographically distributed write traffic |
+| Edge read replica                 | Local writes in the core             | Read-only at the edge         | CDN-like read locality                   |
 
 ---
 
@@ -35,10 +35,10 @@ export interface ICDCEngine {
 }
 
 export interface CDCChangeEvent {
-  lsn: string;                 // monotonic log sequence number in the source engine
-  timestamp: IHLCTimestamp;    // hybrid logical clock stamp
+  lsn: string; // monotonic log sequence number in the source engine
+  timestamp: IHLCTimestamp; // hybrid logical clock stamp
   tableName: string;
-  operation: 'insert' | 'update' | 'delete';
+  operation: "insert" | "update" | "delete";
   oldValues: Record<string, unknown> | null;
   newValues: Record<string, unknown> | null;
   txId: string;
@@ -53,10 +53,19 @@ callback. See [engine adapters](engine-adapters.md#3-change-capture-for-federati
 Publications and subscriptions group tables:
 
 ```ts
-const registry = new CDCPublicationRegistry({ engine, nodeId: 'dc-east-1' });
-await registry.createPublication('orders-pub', ['orders', 'order_items']);
-await registry.createSubscription('to-west', 'orders-pub', 'https://hooks.example.com/cdc');
-await registry.createSubscription('inserts-only', 'orders-pub', 'memory://audit', ['insert']);
+const registry = new CDCPublicationRegistry({ engine, nodeId: "dc-east-1" });
+await registry.createPublication("orders-pub", ["orders", "order_items"]);
+await registry.createSubscription(
+  "to-west",
+  "orders-pub",
+  "https://hooks.example.com/cdc",
+);
+await registry.createSubscription(
+  "inserts-only",
+  "orders-pub",
+  "memory://audit",
+  ["insert"],
+);
 ```
 
 `CDCPublicationRegistry` keeps the named objects; `CDCManager` streams the
@@ -73,15 +82,17 @@ each change once, in order.
 
 ```ts
 class WebhookSink implements ICDCSink {
-  readonly name = 'webhook';
+  readonly name = "webhook";
   constructor(private readonly url: string) {}
   async connect() {}
   async disconnect() {}
   async emit(events: CDCSinkEvent[]) {
     const response = await fetch(this.url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(events, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(events, (_k, v) =>
+        typeof v === "bigint" ? v.toString() : v,
+      ),
     });
     if (!response.ok) throw new Error(`${this.url}: ${response.status}`); // refused, not delivered
   }
@@ -98,7 +109,7 @@ await pump.start();
 // sink — in LSN order, once per change.
 ```
 
-Throwing from `emit()` is how a sink says *no*. The pump retries the same change
+Throwing from `emit()` is how a sink says _no_. The pump retries the same change
 `maxEmitAttempts` times, then records it in a bounded failure log
 (`pump.getFailures()`) and moves on — one bad change does not block the ones
 behind it, and it never disappears silently:
@@ -129,7 +140,7 @@ free of any one destination's client library.
 
 ## 2. Exactly-once delivery
 
-The pipeline is *outbox-before-send*:
+The pipeline is _outbox-before-send_:
 
 ```
 commit ──▶ outbox append (durable) ──▶ pump ──▶ transport ──▶ peer
@@ -139,11 +150,11 @@ commit ──▶ outbox append (durable) ──▶ pump ──▶ transport ─�
 
 ```ts
 const pipeline = new ExactlyOnceCDCPipeline({
-  nodeId: 'dc-east-1',
-  cdcConfig: { nodeId: 'dc-east-1' },
-  outboxConfig: { dataDir: '/var/lib/db/outbox', maxSizeMB: 1024 },
+  nodeId: "dc-east-1",
+  cdcConfig: { nodeId: "dc-east-1" },
+  outboxConfig: { dataDir: "/var/lib/db/outbox", maxSizeMB: 1024 },
   transport,
-  remoteNodeId: 'dc-west-1',
+  remoteNodeId: "dc-west-1",
   pumpIntervalMs: 500,
   pumpBatchSize: 100,
   dedupTtlMs: 600_000,
@@ -151,12 +162,12 @@ const pipeline = new ExactlyOnceCDCPipeline({
 await pipeline.start();
 ```
 
-| Property | Mechanism | Consequence |
-|---|---|---|
-| No loss on crash | Change is persisted to the outbox before transmission | A restart resumes from the checkpoint |
-| At-least-once | Retries until acknowledged | Duplicates are possible on the wire |
-| Effectively-once | Receiver-side `DedupRing` keyed by message id | Each change takes effect once within the dedup window |
-| Bounded memory | `pumpBatchSize`, `maxSizeMB` backpressure | Throughput is capped, not the heap |
+| Property         | Mechanism                                             | Consequence                                           |
+| ---------------- | ----------------------------------------------------- | ----------------------------------------------------- |
+| No loss on crash | Change is persisted to the outbox before transmission | A restart resumes from the checkpoint                 |
+| At-least-once    | Retries until acknowledged                            | Duplicates are possible on the wire                   |
+| Effectively-once | Receiver-side `DedupRing` keyed by message id         | Each change takes effect once within the dedup window |
+| Bounded memory   | `pumpBatchSize`, `maxSizeMB` backpressure             | Throughput is capped, not the heap                    |
 
 **Dedup window caveat:** duplicates arriving after `dedupTtlMs` are treated as new. Size it
 above your maximum expected outage.
@@ -167,17 +178,20 @@ above your maximum expected outage.
 
 Two DCs can write the same key. You choose the semantics per table or key prefix:
 
-| Strategy | Config value | Behaviour | Discards data? |
-|---|---|---|---|
-| Last-write-wins on HLC | `'lww'` | Greater HLC wins; ties broken by node id | Yes — the loser |
-| Counter | `'crdt-counter'` | Values merge additively | No |
-| Set | `'crdt-set'` | Union with add/remove tombstones | No |
-| Map | `'crdt-map'` | Per-field LWW inside a map | Per field |
-| Custom | `'custom'` | Your resolver decides | Up to you |
+| Strategy               | Config value     | Behaviour                                | Discards data?  |
+| ---------------------- | ---------------- | ---------------------------------------- | --------------- |
+| Last-write-wins on HLC | `'lww'`          | Greater HLC wins; ties broken by node id | Yes — the loser |
+| Counter                | `'crdt-counter'` | Values merge additively                  | No              |
+| Set                    | `'crdt-set'`     | Union with add/remove tombstones         | No              |
+| Map                    | `'crdt-map'`     | Per-field LWW inside a map               | Per field       |
+| Custom                 | `'custom'`       | Your resolver decides                    | Up to you       |
 
 ```ts
-const resolver = new ConflictResolver({ localNodeId: 'dc-east-1', strategy: 'lww' });
-resolver.registerCustom('inventory', {
+const resolver = new ConflictResolver({
+  localNodeId: "dc-east-1",
+  strategy: "lww",
+});
+resolver.registerCustom("inventory", {
   predicate: (a, b) => a.key === b.key,
   resolver: (a, b) => ({ winner: a, merged: mergeInventory(a, b) }),
 });
@@ -194,9 +208,15 @@ After a partition, the two sides have diverged. Merkle trees let each side compu
 summary and exchange only the differing leaves:
 
 ```ts
-const antiEntropy = new AntiEntropy({ local: localStore, remote: remoteStore, config: {
-  rangeSize: 1024, hashAlgorithm: 'sha256', maxDepth: 20,
-} });
+const antiEntropy = new AntiEntropy({
+  local: localStore,
+  remote: remoteStore,
+  config: {
+    rangeSize: 1024,
+    hashAlgorithm: "sha256",
+    maxDepth: 20,
+  },
+});
 const result = await antiEntropy.sync();
 // { comparedRanges, divergentRanges, repairedKeys, durationMs }
 ```
@@ -210,24 +230,27 @@ of the Merkle approach. Run it after any partition, and periodically as a safety
 
 ```ts
 const federation = new FederationManager({
-  nodeId: 'dc-east-1',
-  dc: 'east',
-  replicationConfig: { targets: [{ nodeId: 'dc-west-1', priority: 1 }], topology: 'multi-leader' },
+  nodeId: "dc-east-1",
+  dc: "east",
+  replicationConfig: {
+    targets: [{ nodeId: "dc-west-1", priority: 1 }],
+    topology: "multi-leader",
+  },
   transport,
   outbox,
 });
 await federation.start();
 ```
 
-| Concern | Component | What it does |
-|---|---|---|
-| Peer lifecycle | `TopologyManager` | Tracks membership, assigns topology epochs, emits change events |
-| Split-brain detection | `DCSplitBrainDetector` | Compares cluster identity + epoch; refuses to merge a stale view |
-| Fan-out | `MultiLeaderReplication` | One logical stream per peer, independent backpressure |
-| Edge reads | `EdgeReplica` | Resumable read-only stream from the primary (restart from LSN) |
-| Health | `HealthMonitor`, `ChannelHealth` | Per-peer lag/error/jitter scored 0–100 |
+| Concern               | Component                        | What it does                                                     |
+| --------------------- | -------------------------------- | ---------------------------------------------------------------- |
+| Peer lifecycle        | `TopologyManager`                | Tracks membership, assigns topology epochs, emits change events  |
+| Split-brain detection | `DCSplitBrainDetector`           | Compares cluster identity + epoch; refuses to merge a stale view |
+| Fan-out               | `MultiLeaderReplication`         | One logical stream per peer, independent backpressure            |
+| Edge reads            | `EdgeReplica`                    | Resumable read-only stream from the primary (restart from LSN)   |
+| Health                | `HealthMonitor`, `ChannelHealth` | Per-peer lag/error/jitter scored 0–100                           |
 
-Channel health is a weighted score, so a dashboard shows *why* a channel is unhealthy:
+Channel health is a weighted score, so a dashboard shows _why_ a channel is unhealthy:
 
 ```
 health = 100 − min(lag_ms/1000, 1)·30 − (err/(err+0.01))·40 − min(reconnects·5, 25) − min(log2(jitter+1)·2, 10)
@@ -240,12 +263,16 @@ health = 100 − min(lag_ms/1000, 1)·30 − (err/(err+0.01))·40 − min(reconn
 `QueryRouter` sends a query to the cluster that owns the data:
 
 ```ts
-const router = new QueryRouter({ topology, localClusterId: 'dc-east-1', policy: 'nearest-writer' });
-const target = router.route({ table: 'orders', key: 'order-9' });
+const router = new QueryRouter({
+  topology,
+  localClusterId: "dc-east-1",
+  policy: "nearest-writer",
+});
+const target = router.route({ table: "orders", key: "order-9" });
 ```
 
 Policies: `local-first` (default), `nearest-writer`, `primary-only`, `read-any`.
-Routing decisions are *routing hints*, not guarantees; the owning cluster still enforces
+Routing decisions are _routing hints_, not guarantees; the owning cluster still enforces
 its own consistency rules.
 
 ---
@@ -257,9 +284,9 @@ verification. There is no plaintext mode and no "trust the network" switch.
 
 ```ts
 const transport = new TcpSecureTransport({
-  nodeId: 'dc-east-1',
-  listen: { host: '0.0.0.0', port: 7443 },
-  peers: [{ nodeId: 'dc-west-1', host: 'west.example.net', port: 7443 }],
+  nodeId: "dc-east-1",
+  listen: { host: "0.0.0.0", port: 7443 },
+  peers: [{ nodeId: "dc-west-1", host: "west.example.net", port: 7443 }],
   tls: { cert, key, ca },
 });
 await transport.start();
@@ -295,13 +322,38 @@ otherwise be one node on the wire, the routing table would hold one entry for tw
 
 ## 8. Operating a federation
 
-| Symptom | First thing to check | Likely cause |
-|---|---|---|
-| Outbox grows monotonically | `ChannelHealth` reconnect count | Link down or certificate expired |
-| Lag grows but no errors | Peer RTT, `pumpBatchSize` | Throughput cap, not failure |
-| Divergent values after recovery | Conflict strategy for the table | LWW discarding a write that mattered |
-| Duplicate effects | `dedupTtlMs` vs outage length | Dedup window too short |
-| Split-brain warning | Topology epochs of both sides | A DC was restored from a stale snapshot |
+| Symptom                         | First thing to check            | Likely cause                            |
+| ------------------------------- | ------------------------------- | --------------------------------------- |
+| Outbox grows monotonically      | `ChannelHealth` reconnect count | Link down or certificate expired        |
+| Lag grows but no errors         | Peer RTT, `pumpBatchSize`       | Throughput cap, not failure             |
+| Divergent values after recovery | Conflict strategy for the table | LWW discarding a write that mattered    |
+| Duplicate effects               | `dedupTtlMs` vs outage length   | Dedup window too short                  |
+| Split-brain warning             | Topology epochs of both sides   | A DC was restored from a stale snapshot |
 
 A federation is healthy when: outbox depth is flat, lag is bounded by your SLO, channel
 health is > 80, and a periodic anti-entropy pass reports zero divergent ranges.
+
+## 9. Checking the delivery rules yourself
+
+Sections 1 and 2 describe what this package promises: a change reaches a sink once, in LSN order,
+and a refusal is retried and then recorded rather than dropped. Those are claims about your
+deployment, and you can test them against your own sink instead of taking ours on trust.
+
+`@agentix-e/db-federation/testing` publishes `CDCFailureInjector`, which wraps any `ICDCSink` and
+injects the faults you name — a dropped connection, a latency spike, a partial emit, a duplicate, a
+reordered batch:
+
+```ts
+import { CDCFailureInjector } from "@agentix-e/db-federation/testing";
+
+const injector = new CDCFailureInjector(mySink, [
+  { type: "connection_drop", failEveryN: 3, maxFailures: 2, on: "emit" },
+]);
+```
+
+Then drive the pipeline and assert what reached the sink underneath. A fault the injector did not
+actually fire is not counted, so `injectedBy('connection_drop')` tells you whether your test
+measured a fault or a quiet run — which is the difference between a passing test and a meaningful
+one. The reference page is [../federation/docs/testing.md](../federation/docs/testing.md), and it
+ships inside the published package at `docs/testing.md` — every package here now carries its
+documentation in the tarball, not only in the repository.

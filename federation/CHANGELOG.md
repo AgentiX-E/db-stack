@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`@agentix-e/db-federation/testing` — the fault injector, published, without the lies it told.**
+- **`@agentix-e/db-federation/testing`
   `CDCFailureInjector` implements `ICDCSink` and had no entry point and no production caller; it now
   ships from a subpath, because the delivery rules this package promises are only checkable by a
   consumer who can make their own sink misbehave. Four defects went with it: `maxFailures` was a
@@ -35,37 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`createSubscription(..., operations?)`.** The field existed and held one value — all three
   operations, with no parameter to change it. The pump filters on it, so it is now a decision.
 
-### Changed
-
-- **`CDCSubscription.webhookUrl` is `CDCSubscription.targetDsn`.** The catalogue reduced the DSN to
-  `webhookUrl` when it started with `http` and dropped it otherwise, so a subscription to a
-  `postgres://` or `memory://` target recorded no destination at all. A scheme the type could not
-  express was a destination the object did not keep.
-- **`CDCEngine` assigns a sequence number, not a clock reading.** The LSN was
-  `0/${(Date.now() * 1000).toString(16)}`, so two changes appended in the same millisecond carried
-  the same LSN: "delivered in LSN order" was true and meaningless at once, and a checkpoint compared
-  with `<=` could not tell them apart. The LSN is now `0/` plus a zero-padded hex counter — fixed
-  width, so lexicographic order is numeric order — and the counter survives `stop()`/`start()`.
-- **`CDCSinkResolver.emit()` always rejects when a batch is refused.** The failure path returned
-  early when the sink was already disconnected, so `emit()` resolved normally and the caller could
-  not learn that nothing had been written. Reachable whenever a `disconnect()` lands while an emit
-  is in flight.
-- **`CDCSinkResolver.disconnect()` reports a refusal and always refuses to write afterwards.** The
-  flag was cleared after the await and the await was wrapped in an empty `catch`, so a sink that
-  threw left the resolver believing it was connected: `emit()` passed its guard and the write went to
-  a connection the sink had already given up on.
-- **`@agentix-e/db-federation/transport` publishes a barrel, not a module file.** A subpath pointing
-  at `TcpSecureTransport.js` published every module-level export of it, including `retryDelayMs` —
-  which is marked `@internal` and exists for its own suite. A tag the package's own subpath
-  contradicts is not a decision; the subpath now exports the transport and its four types.
-- **Optional configuration is merged field by field.** `{ ...defaults, ...config }` cannot tell
-  "absent" from "explicitly `undefined`", and TypeScript lets a caller write the latter:
-  `checkpointDir: undefined` reached `path.join` and threw at construction, and `dedupTtlMs:
-  undefined` reached `DedupRing` as a ring that never expires. `ExactlyOnceCDCPipeline` and
-  `CDCSubscriptionPump` now fill their defaults with `??`.
-
-### Added
-
 - **`CDCManager` is now the manager the package actually runs.** `index.ts` exported a different
   class of that name — `replication/CDCManager`, the publication/subscription bookkeeping — while
   `FederationManager.getCDC()` returned the streaming manager in `core/`, which no consumer could
@@ -78,38 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TcpSecureTransportPeer`, `FederationEnvelope`, `IRaftTransport`, `FederationConsensusLayer`,
   `FederationOutboxWriter` and `DCSplitBrainDetector` appear in the signature of an exported class
   and were exported by nothing. `pnpm check:public-types` now proves the closure for every package.
-
-### Changed
-
-- **`CDCPublicationRegistry` is documented as a catalogue.** Its reference entry, its README row and
-  its header comment now say it keeps publications and subscriptions and delivers nothing, instead
-  of claiming a delivery path that did not exist.
-- **`FederationEnvelope` was called `RaftMessage`.** A second `RaftMessage` in this package — text
-  `type`, numeric `term` — with the same name as the wire type `@agentix-e/db-cluster` publishes
-  under it. The gateway's envelope has its own name.
-- **`FederationConsensusLayer` / `FederationOutboxWriter`** — the structural copies of db-cluster's
-  `IConsensusLayer` and `IOutboxWriter`. They stay copies, so the package keeps working with an
-  object that merely has the same two methods, but they no longer claim the same names as the
-  interfaces a reader would import from the other package.
-
-### Removed
-
-- **`CDCPublicationRegistry.onSlotInvalid()` and its `fireSlotInvalid()` hook**, and the member on
-  `ICDCManager`. A slot that goes invalid is a PostgreSQL event this package does not observe: the
-  callback set had no source, and the only thing that ever fired it was a public method on a
-  production class that existed so a test could reach it. A deployment could subscribe to an event
-  that could never arrive.
-- **`CDCPublicationRegistry`'s change dispatching.** The class subscribed to the engine's change
-  stream and filtered events into a loop whose body was three `continue`s — it advertised delivering
-  "change events to the appropriate subscriptions" and delivered none. The subscription, the empty
-  loop and the claim are gone; `ExactlyOnceCDCPipeline` is where delivery lives, with the ordering,
-  retry and checkpoint that a second path would not have had.
-- **Seven `ICDCManager` stubs on the streaming manager.** `getPublications()` returned `[]` for every
-  caller forever, `dropPublication()` did nothing, and `createPublication()` built an object it then
-  discarded. Publishing that class under the name `CDCManager` would have published the fakes, so the
-  class no longer claims the interface; the registry is what implements it.
-
-### Added
 
 - **`TcpSecureTransport.delivery.test.ts`** — `AC 47.1`–`AC 47.15`, 31 cases covering the two
   properties a cross-DC link lives or dies by and a return value cannot express: the wire frame is
@@ -136,13 +73,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declared. The store read it through a cast, so no caller could set it and an ACK by
   message id had nothing to resolve against.
 - **`OutboxEntryInput`** — the caller's contract for `add()` / `addBatch()`. `Omit<OutboxEntry,
-  'id'>` required `status`, `createdAt`, `lastAttemptAt`, `attemptCount` and `lastError`, every
+'id'>` required `status`, `createdAt`, `lastAttemptAt`, `attemptCount` and `lastError`, every
   one of which the store overwrites.
 - **`pnpm typecheck:tests`** — every test and benchmark is compiled with the production
   compiler options. The package had carried a `tsconfig.test.json` that no script referenced;
   317 type errors were sitting under it.
 
 ### Changed
+
+- **The documentation ships in the tarball.** `files` listed `dist`, `README.md` and
+  `CHANGELOG.md`, so `docs/api-reference.md` and the new `docs/testing.md` were absent from
+  `node_modules/@agentix-e/db-federation`. `pnpm check:package` now runs `npm pack` over every
+  package with a `docs/` tree and fails when the tarball carries none of it.
+- **`CDCSubscription.webhookUrl` is `CDCSubscription.targetDsn`.** The catalogue reduced the DSN to
+  `webhookUrl` when it started with `http` and dropped it otherwise, so a subscription to a
+  `postgres://` or `memory://` target recorded no destination at all. A scheme the type could not
+  express was a destination the object did not keep.
+- **`CDCEngine` assigns a sequence number, not a clock reading.** The LSN was
+  `0/${(Date.now() * 1000).toString(16)}`, so two changes appended in the same millisecond carried
+  the same LSN: "delivered in LSN order" was true and meaningless at once, and a checkpoint compared
+  with `<=` could not tell them apart. The LSN is now `0/` plus a zero-padded hex counter — fixed
+  width, so lexicographic order is numeric order — and the counter survives `stop()`/`start()`.
+- **`CDCSinkResolver.emit()` always rejects when a batch is refused.** The failure path returned
+  early when the sink was already disconnected, so `emit()` resolved normally and the caller could
+  not learn that nothing had been written. Reachable whenever a `disconnect()` lands while an emit
+  is in flight.
+- **`CDCSinkResolver.disconnect()` reports a refusal and always refuses to write afterwards.** The
+  flag was cleared after the await and the await was wrapped in an empty `catch`, so a sink that
+  threw left the resolver believing it was connected: `emit()` passed its guard and the write went to
+  a connection the sink had already given up on.
+- **`@agentix-e/db-federation/transport` publishes a barrel, not a module file.** A subpath pointing
+  at `TcpSecureTransport.js` published every module-level export of it, including `retryDelayMs` —
+  which is marked `@internal` and exists for its own suite. A tag the package's own subpath
+  contradicts is not a decision; the subpath now exports the transport and its four types.
+- **Optional configuration is merged field by field.** `{ ...defaults, ...config }` cannot tell
+  "absent" from "explicitly `undefined`", and TypeScript lets a caller write the latter:
+  `checkpointDir: undefined` reached `path.join` and threw at construction, and `dedupTtlMs:
+undefined` reached `DedupRing` as a ring that never expires. `ExactlyOnceCDCPipeline` and
+  `CDCSubscriptionPump` now fill their defaults with `??`.
+
+- **`CDCPublicationRegistry` is documented as a catalogue.** Its reference entry, its README row and
+  its header comment now say it keeps publications and subscriptions and delivers nothing, instead
+  of claiming a delivery path that did not exist.
+- **`FederationEnvelope` was called `RaftMessage`.** A second `RaftMessage` in this package — text
+  `type`, numeric `term` — with the same name as the wire type `@agentix-e/db-cluster` publishes
+  under it. The gateway's envelope has its own name.
+- **`FederationConsensusLayer` / `FederationOutboxWriter`** — the structural copies of db-cluster's
+  `IConsensusLayer` and `IOutboxWriter`. They stay copies, so the package keeps working with an
+  object that merely has the same two methods, but they no longer claim the same names as the
+  interfaces a reader would import from the other package.
 
 - **The API reference now describes this package.** `docs/api-reference.md` documented
   `FederationEngine`, `FederationConfig`, `DataChange`, `PipelineBuilder`, `HeartbeatStatus` and
@@ -156,12 +135,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compiler so a design sketch cannot pass as documentation again.
 
 - **The retry schedule is a function, not three lines inside a reconnect.** `retryDelayMs(attempt,
-  baseMs, maxMs, maxRetries)` is exported so the boundary can be asserted directly: attempt
+baseMs, maxMs, maxRetries)` is exported so the boundary can be asserted directly: attempt
   `maxRetries` still doubles, attempt `maxRetries + 1` is capped. Reaching that boundary through
   `setTimeout` meant timing a timer to assert a number, which is why the schedule had never been
   checked at the point where it changes shape.
 - **A peer's wire id is derived from its logical id, not from its position.** `peers:
-  [{ nodeId: 'dc-east' }]` used to give the peer id 1 because it was first in the list,
+[{ nodeId: 'dc-east' }]` used to give the peer id 1 because it was first in the list,
   while a local `nodeId: 'dc-west'` also derived 1 — two nodes, one number. The number is
   now taken from the id (`dc-7` → 7), which is also the number in the peer's certificate
   common name (`raft-node-<n>`), so the two ends agree by construction.
@@ -177,6 +156,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`IMultiLeaderReplication.replicate(..., type?)`** — `type` is optional, which is what the
   only implementation already does (`type ?? 'replicate'`).
+
+### Removed
+
+- **`CDCPublicationRegistry.onSlotInvalid()` and its `fireSlotInvalid()` hook**, and the member on
+  `ICDCManager`. A slot that goes invalid is a PostgreSQL event this package does not observe: the
+  callback set had no source, and the only thing that ever fired it was a public method on a
+  production class that existed so a test could reach it. A deployment could subscribe to an event
+  that could never arrive.
+- **`CDCPublicationRegistry`'s change dispatching.** The class subscribed to the engine's change
+  stream and filtered events into a loop whose body was three `continue`s — it advertised delivering
+  "change events to the appropriate subscriptions" and delivered none. The subscription, the empty
+  loop and the claim are gone; `ExactlyOnceCDCPipeline` is where delivery lives, with the ordering,
+  retry and checkpoint that a second path would not have had.
+- **Seven `ICDCManager` stubs on the streaming manager.** `getPublications()` returned `[]` for every
+  caller forever, `dropPublication()` did nothing, and `createPublication()` built an object it then
+  discarded. Publishing that class under the name `CDCManager` would have published the fakes, so the
+  class no longer claims the interface; the registry is what implements it.
 
 ### Fixed
 
@@ -229,7 +225,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_connectToPeer` returned outright when `attempt > _maxRetries`, which at the defaults
   (`initialRetryMs` 100, `maxRetryMs` 30 000, 5 attempts) is about 3.1 s. A datacenter that
   was down for longer than that never became reachable again without a process restart, while
-  the outbox kept entries it had no path to deliver. The budget now bounds the *fast* attempts
+  the outbox kept entries it had no path to deliver. The budget now bounds the _fast_ attempts
   only; past it the interval is the cap. `send()` also arms the channel when it has to refuse
   a message — a refusal that only reports the failure leaves recovery to a timer that may
   already have given up.

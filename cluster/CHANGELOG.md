@@ -35,62 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package's exported signatures so the next one cannot ship.
 - **`RaftMessage` and `RaftEntry` are now the wire types.** The package exported a `RaftMessage`
   from `interfaces/types.ts` — a protocol sketch with a `'request_vote'` discriminator that nothing
-  in the package produced or consumed — while `RaftTcpTransport.send()` took a *different*
+  in the package produced or consumed — while `RaftTcpTransport.send()` took a _different_
   `RaftMessage` from `MessageCodec`. The name a caller imported was not the type the transport
   accepted. `interfaces/types.ts`'s copy is gone, the codec's is exported under that name.
 - **`OutboundMessage`** — the envelope `ConnectionPool.broadcast()/sendTo()` stamp numeric peer ids
   onto, named so it cannot be confused with the wire type above.
-
-### Changed
-
-- **A failed flush keeps its frames.** `onConnectionCreated` deleted a peer's pending buffer and
-  then wrote it; if a write rejected, the handler closed the socket and the frames were gone — the
-  entries the leader had proposed before the handshake completed were lost with no record. The
-  undelivered tail now goes back to the head of the buffer in order and the socket is still closed,
-  so the pool's reconnect flushes it again over a fresh socket. Retries are bounded at three
-  attempts per batch; after that the frames are counted and reported rather than retried forever
-  against a peer that accepts dials and refuses writes.
-- **The pending buffer is bounded per peer (1024 frames).** The cap used to live on the pool's
-  queue, which nothing ever filled, while the buffer that is actually written grew without limit.
-- **`stop()` releases the buffers it can no longer flush**, and `unregister()` forgets the peer's
-  failure count as well as its frames. A stopped transport has no socket left to drain a queue, and a
-  re-registered peer inheriting a removed peer's retry budget is the same defect `removeNode()` fixed
-  for backoff.
-
-- **`RaftTcpTransportConfig` has one declaration.** `RaftAdapter` carried a second one, structurally
-  a subset of the transport's, and copied it field by field when it built the transport. The copy
-  omitted `compression` and `tls.verify`: a caller who set either through `init(tcpConfig)` got a
-  node that silently did not compress and one that silently ignored the certificate-identity policy
-  it had asked for. The config is now forwarded whole.
-- **`RaftAdapter`'s `SnapshotMeta` is `ShardSnapshotMeta`.** The package publishes a `SnapshotMeta`
-  (for `ISnapshotManager`, keyed by `groupId`) and a `RaftSnapshotMeta` (raft-core's log record), and
-  this third shape had borrowed the first name — so the name the package exported was not the type
-  `readSnapshotMeta()` returned.
-
-### Fixed
-
-- **Two settings `init()` accepted and dropped.** Covered under Changed: `compression` and
-  `tls.verify` never reached the transport.
-
-### Removed
-
-- **`ConnectionPool.sendTo()`, `broadcast()`, `enqueuePending()`, `flushPending()` and the
-  `OutboundMessage` type.** The pool carried a second send path: it serialised messages as JSON,
-  framed them itself, and queued them in its own pending map. `RaftTcpTransport` is the only writer
-  and does none of that — it encodes with `MessageCodec`, compresses, drops heartbeats and buffers
-  against its own drain — so the pool's path had no production caller, and a caller who reached for
-  it would have put JSON where the peer's decoder expects binary frames. The pending map, its
-  writes and its three flush call sites went with it; the transport's buffer took the cap.
-- **`ConnectionPool`'s deprecation notice**, which claimed "existing deployments construct it
-  directly" as the reason to keep the class exported. The pool is the transport's socket layer, not
-  a deprecated API: it is constructed by `RaftTcpTransport.start()` and by nothing else in this
-  repository.
-- **`ITransportReceiver`.** A declaration-only interface for a ZeroMQ transport this package does not
-  have, exported from the entry point, implemented by nothing, and covered by one test that listed
-  its own method names back at itself. Its `RaftMessage` went with it.
-- **`RaftAdapter`'s duplicate `RaftTcpTransportConfig`** — see Changed.
-
-### Added
 
 - **Membership changes over a live cluster** — `RaftAdapter.addServer(nodeId, address, asLearner)`,
   `promoteServer(nodeId)`, `removeServer(nodeId)`, `getMembership()` and `refreshMembership()`.
@@ -147,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their own config. The base config excludes `src/__tests__/performance/**` and
   `src/__tests__/longrun/**`, and a positional filter does not override `exclude`, so
   `test:perf` and `test:soak` printed `No test files found` and ran nothing. A
-  `mergeConfig` override does not work either: merging *concatenates* the arrays.
+  `mergeConfig` override does not work either: merging _concatenates_ the arrays.
 - **`bench/snapshot-threshold-sweep.ts`** — snapshot threshold against retained log,
   proposal latency and restart time, measured on a real cluster.
 - **`bench/proposal-concurrency-curve.ts`** — throughput against in-flight proposals,
@@ -170,7 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reproduce a lost port race deterministically; it now can.
 - **`TestCluster.restartNode(id)`** — bring a killed node back on its own port and its own data
   directory. The harness could already kill a node; it could not observe the half that matters
-  after a compaction, where a follower can only recover by *installing* a snapshot. A restart
+  after a compaction, where a follower can only recover by _installing_ a snapshot. A restart
   keeps the node's id, port and certificate, so its peers address it the same way and the
   leader has to re-establish replication with a lagging node — what a restart looks like in
   production.
@@ -236,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source. It ignores comments, string literals, `createRequire(import.meta.url)` and member calls, and
   its self-test asserts it scans more than a hundred real files, because a gate that scans nothing
   reports perfect compliance.
-- **`check-package.mjs` behaviour probes** — the published-artefact check now *calls* the entry
+- **`check-package.mjs` behaviour probes** — the published-artefact check now _calls_ the entry
   points it loads: the Merkle root must equal a constant computed with `node:crypto`, and a trace id
   must survive an `await` boundary. Both assertions fail on the artefacts that shipped before this
   release, in a plain Node process, which is the only place they could have been caught.
@@ -259,40 +208,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every heading against `src/index.ts` through the TypeScript compiler so the next sketch cannot
   survive a CI run.
 
-### Fixed
-
-- **Three published features called `require` from an ESM package.** This package ships as
-  `"type": "module"`; a bare `require(...)` does not exist there, and the three call sites did not
-  throw at build time or in the test suite — the test transform supplies a `require` — so the suite
-  reported green while consumers got exceptions:
-  - `RaftGroupManager._execOnLeader` called `require('pg')`, so **forwarding a write to the shard
-    leader threw `ReferenceError: require is not defined in ES module scope`** on the first forwarded
-    write. It now loads through `consensus/core/pgClient.ts`, which uses
-    `createRequire(import.meta.url)` and names the optional dependency when it is absent.
-  - `MerkleTree.computeRoot()` called `require('crypto')`, so the public anti-entropy digest threw
-    the same way. It uses a static `node:crypto` import.
-  - `LoggingAdapter.createTraceContext()` called `require('node:async_hooks')` inside a `try` whose
-    `catch` was documented as a pre-Node-12 guard. The guard caught the `ReferenceError`, so the
-    fallback was not a rare path but **the only path**: every log line silently carried
-    `traceId: undefined`, and the suite asserted trace correlation because it could not fail.
-    `AsyncLocalStorage` is imported statically now, and the unreachable fallback is gone.
-- **`MerkleTree.build()` appended its input twice.** It assigned `this._entries = entries` and then
-  called `this.add(entries)` with the same array, so every leaf was counted twice and the root digest
-  covered a doubled leaf set. Two replicas holding identical data produced identical — and identical
-  is not correct — roots, so comparing replicas could never notice. `build()` replaces, `add()`
-  appends, and `size` reports how many leaves there are.
-- **A CONFIG log entry lost its configuration on the way to disk.** `SqliteLogStorage.append` persisted
-  `entry.command` and nothing else, so a configuration entry was read back with `config: undefined` —
-  and the leader replicates by re-reading its own log. `validateLogEntry` rejected the AppendEntries on
-  the follower, the follower answered nothing, the leader timed out, and **no configuration change
-  could replicate on any cluster**. The payload column now carries `{ config }` for a CONFIG entry, a
-  CONFIG entry without one is refused at write time, and a legacy row that has neither fails loudly
-  instead of being read as an empty voter set (which would have been *applied*, rewriting a node's
-  membership to nobody).
-- **A malformed member row could contribute a phantom voter 0.** `Number(null)` and `Number('')` are
-  both `0`; member ids are now required to be positive integers.
-
 ### Changed
+
+- **The documentation ships in the tarball.** `files` listed `dist`, `README.md` and
+  `CHANGELOG.md`, so `docs/api-reference.md` and the new `docs/testing.md` were readable on GitHub
+  and absent from `node_modules/@agentix-e/db-cluster`. `pnpm check:package` now runs `npm pack`
+  over every package with a `docs/` tree and fails when the tarball carries none of it.
+- **A failed flush keeps its frames.** `onConnectionCreated` deleted a peer's pending buffer and
+  then wrote it; if a write rejected, the handler closed the socket and the frames were gone — the
+  entries the leader had proposed before the handshake completed were lost with no record. The
+  undelivered tail now goes back to the head of the buffer in order and the socket is still closed,
+  so the pool's reconnect flushes it again over a fresh socket. Retries are bounded at three
+  attempts per batch; after that the frames are counted and reported rather than retried forever
+  against a peer that accepts dials and refuses writes.
+- **The pending buffer is bounded per peer (1024 frames).** The cap used to live on the pool's
+  queue, which nothing ever filled, while the buffer that is actually written grew without limit.
+- **`stop()` releases the buffers it can no longer flush**, and `unregister()` forgets the peer's
+  failure count as well as its frames. A stopped transport has no socket left to drain a queue, and a
+  re-registered peer inheriting a removed peer's retry budget is the same defect `removeNode()` fixed
+  for backoff.
+
+- **`RaftTcpTransportConfig` has one declaration.** `RaftAdapter` carried a second one, structurally
+  a subset of the transport's, and copied it field by field when it built the transport. The copy
+  omitted `compression` and `tls.verify`: a caller who set either through `init(tcpConfig)` got a
+  node that silently did not compress and one that silently ignored the certificate-identity policy
+  it had asked for. The config is now forwarded whole.
+- **`RaftAdapter`'s `SnapshotMeta` is `ShardSnapshotMeta`.** The package publishes a `SnapshotMeta`
+  (for `ISnapshotManager`, keyed by `groupId`) and a `RaftSnapshotMeta` (raft-core's log record), and
+  this third shape had borrowed the first name — so the name the package exported was not the type
+  `readSnapshotMeta()` returned.
 
 - **`MerkleTree` moved to `consensus/anti-entropy/MerkleTree.ts`.** It was a class among
   declarations in `src/interfaces/`, which the coverage gate skips by design (declarations have no
@@ -300,7 +244,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a release. The package export is unchanged.
 - **The unit-test bootstrap no longer writes to `node_modules`.** It materialised a fake `pg` package
   under `node_modules/pg` so that a CommonJS `require('pg')` inside the source would resolve to a
-  controllable stub. `setupFiles` runs once per worker *thread*, so up to four threads truncated and
+  controllable stub. `setupFiles` runs once per worker _thread_, so up to four threads truncated and
   rewrote the same two files; a worker that required `pg` inside that window got an empty module and
   failed with `TypeError: Client is not a constructor` (CI run 44323059769, three cases) — and because
   `node_modules/pg` is a symlink into the pnpm store, the write replaced the real `pg` for the whole
@@ -365,7 +309,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `IOutboxWriter` no longer declares `write` / `getLastWrittenIndex`. They were
   never called; the interface described a contract no implementation used.
 
+### Removed
+
+- **`ConnectionPool.sendTo()`, `broadcast()`, `enqueuePending()`, `flushPending()` and the
+  `OutboundMessage` type.** The pool carried a second send path: it serialised messages as JSON,
+  framed them itself, and queued them in its own pending map. `RaftTcpTransport` is the only writer
+  and does none of that — it encodes with `MessageCodec`, compresses, drops heartbeats and buffers
+  against its own drain — so the pool's path had no production caller, and a caller who reached for
+  it would have put JSON where the peer's decoder expects binary frames. The pending map, its
+  writes and its three flush call sites went with it; the transport's buffer took the cap.
+- **`ConnectionPool`'s deprecation notice**, which claimed "existing deployments construct it
+  directly" as the reason to keep the class exported. The pool is the transport's socket layer, not
+  a deprecated API: it is constructed by `RaftTcpTransport.start()` and by nothing else in this
+  repository.
+- **`ITransportReceiver`.** A declaration-only interface for a ZeroMQ transport this package does not
+  have, exported from the entry point, implemented by nothing, and covered by one test that listed
+  its own method names back at itself. Its `RaftMessage` went with it.
+- **`RaftAdapter`'s duplicate `RaftTcpTransportConfig`** — see Changed.
+
+- **`RaftTransportAdapter` is gone, and with it the pipeline window nothing ever fed.** The class
+  bridged raft-core's transport interface to the wire and kept per-peer replication state: `nextIndex`,
+  `matchIndex`, an `inFlight` map, serial fallback after rejections, and a `canSendTo()` window that was
+  meant to apply backpressure. Nothing constructed it — production drives `BatchedRaftTransport` and
+  `SharedBatchedTransport`, and only two unit-test files ever called `new` on it — and nothing consumed
+  the state: `acknowledgeEntry()`, `rejectEntry()` and `canSendTo()` had no caller outside those tests,
+  while `send()` registered every entry of every `AppendEntries` as in-flight and never removed one.
+  Measured: 5 000 entries → 5 000 in-flight / +1.7 MB, 50 000 → 45 000 / +9.2 MB, 200 000 → 195 000 /
+  +24.5 MB, with `matchIndex` still 0, `caughtUp` still `true` and `canSendTo()` `false` — an unwindable
+  map, a backpressure signal that could only ever say no, and a "caught up" flag that measured nothing.
+  Replication concurrency belongs to raft-core, whose single pipeline the throughput tests already
+  describe; a transport cannot withhold an `AppendEntries` to honour a window, so the window could not
+  have been wired without losing messages. `RaftTcpTransport`, `BatchedRaftTransport`,
+  `SharedBatchedTransport`, `NodeTransport` and `MessageCodec` keep the conversion and routing work the
+  class duplicated. Consumers that imported the type must use the transports above.
+
+---
+
+- **The group's pipeline buffer, and every way of asking about it.** `RaftGroup` kept a
+  `pipeline: PipelinedEntry[]`, a flush timer armed in `init()`, a mutex, a `BACKPRESSURE` guard and
+  the accessors for them. Nothing outside the tests ever put an entry in: the production batch path is
+  `proposeBatch()`, which packs entries into one `__batch` command and proposes it directly, and
+  `appendWithPipeline()` — the only writer — had no caller in the package. The timer therefore woke
+  every `batchIntervalMs` to find an empty array, `forceFlush()` at shutdown flushed nothing, the
+  queue-depth guard guarded an always-empty queue, and `requestForLearner()`'s fallback branch could
+  never be taken. Wiring it was the wrong repair: `flushPipeline()` proposes each entry separately, so
+  it would turn one commit into N and change the latency the throughput suite measures.
+  Removed with it: `RaftGroup.appendWithPipeline`, `flushPipeline`, `forceFlush`, `getPipeline`,
+  `getPipelineDepth`, `getPipelineQueueDepth`, `getPipelineConfig`, `setPipelineConfig`, the
+  `pipelineConfig` constructor argument, `RaftGroupManager.setGlobalPipelineConfig`,
+  `RaftGroupManager.forceGlobalPipelineFlush`, the `PipelineConfig`, `DEFAULT_PIPELINE_CONFIG` and
+  `PipelinedEntry` types, and the `pipelineDepth` field of `RaftHealthStatus`. Callers passing
+  `pipelineConfig` positionally to `new RaftGroup(...)` or `registerShardWithReplica(...)` drop the
+  argument; callers reading `pipelineDepth` read `applyLag` instead.
+
 ### Fixed
+
+- **Two settings `init()` accepted and dropped.** Covered under Changed: `compression` and
+  `tls.verify` never reached the transport.
+
+- **Three published features called `require` from an ESM package.** This package ships as
+  `"type": "module"`; a bare `require(...)` does not exist there, and the three call sites did not
+  throw at build time or in the test suite — the test transform supplies a `require` — so the suite
+  reported green while consumers got exceptions:
+  - `RaftGroupManager._execOnLeader` called `require('pg')`, so **forwarding a write to the shard
+    leader threw `ReferenceError: require is not defined in ES module scope`** on the first forwarded
+    write. It now loads through `consensus/core/pgClient.ts`, which uses
+    `createRequire(import.meta.url)` and names the optional dependency when it is absent.
+  - `MerkleTree.computeRoot()` called `require('crypto')`, so the public anti-entropy digest threw
+    the same way. It uses a static `node:crypto` import.
+  - `LoggingAdapter.createTraceContext()` called `require('node:async_hooks')` inside a `try` whose
+    `catch` was documented as a pre-Node-12 guard. The guard caught the `ReferenceError`, so the
+    fallback was not a rare path but **the only path**: every log line silently carried
+    `traceId: undefined`, and the suite asserted trace correlation because it could not fail.
+    `AsyncLocalStorage` is imported statically now, and the unreachable fallback is gone.
+- **`MerkleTree.build()` appended its input twice.** It assigned `this._entries = entries` and then
+  called `this.add(entries)` with the same array, so every leaf was counted twice and the root digest
+  covered a doubled leaf set. Two replicas holding identical data produced identical — and identical
+  is not correct — roots, so comparing replicas could never notice. `build()` replaces, `add()`
+  appends, and `size` reports how many leaves there are.
+- **A CONFIG log entry lost its configuration on the way to disk.** `SqliteLogStorage.append` persisted
+  `entry.command` and nothing else, so a configuration entry was read back with `config: undefined` —
+  and the leader replicates by re-reading its own log. `validateLogEntry` rejected the AppendEntries on
+  the follower, the follower answered nothing, the leader timed out, and **no configuration change
+  could replicate on any cluster**. The payload column now carries `{ config }` for a CONFIG entry, a
+  CONFIG entry without one is refused at write time, and a legacy row that has neither fails loudly
+  instead of being read as an empty voter set (which would have been _applied_, rewriting a node's
+  membership to nobody).
+- **A malformed member row could contribute a phantom voter 0.** `Number(null)` and `Number('')` are
+  both `0`; member ids are now required to be positive integers.
 
 - **A throwing `onOpen` left the storage half open.** The callback runs after the handle is created,
   so a configuration hook that threw produced a live better-sqlite3 handle reachable from nowhere,
@@ -382,7 +413,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   8 s is the boundary between "slow" and "stuck", and a stuck storage is a defect. All 19 now count as
   killed (P3-11).
 - **The mutation suite was flaky, and a flaky suite moves a mutation score in both directions.**
-  `vitest.mutation.config.ts` ran its four files in parallel; three clean runs — *no mutant applied* —
+  `vitest.mutation.config.ts` ran its four files in parallel; three clean runs — _no mutant applied_ —
   failed a test in two of them with `SqliteError: disk I/O error` from `pragma journal_mode = WAL`, a
   different test each time. Replaying the 133 reported survivors showed what that does to the number:
   **68 of them failed** when applied, because a flaky test was failing and the runner charged it to the
@@ -392,10 +423,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   share is the machine — and Stryker already runs four workers, each with its own sandbox.
 - **A node had fifteen seconds to say it was ready — on any machine.** CI run 44045755888
   failed `AC 8.13 — connection drop and reconnect` with `Timeout waiting for "ready" from
-  node 1 (15000ms)`, and the restarted process had printed nothing but its first `DEP0123`
+node 1 (15000ms)`, and the restarted process had printed nothing but its first `DEP0123`
   line: it was starting, slowly, on a two-core runner shared with four other files. A cold
   start is `node --import tsx` plus a better-sqlite3 store plus a TLS identity, so the
-  budget is now *derived* — four times the slowest start the same file has measured, floored
+  budget is now _derived_ — four times the slowest start the same file has measured, floored
   at the old number — because the right value is a property of the machine and the test is
   the only thing in a position to ask. `raft-core.test.ts` carried the same constant at ten
   seconds and got the same treatment.
@@ -403,7 +434,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed on the timeout only, so a file accumulated one per wait and reported
   `MaxListenersExceededWarning: 11 message listeners added to [ChildProcess]` — a leaked
   reference per wait, plus handlers running for messages nobody was waiting for. It is
-  removed on both exits now, and a timeout reports what the node *did* say and whether it is
+  removed on both exits now, and a timeout reports what the node _did_ say and whether it is
   still alive, because "timeout waiting for ready" cannot be acted on.
 - **`SqliteStorage.open()` was not idempotent, and the handle it dropped aborted the
   process.** A second `open()` built a second better-sqlite3 database and assigned it
@@ -440,8 +471,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   need it, each of which creates the directory first.
 - **A snapshot larger than one chunk could never install.** raft-core starts `sendSnapshot`
   from its heartbeat loop, which does not await peers (`for (const peer of allPeers)
-  this.sendAppendEntries(peer)`) and holds no per-peer guard, so several transfers to one peer
-  run at once. The receiver resets its chunk assembly on *every* `offset === 0` chunk, so the
+this.sendAppendEntries(peer)`) and holds no per-peer guard, so several transfers to one peer
+  run at once. The receiver resets its chunk assembly on _every_ `offset === 0` chunk, so the
   second transfer wiped the first one's progress, the first one's next chunk arrived at an
   offset the receiver no longer expected, both were answered `success: false`, and the next
   heartbeat began the same race. Snapshots under raft-core's fixed 256 KiB chunk size hid the
@@ -475,7 +506,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler contract. No handler at all still yields an empty snapshot: a group that owns no
   application state has nothing to capture, and raft needs a boundary.
 - **A replica that failed to install a snapshot kept applying anyway.** Raft discards the log up
-  to the snapshot boundary *before* calling `installSnapshot`, so the entries the snapshot was
+  to the snapshot boundary _before_ calling `installSnapshot`, so the entries the snapshot was
   meant to carry are gone from the log and absent from the engine. Applying above the boundary
   then leaves an applied index that matches the cluster and state that does not — measured as
   `stateSize=31` next to `applied=52` on a node that was answering reads. The replica records the
@@ -534,43 +565,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads the log raft-core actually holds, through `RaftAdapter.getLogEntries()`. The response also
   gained `firstAvailableIndex` — the floor compaction has left behind — because a caller whose cursor
   is below it must take the snapshot instead of asking again for entries that no longer exist.
-
-### Removed
-
-- **`RaftTransportAdapter` is gone, and with it the pipeline window nothing ever fed.** The class
-  bridged raft-core's transport interface to the wire and kept per-peer replication state: `nextIndex`,
-  `matchIndex`, an `inFlight` map, serial fallback after rejections, and a `canSendTo()` window that was
-  meant to apply backpressure. Nothing constructed it — production drives `BatchedRaftTransport` and
-  `SharedBatchedTransport`, and only two unit-test files ever called `new` on it — and nothing consumed
-  the state: `acknowledgeEntry()`, `rejectEntry()` and `canSendTo()` had no caller outside those tests,
-  while `send()` registered every entry of every `AppendEntries` as in-flight and never removed one.
-  Measured: 5 000 entries → 5 000 in-flight / +1.7 MB, 50 000 → 45 000 / +9.2 MB, 200 000 → 195 000 /
-  +24.5 MB, with `matchIndex` still 0, `caughtUp` still `true` and `canSendTo()` `false` — an unwindable
-  map, a backpressure signal that could only ever say no, and a "caught up" flag that measured nothing.
-  Replication concurrency belongs to raft-core, whose single pipeline the throughput tests already
-  describe; a transport cannot withhold an `AppendEntries` to honour a window, so the window could not
-  have been wired without losing messages. `RaftTcpTransport`, `BatchedRaftTransport`,
-  `SharedBatchedTransport`, `NodeTransport` and `MessageCodec` keep the conversion and routing work the
-  class duplicated. Consumers that imported the type must use the transports above.
-
----
-
-- **The group's pipeline buffer, and every way of asking about it.** `RaftGroup` kept a
-  `pipeline: PipelinedEntry[]`, a flush timer armed in `init()`, a mutex, a `BACKPRESSURE` guard and
-  the accessors for them. Nothing outside the tests ever put an entry in: the production batch path is
-  `proposeBatch()`, which packs entries into one `__batch` command and proposes it directly, and
-  `appendWithPipeline()` — the only writer — had no caller in the package. The timer therefore woke
-  every `batchIntervalMs` to find an empty array, `forceFlush()` at shutdown flushed nothing, the
-  queue-depth guard guarded an always-empty queue, and `requestForLearner()`'s fallback branch could
-  never be taken. Wiring it was the wrong repair: `flushPipeline()` proposes each entry separately, so
-  it would turn one commit into N and change the latency the throughput suite measures.
-  Removed with it: `RaftGroup.appendWithPipeline`, `flushPipeline`, `forceFlush`, `getPipeline`,
-  `getPipelineDepth`, `getPipelineQueueDepth`, `getPipelineConfig`, `setPipelineConfig`, the
-  `pipelineConfig` constructor argument, `RaftGroupManager.setGlobalPipelineConfig`,
-  `RaftGroupManager.forceGlobalPipelineFlush`, the `PipelineConfig`, `DEFAULT_PIPELINE_CONFIG` and
-  `PipelinedEntry` types, and the `pipelineDepth` field of `RaftHealthStatus`. Callers passing
-  `pipelineConfig` positionally to `new RaftGroup(...)` or `registerShardWithReplica(...)` drop the
-  argument; callers reading `pipelineDepth` read `applyLag` instead.
 
 ## [1.2.0] — 2026-11-15
 

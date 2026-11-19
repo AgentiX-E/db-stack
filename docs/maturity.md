@@ -197,6 +197,15 @@ test trees were the only unverified code in the repository — and they drifted.
 - a reference engine adapter that did not satisfy the interfaces it claimed to implement;
 - module specifiers that resolved to nothing.
 
+**And the documentation was not in the tarball.** Every package listed `dist`, `README.md` and
+`CHANGELOG.md` in `files`, and all fourteen that have a `docs/` tree left it out: the reference
+pages this repository gates so carefully were readable on GitHub and absent from
+`node_modules/@agentix-e/db-*`, which is the first place a consumer looks. Measured with
+`npm pack`: `federation` shipped 200 files and no `docs/`. `files` now includes it, and
+`pnpm check:package` runs `npm pack` over every package with a `docs/` tree and fails when the
+tarball carries none of it — the assertion is the tarball rather than the manifest, because
+`files` can name a directory that an `.npmignore` then empties.
+
 Iteration 53 re-learned it a third time, in the file it was writing at that moment. A new
 fixture described a sink event as `{ id, table, operation, data, timestamp: 1, lsn }`; the
 contract is `{ id, type, table, key, data, timestamp: bigint }`. Vitest ran all eleven cases

@@ -36,7 +36,7 @@
     "url": "git+https://github.com/AgentiX-E/db-stack.git",
     "directory": "operations"
   },
-  "description": "Unified, engine-agnostic database operations framework — 21 packages",
+  "description": "Unified, engine-agnostic database operations framework \u2014 21 packages",
   "keywords": [
     "database",
     "operations",
@@ -89,6 +89,7 @@
     "dist",
     "README.md",
     "CHANGELOG.md",
-    "packages/*/dist"
+    "packages/*/dist",
+    "docs"
   ]
 }
