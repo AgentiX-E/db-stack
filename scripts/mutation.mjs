@@ -14,6 +14,9 @@
  *
  * A checker that only documents a constraint is a comment. This one refuses.
  *
+ * The refusal is a returned code and a sentence, not a `process.exit()` in the
+ * middle of the module, so a test can assert both without starting Stryker.
+ *
  * Usage:
  *   node scripts/mutation.mjs <cluster|federation|operations|all> [stryker args]
  *
@@ -24,70 +27,96 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { TARGETS } from "../mutation/targets.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
-const require = createRequire(import.meta.url);
 
-const [requested, ...forwarded] = process.argv.slice(2);
-const names = Object.keys(TARGETS);
-
-if (!requested || !(requested === "all" || requested in TARGETS)) {
-  console.error(
-    `mutation: expected one of ${[...names, "all"].join(", ")}, received ${requested ?? "nothing"}`,
+/**
+ * The Stryker entry point, resolved rather than reached through a shell, so this
+ * works on every platform.
+ */
+export function strykerBin(requireFn = createRequire(import.meta.url)) {
+  return resolve(
+    dirname(requireFn.resolve("@stryker-mutator/core/package.json")),
+    "bin/stryker.js",
   );
-  process.exit(2);
 }
-
-if (resolve(process.cwd()) !== repositoryRoot) {
-  console.error(
-    [
-      `mutation: run this from the repository root, not from ${process.cwd()}.`,
-      "  Stryker copies the working directory into its sandbox; run from a package",
-      "  directory and the copy has no parent, so the tsconfig it extends and the",
-      "  test helper the setup files import are both missing.",
-      `  From the root: pnpm run test:mutation:${requested === "all" ? "<target>" : requested}`,
-    ].join("\n"),
-  );
-  process.exit(2);
-}
-
-/** Resolved rather than spawned through a shell, so this works on every platform. */
-const strykerBin = resolve(
-  dirname(require.resolve("@stryker-mutator/core/package.json")),
-  "bin/stryker.js",
-);
 
 /** The exit code of one Stryker run. */
-function run(target) {
-  return new Promise((resolveRun) => {
-    const child = spawn(process.execPath, [strykerBin, "run", ...forwarded], {
-      cwd: repositoryRoot,
-      env: { ...process.env, MUTATION_TARGET: target },
-      stdio: "inherit",
-    });
+export function runOne(target, forwarded, options = {}) {
+  const spawnFn = options.spawn ?? spawn;
+  const error = options.error ?? console.error;
+
+  return new Promise((settle) => {
+    const child = spawnFn(
+      options.execPath ?? process.execPath,
+      [options.bin ?? strykerBin(), "run", ...forwarded],
+      {
+        cwd: options.cwd ?? repositoryRoot,
+        env: { ...(options.env ?? process.env), MUTATION_TARGET: target },
+        stdio: "inherit",
+      },
+    );
     child.on("close", (code, signal) => {
       if (signal) {
-        console.error(`mutation: ${target} was killed by ${signal}`);
-        resolveRun(1);
+        error(`mutation: ${target} was killed by ${signal}`);
+        settle(1);
       } else {
-        resolveRun(code ?? 1);
+        settle(code ?? 1);
       }
     });
-    child.on("error", (error) => {
-      console.error(
-        `mutation: could not start the ${target} run — ${error.message}`,
-      );
-      resolveRun(1);
+    child.on("error", (cause) => {
+      error(`mutation: could not start the ${target} run — ${cause.message}`);
+      settle(1);
     });
   });
 }
 
-// `all` stops at the first failure: a gate that reports three scores and exits 0
-// because the last one passed is not a gate.
-const targets = requested === "all" ? names : [requested];
-for (const target of targets) {
-  const code = await run(target);
-  if (code !== 0) process.exit(code);
+/**
+ * The command line as a function: which targets to run, from where, and what to
+ * report when the answer is "not like this".
+ */
+export async function main(argv = process.argv.slice(2), options = {}) {
+  const error = options.error ?? console.error;
+  const targets = options.targets ?? TARGETS;
+  const cwd = options.cwd ?? process.cwd();
+  const root = options.root ?? repositoryRoot;
+  const [requested, ...forwarded] = argv;
+  const names = Object.keys(targets);
+
+  if (!requested || !(requested === "all" || requested in targets)) {
+    error(
+      `mutation: expected one of ${[...names, "all"].join(", ")}, received ${requested ?? "nothing"}`,
+    );
+    return 2;
+  }
+
+  if (resolve(cwd) !== root) {
+    error(
+      [
+        `mutation: run this from the repository root, not from ${cwd}.`,
+        "  Stryker copies the working directory into its sandbox; run from a package",
+        "  directory and the copy has no parent, so the tsconfig it extends and the",
+        "  test helper the setup files import are both missing.",
+        `  From the root: pnpm run test:mutation:${requested === "all" ? "<target>" : requested}`,
+      ].join("\n"),
+    );
+    return 2;
+  }
+
+  // `all` stops at the first failure: a gate that reports three scores and exits 0
+  // because the last one passed is not a gate.
+  const queue = requested === "all" ? names : [requested];
+  const run = options.run ?? ((target) => runOne(target, forwarded, options));
+  for (const target of queue) {
+    const code = await run(target);
+    if (code !== 0) return code;
+  }
+  return 0;
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  process.exit(await main());
 }

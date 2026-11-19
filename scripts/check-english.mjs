@@ -55,7 +55,15 @@ const LOOSE_DOCUMENTS = [
   "e2e/README.md",
 ];
 
-const SOURCE_EXTENSIONS = [".ts", ".mts", ".cts", ".js", ".mjs", ".jsx", ".tsx"];
+const SOURCE_EXTENSIONS = [
+  ".ts",
+  ".mts",
+  ".cts",
+  ".js",
+  ".mjs",
+  ".jsx",
+  ".tsx",
+];
 const WORKFLOW_EXTENSIONS = [".yml", ".yaml"];
 const DOCUMENT_EXTENSIONS = [".md"];
 
@@ -66,7 +74,8 @@ const TITLE_CALLS = ["it", "test", "describe", "suite", "bench"];
 const OPT_OUT = "english-ok";
 
 /** Any CJK ideograph, kana, or the fullwidth punctuation that comes with them. */
-const CJK = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+const CJK =
+  /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/;
 
 /**
  * Every CJK finding in one file.
@@ -76,15 +85,18 @@ const CJK = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\
  * @returns {Array<{file: string, line: number, kind: 'comment' | 'title', text: string}>}
  */
 export function findCjk(text, file) {
-  if (DOCUMENT_EXTENSIONS.some((ext) => file.endsWith(ext))) return proseFindings(text, file);
+  if (DOCUMENT_EXTENSIONS.some((ext) => file.endsWith(ext)))
+    return proseFindings(text, file);
   const findings = [];
   const lines = text.split("\n");
   // YAML and workflow files comment with `#`; TypeScript does not, and a `#` there
   // is a private field. The scanner is told which dialect it is reading rather than
   // guessing from the content.
   const hashComments = /\.ya?ml$/.test(file);
-  for (const finding of commentFindings(text, file, hashComments)) findings.push(finding);
-  for (const finding of titleFindings(text, file, lines)) findings.push(finding);
+  for (const finding of commentFindings(text, file, hashComments))
+    findings.push(finding);
+  for (const finding of titleFindings(text, file, lines))
+    findings.push(finding);
   findings.sort((a, b) => a.line - b.line);
   return findings;
 }
@@ -198,7 +210,13 @@ function proseFindings(text, file) {
     }
     if (fenced) continue;
     if (line.includes(OPT_OUT)) continue;
-    if (CJK.test(line)) findings.push({ file, line: index + 1, kind: "prose", text: line.trim() });
+    if (CJK.test(line))
+      findings.push({
+        file,
+        line: index + 1,
+        kind: "prose",
+        text: line.trim(),
+      });
   }
   return findings;
 }
@@ -217,31 +235,48 @@ function titleFindings(text, file, lines) {
     if (match[1] === "`" && literal.includes("${")) continue;
     if (!CJK.test(literal)) continue;
     const line = text.slice(0, match.index).split("\n").length;
-    findings.push({ file, line, kind: "title", text: (lines[line - 1] ?? "").trim() });
+    findings.push({
+      file,
+      line,
+      kind: "title",
+      text: (lines[line - 1] ?? "").trim(),
+    });
   }
   return findings;
 }
 
 /** Every file the rule applies to, relative to the repository root. */
-function targetFiles() {
+export function targetFiles(root = ROOT) {
   const files = [];
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === "coverage") continue;
+      if (
+        entry.name === "node_modules" ||
+        entry.name === "dist" ||
+        entry.name === "coverage"
+      )
+        continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(full);
         continue;
       }
-      const isSource = SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext));
-      const isWorkflow = WORKFLOW_EXTENSIONS.some((ext) => entry.name.endsWith(ext));
-      const isDocument = DOCUMENT_EXTENSIONS.some((ext) => entry.name.endsWith(ext));
-      if (isSource || isWorkflow || isDocument) files.push(relative(ROOT, full));
+      const isSource = SOURCE_EXTENSIONS.some((ext) =>
+        entry.name.endsWith(ext),
+      );
+      const isWorkflow = WORKFLOW_EXTENSIONS.some((ext) =>
+        entry.name.endsWith(ext),
+      );
+      const isDocument = DOCUMENT_EXTENSIONS.some((ext) =>
+        entry.name.endsWith(ext),
+      );
+      if (isSource || isWorkflow || isDocument)
+        files.push(relative(root, full));
     }
   };
 
   for (const tree of TREES) {
-    const full = join(ROOT, tree);
+    const full = join(root, tree);
     try {
       if (statSync(full).isDirectory()) walk(full);
     } catch {
@@ -250,7 +285,7 @@ function targetFiles() {
   }
   for (const document of LOOSE_DOCUMENTS) {
     try {
-      if (statSync(join(ROOT, document)).isFile()) files.push(document);
+      if (statSync(join(root, document)).isFile()) files.push(document);
     } catch {
       // Absent in this checkout: not a finding.
     }
@@ -259,29 +294,48 @@ function targetFiles() {
 }
 
 /** Run the gate. Exported so its own test can drive it without spawning. */
-export function run() {
+export function run(root = ROOT) {
   const findings = [];
-  for (const file of targetFiles()) {
-    findings.push(...findCjk(readFileSync(join(ROOT, file), "utf8"), file));
+  for (const file of targetFiles(root)) {
+    findings.push(...findCjk(readFileSync(join(root, file), "utf8"), file));
   }
   return findings;
 }
 
+/**
+ * Print the verdict and return the exit code.
+ *
+ * The two streams are arguments because the failure branch is the one that
+ * matters and the one nobody sees on a green run: a test has to be able to read
+ * the sentence that a red build shows.
+ */
+export function report(findings, options = {}) {
+  const out = options.out ?? process.stdout;
+  const err = options.err ?? process.stderr;
+
+  if (findings.length === 0) {
+    out.write(
+      "English gate passed: no CJK in comments, test titles or document prose.\n",
+    );
+    return 0;
+  }
+
+  for (const finding of findings) {
+    err.write(
+      `${finding.file}:${finding.line}: ${finding.kind} is not English\n    ${finding.text}\n`,
+    );
+  }
+  err.write(
+    `\nEnglish gate failed: ${findings.length} line(s) of CJK in comments or test titles.\n` +
+      `Comments and titles are English by rule; a fixture that needs CJK belongs in a string literal.\n`,
+  );
+  return 1;
+}
+
 const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
 
 if (invokedDirectly) {
-  const findings = run();
-  if (findings.length === 0) {
-    process.stdout.write("English gate passed: no CJK in comments, test titles or document prose.\n");
-  } else {
-    for (const finding of findings) {
-      process.stderr.write(`${finding.file}:${finding.line}: ${finding.kind} is not English\n    ${finding.text}\n`);
-    }
-    process.stderr.write(
-      `\nEnglish gate failed: ${findings.length} line(s) of CJK in comments or test titles.\n` +
-        `Comments and titles are English by rule; a fixture that needs CJK belongs in a string literal.\n`,
-    );
-    process.exitCode = 1;
-  }
+  process.exitCode = report(run());
 }

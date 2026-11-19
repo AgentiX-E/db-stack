@@ -150,7 +150,7 @@ export function findBareRequire(source, file) {
   return findings;
 }
 
-function isEsmPackage(dir) {
+export function isEsmPackage(dir) {
   try {
     const manifest = JSON.parse(
       readFileSync(join(dir, "package.json"), "utf8"),
@@ -161,7 +161,7 @@ function isEsmPackage(dir) {
   }
 }
 
-function collectFiles(dir, files = []) {
+export function collectFiles(dir, files = []) {
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -183,15 +183,15 @@ function collectFiles(dir, files = []) {
 }
 
 /** Run the gate. Exported so its own test can drive it without spawning. */
-export function run() {
+export function run(repositoryRoot = ROOT) {
   const findings = [];
   const scanned = [];
 
   for (const root of PACKAGE_ROOTS) {
-    const dir = join(ROOT, root);
+    const dir = join(repositoryRoot, root);
     if (!isEsmPackage(dir)) continue;
     for (const file of collectFiles(join(dir, "src"))) {
-      const rel = relative(ROOT, file);
+      const rel = relative(repositoryRoot, file);
       scanned.push(rel);
       findings.push(...findBareRequire(readFileSync(file, "utf8"), rel));
     }
@@ -204,24 +204,37 @@ const invokedDirectly =
   process.argv[1] !== undefined &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
 
-if (invokedDirectly) {
-  const { findings, scanned } = run();
+/**
+ * Print the verdict and return the exit code.
+ *
+ * Extracted for the same reason `run` takes a root: the failure branch is the
+ * one nobody reads until a consumer reports it, so a test has to be able to.
+ */
+export function report({ findings, scanned }, options = {}) {
+  const out = options.out ?? process.stdout;
+  const err = options.err ?? process.stderr;
+
   if (findings.length === 0) {
-    process.stdout.write(
+    out.write(
       `ESM gate passed: no bare require() in ${scanned.length} ESM source files.\n`,
     );
-  } else {
-    for (const finding of findings) {
-      process.stderr.write(
-        `${finding.file}:${finding.line}: bare require() in an ESM package\n    ${finding.text}\n`,
-      );
-    }
-    process.stderr.write(
-      `\nESM gate failed: ${findings.length} bare require() call(s).\n` +
-        `These compile and pass the test suite (the test transform supplies a require) and then throw\n` +
-        `"require is not defined in ES module scope" for every consumer. Use an ESM import, or\n` +
-        `createRequire(import.meta.url) when the dependency must be optional.\n`,
-    );
-    process.exitCode = 1;
+    return 0;
   }
+
+  for (const finding of findings) {
+    err.write(
+      `${finding.file}:${finding.line}: bare require() in an ESM package\n    ${finding.text}\n`,
+    );
+  }
+  err.write(
+    `\nESM gate failed: ${findings.length} bare require() call(s).\n` +
+      `These compile and pass the test suite (the test transform supplies a require) and then throw\n` +
+      `"require is not defined in ES module scope" for every consumer. Use an ESM import, or\n` +
+      `createRequire(import.meta.url) when the dependency must be optional.\n`,
+  );
+  return 1;
+}
+
+if (invokedDirectly) {
+  process.exitCode = report(run());
 }

@@ -18,6 +18,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -356,5 +357,48 @@ test("the repository's table adds up to the totals the page states, by its own a
     sum,
     parseCount(stated[2]),
     "the rows add up to the stated total",
+  );
+});
+
+test("--write on a page that is already right changes nothing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "test-counts-"));
+  try {
+    const page = join(dir, "README.md");
+    const report = join(dir, "report.json");
+    writeFileSync(page, PAGE);
+    writeFileSync(report, JSON.stringify(reportOf([CORE, 2], [HEALTH, null])));
+
+    const lines = [];
+    const code = run(["--write"], {
+      page,
+      report,
+      log: (line) => lines.push(line),
+    });
+
+    assert.equal(code, 0);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /✓ test-counts: 2 cases in 2 files/);
+    assert.equal(readFileSync(page, "utf8"), PAGE);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the command line is the command line: a missing report exits 1 and says what to run", () => {
+  // The entry point is six lines no import can reach, and it is the half of the
+  // gate a person actually runs. Spawning it is the only way to assert that the
+  // exit code is 1 rather than an unhandled throw.
+  const child = spawnSync(
+    process.execPath,
+    [resolve(ROOT, "scripts/check-test-counts.mjs")],
+    {
+      encoding: "utf8",
+    },
+  );
+
+  assert.equal(child.status, 1);
+  assert.match(
+    child.stderr,
+    /no report at operations\/coverage\/test-report\.json/,
   );
 });

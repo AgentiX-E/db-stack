@@ -49,9 +49,15 @@ const NAMED_TYPE_FLAGS =
   ts.SymbolFlags.TypeAlias |
   ts.SymbolFlags.Enum;
 
-/** A type a consumer never has to name. */
+/**
+ * A type a consumer never has to name.
+ *
+ * There is deliberately no `if (!type)` guard: every caller passes a `ts.Type`,
+ * which the compiler guarantees is non-null, and a branch no input can reach is
+ * not robustness — it is a line the coverage instrument counts and no test can
+ * ever make true.
+ */
 function isUntouchable(type) {
-  if (!type) return true;
   if (
     type.flags &
     (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter)
@@ -128,7 +134,24 @@ export function auditPackage(entryPath, packageRoot, options = {}) {
   const walkedTypes = new Set();
   const walkedSymbols = new Set();
 
-  const exportedAnywhere = (symbol) => exported.has(symbol) || Boolean(options.elsewhere?.has(symbol));
+  /**
+   * Whether a consumer can name this type by importing from a published entry.
+   *
+   * A top-level export counts directly. So does a type declared inside an
+   * exported namespace: `export namespace Shapes { export interface Point }`
+   * lets a consumer write `Shapes.Point`, and the gate used to call that
+   * unexported because `Point` is not itself a key of the entry module. Only
+   * namespaces are walked — a type declared inside a function is not nameable
+   * from outside, and treating any exported parent as a warrant would say it was.
+   */
+  const exportedAnywhere = (symbol) => {
+    if (exported.has(symbol) || options.elsewhere?.has(symbol)) return true;
+    for (let parent = symbol.parent; parent; parent = parent.parent) {
+      if ((parent.flags & ts.SymbolFlags.NamespaceModule) === 0) continue;
+      if (exported.has(parent) || options.elsewhere?.has(parent)) return true;
+    }
+    return false;
+  };
 
   const record = (symbol, via) => {
     if (!(symbol.flags & NAMED_TYPE_FLAGS)) return false;
@@ -242,7 +265,9 @@ export function auditPackage(entryPath, packageRoot, options = {}) {
  * a promise in a manifest that only the first consumer could falsify.
  */
 export function publishedEntries(pkgDir) {
-  const manifest = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
+  const manifest = JSON.parse(
+    readFileSync(join(pkgDir, "package.json"), "utf8"),
+  );
   const entries = [];
   const exportsMap = manifest.exports ?? {};
   for (const [subpath, target] of Object.entries(exportsMap)) {
@@ -263,7 +288,11 @@ export function publishedEntries(pkgDir) {
   return entries;
 }
 
-export function run(root = ROOT) {
+export function run(root = ROOT, options = {}) {
+  const log = options.log ?? console.log;
+  const error = options.error ?? console.error;
+  const verbose = options.verbose ?? VERBOSE;
+
   const packages = workspacePackages(root).filter((pkg) =>
     existsSync(join(pkg.abs, "src", "index.ts")),
   );
@@ -285,7 +314,8 @@ export function run(root = ROOT) {
 
     const entryPaths = [join(pkg.abs, "src", "index.ts")];
     for (const entry of published) {
-      if (existsSync(entry.source) && entry.subpath !== ".") entryPaths.push(entry.source);
+      if (existsSync(entry.source) && entry.subpath !== ".")
+        entryPaths.push(entry.source);
     }
 
     // One program for every entry of the package, so the exported symbols of the
@@ -299,13 +329,17 @@ export function run(root = ROOT) {
     });
     const union = new Set();
     for (const entryPath of entryPaths) {
-      for (const symbol of entryExports(program, entryPath).symbols) union.add(symbol);
+      for (const symbol of entryExports(program, entryPath).symbols)
+        union.add(symbol);
     }
 
     let exported = 0;
     let found = 0;
     for (const entryPath of entryPaths) {
-      const result = auditPackage(entryPath, `${pkg.abs}/`, { program, elsewhere: union });
+      const result = auditPackage(entryPath, `${pkg.abs}/`, {
+        program,
+        elsewhere: union,
+      });
       exported = Math.max(exported, result.exported);
       found += result.findings.length;
       for (const finding of result.findings) {
@@ -322,30 +356,30 @@ export function run(root = ROOT) {
     );
   }
 
-  if (VERBOSE) for (const note of notes) console.log(`  ${note}`);
+  if (verbose) for (const note of notes) log(`  ${note}`);
 
   if (failures.length > 0) {
-    console.error(`\n✗ public-types: ${failures.length} finding(s)\n`);
+    error(`\n✗ public-types: ${failures.length} finding(s)\n`);
     for (const failure of failures) {
       if (failure.kind === "missing-entry") {
-        console.error(
+        error(
           `  ${failure.dir}: publishes \`${failure.name}\` but ${failure.via}`,
         );
         continue;
       }
-      console.error(
+      error(
         `  ${failure.dir}: \`${failure.name}\` appears in a public signature but no ` +
           `published entry exports it (${failure.entry})\n      via ${failure.via}`,
       );
     }
-    console.error(
+    error(
       "\nA type a consumer has to name must be importable from a published entry, " +
         "and a published entry must be buildable. Export it, or stop exposing it.\n",
     );
     return 1;
   }
 
-  console.log(
+  log(
     `✓ public-types: every type named by a public signature is exportable from a ` +
       `published entry (${packages.length} packages)`,
   );

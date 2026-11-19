@@ -12,11 +12,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+
 import {
+  collectFiles,
   findBareRequire,
-  stripCommentsAndStrings,
+  isEsmPackage,
+  report,
   run,
+  stripCommentsAndStrings,
 } from "./check-esm-require.mjs";
+
+const ROOT = resolve(import.meta.dirname, "..");
 
 const hits = (text) => findBareRequire(text, "sample.ts");
 
@@ -95,4 +105,120 @@ test("the repository itself is clean, and the gate is looking at real files", ()
     scanned.length > 100,
     `expected a real tree, scanned ${scanned.length} files`,
   );
+});
+
+test("a package directory with no readable manifest is not an ESM package", () => {
+  const root = mkdtempSync(join(tmpdir(), "esm-pkg-"));
+  try {
+    mkdirSync(join(root, "cluster"), { recursive: true });
+    assert.equal(isEsmPackage(join(root, "cluster")), false);
+
+    writeFileSync(join(root, "cluster", "package.json"), "{ not json");
+    assert.equal(isEsmPackage(join(root, "cluster")), false);
+
+    writeFileSync(
+      join(root, "cluster", "package.json"),
+      JSON.stringify({ name: "x" }),
+    );
+    assert.equal(isEsmPackage(join(root, "cluster")), false);
+
+    writeFileSync(
+      join(root, "cluster", "package.json"),
+      JSON.stringify({ type: "module" }),
+    );
+    assert.equal(isEsmPackage(join(root, "cluster")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collection skips build output and keeps only source files", () => {
+  const root = mkdtempSync(join(tmpdir(), "esm-collect-"));
+  try {
+    const write = (path) => {
+      mkdirSync(join(root, path, ".."), { recursive: true });
+      writeFileSync(join(root, path), "export {};\n");
+    };
+    write("src/a.ts");
+    write("src/nested/b.mts");
+    write("src/nested/c.json");
+    write("src/dist/d.ts");
+    write("src/node_modules/e.ts");
+
+    const files = collectFiles(join(root, "src"))
+      .map((file) => file.slice(root.length + 1))
+      .sort();
+
+    assert.deepEqual(files, ["src/a.ts", "src/nested/b.mts"]);
+    assert.deepEqual(collectFiles(join(root, "absent")), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("run scans only the packages that declare themselves ESM", () => {
+  const root = mkdtempSync(join(tmpdir(), "esm-run-"));
+  try {
+    const write = (path, text) => {
+      mkdirSync(join(root, path, ".."), { recursive: true });
+      writeFileSync(join(root, path), text);
+    };
+    write("cluster/package.json", JSON.stringify({ type: "module" }));
+    write("cluster/src/a.ts", "const x = require('fs');\n");
+    // Not ESM, so it is out of scope for a gate about ESM scopes.
+    write("federation/package.json", JSON.stringify({ name: "cjs" }));
+    write("federation/src/b.ts", "const x = require('fs');\n");
+
+    const { findings, scanned } = run(root);
+
+    assert.deepEqual(scanned, ["cluster/src/a.ts"]);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].line, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("report writes the pass sentence with the number of files scanned", () => {
+  const out = [];
+  const code = report(
+    { findings: [], scanned: ["a", "b", "c"] },
+    { out: { write: (line) => out.push(line) } },
+  );
+
+  assert.equal(code, 0);
+  assert.deepEqual(out, [
+    "ESM gate passed: no bare require() in 3 ESM source files.\n",
+  ]);
+});
+
+test("report writes every finding and the consumer-facing reason, and returns 1", () => {
+  const err = [];
+  const code = report(
+    {
+      findings: [
+        { file: "cluster/src/a.ts", line: 4, text: "const x = require('fs');" },
+      ],
+      scanned: ["a"],
+    },
+    { err: { write: (line) => err.push(line) } },
+  );
+
+  assert.equal(code, 1);
+  assert.equal(
+    err[0],
+    "cluster/src/a.ts:4: bare require() in an ESM package\n    const x = require('fs');\n",
+  );
+  assert.match(err[1], /require is not defined in ES module scope/);
+});
+
+test("the command line exits 0 on this repository", () => {
+  const child = spawnSync(
+    process.execPath,
+    [resolve(ROOT, "scripts/check-esm-require.mjs")],
+    { encoding: "utf8" },
+  );
+
+  assert.equal(child.status, 0);
+  assert.match(child.stdout, /ESM gate passed/);
 });

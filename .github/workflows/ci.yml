@@ -65,7 +65,10 @@ jobs:
   quality:
     name: Quality (lint + format)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The gate self-tests run twice on purpose: once plain, once under Node's
+    # coverage, so that the coverage of a gate is a measured fact. That is the
+    # longest step here, and ten minutes did not leave room for it.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -78,6 +81,8 @@ jobs:
         run: pnpm check:gates
       - name: Gate self-tests (a gate that is not tested is a script that prints "passed")
         run: pnpm test:scripts
+      - name: The gate self-tests cover the gates
+        run: pnpm check:script-coverage
       - name: English-only comments and test titles
         run: pnpm check:english
       - name: No CommonJS require() in ESM packages (it passes tests, fails consumers)

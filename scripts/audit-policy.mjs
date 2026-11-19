@@ -21,18 +21,28 @@
  *      repository ends up exempting an advisory that was fixed two years ago — or, worse, exempting a
  *      CVE id that a future advisory reuses.
  *
- * Usage:  node scripts/audit-policy.mjs
+ * `evaluate()` takes the two advisory sets as data, so the three rules are tested against advisory
+ * sets a case writes rather than against whatever the registry says today. `--from <file>` replays a
+ * recorded audit, which is also what makes the command line itself testable offline.
+ *
+ * Usage:
+ *   node scripts/audit-policy.mjs
+ *   node scripts/audit-policy.mjs --from audit-recording.json
  */
 
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
-const root = new URL('..', import.meta.url);
-const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
-const allow = pkg.auditPolicy?.allow ?? [];
+const root = new URL("..", import.meta.url);
 
 /** Severities the gate refuses to ship, and the ones it simply reports. */
-const BLOCKING = new Set(['high', 'critical']);
+export const BLOCKING = new Set(["high", "critical"]);
+
+/** `GHSA-…` if the advisory has one, so an exception names something a human can look up. */
+export function idOf(advisory) {
+  return advisory.github_advisory_id ?? `npm-${advisory.id}`;
+}
 
 /**
  * Advisories from one `pnpm audit` run, keyed by advisory id.
@@ -43,75 +53,137 @@ const BLOCKING = new Set(['high', 'critical']);
  * "no advisories", because a policy checker that passes when it could not look is a policy checker
  * that always passes.
  */
-function advisories(args) {
+export function advisories(args, exec = execFileSync) {
   let stdout;
   try {
-    stdout = execFileSync('pnpm', ['audit', '--json', ...args], { encoding: 'utf8', cwd: root });
+    stdout = exec("pnpm", ["audit", "--json", ...args], {
+      encoding: "utf8",
+      cwd: root,
+    });
   } catch (error) {
-    stdout = error.stdout ?? '';
-    if (stdout.trim() === '') throw error;
+    stdout = error.stdout ?? "";
+    if (stdout.trim() === "") throw error;
   }
-  const report = JSON.parse(stdout);
-  return new Map(Object.entries(report.advisories ?? {}).map(([id, a]) => [id, a]));
+  return toMap(JSON.parse(stdout));
 }
 
-const all = advisories([]);
-const production = advisories(['--prod']);
-const allowedIds = new Set(allow.map((entry) => entry.advisory));
+export function toMap(report) {
+  return new Map(
+    Object.entries(report.advisories ?? {}).map(([id, advisory]) => [
+      id,
+      advisory,
+    ]),
+  );
+}
 
-/** `GHSA-…` if the advisory has one, so an exception names something a human can look up. */
-const idOf = (advisory) => advisory.github_advisory_id ?? `npm-${advisory.id}`;
+/**
+ * The three rules, as one function of the two advisory sets.
+ *
+ * Returns `failures` (each a sentence that says what to do) and `exceptions` (the allowlisted
+ * advisories that really are present, so the run reports what it excused rather than how many
+ * entries the allowlist has).
+ */
+export function evaluate({ all, production, allow }) {
+  const failures = [];
+  const exceptions = [];
 
-const failures = [];
-const exceptions = [];
-
-for (const [id, advisory] of production) {
-  if (BLOCKING.has(advisory.severity)) {
+  for (const advisory of production.values()) {
+    if (!BLOCKING.has(advisory.severity)) continue;
     failures.push(
       `production: ${advisory.module_name} — ${advisory.severity} — ${idOf(advisory)} — ` +
-        `${advisory.title ?? 'no title'}. No exception can cover a dependency that ships.`,
+        `${advisory.title ?? "no title"}. No exception can cover a dependency that ships.`,
     );
   }
-}
 
-for (const [id, advisory] of all) {
-  if (!BLOCKING.has(advisory.severity)) continue;
-  if (production.has(id)) continue;
-  const name = idOf(advisory);
-  const entry = allow.find((candidate) => candidate.advisory === name);
-  if (!entry) {
-    failures.push(
-      `dev tree: ${advisory.module_name} — ${advisory.severity} — ${name} — ` +
-        `${advisory.title ?? 'no title'}. Add an entry to auditPolicy.allow with a reason and the ` +
-        'date it was reviewed, or fix the dependency.',
-    );
-    continue;
-  }
-  exceptions.push(`${advisory.module_name} (${name}) — ${entry.reason} — reviewed ${entry.reviewed}`);
-}
-
-for (const entry of allow) {
-  const seen = [...all.values()].some((advisory) => idOf(advisory) === entry.advisory);
-  if (!seen) {
-    failures.push(
-      `stale exception: ${entry.advisory} matches no advisory in the tree. Remove it, or the next ` +
-        'advisory that reuses the id is exempt without anybody deciding that.',
+  for (const [id, advisory] of all) {
+    if (!BLOCKING.has(advisory.severity)) continue;
+    if (production.has(id)) continue;
+    const name = idOf(advisory);
+    const entry = allow.find((candidate) => candidate.advisory === name);
+    if (!entry) {
+      failures.push(
+        `dev tree: ${advisory.module_name} — ${advisory.severity} — ${name} — ` +
+          `${advisory.title ?? "no title"}. Add an entry to auditPolicy.allow with a reason and the ` +
+          "date it was reviewed, or fix the dependency.",
+      );
+      continue;
+    }
+    exceptions.push(
+      `${advisory.module_name} (${name}) — ${entry.reason} — reviewed ${entry.reviewed}`,
     );
   }
+
+  for (const entry of allow) {
+    const seen = [...all.values()].some(
+      (advisory) => idOf(advisory) === entry.advisory,
+    );
+    if (!seen) {
+      failures.push(
+        `stale exception: ${entry.advisory} matches no advisory in the tree. Remove it, or the next ` +
+          "advisory that reuses the id is exempt without anybody deciding that.",
+      );
+    }
+  }
+
+  return { failures, exceptions };
 }
 
-if (exceptions.length > 0) {
-  console.log('Allowlisted, dev tree only:');
-  for (const line of exceptions) console.log(`  - ${line}`);
+/** A recorded run, for `--from`: `{ "all": {...}, "production": {...} }` in `pnpm audit --json` shape. */
+export function replay(path) {
+  const recorded = JSON.parse(readFileSync(path, "utf8"));
+  return {
+    all: toMap(recorded.all ?? recorded),
+    production: toMap(recorded.production ?? {}),
+  };
 }
 
-if (failures.length > 0) {
-  console.error('Dependency policy failed:');
-  for (const line of failures) console.error(`  - ${line}`);
-  process.exit(1);
+export function run(argv = process.argv.slice(2), options = {}) {
+  const log = options.log ?? console.log;
+  const error = options.error ?? console.error;
+  const allow =
+    (
+      options.pkg ??
+      JSON.parse(readFileSync(new URL("package.json", root), "utf8"))
+    ).auditPolicy?.allow ?? [];
+
+  const at = argv.indexOf("--from");
+  let all;
+  let production;
+  if (at !== -1) {
+    if (argv[at + 1] === undefined) {
+      error("audit-policy: --from needs a path");
+      return 2;
+    }
+    ({ all, production } = replay(argv[at + 1]));
+  } else {
+    // `read` is the module's own reader unless a caller supplies one, which is
+    // how the live path is exercised without a registry: a policy gate that can
+    // only be tested against today's advisories is tested by the weather.
+    const read = options.advisories ?? advisories;
+    all = read([]);
+    production = read(["--prod"]);
+  }
+
+  const { failures, exceptions } = evaluate({ all, production, allow });
+
+  if (exceptions.length > 0) {
+    log("Allowlisted, dev tree only:");
+    for (const line of exceptions) log(`  - ${line}`);
+  }
+
+  if (failures.length > 0) {
+    error("Dependency policy failed:");
+    for (const line of failures) error(`  - ${line}`);
+    return 1;
+  }
+
+  log(
+    `Dependency policy passed: ${production.size} advisories in the production tree, ` +
+      `${exceptions.length} exception(s) in the dev tree.`,
+  );
+  return 0;
 }
 
-console.log(
-  `Dependency policy passed: ${production.size} advisories in the production tree, ` +
-    `${exceptions.length} exception(s) in the dev tree.`,
-);
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  process.exit(run());
+}

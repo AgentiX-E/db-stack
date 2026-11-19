@@ -373,11 +373,14 @@ if (!existsSync(mutationConfigPath)) {
   const runnerText = existsSync(runnerPath) ? readText(runnerPath) : "";
   if (!runnerText) {
     failures.push("scripts/mutation.mjs is missing — nothing anchors the run to the repository root");
-  } else if (!/resolve\(process\.cwd\(\)\)\s*!==\s*repositoryRoot/.test(runnerText)) {
-    failures.push(
-      "scripts/mutation.mjs does not check the working directory — from a package directory the sandbox loses its parent",
-    );
   }
+  // The working-directory refusal used to be matched here as the literal text
+  // `resolve(process.cwd()) !== repositoryRoot`. It was a proxy, and it rotted the
+  // moment the runner grew an injected `cwd` so that the refusal could be tested at
+  // all: the behaviour was intact, the string was not. A rule that fails when the
+  // code improves is a rule nobody keeps, so the behaviour is proven by a real case
+  // in `mutation.test.mjs` — a package directory is refused, the exit code is 2, and
+  // the injected runner records that nothing ran.
 
   for (const ignored of ["reports/mutation/", ".stryker-tmp/"]) {
     if (!rootGitignore.includes(ignored)) {

@@ -110,7 +110,8 @@ export function workspacePackages(root = ROOT) {
   const opsRoot = join(root, "operations", "packages");
   if (existsSync(opsRoot)) {
     for (const entry of readdirSync(opsRoot, { withFileTypes: true })) {
-      if (entry.isDirectory()) packages.push(join("operations", "packages", entry.name));
+      if (entry.isDirectory())
+        packages.push(join("operations", "packages", entry.name));
     }
   }
   return packages
@@ -126,7 +127,9 @@ export function workspacePackages(root = ROOT) {
  * directory index maps to `src/<key>/index.ts`.
  */
 export function exportEntries(pkgAbs) {
-  const manifest = JSON.parse(readFileSync(join(pkgAbs, "package.json"), "utf8"));
+  const manifest = JSON.parse(
+    readFileSync(join(pkgAbs, "package.json"), "utf8"),
+  );
   const entries = [];
   for (const [key, target] of Object.entries(manifest.exports ?? {})) {
     if (key === "./package.json") continue;
@@ -134,9 +137,13 @@ export function exportEntries(pkgAbs) {
     if (typeof types !== "string") continue;
     const candidates = [
       types.replace(/^\.\/dist\//, "src/").replace(/\.d\.ts$/, ".ts"),
-      key === "." ? "src/index.ts" : join("src", key.replace(/^\.\//, ""), "index.ts"),
+      key === "."
+        ? "src/index.ts"
+        : join("src", key.replace(/^\.\//, ""), "index.ts"),
     ];
-    const found = candidates.map((c) => join(pkgAbs, c)).find((abs) => existsSync(abs));
+    const found = candidates
+      .map((c) => join(pkgAbs, c))
+      .find((abs) => existsSync(abs));
     if (found) entries.push({ key, path: found });
   }
   return entries;
@@ -204,7 +211,9 @@ export function exportSurface(entryPath) {
   const values = new Set();
 
   const unwrap = (symbol) =>
-    symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+    symbol.flags & ts.SymbolFlags.Alias
+      ? checker.getAliasedSymbol(symbol)
+      : symbol;
 
   for (const raw of checker.getExportsOfModule(moduleSymbol)) {
     const name = raw.getName();
@@ -224,9 +233,14 @@ export function exportSurface(entryPath) {
     }
     if (
       flags &
-      (ts.SymbolFlags.Class | ts.SymbolFlags.Interface | ts.SymbolFlags.TypeAlias | ts.SymbolFlags.Enum)
+      (ts.SymbolFlags.Class |
+        ts.SymbolFlags.Interface |
+        ts.SymbolFlags.TypeAlias |
+        ts.SymbolFlags.Enum)
     ) {
-      for (const property of checker.getDeclaredTypeOfSymbol(symbol).getProperties()) {
+      for (const property of checker
+        .getDeclaredTypeOfSymbol(symbol)
+        .getProperties()) {
         members.add(property.getName());
       }
     }
@@ -239,7 +253,9 @@ export function exportSurface(entryPath) {
 export function auditDocument({ text, file, surface }) {
   const problems = [];
   const known = (name) =>
-    surface.exported.has(name) || surface.members.has(name) || NAVIGATION_HEADINGS.has(name);
+    surface.exported.has(name) ||
+    surface.members.has(name) ||
+    NAVIGATION_HEADINGS.has(name);
 
   for (const heading of symbolicHeadings(text)) {
     if (!known(heading.name)) {
@@ -255,7 +271,7 @@ export function auditDocument({ text, file, surface }) {
   return problems;
 }
 
-function describe(problem) {
+export function describe(problem) {
   if (problem.kind === "unknown-symbol") {
     return (
       `${problem.file}:${problem.line} names \`${problem.name}\`, which the package ` +
@@ -295,9 +311,7 @@ function describe(problem) {
   if (problem.kind === "duplicate-index-row") {
     return `${problem.file}:${problem.line} links \`./packages/${problem.name}/\` a second time`;
   }
-  return (
-    `${problem.file} never mentions \`${problem.name}\`, which ${problem.entryKey === "." ? "the package" : `the subpath \`${problem.entryKey}\``} exports`
-  );
+  return `${problem.file} never mentions \`${problem.name}\`, which ${problem.entryKey === "." ? "the package" : `the subpath \`${problem.entryKey}\``} exports`;
 }
 
 /**
@@ -349,7 +363,9 @@ export function splitSpecifier(specifier) {
 export function packageIndex(root = ROOT) {
   const index = new Map();
   for (const pkg of workspacePackages(root)) {
-    const manifest = JSON.parse(readFileSync(join(pkg.abs, "package.json"), "utf8"));
+    const manifest = JSON.parse(
+      readFileSync(join(pkg.abs, "package.json"), "utf8"),
+    );
     if (typeof manifest.name !== "string") continue;
     const entries = new Map();
     for (const entry of exportEntries(pkg.abs)) {
@@ -391,7 +407,12 @@ export function unresolvedImports(text, index) {
     }
     const surface = target.entries.get(key);
     if (!surface) {
-      findings.push({ kind: "unknown-subpath", name: specifier, specifier, line });
+      findings.push({
+        kind: "unknown-subpath",
+        name: specifier,
+        specifier,
+        line,
+      });
       continue;
     }
 
@@ -407,7 +428,12 @@ export function unresolvedImports(text, index) {
         ?.trim();
       if (!imported) continue;
       if (!surface.has(imported)) {
-        findings.push({ kind: "unresolved-import", name: imported, specifier, line });
+        findings.push({
+          kind: "unresolved-import",
+          name: imported,
+          specifier,
+          line,
+        });
       }
     }
   }
@@ -427,7 +453,8 @@ const PACKAGE_LINK = /\]\(\.\/packages\/([A-Za-z0-9_.-]+)\/?\)/g;
 export function indexedPackages(text) {
   const rows = [];
   text.split(/\r?\n/).forEach((line, index) => {
-    for (const match of line.matchAll(PACKAGE_LINK)) rows.push({ dir: match[1], line: index + 1 });
+    for (const match of line.matchAll(PACKAGE_LINK))
+      rows.push({ dir: match[1], line: index + 1 });
   });
   return rows;
 }
@@ -445,11 +472,17 @@ export function indexedWorkspaces(root = ROOT) {
   const consider = (base) => {
     const packagesDir = join(base, "packages");
     const readme = join(base, "README.md");
-    if (existsSync(packagesDir) && existsSync(readme)) found.push({ readme, packagesDir });
+    if (existsSync(packagesDir) && existsSync(readme))
+      found.push({ readme, packagesDir });
   };
   consider(root);
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    if (
+      !entry.isDirectory() ||
+      entry.name.startsWith(".") ||
+      entry.name === "node_modules"
+    )
+      continue;
     consider(join(root, entry.name));
   }
   return found.sort((a, b) => a.readme.localeCompare(b.readme));
@@ -468,7 +501,9 @@ export function auditPackageIndex({ readme, packagesDir, root = ROOT }) {
   const failures = [];
   const actual = readdirSync(packagesDir, { withFileTypes: true })
     .filter(
-      (entry) => entry.isDirectory() && existsSync(join(packagesDir, entry.name, "package.json")),
+      (entry) =>
+        entry.isDirectory() &&
+        existsSync(join(packagesDir, entry.name, "package.json")),
     )
     .map((entry) => entry.name)
     .sort();
@@ -478,22 +513,35 @@ export function auditPackageIndex({ readme, packagesDir, root = ROOT }) {
   const file = relative(root, readme);
 
   for (const dir of actual) {
-    if (!declared.has(dir)) failures.push({ file, line: 0, name: dir, kind: "missing-index-row" });
+    if (!declared.has(dir))
+      failures.push({ file, line: 0, name: dir, kind: "missing-index-row" });
   }
 
   const seen = new Set();
   for (const row of rows) {
     if (!actual.includes(row.dir)) {
-      failures.push({ file, line: row.line, name: row.dir, kind: "stale-index-row" });
+      failures.push({
+        file,
+        line: row.line,
+        name: row.dir,
+        kind: "stale-index-row",
+      });
     } else if (seen.has(row.dir)) {
-      failures.push({ file, line: row.line, name: row.dir, kind: "duplicate-index-row" });
+      failures.push({
+        file,
+        line: row.line,
+        name: row.dir,
+        kind: "duplicate-index-row",
+      });
     }
     seen.add(row.dir);
   }
 
   return {
     failures,
-    notes: [`${file}: ${actual.length} package(s) on disk, ${declared.size} listed`],
+    notes: [
+      `${file}: ${actual.length} package(s) on disk, ${declared.size} listed`,
+    ],
   };
 }
 
@@ -515,7 +563,10 @@ export function auditPackage(pkg, root = ROOT, index = packageIndex(root)) {
   // Headings resolve against every entry point at once: a reference page may
   // document `./testing` beside the root, and a reader does not care which
   // import specifier a symbol comes from.
-  const surfaces = entries.map((entry) => ({ entry, surface: exportSurface(entry.path) }));
+  const surfaces = entries.map((entry) => ({
+    entry,
+    surface: exportSurface(entry.path),
+  }));
   const union = {
     exported: new Set(surfaces.flatMap(({ surface }) => [...surface.exported])),
     members: new Set(surfaces.flatMap(({ surface }) => [...surface.members])),
@@ -541,7 +592,10 @@ export function auditPackage(pkg, root = ROOT, index = packageIndex(root)) {
     `${pkg.dir}: ${entries.length} entry point(s), ${union.exported.size} exports, ${docs.length} document(s)`,
   );
 
-  const texts = docs.map((file) => ({ file, text: readFileSync(file, "utf8") }));
+  const texts = docs.map((file) => ({
+    file,
+    text: readFileSync(file, "utf8"),
+  }));
 
   for (const { file, text } of texts) {
     failures.push(
@@ -564,7 +618,9 @@ export function auditPackage(pkg, root = ROOT, index = packageIndex(root)) {
 
   // A published value has to be mentioned somewhere under `docs/`, by
   // whichever page its author chose.
-  const mentionedEverywhere = new Set(texts.flatMap(({ text }) => [...mentionedNames(text)]));
+  const mentionedEverywhere = new Set(
+    texts.flatMap(({ text }) => [...mentionedNames(text)]),
+  );
   for (const finding of undocumentedExports(surfaces, mentionedEverywhere)) {
     failures.push({
       file: `${pkg.dir}: docs/`,
@@ -580,7 +636,10 @@ export function auditPackage(pkg, root = ROOT, index = packageIndex(root)) {
   // no README at all until iteration 54 — published to npm as a bare `dist/`.
   const readme = join(pkg.abs, "README.md");
   if (existsSync(readme)) {
-    for (const finding of unresolvedImports(readFileSync(readme, "utf8"), index)) {
+    for (const finding of unresolvedImports(
+      readFileSync(readme, "utf8"),
+      index,
+    )) {
       failures.push({
         file: relative(root, readme),
         line: finding.line,
@@ -594,7 +653,36 @@ export function auditPackage(pkg, root = ROOT, index = packageIndex(root)) {
   return { failures, notes };
 }
 
-export function run(root = ROOT) {
+/**
+ * Print the verdict and return the exit code.
+ *
+ * Failures are printed through `describe()`, which is the only place a finding
+ * becomes a sentence a person can act on; a test that never runs the printer
+ * tests every rule and then ships a gate that says nothing.
+ */
+export function report(failures, notes, options = {}) {
+  const log = options.log ?? console.log;
+  const error = options.error ?? console.error;
+  const verbose = options.verbose ?? VERBOSE;
+
+  if (verbose) for (const note of notes) log(`  ${note}`);
+
+  if (failures.length > 0) {
+    error(`\n✗ docs-api: ${failures.length} finding(s)\n`);
+    for (const failure of failures) error(`  ${describe(failure)}`);
+    error(
+      "\nAn API reference is a promise about the package. Either document what " +
+        "the package exports, or export what you documented.\n",
+    );
+    return 1;
+  }
+
+  const scope = notes.length === 0 ? "" : ` (${notes.join("; ")})`;
+  log(`✓ docs-api: every documented symbol resolves${scope}`);
+  return 0;
+}
+
+export function run(root = ROOT, options = {}) {
   const failures = [];
   const notes = [];
 
@@ -607,7 +695,10 @@ export function run(root = ROOT) {
   // checked for imports only, and their headings are left alone.
   const auditRootDocs = () => {
     for (const file of markdownFiles(join(root, "docs"))) {
-      for (const finding of unresolvedImports(readFileSync(file, "utf8"), index)) {
+      for (const finding of unresolvedImports(
+        readFileSync(file, "utf8"),
+        index,
+      )) {
         failures.push({
           file: relative(root, file),
           line: finding.line,
@@ -634,21 +725,7 @@ export function run(root = ROOT) {
     notes.push(...result.notes);
   }
 
-  if (VERBOSE) for (const note of notes) console.log(`  ${note}`);
-
-  if (failures.length > 0) {
-    console.error(`\n✗ docs-api: ${failures.length} finding(s)\n`);
-    for (const failure of failures) console.error(`  ${describe(failure)}`);
-    console.error(
-      "\nAn API reference is a promise about the package. Either document what " +
-        "the package exports, or export what you documented.\n",
-    );
-    return 1;
-  }
-
-  const scope = notes.length === 0 ? "" : ` (${notes.join("; ")})`;
-  console.log(`✓ docs-api: every documented symbol resolves${scope}`);
-  return 0;
+  return report(failures, notes, options);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

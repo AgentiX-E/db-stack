@@ -10,13 +10,18 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 
 import {
   commandSegments,
   commandWord,
   isResolvable,
+  installedBinaries,
   missingBinaries,
+  run,
   workspaceDirs,
 } from "./check-script-bins.mjs";
 
@@ -96,4 +101,152 @@ test("scans more than one manifest", () => {
   assert.ok(dirs.includes("cluster"));
   assert.ok(dirs.includes("federation"));
   assert.ok(dirs.some((dir) => dir.startsWith("operations/packages/")));
+});
+
+test("installedBinaries unions the .bin directories of the root and every package", () => {
+  const root = mkdtempSync(join(tmpdir(), "script-bins-"));
+  try {
+    const install = (dir, names) => {
+      mkdirSync(join(root, dir, "node_modules", ".bin"), { recursive: true });
+      for (const name of names)
+        writeFileSync(join(root, dir, "node_modules", ".bin", name), "");
+    };
+    install(".", ["turbo"]);
+    install("cluster", ["vitest"]);
+    // A package with no node_modules contributes nothing rather than failing.
+    mkdirSync(join(root, "federation"), { recursive: true });
+
+    const bins = installedBinaries(root, ["cluster", "federation"]);
+
+    assert.deepEqual([...bins].sort(), ["turbo", "vitest"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("run passes and reports how many manifests it read", () => {
+  const lines = [];
+  const code = run(ROOT, {
+    binaries: new Set([
+      "tsc",
+      "vitest",
+      "eslint",
+      "prettier",
+      "knip",
+      "tsx",
+      "stryker",
+      "turbo",
+      "pino",
+      "download-lmdb-prebuilds",
+      "typedoc",
+    ]),
+    log: (line) => lines.push(line),
+  });
+
+  assert.equal(code, 0);
+  assert.match(
+    lines[0],
+    /✓ script-bins: every script command is installed \(\d+ manifests\)/,
+  );
+});
+
+test("run fails, naming the package, the script and the binary", () => {
+  const root = mkdtempSync(join(tmpdir(), "script-bins-"));
+  try {
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "root", scripts: { docs: "typedoc --out docs" } }),
+    );
+    const errors = [];
+    const code = run(root, {
+      binaries: new Set(),
+      error: (line) => errors.push(line),
+    });
+
+    assert.equal(code, 1);
+    assert.match(errors[0], /✗ script-bins: 1 script\(s\) cannot run/);
+    assert.match(
+      errors[1],
+      /\.: "docs" runs `typedoc`, which is not installed/,
+    );
+    assert.match(
+      errors[2],
+      /A script nothing can execute is a promise that fails at the first use/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the command line exits 0 on this workspace", () => {
+  const child = spawnSync(
+    process.execPath,
+    [resolve(ROOT, "scripts/check-script-bins.mjs")],
+    { encoding: "utf8" },
+  );
+
+  assert.equal(child.status, 0);
+  assert.match(child.stdout, /every script command is installed/);
+});
+
+test("workspaceDirs keeps the four trees, and the packages that have a manifest", () => {
+  const root = mkdtempSync(join(tmpdir(), "script-bins-"));
+  try {
+    // No operations/packages at all: the four fixed trees still apply, and only
+    // those that carry a manifest are returned.
+    mkdirSync(join(root, "cluster"), { recursive: true });
+    writeFileSync(join(root, "cluster", "package.json"), "{}");
+    mkdirSync(join(root, "federation"), { recursive: true });
+
+    assert.deepEqual(workspaceDirs(root), ["cluster"]);
+
+    mkdirSync(join(root, "operations", "packages", "one"), { recursive: true });
+    writeFileSync(
+      join(root, "operations", "packages", "one", "package.json"),
+      "{}",
+    );
+    // A stray file in packages/ is not a package.
+    writeFileSync(join(root, "operations", "packages", "README.md"), "");
+
+    assert.deepEqual(workspaceDirs(root), [
+      "cluster",
+      "operations/packages/one",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a segment that is not a command yields no word; a pipe yields its reader", () => {
+  // An empty segment is the only case with no word at all. A leading pipe is
+  // impossible in a manifest that runs (`a | head` reads as `a`), but reading
+  // `head` out of it is better than reading the pipe.
+  assert.equal(commandWord("   "), "");
+  assert.equal(commandWord("| head -5"), "head");
+});
+
+test("a word the shell expands is left to the shell", () => {
+  assert.equal(isResolvable("$HOME/bin/gate", new Set()), true);
+  assert.equal(isResolvable("*.mjs", new Set()), true);
+  assert.equal(isResolvable("", new Set()), true);
+  assert.equal(isResolvable("vitest", new Set(["vitest"])), true);
+  assert.equal(isResolvable("vitest", new Set()), false);
+});
+
+test("a manifest with no scripts has nothing to check", () => {
+  const root = mkdtempSync(join(tmpdir(), "script-bins-"));
+  try {
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "root" }));
+
+    assert.deepEqual(missingBinaries(root, new Set()), {
+      missing: [],
+      scanned: 1,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a fallback chain splits like an and-chain", () => {
+  assert.deepEqual(commandSegments("pnpm a || pnpm b"), ["pnpm a", "pnpm b"]);
 });

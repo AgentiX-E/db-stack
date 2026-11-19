@@ -22,10 +22,14 @@ import { tmpdir } from "node:os";
 
 import {
   auditExamples,
+  dedupe,
+  describeDiagnostic,
   documentedPages,
   exampleSource,
+  report,
   run,
   sourceAliases,
+  toDiagnostic,
 } from "./check-doc-examples.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -79,7 +83,8 @@ function audit(root) {
   return auditExamples(documentedPages(root), root).findings;
 }
 
-const page = (code) => `# API\n\nProse that introduces the value.\n\n\`\`\`ts\n${code}\n\`\`\`\n`;
+const page = (code) =>
+  `# API\n\nProse that introduces the value.\n\n\`\`\`ts\n${code}\n\`\`\`\n`;
 
 test("a method the type does not declare is a finding", (t) => {
   const root = fixture(
@@ -99,13 +104,18 @@ test("an argument the constructor cannot accept is a finding", (t) => {
   // The quick start's `new InMemoryLogger({ level: "info" })`: the constructor
   // takes a string, and no reader can tell from prose.
   const root = fixture(
-    page(`import { RaftGroup } from "@agentix-e/db-fixture";\nconst group = new RaftGroup({ id: "a" });`),
+    page(
+      `import { RaftGroup } from "@agentix-e/db-fixture";\nconst group = new RaftGroup({ id: "a" });`,
+    ),
   );
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   const findings = audit(root);
   assert.equal(findings.length, 1);
-  assert.ok([2345, 2554].includes(findings[0].code), `unexpected code ${findings[0].code}`);
+  assert.ok(
+    [2345, 2554].includes(findings[0].code),
+    `unexpected code ${findings[0].code}`,
+  );
 });
 
 test("an object literal with a key the type does not declare is a finding", (t) => {
@@ -125,13 +135,18 @@ test("an object literal with a key the type does not declare is a finding", (t) 
 
 test("a required property the literal omits is a finding", (t) => {
   const root = fixture(
-    page(`import { describeGroup } from "@agentix-e/db-fixture";\ndescribeGroup({ peers: [2] });`),
+    page(
+      `import { describeGroup } from "@agentix-e/db-fixture";\ndescribeGroup({ peers: [2] });`,
+    ),
   );
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   const findings = audit(root);
   assert.equal(findings.length, 1);
-  assert.ok([2345, 2561].includes(findings[0].code), `unexpected code ${findings[0].code}`);
+  assert.ok(
+    [2345, 2561].includes(findings[0].code),
+    `unexpected code ${findings[0].code}`,
+  );
 });
 
 test("a name the block never declares is not a finding", (t) => {
@@ -193,7 +208,8 @@ test("a finding inside a multi-line import lands on its own line", (t) => {
   // honest. A three-line import mapped to one line shifted every finding after
   // it by two.
   const root = fixture(
-    MANIFEST && `# API\n\n\`\`\`ts\nimport {\n  RaftGroup,\n  describeGroup,\n} from "@agentix-e/db-fixture";\n\nconst group = new RaftGroup("a");\ngroup.proposeTwice("x");\n\`\`\`\n`,
+    MANIFEST &&
+      `# API\n\n\`\`\`ts\nimport {\n  RaftGroup,\n  describeGroup,\n} from "@agentix-e/db-fixture";\n\nconst group = new RaftGroup("a");\ngroup.proposeTwice("x");\n\`\`\`\n`,
   );
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -203,14 +219,19 @@ test("a finding inside a multi-line import lands on its own line", (t) => {
 });
 
 test("a fenced block in another language is not read", (t) => {
-  const root = fixture(`# API\n\n\`\`\`bash\nnpm install @agentix-e/db-fixture\n\`\`\`\n`);
+  const root = fixture(
+    `# API\n\n\`\`\`bash\nnpm install @agentix-e/db-fixture\n\`\`\`\n`,
+  );
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   assert.deepEqual(audit(root), []);
 });
 
 test("a page is read whole, so a later block is found too", () => {
-  const fragment = exampleSource("page.md", page(`const a = 1;`) + page(`const b = 2;`));
+  const fragment = exampleSource(
+    "page.md",
+    page(`const a = 1;`) + page(`const b = 2;`),
+  );
   assert.ok(fragment.map.length >= 4, "both blocks contribute lines");
 });
 
@@ -219,7 +240,10 @@ test("every published package maps its entry points to sources", () => {
   // when the gate ran, so the alias table has to point at `src/`.
   const aliases = sourceAliases(ROOT);
   assert.equal(aliases["@agentix-e/db-cluster"][0], "cluster/src/index.ts");
-  assert.equal(aliases["@agentix-e/db-operations-core"][0], "operations/packages/core/src/index.ts");
+  assert.equal(
+    aliases["@agentix-e/db-operations-core"][0],
+    "operations/packages/core/src/index.ts",
+  );
   assert.ok(
     Object.keys(aliases).length >= 20,
     `expected the whole workspace, got ${Object.keys(aliases).length} entries`,
@@ -228,12 +252,214 @@ test("every published package maps its entry points to sources", () => {
 
 test("the repository's own examples are all read", () => {
   const pages = documentedPages(ROOT);
-  assert.ok(pages.length >= 50, `a gate over ${pages.length} pages is a gate over nothing`);
-  assert.ok(pages.includes(resolve(ROOT, "docs", "user-guide", "operations.md")));
-  assert.ok(pages.includes(resolve(ROOT, "operations", "packages", "monitor", "README.md")));
+  assert.ok(
+    pages.length >= 50,
+    `a gate over ${pages.length} pages is a gate over nothing`,
+  );
+  assert.ok(
+    pages.includes(resolve(ROOT, "docs", "user-guide", "operations.md")),
+  );
+  assert.ok(
+    pages.includes(
+      resolve(ROOT, "operations", "packages", "monitor", "README.md"),
+    ),
+  );
   assert.ok(pages.includes(resolve(ROOT, "operations", "README.md")));
 });
 
 test("the real repository's examples all type-check", () => {
   assert.equal(run(ROOT), 0);
+});
+
+test("the same page line failing twice is one finding", () => {
+  const findings = dedupe([
+    { file: "b.md", line: 3, code: 2339, message: "x" },
+    { file: "a.md", line: 9, code: 2339, message: "first" },
+    { file: "a.md", line: 2, code: 2339, message: "second" },
+    { file: "a.md", line: 9, code: 2339, message: "again" },
+  ]);
+
+  assert.deepEqual(
+    findings.map(
+      (finding) => `${finding.file}:${finding.line}:${finding.message}`,
+    ),
+    ["a.md:2:second", "a.md:9:first", "b.md:3:x"],
+  );
+});
+
+test("a diagnostic is reported against the page line a reader sees", () => {
+  const fragment = {
+    map: [
+      { file: "/repo/docs/a.md", line: 4 },
+      { file: "/repo/docs/a.md", line: 5 },
+    ],
+    source: "const a = 1;\nconst b = 2;\n",
+  };
+
+  assert.deepEqual(
+    describeDiagnostic(
+      { line: 1, code: 2339, message: "no such member" },
+      fragment,
+    ),
+    {
+      file: "/repo/docs/a.md",
+      line: 5,
+      code: 2339,
+      message: "no such member",
+      kind: "property does not exist on the type",
+    },
+  );
+});
+
+test("a diagnostic the map cannot place falls back to the page the fragment came from", () => {
+  const fragment = {
+    map: [{ file: "/repo/docs/a.md", line: 4 }],
+    source: "const a = 1;\n",
+  };
+
+  // A line past the end of the map has no page to point at; the page the
+  // fragment came from is the best answer available.
+  assert.deepEqual(
+    describeDiagnostic(
+      { line: 99, code: 2554, message: "expected 2 arguments" },
+      fragment,
+    ),
+    {
+      file: "/repo/docs/a.md",
+      line: 1,
+      code: 2554,
+      message: "expected 2 arguments",
+      kind: "wrong number of arguments",
+    },
+  );
+});
+
+test("a code outside the judged set is reported as wrong about the API", () => {
+  const fragment = {
+    map: [{ file: "/repo/docs/a.md", line: 1 }],
+    source: "x;\n",
+  };
+
+  assert.equal(
+    describeDiagnostic({ line: 0, code: 1234, message: "m" }, fragment).kind,
+    "wrong-about-the-api",
+  );
+});
+
+test("report prints every finding, names the page and the code, and returns 1", () => {
+  const errors = [];
+  const code = report(
+    {
+      findings: [
+        {
+          file: "/repo/docs/a.md",
+          line: 7,
+          code: 2339,
+          message: "Property 'x' does not exist",
+        },
+      ],
+      pageCount: 1,
+    },
+    "/repo",
+    { error: (line) => errors.push(line) },
+  );
+
+  assert.equal(code, 1);
+  assert.match(errors[0], /✗ doc-examples: 1 finding\(s\) in 1 page\(s\)/);
+  assert.equal(errors[1], "  docs/a.md:7 TS2339 — Property 'x' does not exist");
+  assert.match(
+    errors[2],
+    /An example that does not compile is a promise the reader cannot keep/,
+  );
+});
+
+test("report passes and counts the pages that carry examples", () => {
+  const out = [];
+  const code = report({ findings: [], pageCount: 61 }, "/repo", {
+    log: (line) => out.push(line),
+  });
+
+  assert.equal(code, 0);
+  assert.deepEqual(out, [
+    "✓ doc-examples: every fenced example type-checks (61 page(s))",
+  ]);
+});
+
+test("run over a tree with no documentation passes without inventing pages", () => {
+  const dir = mkdtempSync(join(tmpdir(), "doc-examples-"));
+  try {
+    const out = [];
+    const code = run(dir, { log: (line) => out.push(line), verbose: true });
+
+    assert.equal(code, 0);
+    assert.deepEqual(out, [
+      "  0 page(s) with examples, 0 page(s) read",
+      "✓ doc-examples: every fenced example type-checks (0 page(s))",
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("run writes its census to the process console when no stream is given", () => {
+  const dir = mkdtempSync(join(tmpdir(), "doc-examples-"));
+  try {
+    const written = [];
+    const original = console.log;
+    console.log = (line) => written.push(line);
+    try {
+      assert.equal(run(dir, { verbose: true }), 0);
+    } finally {
+      console.log = original;
+    }
+    assert.match(written[0], /0 page\(s\) with examples/);
+    assert.match(written[1], /✓ doc-examples/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a diagnostic that belongs to no file is kept, with no path and no line", () => {
+  // The compiler reports option and global problems without a file. Dropping
+  // them would make the gate blind to exactly the errors that stop everything.
+  assert.deepEqual(
+    toDiagnostic({ code: 1208, messageText: "global problem" }),
+    {
+      path: "",
+      line: 0,
+      code: 1208,
+      message: "global problem",
+    },
+  );
+});
+
+test("a diagnostic with a file but no position is reported at the top of the file", () => {
+  const file = { fileName: "/generated/a.ts" };
+  assert.deepEqual(
+    toDiagnostic({ file, code: 1208, messageText: "no position" }),
+    {
+      path: "/generated/a.ts",
+      line: 0,
+      code: 1208,
+      message: "no position",
+    },
+  );
+});
+
+test("a nested diagnostic message is flattened into one sentence", () => {
+  assert.equal(
+    toDiagnostic({
+      code: 2322,
+      messageText: {
+        messageText: "Type A is not assignable to type B",
+        next: [],
+      },
+      file: {
+        fileName: "/g.ts",
+        getLineAndCharacterOfPosition: () => ({ line: 3, character: 0 }),
+      },
+      start: 10,
+    }).message,
+    "Type A is not assignable to type B",
+  );
 });

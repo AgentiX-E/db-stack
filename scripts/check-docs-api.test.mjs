@@ -23,6 +23,9 @@ import { dirname, join, resolve } from "node:path";
 import {
   auditDocument,
   auditPackage,
+  auditPackageIndex,
+  describe,
+  report,
   exportEntries,
   exportSurface,
   markdownFiles,
@@ -53,28 +56,42 @@ const audit = (text, options = {}) =>
   });
 
 test("reads a heading that opens with a backticked type name", () => {
-  assert.deepEqual(symbolicHeadings("### `RaftGroup`\n"), [{ name: "RaftGroup", line: 1 }]);
+  assert.deepEqual(symbolicHeadings("### `RaftGroup`\n"), [
+    { name: "RaftGroup", line: 1 },
+  ]);
 });
 
 test("reads a heading whose signature starts with a modifier", () => {
   assert.deepEqual(symbolicHeadings("### `async stop(): Promise<void>`\n"), [
     { name: "stop", line: 1 },
   ]);
-  assert.deepEqual(symbolicHeadings("### `static reset(): void`\n"), [{ name: "reset", line: 1 }]);
-  assert.deepEqual(symbolicHeadings("### `readonly size: number`\n"), [{ name: "size", line: 1 }]);
+  assert.deepEqual(symbolicHeadings("### `static reset(): void`\n"), [
+    { name: "reset", line: 1 },
+  ]);
+  assert.deepEqual(symbolicHeadings("### `readonly size: number`\n"), [
+    { name: "size", line: 1 },
+  ]);
 });
 
 test("ignores headings that do not open with a backticked identifier", () => {
-  assert.deepEqual(symbolicHeadings("## How the pieces fit\n### Constructor\n"), []);
+  assert.deepEqual(
+    symbolicHeadings("## How the pieces fit\n### Constructor\n"),
+    [],
+  );
 });
 
 test("reports the line the heading is on", () => {
   const text = "# Title\n\nIntro.\n\n### `RaftGroup`\n";
-  assert.deepEqual(symbolicHeadings(text).map((h) => h.line), [5]);
+  assert.deepEqual(
+    symbolicHeadings(text).map((h) => h.line),
+    [5],
+  );
 });
 
 test("collects names mentioned in inline code", () => {
-  const names = mentionedNames("Uses `RaftGroup` and `applyLag`, not `RaftGroup` again.\n");
+  const names = mentionedNames(
+    "Uses `RaftGroup` and `applyLag`, not `RaftGroup` again.\n",
+  );
   assert.deepEqual([...names].sort(), ["RaftGroup", "applyLag"]);
 });
 
@@ -82,7 +99,9 @@ test("a call or a generic instantiation is a mention of its name", () => {
   // `createNodeDurableFileSystem(calls?)` documents that function. The pattern
   // used to read it as no mention at all, so the page was told to spell the name
   // a second time — a demand produced by the reader, not by the documents.
-  const names = mentionedNames("`parseCronField(expr)` and `register<T>(handler)`\n");
+  const names = mentionedNames(
+    "`parseCronField(expr)` and `register<T>(handler)`\n",
+  );
   assert.deepEqual([...names].sort(), ["parseCronField", "register"]);
 });
 
@@ -91,7 +110,10 @@ test("a dotted path is not a mention of its first segment", () => {
   // their first segment as a mention would let a page cover a symbol by
   // accident, which is the failure direction that matters: a gate must not go
   // green on a document that never named the export.
-  assert.deepEqual([...mentionedNames("`audit.v2` and `store.write` and `a.b.c`\n")], []);
+  assert.deepEqual(
+    [...mentionedNames("`audit.v2` and `store.write` and `a.b.c`\n")],
+    [],
+  );
 });
 
 test("accepts a heading naming an exported symbol", () => {
@@ -121,7 +143,12 @@ test("rejects a typo in an exported name", () => {
 test("reports an exported value no page mentions", () => {
   // The duty is on the package, not on a filename: for two years it fired only
   // on `api-reference.md`, which twelve of fourteen packages did not have.
-  const surfaces = [{ entry: { key: "." }, surface: { values: new Set(["RaftGroup", "applyLag"]) } }];
+  const surfaces = [
+    {
+      entry: { key: "." },
+      surface: { values: new Set(["RaftGroup", "applyLag"]) },
+    },
+  ];
   const findings = undocumentedExports(surfaces, new Set(["applyLag"]));
   assert.deepEqual(findings, [{ entryKey: ".", name: "RaftGroup" }]);
 });
@@ -129,15 +156,23 @@ test("reports an exported value no page mentions", () => {
 test("does not require coverage of type-only exports", () => {
   // A type is documented by the signature that names it; a value is a thing a
   // reader can call, and one that appears in no page is one they cannot find.
-  const surfaces = [{ entry: { key: "." }, surface: { values: new Set(["RaftGroup"]) } }];
+  const surfaces = [
+    { entry: { key: "." }, surface: { values: new Set(["RaftGroup"]) } },
+  ];
   const findings = undocumentedExports(surfaces, new Set());
-  assert.deepEqual(findings.map((finding) => finding.name), ["RaftGroup"]);
+  assert.deepEqual(
+    findings.map((finding) => finding.name),
+    ["RaftGroup"],
+  );
 });
 
 test("judges the root and every subpath, and says which one", () => {
   const surfaces = [
     { entry: { key: "." }, surface: { values: new Set(["Root"]) } },
-    { entry: { key: "./testing" }, surface: { values: new Set(["Documented", "Forgotten"]) } },
+    {
+      entry: { key: "./testing" },
+      surface: { values: new Set(["Documented", "Forgotten"]) },
+    },
   ];
 
   const findings = undocumentedExports(surfaces, new Set(["Documented"]));
@@ -150,7 +185,9 @@ test("judges the root and every subpath, and says which one", () => {
 test("accepts a value mentioned on any page of the package", () => {
   // `docs/architecture.md` may carry a class the `docs/api/` page omits; a
   // reader looking for it still has somewhere to land.
-  const surfaces = [{ entry: { key: "." }, surface: { values: new Set(["RaftGroup"]) } }];
+  const surfaces = [
+    { entry: { key: "." }, surface: { values: new Set(["RaftGroup"]) } },
+  ];
   assert.deepEqual(undocumentedExports(surfaces, new Set(["RaftGroup"])), []);
 });
 
@@ -163,7 +200,10 @@ test("finds the packages that ship docs", () => {
 
 test("finds the documents, and finds more than one", () => {
   const docs = markdownFiles(resolve(ROOT, "cluster", "docs"));
-  assert.ok(docs.length >= 1, "a gate over zero documents reports perfect compliance");
+  assert.ok(
+    docs.length >= 1,
+    "a gate over zero documents reports perfect compliance",
+  );
   assert.ok(docs.some((file) => file.endsWith("api-reference.md")));
 });
 
@@ -174,7 +214,9 @@ test("resolves the export surface through the compiler", () => {
   assert.ok(cluster.members.has("proposeAndWait"));
   assert.ok(cluster.values.has("RaftGroup"));
 
-  const federation = exportSurface(resolve(ROOT, "federation", "src", "index.ts"));
+  const federation = exportSurface(
+    resolve(ROOT, "federation", "src", "index.ts"),
+  );
   assert.ok(federation.exported.has("FederationManager"));
   assert.equal(
     federation.exported.has("FederationEngine"),
@@ -184,7 +226,9 @@ test("resolves the export surface through the compiler", () => {
 });
 
 test("resolves re-exported namespaces, not just local declarations", () => {
-  const operations = exportSurface(resolve(ROOT, "operations", "src", "index.ts"));
+  const operations = exportSurface(
+    resolve(ROOT, "operations", "src", "index.ts"),
+  );
   assert.ok(operations.exported.size > 0);
   assert.ok(operations.exported.has("core"));
 });
@@ -196,9 +240,15 @@ test("resolves every published entry point, not just the package root", () => {
   const cluster = exportEntries(resolve(ROOT, "cluster"));
   const keys = cluster.map((entry) => entry.key);
   assert.ok(keys.includes("."), "the root is an entry point");
-  assert.ok(keys.includes("./testing"), "the harness subpath is an entry point");
+  assert.ok(
+    keys.includes("./testing"),
+    "the harness subpath is an entry point",
+  );
   for (const entry of cluster) {
-    assert.ok(entry.path.endsWith(".ts"), `${entry.key} resolves to a source file`);
+    assert.ok(
+      entry.path.endsWith(".ts"),
+      `${entry.key} resolves to a source file`,
+    );
   }
 
   const federation = exportEntries(resolve(ROOT, "federation"));
@@ -214,7 +264,10 @@ test("a subpath publishes what it means to, not a whole module", () => {
   );
   assert.ok(entry, "./transport is published");
   const surface = exportSurface(entry.path);
-  assert.ok(surface.exported.has("TcpSecureTransport"), "the transport is published");
+  assert.ok(
+    surface.exported.has("TcpSecureTransport"),
+    "the transport is published",
+  );
   assert.equal(
     surface.exported.has("retryDelayMs"),
     false,
@@ -258,19 +311,29 @@ test("a package that publishes a value and ships no docs is a finding", (t) => {
   });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  const { failures } = auditPackage({ dir: "cluster", abs: join(root, "cluster") }, root);
-  assert.deepEqual(failures, [{ file: "cluster", line: 0, name: "1", kind: "no-docs" }]);
+  const { failures } = auditPackage(
+    { dir: "cluster", abs: join(root, "cluster") },
+    root,
+  );
+  assert.deepEqual(failures, [
+    { file: "cluster", line: 0, name: "1", kind: "no-docs" },
+  ]);
 });
 
 test("a documented package that forgets one value names it and its entry point", (t) => {
   const root = fixtureTree({
     "cluster/package.json": MANIFEST,
-    "cluster/src/index.ts": "export class Documented {}\nexport class Forgotten {}\n",
-    "cluster/docs/api-reference.md": "# API\n\n### `Documented`\n\nUse `Documented`.\n",
+    "cluster/src/index.ts":
+      "export class Documented {}\nexport class Forgotten {}\n",
+    "cluster/docs/api-reference.md":
+      "# API\n\n### `Documented`\n\nUse `Documented`.\n",
   });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  const { failures } = auditPackage({ dir: "cluster", abs: join(root, "cluster") }, root);
+  const { failures } = auditPackage(
+    { dir: "cluster", abs: join(root, "cluster") },
+    root,
+  );
   assert.deepEqual(
     failures.map((failure) => [failure.kind, failure.name, failure.entryKey]),
     [["undocumented-export", "Forgotten", "."]],
@@ -288,12 +351,16 @@ test("a subpath value no page mentions is reported against that subpath", (t) =>
       },
     }),
     "cluster/src/index.ts": "export class Root {}\n",
-    "cluster/src/testing/index.ts": "export function awaitAgreement(): void {}\n",
+    "cluster/src/testing/index.ts":
+      "export function awaitAgreement(): void {}\n",
     "cluster/docs/api-reference.md": "# API\n\n### `Root`\n",
   });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  const { failures } = auditPackage({ dir: "cluster", abs: join(root, "cluster") }, root);
+  const { failures } = auditPackage(
+    { dir: "cluster", abs: join(root, "cluster") },
+    root,
+  );
   assert.deepEqual(
     failures.map((failure) => [failure.kind, failure.name, failure.entryKey]),
     [["undocumented-export", "awaitAgreement", "./testing"]],
@@ -308,14 +375,20 @@ test("a heading naming a symbol the package does not export fails the package", 
   });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  const { failures } = auditPackage({ dir: "cluster", abs: join(root, "cluster") }, root);
+  const { failures } = auditPackage(
+    { dir: "cluster", abs: join(root, "cluster") },
+    root,
+  );
 
   // Two findings, and both are true: the heading names a symbol that does not
   // exist, and the misspelling is why the real name is mentioned nowhere.
   const heading = failures.find((failure) => failure.kind === "unknown-symbol");
   assert.deepEqual([heading.name, heading.line], ["RaftGrup", 1]);
   assert.ok(
-    failures.some((failure) => failure.kind === "undocumented-export" && failure.name === "RaftGroup"),
+    failures.some(
+      (failure) =>
+        failure.kind === "undocumented-export" && failure.name === "RaftGroup",
+    ),
     "the misspelling is also why nothing mentions RaftGroup",
   );
 });
@@ -329,10 +402,13 @@ test("a package with no published entry point is not judged", (t) => {
   });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  assert.deepEqual(auditPackage({ dir: "cluster", abs: join(root, "cluster") }, root), {
-    failures: [],
-    notes: [],
-  });
+  assert.deepEqual(
+    auditPackage({ dir: "cluster", abs: join(root, "cluster") }, root),
+    {
+      failures: [],
+      notes: [],
+    },
+  );
 });
 
 // ── Imports in fenced examples ────────────────────────────────────
@@ -367,7 +443,10 @@ test("a subpath that is not published is reported", () => {
 });
 
 test("a package that is not in this repository is reported", () => {
-  const findings = unresolvedImports('import { X } from "@agentix-e/db-nope";\n', REAL_TREE_INDEX);
+  const findings = unresolvedImports(
+    'import { X } from "@agentix-e/db-nope";\n',
+    REAL_TREE_INDEX,
+  );
   assert.deepEqual(
     findings.map((finding) => finding.kind),
     ["unknown-package"],
@@ -422,10 +501,323 @@ test("the repository's own documentation is checked too", (t) => {
     return root;
   };
 
-  assert.equal(run(build('import { RaftGroup } from "@agentix-e/db-fixture";')), 0);
+  assert.equal(
+    run(build('import { RaftGroup } from "@agentix-e/db-fixture";')),
+    0,
+  );
   assert.equal(
     run(build('import { RaftGroup, Missing } from "@agentix-e/db-fixture";')),
     1,
     "an unresolvable import in the guide has to fail the gate",
   );
+});
+
+test("every kind of finding has a sentence that says what to do about it", () => {
+  // `describe` is where a rule becomes advice. A finding printed as
+  // "[object Object]" is a gate that ran and told nobody anything.
+  assert.equal(
+    describe({ kind: "unknown-symbol", file: "a.md", line: 4, name: "Foo" }),
+    "a.md:4 names `Foo`, which the package does not export and no exported type declares",
+  );
+  assert.match(
+    describe({ kind: "no-docs", file: "pkg-x", name: 6 }),
+    /^pkg-x publishes 6 exported value\(s\) and has no `docs\/` tree/,
+  );
+  assert.match(
+    describe({
+      kind: "unresolved-import",
+      file: "a.md",
+      line: 2,
+      name: "Counter",
+      specifier: "@s/m",
+    }),
+    /^a\.md:2 tells the reader to import `Counter` from "@s\/m", which does not export it/,
+  );
+  assert.match(
+    describe({
+      kind: "unknown-subpath",
+      file: "a.md",
+      line: 2,
+      specifier: "@s/m/nope",
+    }),
+    /^a\.md:2 imports from "@s\/m\/nope", which is not a published entry point/,
+  );
+  assert.match(
+    describe({
+      kind: "unknown-package",
+      file: "a.md",
+      line: 2,
+      specifier: "@s/nope",
+    }),
+    /which is not a package here$/,
+  );
+  assert.match(
+    describe({
+      kind: "missing-index-row",
+      file: "README.md",
+      name: "federation",
+    }),
+    /does not link `\.\/packages\/federation\/`, a package that exists/,
+  );
+  assert.match(
+    describe({
+      kind: "stale-index-row",
+      file: "README.md",
+      line: 9,
+      name: "gone",
+    }),
+    /^README\.md:9 links `\.\/packages\/gone\/`, which does not exist$/,
+  );
+  assert.match(
+    describe({
+      kind: "duplicate-index-row",
+      file: "README.md",
+      line: 9,
+      name: "core",
+    }),
+    /^README\.md:9 links `\.\/packages\/core\/` a second time$/,
+  );
+  assert.equal(
+    describe({
+      kind: "undocumented-export",
+      file: "p: docs/",
+      name: "applyLag",
+      entryKey: ".",
+    }),
+    "p: docs/ never mentions `applyLag`, which the package exports",
+  );
+  assert.equal(
+    describe({
+      kind: "undocumented-export",
+      file: "p: docs/",
+      name: "applyLag",
+      entryKey: "./beta",
+    }),
+    "p: docs/ never mentions `applyLag`, which the subpath `./beta` exports",
+  );
+});
+
+test("the package index is compared to the directory in both directions", () => {
+  const root = mkdtempSync(join(tmpdir(), "docs-api-"));
+  try {
+    const packagesDir = join(root, "packages");
+    for (const name of ["alpha", "beta"]) {
+      mkdirSync(join(packagesDir, name), { recursive: true });
+      writeFileSync(join(packagesDir, name, "package.json"), "{}");
+    }
+    mkdirSync(join(packagesDir, "not-a-package"), { recursive: true });
+
+    const readme = join(root, "README.md");
+    writeFileSync(
+      readme,
+      [
+        "| [`alpha`](./packages/alpha/) | ✅ |",
+        "| [`gone`](./packages/gone/) | ✅ |",
+      ].join("\n"),
+    );
+
+    const { failures, notes } = auditPackageIndex({
+      readme,
+      packagesDir,
+      root,
+    });
+
+    assert.deepEqual(
+      failures.map((failure) => [failure.kind, failure.name]),
+      [
+        ["missing-index-row", "beta"],
+        ["stale-index-row", "gone"],
+      ],
+    );
+    // A directory with no manifest is not a package, so it is neither missing
+    // from the table nor reported as stale.
+    assert.deepEqual(notes, ["README.md: 2 package(s) on disk, 2 listed"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a table that links the same package twice is a table edited by appending", () => {
+  const root = mkdtempSync(join(tmpdir(), "docs-api-"));
+  try {
+    const packagesDir = join(root, "packages");
+    mkdirSync(join(packagesDir, "alpha"), { recursive: true });
+    writeFileSync(join(packagesDir, "alpha", "package.json"), "{}");
+
+    const readme = join(root, "README.md");
+    writeFileSync(
+      readme,
+      [
+        "| [`alpha`](./packages/alpha/) | ✅ |",
+        "| [`alpha`](./packages/alpha/) | ✅ |",
+      ].join("\n"),
+    );
+
+    const { failures } = auditPackageIndex({ readme, packagesDir, root });
+
+    assert.deepEqual(
+      failures.map((failure) => [failure.kind, failure.line]),
+      [["duplicate-index-row", 2]],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("report prints the notes, then the verdict", () => {
+  const out = [];
+  const code = report([], ["a: 1 package", "b: 2 packages"], {
+    log: (line) => out.push(line),
+    verbose: false,
+  });
+
+  assert.equal(code, 0);
+  assert.equal(out.length, 1);
+  assert.equal(
+    out[0],
+    "✓ docs-api: every documented symbol resolves (a: 1 package; b: 2 packages)",
+  );
+});
+
+test("report prints every finding through describe(), and returns 1", () => {
+  const err = [];
+  const code = report(
+    [
+      { kind: "unknown-symbol", file: "a.md", line: 4, name: "Foo" },
+      { kind: "missing-index-row", file: "README.md", name: "federation" },
+    ],
+    [],
+    { error: (line) => err.push(line) },
+  );
+
+  assert.equal(code, 1);
+  assert.match(err[0], /✗ docs-api: 2 finding\(s\)/);
+  assert.match(err[1], /^  a\.md:4 names `Foo`/);
+  assert.match(err[2], /^  README\.md does not link/);
+  assert.match(err.at(-1), /An API reference is a promise about the package/);
+});
+
+test("report with a clean run and no notes says so without parentheses", () => {
+  const out = [];
+  const code = report([], [], { log: (line) => out.push(line) });
+
+  assert.equal(code, 0);
+  assert.deepEqual(out, ["✓ docs-api: every documented symbol resolves"]);
+});
+
+test("report prints the notes in verbose mode before the verdict", () => {
+  const out = [];
+  report([], ["one"], { log: (line) => out.push(line), verbose: true });
+
+  assert.deepEqual(out, [
+    "  one",
+    "✓ docs-api: every documented symbol resolves (one)",
+  ]);
+});
+
+test("a package README is judged like any other page", () => {
+  // The README is what the registry shows first, and its examples are imports
+  // like any other. Ten packages shipped none until iteration 54; this case is
+  // the rule that now reads the ones that exist.
+  const root = mkdtempSync(join(tmpdir(), "docs-api-"));
+  try {
+    const pkg = join(root, "cluster");
+    const write = (path, text) => {
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, text);
+    };
+    write(
+      join(pkg, "package.json"),
+      JSON.stringify({
+        name: "@agentix-e/db-cluster",
+        exports: { ".": "./dist/index.d.ts" },
+      }),
+    );
+    write(
+      join(pkg, "src", "index.ts"),
+      "export const RaftGroup = 1;\nexport function applyLag() {}\n",
+    );
+    write(
+      join(pkg, "docs", "api", "gate.md"),
+      "# API\n\n`RaftGroup` is the entry; call `applyLag()` after a snapshot.\n\n" +
+        '```ts\nimport { Missing } from "@agentix-e/db-cluster";\n```\n',
+    );
+    write(
+      join(pkg, "README.md"),
+      '```ts\nimport { RaftGroup, Nope } from "@agentix-e/db-cluster";\n```\n',
+    );
+
+    const packages = workspacePackages(root);
+    assert.deepEqual(
+      packages.map((entry) => entry.dir),
+      ["cluster"],
+    );
+
+    const { failures } = auditPackage(packages[0], root, packageIndex(root));
+
+    // One finding per page: the docs tree and the README are read the same way,
+    // which is the rule iteration 54 added after ten packages shipped no README.
+    assert.deepEqual(
+      failures.map((failure) => [
+        failure.kind,
+        failure.name,
+        failure.file.split("/").at(-1),
+      ]),
+      [
+        ["unresolved-import", "Missing", "gate.md"],
+        ["unresolved-import", "Nope", "README.md"],
+      ],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a package that publishes nothing is not judged", () => {
+  const root = mkdtempSync(join(tmpdir(), "docs-api-"));
+  try {
+    const pkg = join(root, "cluster");
+    mkdirSync(join(pkg, "src"), { recursive: true });
+    writeFileSync(join(pkg, "src", "index.ts"), "export const internal = 1;\n");
+    writeFileSync(
+      join(pkg, "package.json"),
+      JSON.stringify({ name: "@agentix-e/db-cluster" }),
+    );
+
+    const [entry] = workspacePackages(root);
+    assert.deepEqual(auditPackage(entry, root, packageIndex(root)), {
+      failures: [],
+      notes: [],
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the umbrella's own packages are discovered from operations/packages", () => {
+  const root = mkdtempSync(join(tmpdir(), "docs-api-"));
+  try {
+    for (const dir of ["core", "health"]) {
+      const abs = join(root, "operations", "packages", dir);
+      mkdirSync(join(abs, "src"), { recursive: true });
+      writeFileSync(join(abs, "src", "index.ts"), "export const x = 1;\n");
+      writeFileSync(
+        join(abs, "package.json"),
+        JSON.stringify({ name: `@agentix-e/db-${dir}` }),
+      );
+    }
+    // A directory without an index is not a package with an API surface.
+    mkdirSync(join(root, "operations", "packages", "empty"), {
+      recursive: true,
+    });
+
+    // `cluster`, `federation` and `operations` are in the fixed list but have no
+    // `src/index.ts` here, so they are not packages with a surface.
+    assert.deepEqual(
+      workspacePackages(root).map((entry) => entry.dir),
+      ["operations/packages/core", "operations/packages/health"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

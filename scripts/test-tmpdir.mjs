@@ -18,11 +18,20 @@
  *   1. `$DBSTACK_TEST_TMPDIR` (explicit override)
  *   2. `/dev/shm/db-stack-tests/<id>` when writable with >= 512 MB free
  *   3. `<cwd>/.tmp` (workspace-local; survives /tmp pruning)
+ *
+ * Each step takes its filesystem, environment and working directory as an
+ * argument with the real one as the default. The interesting branches — a
+ * `/dev/shm` that is full, a `statfs` that is unsupported, an override that is
+ * set but empty — are the ones a machine never reaches on a good day, and they
+ * are exactly the branches that decide where a ninety-second test writes.
  */
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+/** The least free space `/dev/shm` must have before it is preferred. */
+export const MIN_SHM_BYTES = 512 * 1024 * 1024;
 
 /**
  * Which worker thread this process-level root belongs to.
@@ -37,31 +46,32 @@ import path from "node:path";
  * (`resolveSharedTempDir`): two threads that leased from separate pools would
  * hand out the same port.
  */
-function workerSuffix() {
-  const id = process.env.VITEST_WORKER_ID ?? process.env.VITEST_POOL_ID;
+export function workerSuffix(env = process.env) {
+  const id = env.VITEST_WORKER_ID ?? env.VITEST_POOL_ID;
   return id === undefined || id === "" ? "-w0" : `-w${id}`;
 }
 
-/** @param {string} label @returns {string} */
-export function resolveTestTmpRoot(label) {
-  const override = process.env.DBSTACK_TEST_TMPDIR;
+/** @param {string} label */
+export function resolveTestTmpRoot(label, deps = {}) {
+  const fsx = deps.fs ?? fs;
+  const env = deps.env ?? process.env;
+  const shm = deps.shm ?? "/dev/shm";
+  const cwd = deps.cwd ?? process.cwd();
+  const suffix = workerSuffix(env);
+
+  const override = env.DBSTACK_TEST_TMPDIR;
   if (override && override.length > 0) {
-    fs.mkdirSync(override, { recursive: true });
+    fsx.mkdirSync(override, { recursive: true });
     return override;
   }
 
-  const shm = "/dev/shm";
-  if (fs.existsSync(shm)) {
+  if (fsx.existsSync(shm)) {
     try {
-      const stat = fs.statfsSync(shm);
+      const stat = fsx.statfsSync(shm);
       const freeBytes = Number(stat.bavail) * Number(stat.bsize);
-      if (freeBytes > 512 * 1024 * 1024) {
-        const dir = path.join(
-          shm,
-          "db-stack-tests",
-          `${label}${workerSuffix()}`,
-        );
-        fs.mkdirSync(dir, { recursive: true });
+      if (freeBytes > MIN_SHM_BYTES) {
+        const dir = path.join(shm, "db-stack-tests", `${label}${suffix}`);
+        fsx.mkdirSync(dir, { recursive: true });
         return dir;
       }
     } catch {
@@ -69,12 +79,8 @@ export function resolveTestTmpRoot(label) {
     }
   }
 
-  const localTmp = path.join(
-    process.cwd(),
-    ".tmp",
-    `${label}${workerSuffix()}`,
-  );
-  fs.mkdirSync(localTmp, { recursive: true });
+  const localTmp = path.join(cwd, ".tmp", `${label}${suffix}`);
+  fsx.mkdirSync(localTmp, { recursive: true });
   return localTmp;
 }
 
@@ -84,26 +90,30 @@ export function resolveTestTmpRoot(label) {
  * Ports are the only thing that needs one: a port leased in one thread must be
  * visible to the others, or the same port is handed out twice.
  *
- * @param {string} kind @returns {string}
+ * @param {string} kind
  */
-export function resolveSharedTempDir(kind) {
-  const shm = "/dev/shm";
-  if (fs.existsSync(shm)) {
+export function resolveSharedTempDir(kind, deps = {}) {
+  const fsx = deps.fs ?? fs;
+  const shm = deps.shm ?? "/dev/shm";
+  const cwd = deps.cwd ?? process.cwd();
+
+  if (fsx.existsSync(shm)) {
     const dir = path.join(shm, "db-stack-tests", kind);
-    fs.mkdirSync(dir, { recursive: true });
+    fsx.mkdirSync(dir, { recursive: true });
     return dir;
   }
-  const dir = path.join(process.cwd(), ".tmp", kind);
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = path.join(cwd, ".tmp", kind);
+  fsx.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-/** @param {string} label @returns {string} */
-export function useTestTmpRoot(label) {
-  const root = resolveTestTmpRoot(label);
-  process.env.TMPDIR = root;
-  process.env.TMP = root;
-  process.env.TEMP = root;
+/** @param {string} label */
+export function useTestTmpRoot(label, deps = {}) {
+  const env = deps.env ?? process.env;
+  const root = resolveTestTmpRoot(label, deps);
+  env.TMPDIR = root;
+  env.TMP = root;
+  env.TEMP = root;
   // `os.tmpdir()` memoises its result on some platforms; reset the cache so
   // later callers see it.
   if (typeof os.tmpdir.resetCache === "function") os.tmpdir.resetCache();
@@ -128,13 +138,15 @@ export function useTestTmpRoot(label) {
  *
  * @returns {string} the temp root that is now guaranteed to exist.
  */
-export function ensureTestTmpRoot() {
-  const root = process.env.TMPDIR;
+export function ensureTestTmpRoot(deps = {}) {
+  const fsx = deps.fs ?? fs;
+  const env = deps.env ?? process.env;
+  const root = env.TMPDIR;
   if (!root || root.length === 0) {
     throw new Error(
       "ensureTestTmpRoot: TMPDIR is unset — call useTestTmpRoot(label) first",
     );
   }
-  if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true });
+  if (!fsx.existsSync(root)) fsx.mkdirSync(root, { recursive: true });
   return root;
 }

@@ -108,7 +108,7 @@ export function workspaceDirs(root = ROOT) {
   return dirs.filter((dir) => existsSync(join(root, dir, "package.json")));
 }
 
-function installedBinaries(root, dirs) {
+export function installedBinaries(root, dirs) {
   const bins = new Set();
   for (const dir of [".", ...dirs]) {
     const binDir = join(root, dir, "node_modules", ".bin");
@@ -143,22 +143,31 @@ export function missingBinaries(root = ROOT, binaries) {
   return { missing, scanned: dirs.length + 1 };
 }
 
-export function run(root = ROOT) {
-  const { missing, scanned } = missingBinaries(root);
+/**
+ * Print the verdict and return the exit code.
+ *
+ * The streams are parameters so the failure branch — the one a green run never
+ * shows — is asserted rather than assumed.
+ */
+export function run(root = ROOT, options = {}) {
+  const log = options.log ?? console.log;
+  const error = options.error ?? console.error;
+  const { missing, scanned } = missingBinaries(root, options.binaries);
+
   if (missing.length > 0) {
-    console.error(`\n✗ script-bins: ${missing.length} script(s) cannot run\n`);
+    error(`\n✗ script-bins: ${missing.length} script(s) cannot run\n`);
     for (const entry of missing) {
-      console.error(
+      error(
         `  ${entry.dir}: "${entry.script}" runs \`${entry.word}\`, which is not installed`,
       );
     }
-    console.error(
+    error(
       "\nA script nothing can execute is a promise that fails at the first use. " +
         "Install what it calls, or delete the script.\n",
     );
     return 1;
   }
-  console.log(
+  log(
     `✓ script-bins: every script command is installed (${scanned} manifests)`,
   );
   return 0;

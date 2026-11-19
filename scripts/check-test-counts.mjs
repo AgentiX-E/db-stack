@@ -292,8 +292,8 @@ export function loadReport(path) {
  * that asserts a sentence.
  */
 export function run(argv = process.argv.slice(2), options = {}) {
-  const log = options.log ?? ((line) => console.log(line));
-  const error = options.error ?? ((line) => console.error(line));
+  const log = options.log ?? console.log;
+  const error = options.error ?? console.error;
   const pagePath = options.page ?? resolve(root, PAGE);
   const write = options.write ?? argv.includes("--write");
 
