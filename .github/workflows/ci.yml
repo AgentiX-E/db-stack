@@ -84,6 +84,8 @@ jobs:
         run: pnpm check:esm-require
       - name: API reference names only symbols the packages export
         run: pnpm check:docs-api
+      - name: Every fenced example type-checks against the API it names
+        run: pnpm check:doc-examples
       - name: Every type a public signature names is importable from the package root
         run: pnpm check:public-types
       - name: Every script invokes a binary that is installed

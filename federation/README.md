@@ -21,19 +21,20 @@ import { ExactlyOnceCDCPipeline } from '@agentix-e/db-federation';
 // Create a CDC pipeline that guarantees exactly-once delivery
 const pipeline = new ExactlyOnceCDCPipeline({
   nodeId: 'dc-east-1',
-  cdcConfig: {
-    tables: ['orders', 'users'],
-    batchSize: 500,
-    pollIntervalMs: 100,
-  },
+  cdcConfig: { nodeId: 'dc-east-1' }, // HLC is created from the node id
   outboxConfig: {
     dataDir: '/data/cdc-outbox',
-    maxSizeMB: 1024,
+    mapSize: 1024 * 1024 * 1024, // LMDB map size, in bytes
   },
   remoteNodeId: 'dc-west-1',
 });
 
 await pipeline.start();
+
+// Which tables are replicated is decided after construction, so one pipeline can
+// follow a schema that changes at runtime.
+pipeline.watchTable('orders');
+pipeline.watchTable('users');
 
 // All changes to 'orders' and 'users' are now replicated
 // to dc-west-1 with exactly-once semantics

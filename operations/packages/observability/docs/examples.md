@@ -8,6 +8,13 @@ import { InMemoryDistributedTracer } from '@agentix-e/db-operations-observabilit
 class QueryEngine {
   constructor(private tracer: InMemoryDistributedTracer) {}
 
+  // The engine this wraps is injected, not part of the tracing story. Declaring
+  // the three hooks here is what lets the example be checked: without them the
+  // reader cannot tell whether `analyze` returns a plan or nothing at all.
+  private analyze!: (sql: string) => Promise<{ table: string }>;
+  private readFromStorage!: (plan: { table: string }) => Promise<unknown[]>;
+  private deserialize!: (rows: unknown[]) => string;
+
   async execute(sql: string, db: string) {
     // Start root span for this query
     const querySpan = this.tracer.startSpan('db.query', {
@@ -118,11 +125,13 @@ describe('InMemoryTelemetryExporter', () => {
 const tracerA = new InMemoryDistributedTracer();
 
 function handleRequest(req: Request) {
-  const incomingCtx = tracerA.extract(req.headers);
+  // `extract` takes a plain string map; a fetch `Headers` is not one.
+  const incoming: Record<string, string> = Object.fromEntries(req.headers.entries());
+  const incomingCtx = tracerA.extract(incoming);
   const span = tracerA.startSpan('gateway.handle', {
     traceId: incomingCtx?.traceId,
     parentSpanId: incomingCtx?.parentSpanId,
-    attributes: { 'http.method': req.method, 'http.path': req.path },
+    attributes: { 'http.method': req.method, 'http.path': new URL(req.url).pathname },
   });
 
   // Forward trace context to downstream service

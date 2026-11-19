@@ -49,7 +49,7 @@ import { InMemoryEncryptionManager } from '@agentix-e/db-operations-security';
 import { InMemoryRBACProvider } from '@agentix-e/db-operations-security';
 import { InMemoryCircuitBreaker } from '@agentix-e/db-operations-circuitbreaker';
 import { InMemoryAutoScaler } from '@agentix-e/db-operations-autoscaler';
-import { InMemoryRollingUpgrade } from '@agentix-e/db-operations-rollingupgrade';
+import { RollingUpgradeOrchestrator } from '@agentix-e/db-operations-rollingupgrade';
 
 /**
  * Single factory that creates interconnected instances of every
@@ -158,7 +158,7 @@ export class IntegratedFactory {
   // ── RollingUpgrade ─────────────────────────────────
 
   createRollingUpgrade(): IRollingUpgrade {
-    return new InMemoryRollingUpgrade();
+    return new RollingUpgradeOrchestrator();
   }
 
   // ── CircuitBreaker ─────────────────────────────────

@@ -14,4 +14,3 @@ export type {
   RollbackTrigger,
 } from './interfaces/types.js';
 export { RollingUpgradeOrchestrator } from './impl/RollingUpgradeOrchestrator.js';
-export { InMemoryRollingUpgrade } from './impl/InMemoryRollingUpgrade.js';

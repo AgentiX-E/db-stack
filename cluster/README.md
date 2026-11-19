@@ -18,9 +18,11 @@ npm install @agentix-e/db-cluster
 ```typescript
 import { RaftAdapter, RaftTcpTransport, SqliteStorage } from '@agentix-e/db-cluster';
 
-// Create a Raft-backed cluster node
+// Create a Raft-backed cluster node. `peers` is the voting set *without* this
+// node — the id here is 1, so the other two members are 2 and 3.
 const adapter = new RaftAdapter({
   id: 1,
+  peers: [2, 3],
   electionTick: 10,
   heartbeatTick: 1,
   storagePath: '/data/raft-node-1.db',

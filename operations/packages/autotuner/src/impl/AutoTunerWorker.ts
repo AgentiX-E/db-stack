@@ -139,10 +139,10 @@ export class AutoTunerWorker {
 
     // Filter by cooldown and confidence
     const now = Date.now();
-    let appliedCount = 0;
+    const applied: TuningRecommendation[] = [];
 
     for (const rec of raw) {
-      if (appliedCount >= this.config.maxRecommendations) break;
+      if (applied.length >= this.config.maxRecommendations) break;
 
       // Check cooldown
       const lastApplied = this.appliedHistory.find((h) => h.parameter === rec.parameter);
@@ -166,10 +166,14 @@ export class AutoTunerWorker {
         metricBefore: { ...metrics },
       });
 
-      appliedCount++;
+      applied.push(rec);
     }
 
-    return raw.filter((r) => r.confidence >= this.config.minConfidence);
+    // What was applied, not what cleared the confidence bar. The old return was
+    // `raw.filter((r) => r.confidence >= minConfidence)`, which included every
+    // recommendation the cooldown and the per-cycle cap had *skipped* — a caller
+    // that logged the result reported three changes and made one.
+    return applied;
   }
 
   /**

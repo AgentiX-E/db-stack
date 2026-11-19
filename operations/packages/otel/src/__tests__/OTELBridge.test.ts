@@ -82,6 +82,24 @@ describe('InMemoryOTELBridge', () => {
     expect(otel.isShutdown()).toBe(true);
   });
 
+  it('a shut-down bridge refuses new signals', async () => {
+    // The flag used to be reported and read by nothing: a component that kept
+    // producing after its owner stopped the pipeline grew buffers nobody would
+    // drain. A shutdown that changes no behaviour is not a shutdown.
+    const otel = new InMemoryOTELBridge();
+    const open = otel.startSpan('before');
+    await otel.shutdown();
+
+    expect(() => otel.startSpan('after')).toThrow(/shut down/);
+    expect(() => otel.recordMetric('late_metric', 1)).toThrow(/shut down/);
+    expect(() => otel.exportLog({ severity: 'info', message: 'late', attributes: {} })).toThrow(/shut down/);
+
+    // Ending a span that was already started is closing work, not opening any.
+    open.end('ok');
+    expect(otel.getSpans()).toHaveLength(1);
+    expect(otel.getSpans()[0]!.endTime).toBeTypeOf('number');
+  });
+
   it('spans have traceId set', () => {
     const otel = new InMemoryOTELBridge();
     const s = otel.startSpan('root');

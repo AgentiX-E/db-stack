@@ -10,6 +10,19 @@ export class InMemoryOTELBridge implements IOTELBridge {
   private active: Map<string, OTSpan> = new Map();
   private _shutDown = false;
 
+  /**
+   * Refuse a write once the bridge is shut down.
+   *
+   * `shutdown()` used to set a flag that nothing read: `isShutdown()` reported
+   * `true` while `startSpan`, `recordMetric` and `exportLog` kept accepting work,
+   * so a component that kept producing signals after its owner had stopped the
+   * pipeline grew buffers nobody would drain. A shutdown that changes no
+   * behaviour is a promise to the caller about a mechanism that is not there.
+   */
+  private assertOpen(): void {
+    if (this._shutDown) throw new Error('InMemoryOTELBridge has been shut down');
+  }
+
   startSpan(
     name: string,
     options?: {
@@ -18,6 +31,7 @@ export class InMemoryOTELBridge implements IOTELBridge {
       attributes?: Record<string, string | number | boolean>;
     },
   ): { spanId: string; end: (status?: 'ok' | 'error') => void } {
+    this.assertOpen();
     const spanId = `span-${++spanCounter}-${Date.now()}`;
     const traceId = options?.traceId ?? `trace-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const span: OTSpan = {
@@ -45,6 +59,7 @@ export class InMemoryOTELBridge implements IOTELBridge {
   }
 
   recordMetric(name: string, value: number, labels?: Record<string, string>): void {
+    this.assertOpen();
     this.metrics.push({
       name,
       value,
@@ -54,6 +69,7 @@ export class InMemoryOTELBridge implements IOTELBridge {
   }
 
   exportLog(log: Omit<OTLog, 'timestamp'>): void {
+    this.assertOpen();
     this.logs.push({ ...log, timestamp: Date.now() });
   }
 

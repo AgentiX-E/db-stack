@@ -79,9 +79,17 @@ import { RaftGroup, EngineBackedReplica, MemoryStorageEngine } from '@agentix-e/
 const engine = new MemoryStorageEngine();          // ← your engine goes here
 const replica = new EngineBackedReplica({ shardId: 0, engine });
 
-const group = new RaftGroup({ /* config */ }, replica);
+const group = new RaftGroup(
+  0,                                               // shard id
+  { id: 1, peers: [2, 3], electionTick: 10, heartbeatTick: 1 },
+  replica,
+  outboxManager,                                   // an IOutboxWriter; the shard's own
+);
 await group.init();
 ```
+
+`RaftGroup` takes its collaborators positionally, and the shard id comes first —
+it is the shard, not a field of the config, because one process owns many.
 
 That is the entire integration. `EngineBackedReplica` then guarantees, on your behalf:
 

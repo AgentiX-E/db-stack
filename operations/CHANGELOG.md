@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Documentation for ten packages that shipped none.** `autoscaler`, `autotuner`, `chaosengine`,
+  `circuitbreaker`, `configwatcher`, `federation`, `memoryguard`, `otel`, `rollingupgrade` and
+  `slacollector` published 17 exported values behind no `docs/` tree at all, and a `docs/`-less
+  package was skipped by `pnpm check:docs-api` — the loop read a package's documents to decide
+  whether it had any. Each now has a page that names every value it publishes, and the gate fails
+  a package that publishes without documenting (`no-docs`). The same pass filled the gaps in nine
+  packages that *did* have documentation: `FileAuditStore` and the `DurableFileSystem` family in
+  `audit`, the seven production classes in `security`, `BackupVerifier` / `S3StorageBackend` /
+  the backup-chain functions in `backup`, `MaintenanceWindowScheduler` and the cron grammar in
+  `maintenance`, `PrometheusPushExporter`, `W3CTraceContextProvider`, and `DB_OPERATIONS_VERSION`.
+- **A fourth gate rule: an import in a fenced example must resolve.** `check:docs-api` now reads
+  every named import in every package's documentation and checks it against the export surface of
+  the package and entry point it names. `operations/docs/getting-started.md` told a reader to
+  `import { HealthOrchestrator, ComponentProbe }` from the health package, which exports
+  `componentProbe`; another snippet imported `IBackupManager` and a `BackupType` that exists
+  nowhere from `@agentix-e/db-operations-core/types`, and returned `{ snapshotId, type, state }`
+  where `BackupResult` is `{ success, snapshot }`. The heading rule could not see any of it — a
+  fenced block has no headings.
 - **Thirty-seven types that public signatures named and no package exported.** The security package
   returned `RotationEvent`, `KeyRotationState`, `AuditEvent`, `RBACDecision`, `RBACStats` and
   eighteen more from methods a consumer calls, without exporting any of them; `monitor` did the same
@@ -17,8 +35,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `health`, `maintenance` and `metrics` with one or two each. They are exported now, and
   `pnpm check:public-types` fails the build if a package grows another.
 
+- **A fifth gate rule: a package index lists every package.** `operations/README.md` opened with
+  "21 packages" above a table of twenty rows — `federation` was published, tested and documented,
+  and absent from the one page that says what the umbrella contains. `check:docs-api` now compares
+  a package index to the directory it indexes, in both directions: a package that exists and is not
+  linked is a package a reader cannot find, and a link to a package that is gone is a 404 on the
+  registry page.
+- **`check:doc-examples`: every fenced example type-checks.** A new gate compiles all 281 fenced
+  TypeScript blocks in the 61 documentation pages against the packages' sources — not their built
+  `dist/` — and reports only the diagnostics that are claims about the API: a property that does
+  not exist, an argument that cannot be passed, a call with the wrong number of arguments, an
+  object literal with a key the target does not declare or without one it requires. Fourteen
+  examples were wrong and are fixed; the worst were the quick start itself
+  (`new InMemoryLogger({ level: 'info' })` for a constructor that takes `(component, maxEntries)`,
+  `health.register(...)` and `health.runAllChecks()` for methods that do not exist, and a
+  `BackupManager` built from `{ storage, schedule }`), `backups.delete(id)` for `deleteBackup(id)`,
+  `tracing.extract(req.headers)` on a fetch `Headers`, and `{ tables, batchSize, pollIntervalMs }`
+  passed as a two-field `CDCEngineConfig`.
+
 ### Removed
 
+- **Nineteen internals from `@agentix-e/db-operations-audit`'s root.** `segmentPattern`,
+  `readableSegmentsNewestFirst`, `newestOpenSegment`, `fileIdentity`, `isUnlinkRefusal`,
+  `unlinkIfUnchanged`, `readView`, `repairFor`, `shadowedPairs`, `relateTwin`, `listDirectory`,
+  `isRegularFile`, `mtimeOf`, `removeFile`, `readSegmentFromDisk`, `PARTIAL_ARCHIVE_SUFFIX`,
+  `gzipFile`, `archiveSegment` and `sweepAbandonedArchives` — plus the five types only they used
+  (`FileIdentity`, `SegmentView`, `TwinRepair`, `TwinVerdict` and `CompressFile`) — were published
+  by the package root and named by no document. The package's own suites import them from
+  `impl/FileAuditStore.js`, which is where a test of an internal belongs; the one importer outside
+  the package was another package's test, which is the shape of an export nobody asked for.
+  `AC 79.2b` fails the build if one comes back.
+- **`InMemoryRollingUpgrade`.** It was a one-line subclass of `RollingUpgradeOrchestrator` with no
+  behaviour of its own, kept "to keep the public export stable". A second name for the same class
+  makes every reference page document the same methods twice and every reader wonder which one to
+  import; the tests and the e2e factory now use the orchestrator.
+- **`VerifyOptions.cleanup` from `BackupVerifier`.** Declared as *"whether temporary data is deleted
+  after verification"* and read by no branch, because nothing in the class creates temporary data.
+  A flag the caller can set and cannot observe is a promise about a mechanism that does not exist.
 - **`"docs": "typedoc"` from all three packages.** None of them depended on TypeDoc, so the script
   had never run: `pnpm --filter @agentix-e/db-federation docs` exited `sh: 1: typedoc: not found`,
   and the two API reference pages told readers to run it. A generated reference was the plan when
@@ -27,6 +80,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than published. `pnpm check:script-bins` now refuses a script whose command is not installed —
   the same question `check:gates` asks about a tsconfig no script references, asked from the other
   end.
+
+### Fixed
+
+- **Fourteen documented examples that could not compile.** `operations/README.md`'s quick start
+  called three methods that do not exist and passed an options object to a constructor that takes
+  two positional arguments; `docs/user-guide/operations.md` and `operations/docs/getting-started.md`
+  repeated the same three mistakes, then called `backups.delete(id)` where the manager has
+  `deleteBackup(id)`, built a `RollingUpgradeOrchestrator` from `{ cluster, targetVersion,
+  maxUnavailable }` where the constructor takes `{ minBakeMs, sleep }` and the plan goes to
+  `execute()`, and read `.length` off `parseCron("0 3 * *")`, which throws. `monitor`'s alert rules
+  omitted the required `durationMs`, `metrics`' pool example called `this.poolAcquire()` on a class
+  that never had one, `observability` passed a fetch `Headers` to a method that takes a plain string
+  map and read `req.path` off a `Request`, `otel` logged with `level` instead of `severity` +
+  `attributes`, `federation`'s quick start passed `{ tables, batchSize, pollIntervalMs }` as the
+  two-field `CDCEngineConfig` and `{ maxSizeMB }` as an `OutboxStoreConfig`, and `cluster`'s quick
+  start omitted the required `peers`. Every one is fixed, and `pnpm check:doc-examples` fails the
+  build if another lands.
+- **`BackupVerifier.verify` reported chunk counts for chunks it never took.** `chunkCount` was
+  `Math.ceil(length / chunkSize)` beside a single `hash.update(buffer)` call — a number describing
+  pieces that were never cut — and `verifyStream`, the only mode that actually receives pieces,
+  reported `0` beside a comment saying streaming "does not count chunks". `verify` now walks the
+  buffer in pieces of `chunkSize`, `verifyStream` counts what the iterable produced, and a
+  non-positive or fractional `chunkSize` is refused instead of looping.
+- **`AutoTunerWorker.runAnalysis` returned recommendations it had skipped.** The return was
+  `raw.filter((r) => r.confidence >= minConfidence)`, which included every recommendation the
+  cooldown and the per-cycle cap had blocked. A caller that logged the result reported three
+  changes and made one. It now returns what it applied.
+- **`InMemoryOTELBridge.shutdown()` changed nothing.** It set a flag that `isShutdown()` reported
+  and no other method read, so `startSpan`, `recordMetric` and `exportLog` kept accepting work after
+  its owner had stopped the pipeline, growing buffers nobody would drain. The three now throw, and
+  ending a span that was already started still works — that is closing work, not opening any.
+- **`DB_OPERATIONS_VERSION` said `1.1.0` while the manifest said `1.11.3`**, under a comment
+  claiming a release step synchronised them; nothing in the repository read the constant or rewrote
+  it. `AC 79.8` compares the two.
 
 ## [1.11.3] — 2026-11-18
 

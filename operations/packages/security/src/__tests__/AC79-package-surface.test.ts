@@ -26,9 +26,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as security from '@agentix-e/db-operations-security';
 import * as audit from '@agentix-e/db-operations-audit';
 import * as operations from '@agentix-e/db-operations';
@@ -47,8 +48,37 @@ const SECURITY_SURFACE = [
   'InMemoryRateLimiter',
 ] as const;
 
-/** Names the user guide imports from `@agentix-e/db-operations-audit`. */
-const AUDIT_SURFACE = ['FileAuditStore', 'InMemoryAuditStore', 'readSegmentFromDisk'] as const;
+/**
+ * Names the user guide imports from `@agentix-e/db-operations-audit`.
+ *
+ * `readSegmentFromDisk` was on this list until iteration 54. The guide never
+ * imported it — it is `FileAuditStore`'s default read port, an internal exported
+ * from the package root for its own suite's benefit. A list whose comment says
+ * "the user guide imports" and whose content includes something the guide does
+ * not import is the same defect this file exists to catch, one level up: it made
+ * an accidental export look intentional for two years.
+ */
+const AUDIT_SURFACE = ['FileAuditStore', 'InMemoryAuditStore'] as const;
+
+/**
+ * Internals that must not come back through the root.
+ *
+ * Nineteen of these were exported from `@agentix-e/db-operations-audit` and named
+ * by no document; the audit package's own suites import them from
+ * `impl/FileAuditStore.js`, which is where a test of an internal belongs. This
+ * case is the regression guard: a helper re-exported "just for a test" is how the
+ * list got that long in the first place.
+ */
+const AUDIT_INTERNALS = [
+  'archiveSegment',
+  'fileIdentity',
+  'gzipFile',
+  'mtimeOf',
+  'readSegmentFromDisk',
+  'relateTwin',
+  'shadowedPairs',
+  'unlinkIfUnchanged',
+] as const;
 
 /** Constants the encryption section tells a reader to compare against. */
 const SECURITY_CONSTANTS = [
@@ -70,6 +100,15 @@ describe('AC79.1–79.6: the package exports what the guide imports', () => {
     for (const name of AUDIT_SURFACE) {
       const value = (audit as Record<string, unknown>)[name];
       expect(typeof value, `${name} is not exported from @agentix-e/db-operations-audit`).toBe('function');
+    }
+  });
+
+  it('79.2b the audit package no longer publishes its internals', () => {
+    for (const name of AUDIT_INTERNALS) {
+      expect(
+        (audit as Record<string, unknown>)[name],
+        `${name} is an internal and must not be reachable from the package root`,
+      ).toBeUndefined();
     }
   });
 
@@ -139,5 +178,18 @@ describe('AC79.1–79.6: the package exports what the guide imports', () => {
         expect(typeof module[name], `${name} is not exported from ${packageName}`).not.toBe('undefined');
       }
     }
+  });
+
+  it('79.8 the umbrella version is the version the manifest publishes', () => {
+    // The constant said `1.1.0` while the manifest said `1.11.3`, under a comment
+    // claiming a release step synchronised them. No script read either one, so the
+    // claim was about a mechanism that did not exist — and a version constant that
+    // nothing compares is a number that drifts silently. This case is the
+    // comparison.
+    const manifest = JSON.parse(
+      readFileSync(fileURLToPath(new URL('../../../../package.json', import.meta.url)), 'utf-8'),
+    ) as { version: string };
+
+    expect(operations.DB_OPERATIONS_VERSION).toBe(manifest.version);
   });
 });

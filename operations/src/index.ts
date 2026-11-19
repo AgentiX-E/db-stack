@@ -37,5 +37,14 @@ export * as rollingupgrade from '@agentix-e/db-operations-rollingupgrade';
 export * as slacollector from '@agentix-e/db-operations-slacollector';
 export * as federation from '@agentix-e/db-operations-federation';
 
-/** Framework version, kept in sync with package.json at release time. */
-export const DB_OPERATIONS_VERSION = '1.1.0';
+/**
+ * Framework version.
+ *
+ * This was `1.1.0` while the manifest said `1.11.3`, under a comment claiming
+ * the two were kept in sync "at release time" — and nothing in the repository
+ * read the constant or rewrote it, so the claim described a mechanism that did
+ * not exist. It is asserted against `package.json` by `AC 79.8`; a version
+ * constant nobody compares to the manifest is a number that drifts and a
+ * deployment that cannot answer "which build am I running".
+ */
+export const DB_OPERATIONS_VERSION = '1.11.3';

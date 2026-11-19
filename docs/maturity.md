@@ -153,21 +153,40 @@ so it works with any engine that registers the providers it needs.
 | `federation`     | Schema federation, repair execution                                  | U · I         |
 | …and 5 more      | See the operations guide                                             | U · I         |
 
+Every one of the 21 ships a `docs/` tree, and since iteration 54 that is enforced rather than
+observed: ten of them shipped none and were skipped by the documentation gate, because the loop
+read a package's documents to decide whether it had any. `pnpm check:docs-api` now reads 29 entry
+points across 24 packages, requires every published value to be named somewhere under its
+package's `docs/`, resolves every import in every fenced example against the export surface of the
+package it names, and holds each package index to the directory it indexes.
+
+The imports were the easy half. `pnpm check:doc-examples` compiles the examples themselves —
+281 fenced TypeScript blocks across 61 pages — against the packages' sources rather than their
+built `dist/`, and judges only the diagnostics that are *claims*: a property that does not exist,
+an argument that cannot be passed, a call with the wrong arity, an object literal with a key the
+target does not declare or without one it requires. Fragments are allowed to be fragments —
+undeclared names, implicit `any`, class sketches without bodies — because none of those is a
+statement about the API. It found **72** findings on the first run and **14** once the gate
+stopped lying about its own assembling (see §4.1); every one of the 14 was a snippet a reader
+would have pasted and watched fail. See §4.1 for what that found.
+
 ---
 
 ## 4. Measured coverage
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-All four rows are from the iteration-53 run: `cluster` 99.42/99.42/99.70/98.15,
-`federation` 99.44/99.44/99.77/98.95, `operations` 99.47/99.47/99.87/98.51. The gate covers four packages, not three: the end-to-end harness is measured as well,
-because a harness bug produces confident, meaningless acceptance passes.
+All four rows are from a green run of this repository; `operations` was re-measured in
+iteration 54 (99.47/99.47/99.87/98.52) and `cluster`/`federation` are unchanged since iteration 53
+because neither had a source change in that iteration. The gate covers four packages, not three:
+the end-to-end harness is measured as well, because a harness bug produces confident, meaningless
+acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
 | `cluster`       | 99.42% | 99.42%     | 99.70%    | 98.15%   |
 | `federation`    | 99.44% | 99.44%     | 99.77%    | 98.95%   |
-| `operations`    | 99.47% | 99.47%     | 99.87%    | 98.51%   |
+| `operations`    | 99.47% | 99.47%     | 99.87%    | 98.52%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
 The `e2e` row covers `e2e/harness/support.ts` — process supervision, IPC, port allocation,
@@ -252,19 +271,51 @@ hierarchy the package does not have. Both pages had been written from a design s
 code existed and were never compared to it; a reader following either one wrote code that failed
 on the first line. `pnpm check:docs-api` now resolves every `##`–`####` heading that opens with a
 backticked identifier against the package's real export surface, read through the TypeScript
-compiler rather than by pattern matching, and requires a file named `api-reference.md` to mention
-every exported value. Both pages were rewritten against it, and the check is what keeps them
-honest.
+compiler rather than by pattern matching. Both pages were rewritten against it, and the check is
+what keeps them honest.
 
 It read `src/index.ts` and stopped there, which left a second promise on every package
 unchecked: a subpath. `@agentix-e/db-cluster/testing` had been publishing fifteen symbols — a
 whole harness a downstream package is expected to build against — and no gate looked at any of
 them; its first page was written in iteration 53, after the gate learned to read the `exports`
-map. Every entry point is now resolved from `package.json`, headings may name a symbol from any
-of them, `api-reference.md` still has to cover the package root in full, and each subpath's own
-values have to appear somewhere under `docs/`. Twenty findings, all real, all now closed — and
-the gate's own suite pins both directions, including `run()` over the working tree, because a
-gate that only ever prints "passed" is the same defect one layer out.
+map. Every entry point is now resolved from `package.json` and headings may name a symbol from
+any of them. Twenty findings, all real, all now closed — and the gate's own suite pins both
+directions, including `run()` over the working tree, because a gate that only ever prints
+"passed" is the same defect one layer out.
+
+Iteration 54 found that the coverage rule was still stated about a *filename*. It fired on
+`api-reference.md`, which two of twenty-four packages have, and a package with no `docs/` tree at
+all was skipped before any rule ran — the loop read a package's documents to decide whether it
+had any, so writing none was the strongest possible way to comply. Measured: **50 exported values
+across nine documented packages named by no page, and ten packages publishing 17 values behind no
+documentation whatsoever.** Three rules replaced the one:
+
+1. **Every exported value of every entry point is mentioned somewhere under the package's
+   `docs/`.** Root and subpaths alike; the duty is on the package, so `architecture.md` may carry
+   a class the `api/` page omits.
+2. **A package that publishes a value ships a `docs/` tree.** A `docs/`-less package is a finding,
+   not a skip.
+3. **Every named import in a fenced example resolves** against the package and entry point it
+   names — in a package's own `docs/` **and** in the repository's `docs/`, which belongs to no
+   package and was read by nothing. `operations/docs/getting-started.md` told readers to
+   `import { HealthOrchestrator, ComponentProbe }` from a package that exports `componentProbe`;
+   another snippet imported `IBackupManager` from `core` and a `BackupType` that exists nowhere,
+   and returned `{ snapshotId, type, state }` where `BackupResult` is `{ success, snapshot }`.
+   The heading rule cannot see any of it, because a fenced block has no headings. The user guide
+   had five more: `Counter` and `Histogram` from `metrics`, which exports `ICounter`/`IHistogram`
+   and creates them through `registry.counter()`; `BackupManager`, which is
+   `InMemoryBackupManager` and takes its storage and retention policy positionally; and
+   `report.passed`, where the field is `valid`. A guide that cannot compile is worse than no
+   guide, because it is the page a reader trusts.
+
+Nineteen of the 50 were internals — `audit` published nineteen helpers of `FileAuditStore`, and
+the only importer outside the package was a *different package's* test, which is the shape of an
+export nobody asked for. Those are gone from the root and the test moved to the package that owns
+the behaviour. The rest were real gaps: `FileAuditStore` itself, the seven production classes in
+`security`, `BackupVerifier`, `S3StorageBackend`, the backup-chain functions, the cron grammar,
+`PrometheusPushExporter`, `W3CTraceContextProvider`. The gate's suite now pins all three rules
+against trees that must fail them, because the working tree passing is equally consistent with a
+rule that never fires.
 
 ---
 
@@ -282,7 +333,7 @@ gate that only ever prints "passed" is the same defect one layer out.
 | **Cross-version upgrade path** | Partially covered | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
 | **Sustained soak beyond CI limits** | Scheduled only | Multi-hour runs exist (`test:soak`) but do not gate a pull request. |
 | **Quorum-loss step-down** | Covered | raft-core 0.2.1 has no check-quorum, so an isolated leader keeps reporting `isLeader() === true` while committing nothing (measured: 16 s, commit index frozen, write refused at 5 028 ms). `checkQuorum` is now real: contact is a completed round trip through the _real_ transport, `isLeader()` answers from the role **and** from a majority inside one election timeout, `getLeader()` returns `null` while that is not true, and a write is refused with `QUORUM_FAILED` instead of waiting out the library's commit timeout. Seven cases in `quorum-loss.test.ts` drive it against a real 3-node TLS cluster. |
-| **Documentation fidelity** | Covered (iteration 50) | `pnpm check:docs-api` fails the build when an API heading names a symbol the package does not export, and when `api-reference.md` omits an exported value. `pnpm check:public-types` closes the other half: every type a public signature names must be importable from the package root, which is how the two `CDCManager` classes and forty-three unnameable cluster types were found. `pnpm check:script-bins` fails a script whose command is not installed — that is how the three `docs` scripts running an absent TypeDoc were found, and they are gone rather than fixed: the curated pages are compiler-checked now, so a generated second surface would only be a second thing to keep honest. Not covered: the prose around a signature, and the field-level detail of a config interface — a page can name the right class and describe the wrong default. |
+| **Documentation fidelity** | Covered (iteration 54) | Three gates, each comparing a different kind of claim to the code. `pnpm check:docs-api` reads every package's `exports` map and fails when a heading names a symbol the package does not publish, when a published value is named on no page, when a package ships no `docs/` tree at all, when a fenced import names a member the entry point does not have, or when a package index omits a package that exists. `pnpm check:doc-examples` type-checks all 281 fenced TypeScript blocks in 61 pages against the packages' **sources**, which is how 14 examples that could not compile — `new InMemoryLogger({ level: 'info' })`, `health.runAllChecks()`, `backups.delete(id)`, `tracing.extract(req.headers)`, `{ tables: [...] }` in a two-field config — were found and fixed. `pnpm check:public-types` closes the type half: every type a public signature names must be importable from the package root. Not covered: the prose around a signature, and the field-level detail of a config interface — a page can name the right class and describe the wrong default. |
 | **CDC delivery over a network** | Not covered | The pump hands events to an `ICDCSink` the deployment supplies; the sinks exercised in CI are in-process (a recording sink, `InMemoryCDCSink`, the resolver, the failure injector). A webhook or Kafka sink is application code, and no suite here drives one over a real socket. The ordering, retry and loss properties are measured against the sink contract; a sink that lies about accepting a batch is outside it, and the contract says so. |
 | **Harness `.mjs` child programs** | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
 
@@ -298,6 +349,7 @@ an owner and an exit criterion; none of them is hidden behind a passing badge.
 pnpm install --frozen-lockfile && pnpm build
 pnpm check:gates                                     # no orphan configs, no dangling scripts
 pnpm check:docs-api                                  # every API heading resolves to a real export
+pnpm check:doc-examples                              # every fenced example type-checks
 pnpm check:public-types                              # every type a public signature names is exported
 pnpm check:script-bins                               # every script's binary is installed
 pnpm typecheck && pnpm typecheck:tests               # static gates, production and tests

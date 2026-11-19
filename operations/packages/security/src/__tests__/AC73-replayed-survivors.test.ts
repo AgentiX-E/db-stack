@@ -14,6 +14,12 @@
  * report's recorded range and replacement text, not a line number. Every case
  * below was chosen by replaying one recorded survivor and asking what a caller
  * would notice if the recorded edit were real.
+ *
+ * Two cases that replayed survivors of `FileAuditStore`'s unlink path used to
+ * live here, importing `unlinkIfUnchanged` and `fileIdentity` from
+ * `@agentix-e/db-operations-audit`. They moved to that package in iteration 54
+ * (AC 91.1–91.3): a behaviour test belongs beside the code it asserts, and the
+ * root export that made the cross-package import possible was itself the defect.
  */
 import fs from 'fs';
 import os from 'os';
@@ -24,7 +30,6 @@ import { EnvelopeEncryptionProvider } from '../impl/EnvelopeEncryptionProvider.j
 import { KeyManager } from '../impl/KeyManager.js';
 import type { AuditEvent } from '../interfaces/IAuditLogger.js';
 import type { EncryptionConfig } from '../interfaces/index.js';
-import { unlinkIfUnchanged, fileIdentity } from '@agentix-e/db-operations-audit';
 
 const CONFIG: EncryptionConfig = { algorithm: 'aes-256-gcm', keyDerivation: 'pbkdf2' };
 const tmpdirs: string[] = [];
@@ -209,35 +214,5 @@ describe('AC 73 — a provider refuses to work uninitialized', () => {
     const sealed = await provider.encrypt(Buffer.alloc(0));
 
     expect((await provider.decrypt(sealed)).length).toBe(0);
-  });
-});
-
-describe('AC 73 — file identity is about the file that is there', () => {
-  it('73.12 a different file of the same size is not the file that was measured', () => {
-    const file = path.join(scratch(), 'same-size.ndjson');
-    fs.writeFileSync(file, 'AAAAA');
-    const measured = fileIdentity(file)!;
-
-    // Same name, same length, different file. The recorded survivor replaced
-    // `actual.ino !== expected.ino` with `false`, which leaves only the size
-    // comparison — and a size is not an identity. This is the whole reason the
-    // helper exists: delete only the file you measured.
-    fs.rmSync(file);
-    fs.writeFileSync(file, 'BBBBB');
-
-    expect(unlinkIfUnchanged(file, measured)).toBe(false);
-    expect(fs.readFileSync(file, 'utf-8')).toBe('BBBBB');
-  });
-
-  it('73.13 identity of a path that no longer exists is null, not a throw', () => {
-    const file = path.join(scratch(), 'gone.ndjson');
-    fs.writeFileSync(file, 'x');
-    const identity = { ino: 1, size: 1 };
-    fs.rmSync(file);
-
-    // The recorded survivor dropped `if (!actual) return false`, which left the
-    // comparison dereferencing null. Deleting a file between "measure" and
-    // "unlink" is the case this helper exists for.
-    expect(unlinkIfUnchanged(file, identity)).toBe(false);
   });
 });

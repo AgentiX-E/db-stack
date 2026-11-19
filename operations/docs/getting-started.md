@@ -9,6 +9,21 @@ npm install @agentix-e/db-operations-backup
 # ... etc for each package you need
 ```
 
+### Which version is running?
+
+```typescript
+import { DB_OPERATIONS_VERSION } from '@agentix-e/db-operations';
+
+console.log(DB_OPERATIONS_VERSION); // e.g. "1.11.3"
+```
+
+`DB_OPERATIONS_VERSION` is the **umbrella's** version. The 21 packages version
+independently — `@agentix-e/db-operations-audit` is at 1.5.0 while the umbrella is
+at 1.11.3 — so a deployment that needs to know which audit build it is running
+reads that package's own `package.json`. The constant is asserted against
+`operations/package.json` by `AC 79.8`, because a version constant nobody compares
+is a number that drifts.
+
 ## Minimal Setup (3 minutes)
 
 ### 1. Provider Registry
@@ -22,28 +37,50 @@ const registry = new ProviderRegistry();
 ### 2. Register Services
 
 ```typescript
+import type { ILogger } from '@agentix-e/db-operations-logger';
 import { InMemoryLogger } from '@agentix-e/db-operations-logger';
-import { HealthOrchestrator, ComponentProbe } from '@agentix-e/db-operations-health';
+import { HealthOrchestrator, componentProbe } from '@agentix-e/db-operations-health';
 import { MetricsRegistry } from '@agentix-e/db-operations-metrics';
 
-const ILogger = token<ILogger>('ILogger');
-registry.register(ILogger, new InMemoryLogger({ level: 'info' }));
-registry.register(token('HealthOrchestrator'), new HealthOrchestrator(registry));
-registry.register(token('MetricsRegistry'), new MetricsRegistry());
+// Services that a caller looks up *by interface* go in the registry.
+const ILoggerToken = token<ILogger>('ILogger');
+registry.register(ILoggerToken, new InMemoryLogger('getting-started'));
+
+// Health and metrics own their own state and are used directly; putting them in
+// the registry buys a lookup nobody performs.
+const health = new HealthOrchestrator();
+const metrics = new MetricsRegistry();
 ```
+
+`InMemoryLogger` takes `(component: string, maxEntries = 100)`, not an options
+object — a snippet that passed `{ level: 'info' }` type-checked in the reader's
+head for two releases and nowhere else.
 
 ### 3. Use Services
 
 ```typescript
-// Health check
-const orchestrator = registry.get<HealthOrchestrator>(token('HealthOrchestrator'));
-await orchestrator.registerComponent('database-1', probe);
-const status = await orchestrator.evaluateComponentHealth('database-1');
+// Health check: register a probe, then ask for readiness.
+health.registerComponent(
+  componentProbe('database-1', 'Primary database', {
+    liveness: () => ({ ok: true }),
+    readiness: () => ({ ok: true, message: 'replication lag 12 ms' }),
+  }),
+);
+const readiness = health.readiness(); // { ok: boolean, errors: string[] }
+const components = health.getComponentHealth(); // per-component detail
 
-// Backup
-import { InMemoryBackupManager, InMemoryStorageBackend } from '@agentix-e/db-operations-backup';
-const backup = new InMemoryBackupManager(new InMemoryStorageBackend());
-const result = await backup.createBackup('full');
+// Backup: a manager is a storage backend plus a retention policy.
+import {
+  InMemoryBackupManager,
+  InMemoryStorageBackend,
+  RetentionPolicyEvaluator,
+} from '@agentix-e/db-operations-backup';
+
+const backup = new InMemoryBackupManager(
+  new InMemoryStorageBackend(),
+  new RetentionPolicyEvaluator({ maxFullSnapshots: 24, maxTotalBytes: 64 * 1024 ** 3 }),
+);
+const result = await backup.createBackup({ type: 'full' });
 ```
 
 ## Common Patterns
@@ -60,12 +97,15 @@ class DatabaseOperations {
   public readonly audit: IAuditStore;
 
   constructor() {
-    this.logger = new InMemoryLogger({ level: 'debug' });
+    this.logger = new InMemoryLogger('operations');
     this.metrics = new MetricsRegistry();
-    this.backup = new InMemoryBackupManager(new InMemoryStorageBackend());
+    this.backup = new InMemoryBackupManager(
+      new InMemoryStorageBackend(),
+      new RetentionPolicyEvaluator({ maxFullSnapshots: 24, maxTotalBytes: 64 * 1024 ** 3 }),
+    );
     this.monitor = new InMemoryDeadlockDetector();
     this.audit = new InMemoryAuditStore();
-    this.health = new HealthOrchestrator(new ProviderRegistry());
+    this.health = new HealthOrchestrator();
   }
 }
 ```
@@ -73,16 +113,38 @@ class DatabaseOperations {
 ### Custom adapter skeleton
 
 ```typescript
-import type { IBackupManager, BackupType, BackupResult } from '@agentix-e/db-operations-core/types';
+import type { IBackupManager, CreateBackupOptions } from '@agentix-e/db-operations-backup';
+import type { BackupResult } from '@agentix-e/db-operations-core/types';
 
 class MyDatabaseBackupAdapter implements IBackupManager {
-  async createBackup(type: BackupType): Promise<BackupResult> {
+  async createBackup(options: CreateBackupOptions): Promise<BackupResult> {
     // Bridge to your custom database backup API
-    return { snapshotId: '...', type, state: 'completed', ... };
+    const snapshot = await myEngine.snapshot(options.type);
+    return {
+      success: true,
+      snapshot: {
+        snapshotId: snapshot.id,
+        type: options.type,
+        state: 'completed',
+        createdAt: snapshot.startedAt,
+        completedAt: snapshot.finishedAt,
+        sizeBytes: snapshot.sizeBytes,
+        fileCount: snapshot.files.length,
+        location: `s3://backups/${snapshot.id}`,
+      },
+    };
   }
-  // ...
+
+  // listBackups / getBackup / deleteBackup / restoreFromSnapshot / pitr / prune …
 }
 ```
+
+`IBackupManager` is defined by the `backup` package, not by `core`; `core` owns the
+shapes (`BackupResult`, `BackupMetadata`, `SnapshotType`). An earlier version of
+this snippet imported both from `@agentix-e/db-operations-core/types`, named a
+`BackupType` that exists nowhere, and returned `{ snapshotId, type, state }` where
+the real shape is `{ success, snapshot }` — three errors a reader would have
+discovered only after wiring their first adapter.
 
 ## Next Steps
 

@@ -5,19 +5,28 @@
 ```typescript
 import { MetricsRegistry } from '@agentix-e/db-operations-metrics';
 
+/** Whatever connection source you already have. */
+interface UpstreamPool {
+  acquire(): unknown;
+  release(): void;
+}
+
 class ConnectionPool {
   private metrics = new MetricsRegistry();
 
-  constructor(private poolId: string) {}
+  constructor(
+    private poolId: string,
+    private upstream: UpstreamPool,
+  ) {}
 
   acquire() {
     this.metrics.gauge('pool_active', { pool: this.poolId }).inc();
-    return this.poolAcquire();
+    return this.upstream.acquire();
   }
 
   release() {
     this.metrics.gauge('pool_active', { pool: this.poolId }).dec();
-    this.poolRelease();
+    this.upstream.release();
   }
 
   recordWait(ms: number) {

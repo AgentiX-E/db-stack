@@ -147,7 +147,10 @@ describe('AutoTunerWorker — AC 53.x: Auto Tuner Worker', () => {
 
     const historyBefore = await tuner.getHistory().length;
     const recs = await worker.runAnalysis();
-    expect(recs.length).toBeGreaterThanOrEqual(1);
+    // What came back is what was applied. It used to be every recommendation
+    // that cleared `minConfidence`, including the ones the cap had skipped —
+    // three changes reported, one made.
+    expect(recs.length).toBe(1);
 
     // maxRecommendations = 1, so at most 1 was applied
     const historyAfter = tuner.getHistory().length;

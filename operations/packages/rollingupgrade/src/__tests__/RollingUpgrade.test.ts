@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { InMemoryRollingUpgrade } from '../impl/InMemoryRollingUpgrade.js';
+import { RollingUpgradeOrchestrator } from '../impl/RollingUpgradeOrchestrator.js';
 import type { RollingUpgradePlan, BatchHealth } from '../interfaces/types.js';
 
-// InMemoryRollingUpgrade is a thin alias over RollingUpgradeOrchestrator, so
-// these tests exercise the public IRollingUpgrade contract through the
-// in-memory entry point.
+// These cases exercise the IRollingUpgrade contract through the orchestrator.
+// `InMemoryRollingUpgrade` was a one-line subclass of it and nothing else, so
+// the tests moved to the class that has behaviour (iteration 54).
 
 const instantSleep = () => Promise.resolve();
 
@@ -30,9 +30,9 @@ function healthy(): Promise<BatchHealth> {
   });
 }
 
-describe('InMemoryRollingUpgrade', () => {
+describe('RollingUpgradeOrchestrator', () => {
   it('starts with an empty phase (idle) and no batches', () => {
-    const ug = new InMemoryRollingUpgrade();
+    const ug = new RollingUpgradeOrchestrator();
     expect(ug.getPhase()).toBe('idle');
     expect(ug.getBatches()).toEqual([]);
     expect(ug.getEvents()).toEqual([]);
@@ -40,7 +40,7 @@ describe('InMemoryRollingUpgrade', () => {
   });
 
   it('executes a single-node upgrade to completion', async () => {
-    const ug = new InMemoryRollingUpgrade({
+    const ug = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
       sleep: instantSleep,
     });
@@ -57,7 +57,7 @@ describe('InMemoryRollingUpgrade', () => {
   });
 
   it('splits nodes into the requested number of batches', async () => {
-    const ug = new InMemoryRollingUpgrade({
+    const ug = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
       sleep: instantSleep,
     });
@@ -74,7 +74,7 @@ describe('InMemoryRollingUpgrade', () => {
   });
 
   it('records events across validation, batches, and completion', async () => {
-    const ug = new InMemoryRollingUpgrade({
+    const ug = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
       sleep: instantSleep,
     });
@@ -91,14 +91,14 @@ describe('InMemoryRollingUpgrade', () => {
   });
 
   it('pause and resume toggle the paused state without throwing', async () => {
-    const ug = new InMemoryRollingUpgrade();
+    const ug = new RollingUpgradeOrchestrator();
     await ug.pause();
     await ug.resume();
     expect(true).toBe(true);
   });
 
   it('rollback on a completed plan is accepted', async () => {
-    const ug = new InMemoryRollingUpgrade({
+    const ug = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
       sleep: instantSleep,
     });
@@ -108,12 +108,12 @@ describe('InMemoryRollingUpgrade', () => {
   });
 
   it('rejects an invalid plan (missing id)', async () => {
-    const ug = new InMemoryRollingUpgrade();
+    const ug = new RollingUpgradeOrchestrator();
     await expect(ug.execute(makePlan({ id: '' }))).rejects.toThrow();
   });
 
   it('satisfies the full IRollingUpgrade surface', () => {
-    const ug = new InMemoryRollingUpgrade();
+    const ug = new RollingUpgradeOrchestrator();
     expect(typeof ug.execute).toBe('function');
     expect(typeof ug.getPhase).toBe('function');
     expect(typeof ug.getBatches).toBe('function');

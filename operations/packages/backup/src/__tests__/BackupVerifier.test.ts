@@ -93,6 +93,27 @@ describe('BackupVerifier', () => {
     expect(result.chunkCount).toBe(4);
   });
 
+  it('the piece size changes the count, never the digest', async () => {
+    // The count used to be `ceil(length / chunkSize)` beside one `update(buffer)`
+    // call — a number describing pieces that were never taken. Now the buffer is
+    // walked in pieces, and the digest has to be identical to the one-shot hash
+    // or the pieces are being cut wrong.
+    const data = Buffer.from('the same bytes however they are cut');
+    const oneShot = verifier.calculateChecksum(data);
+
+    for (const chunkSize of [1, 3, 7, 1024]) {
+      const result = await verifier.verify('pieces', data, { chunkSize });
+      expect(result.computedChecksum, `chunkSize=${chunkSize}`).toBe(oneShot);
+      expect(result.chunkCount).toBe(Math.ceil(data.length / chunkSize));
+    }
+  });
+
+  it('a chunkSize that would loop forever is refused', async () => {
+    for (const chunkSize of [0, -1, 1.5]) {
+      await expect(verifier.verify('bad', Buffer.from('x'), { chunkSize })).rejects.toThrow(/positive integer/);
+    }
+  });
+
   // ── Stored checksum ─────────────────────────────────────────────
 
   it('the checksum is stored after verification for later comparison', async () => {
@@ -123,6 +144,10 @@ describe('BackupVerifier', () => {
 
     expect(result.valid).toBe(true);
     expect(result.totalSize).toBe(20);
+    // Three chunks in, three counted. The field reported `0` for two years beside
+    // a comment explaining that streaming "does not count chunks" — while this is
+    // the only mode that has chunks to count.
+    expect(result.chunkCount).toBe(3);
   });
 
   it('verifyStream detects a checksum mismatch', async () => {

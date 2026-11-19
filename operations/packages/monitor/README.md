@@ -42,6 +42,7 @@ const ruleId = await alertMgr.createRule({
   metric: 'cpu_percent',
   condition: 'gt',
   threshold: 90,
+  durationMs: 0, // fire on the first sample above the threshold
   severity: 'critical',
   enabled: true,
 });
@@ -214,6 +215,7 @@ const cpuRule = await rules.createRule({
   metric: 'cpu_percent',
   condition: 'gt',
   threshold: 90,
+  durationMs: 60_000, // sustained for a minute, not a single spike
   severity: 'critical',
   enabled: true,
 });
@@ -223,6 +225,7 @@ const memRule = await rules.createRule({
   metric: 'memory_mb',
   condition: 'gte',
   threshold: 8000,
+  durationMs: 300_000,
   severity: 'warning',
   enabled: true,
 });

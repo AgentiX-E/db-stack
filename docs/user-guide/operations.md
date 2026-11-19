@@ -23,13 +23,14 @@ import { HealthOrchestrator } from "@agentix-e/db-operations-health";
 import { InMemoryLogger, type ILogger } from "@agentix-e/db-operations-logger";
 
 const registry = new ProviderRegistry();
-registry.register(
-  token<ILogger>("ILogger"),
-  new InMemoryLogger({ level: "info" }),
-);
+registry.register(token<ILogger>("ILogger"), new InMemoryLogger("operations"));
 
-const health = new HealthOrchestrator({ registry });
-await health.runAllChecks();
+const health = new HealthOrchestrator();
+health.registerFunctional("storage", "Storage", {
+  liveness: () => ({ ok: true }),
+  readiness: () => ({ ok: true }),
+});
+health.readiness();
 ```
 
 Why this matters: the same code runs in tests, staging and production with different
@@ -73,74 +74,84 @@ not editing call sites.
 ```ts
 import {
   HealthOrchestrator,
-  ComponentProbe,
+  componentProbe,
 } from "@agentix-e/db-operations-health";
 
-const health = new HealthOrchestrator({ registry });
+const health = new HealthOrchestrator();
 
-health.register(
-  "storage",
-  new ComponentProbe({
-    liveness: async () => (await storage.ping()) === "ok",
-    readiness: async () => (await storage.replicaLagMs()) < 5_000,
+health.registerComponent(
+  componentProbe("storage", "Storage", {
+    liveness: () => ({ ok: storage.isEventLoopResponsive() }),
+    readiness: () => {
+      const lag = storage.replicaLagMs();
+      return { ok: lag < 5_000, message: `replica lag ${lag} ms` };
+    },
   }),
 );
 
-const status = await health.runAllChecks();
-// { status: 'healthy' | 'degraded' | 'unhealthy', components: {...} }
+health.liveness();        // { ok: true, errors: [] }
+health.readiness();       // { ok: false, errors: ["storage: replica lag 8 200 ms"] }
+health.getHealthStatus(); // structured, for a dashboard
 ```
 
 A failing **liveness** probe means "restart me". A failing **readiness** probe means "stop
 sending traffic". Wiring both to the same check is the most common way to turn a slow
 replica into a restart loop.
 
+`IHealthProbe` is **synchronous** — `liveness()`, `readiness()` and `startup()` return a
+`ProbeResult`, not a promise. That is a deliberate constraint, not an oversight: a probe that
+awaits is a probe that can hang, and a liveness check that blocks on I/O is the failure it was
+supposed to detect. A component whose readiness genuinely needs a round trip keeps the answer in
+a field an in-process sample updates, and the probe reads the field.
+
 ### 3.2 Metrics
 
 ```ts
-import {
-  MetricsRegistry,
-  Counter,
-  Histogram,
-} from "@agentix-e/db-operations-metrics";
+import { MetricsRegistry } from "@agentix-e/db-operations-metrics";
 
-const registry = new MetricsRegistry();
-const writes = new Counter({
-  name: "db_writes_total",
-  help: "Committed writes",
-});
-const latency = new Histogram({
-  name: "db_write_seconds",
-  buckets: [0.001, 0.005, 0.02, 0.1],
-});
+const metrics = new MetricsRegistry();
+const writes = metrics.counter("db_writes_total", { db: "orders" });
+const latency = metrics.histogram("db_write_seconds", { db: "orders" }, [0.001, 0.005, 0.02, 0.1]);
 
-registry.register(writes);
-registry.register(latency);
 writes.inc();
 latency.observe(0.004);
-const text = registry.toPrometheusText();
+
+const snapshot = metrics.snapshot(); // what the Prometheus exporter publishes
 ```
+
+Metrics are created *by the registry*, not passed to it: `counter`, `gauge` and `histogram` take
+a name, an optional label set and — for histograms — bucket bounds, and return a handle. A second
+call with the same name and the same labels returns the same counter, so a component does not have
+to thread a handle through its own constructor to record a metric.
 
 ### 3.3 Backup with verification
 
 ```ts
 import {
-  BackupManager,
+  InMemoryBackupManager,
+  RetentionPolicyEvaluator,
   S3StorageBackend,
   BackupVerifier,
 } from "@agentix-e/db-operations-backup";
 
-const backups = new BackupManager({
-  storage: new S3StorageBackend({ bucket: "db-backups", region: "eu-west-1" }),
-  engine: myEngineBackupAdapter,
-});
-
-const manifest = await backups.create({ label: "nightly" });
-const report = await new BackupVerifier().verifyStream(
-  await backups.openStream(manifest.id),
+const backups = new InMemoryBackupManager(
+  new S3StorageBackend({ bucket: "db-backups", region: "eu-west-1" }),
+  new RetentionPolicyEvaluator({ maxFullSnapshots: 7, maxTotalBytes: 5e11, keepRecent: "P7D" }),
 );
-if (!report.passed)
-  throw new Error(`backup ${manifest.id} failed verification: ${report.error}`);
+
+const result = await backups.createBackup({ type: "full" });
+if (!result.success) throw new Error(result.error);
+
+const metadata = await backups.getBackup(result.snapshot!.snapshotId);
+const report = await new BackupVerifier().verifyStream(await openStream(metadata!));
+if (!report.valid)
+  throw new Error(`backup ${metadata!.snapshotId} failed verification: ${report.error}`);
 ```
+
+The manager takes its two collaborators **positionally** — a storage backend and a retention
+policy — rather than a configuration object, because both are interfaces with more than one
+implementation and neither has a sensible default: a manager that quietly backed up to memory
+would be a manager whose backups are gone at the next restart.
 
 Verify on creation **and** on a schedule — a backup that was never restored is a hypothesis,
 not a backup.
@@ -712,16 +723,26 @@ const report = auditor.generateReport("PCI-DSS");
 ```ts
 import { RollingUpgradeOrchestrator } from "@agentix-e/db-operations-rollingupgrade";
 
-const upgrade = new RollingUpgradeOrchestrator({
-  cluster,
+const upgrade = new RollingUpgradeOrchestrator({ minBakeMs: 30_000 });
+const stats = await upgrade.execute({
+  id: "upgrade-2026-11-19",
+  name: "1.1.3 → 1.2.0",
   targetVersion: "1.2.0",
-  maxUnavailable: 1,
+  nodes: ["node-a", "node-b", "node-c"],
+  batchStrategy: "fixed_size",
+  batchSize: 1,
+  rollbackTrigger: "on_first_failure",
+  healthCheckNames: ["storage", "replication"],
 });
-await upgrade.run();
+
+upgrade.getBatches(); // what ran, in order
+upgrade.getEvents(); // and why each step did
 ```
 
 The orchestrator refuses to proceed if it would lose quorum, gates each step on health, and
-aborts (rather than continuing) on the first unhealthy node.
+aborts (rather than continuing) on the first unhealthy node. The constructor takes only the
+canary bake time and a sleep function — the plan is the argument to `execute`, because a
+long-lived orchestrator runs more than one upgrade.
 
 ### 3.7 Maintenance windows
 
@@ -791,7 +812,7 @@ check an expression before you register a window:
 import { parseCron } from "@agentix-e/db-operations-maintenance";
 
 parseCron("*/15 0-6 * * 1-5").minutes; // Set { 0, 15, 30, 45 }
-parseCron("0 3 * *").length; // throws: expected 5 fields
+parseCron("0 3 * *"); // throws: expected 5 fields
 ```
 
 | Form        | Meaning                                              | Malformed becomes                       |

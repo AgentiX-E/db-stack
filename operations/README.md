@@ -1,7 +1,7 @@
 # db-operations — Unified Database Operations Framework
 
-**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 3 149 test
-cases in 146 files, every coverage dimension at or above 95 %.**
+**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 3 155 test
+cases in 147 files, every coverage dimension at or above 95 %.**
 
 **Mutation score:** 97.96 % across the thirteen modules that decide what gets deleted, whether a
 backup can be restored, which key material survives at all, which key a blob was sealed with,
@@ -41,33 +41,56 @@ npm install @agentix-e/db-operations
 
 ```typescript
 import { ProviderRegistry, token } from '@agentix-e/db-operations-core';
-import { HealthOrchestrator, ComponentProbe } from '@agentix-e/db-operations-health';
+import type { ILogger } from '@agentix-e/db-operations-logger';
 import { InMemoryLogger } from '@agentix-e/db-operations-logger';
-import { MetricsRegistry, Counter, Histogram } from '@agentix-e/db-operations-metrics';
-import { BackupManager, S3StorageBackend } from '@agentix-e/db-operations-backup';
-import { AutoTunerWorker } from '@agentix-e/db-operations-autotuner';
+import { HealthOrchestrator, componentProbe } from '@agentix-e/db-operations-health';
+import { MetricsRegistry } from '@agentix-e/db-operations-metrics';
+import {
+  InMemoryBackupManager,
+  InMemoryStorageBackend,
+  RetentionPolicyEvaluator,
+} from '@agentix-e/db-operations-backup';
 
-// 1. Create provider registry
+// 1. One registry, keyed by interface token rather than by class name.
 const registry = new ProviderRegistry();
-const ILogger = token<ILogger>('ILogger');
-registry.register(ILogger, new InMemoryLogger({ level: 'info' }));
+const ILoggerToken = token<ILogger>('ILogger');
+registry.register(ILoggerToken, new InMemoryLogger('quick-start'));
+const logger = registry.get<ILogger>(ILoggerToken);
 
-// 2. Set up health checks
-const health = new HealthOrchestrator({ registry });
-health.register('storage', new ComponentProbe({ check: checkStorage }));
-const status = await health.runAllChecks();
+// 2. Health: K8s-style probes built from plain functions.
+const health = new HealthOrchestrator();
+health.registerComponent(
+  componentProbe('storage', 'Block storage', {
+    liveness: () => ({ ok: true }),
+    readiness: () => ({ ok: true, message: 'fsync p99 1.2 ms' }),
+  }),
+);
+const readiness = health.readiness();
 
-// 3. Export metrics
+// 3. Metrics: series come from the registry, so one snapshot holds every
+//    series this process exported.
 const metrics = new MetricsRegistry();
-const writes = new Counter({ name: 'db_writes_total', help: 'Total writes' });
-metrics.register(writes);
+metrics.counter('db_writes_total', { db: 'primary' }).inc();
+metrics.histogram('db_query_seconds').observe(0.004);
+const snapshot = metrics.snapshot();
 
-// 4. Schedule backups
-const backup = new BackupManager({
-  storage: new S3StorageBackend({ bucket: 'my-backups', region: 'us-east-1' }),
-  schedule: { intervalMs: 3600_000, retentionCount: 24 },
+// 4. Backups: a manager is a storage backend plus a retention policy — both are
+//    interfaces, so the S3 backend swaps in without touching this code.
+const backups = new InMemoryBackupManager(
+  new InMemoryStorageBackend(),
+  new RetentionPolicyEvaluator({
+    maxFullSnapshots: 24,
+    maxTotalBytes: 64 * 1024 ** 3,
+    keepRecent: 'P7D',
+  }),
+);
+const created = await backups.createBackup({ type: 'full' });
+
+logger.info('operations ready', {
+  ready: readiness.ok,
+  series: snapshot.points.length,
+  snapshotId: created.snapshot?.snapshotId,
 });
-await backup.start();
 ```
 
 ---
@@ -81,7 +104,7 @@ Without a shared framework, each engine implements these from scratch — with
 incompatible APIs, inconsistent error handling, and duplicated testing effort.
 
 **db-operations solves this** with an interface-first, composable, pluggable
-architecture that 20 packages deliver as a cohesive whole.
+architecture that 21 packages deliver as a cohesive whole.
 
 ### Design Principles
 
@@ -108,30 +131,33 @@ architecture that 20 packages deliver as a cohesive whole.
 
 | Package | Status | Tests | Description |
 |---------|--------|-------|-------------|
-| [`core`](./packages/core/) | ✅ | 22 | Base types, provider registry, error hierarchy |
-| [`health`](./packages/health/) | ✅ | 23 | Component probes, orchestration, K8s-style liveness |
-| [`logger`](./packages/logger/) | ✅ | 19 | Structured logging with levels, child loggers, backends |
-| [`metrics`](./packages/metrics/) | ✅ | 21 | Counters, gauges, histograms with label support |
-| [`monitor`](./packages/monitor/) | ✅ | 38 | Slow queries, deadlock detection, alerts, resource quotas |
-| [`backup`](./packages/backup/) | ✅ | 30 | Backup orchestration, PITR, retention policies, S3 backend |
-| [`maintenance`](./packages/maintenance/) | ✅ | 29 | VACUUM, ANALYZE, REINDEX scheduling |
+| [`core`](./packages/core/) | ✅ | 549 | Base types, provider registry, error hierarchy |
+| [`health`](./packages/health/) | ✅ | 78 | Component probes, orchestration, K8s-style liveness |
+| [`logger`](./packages/logger/) | ✅ | 55 | Structured logging with levels, child loggers, backends |
+| [`metrics`](./packages/metrics/) | ✅ | 38 | Counters, gauges, histograms with label support |
+| [`monitor`](./packages/monitor/) | ✅ | 129 | Slow queries, deadlock detection, alerts, resource quotas |
+| [`backup`](./packages/backup/) | ✅ | 190 | Backup orchestration, PITR, retention policies, S3 backend |
+| [`federation`](./packages/federation/) | ✅ | 212 | Cross-datacenter replication (HLC, outbox, conflict resolution) |
+| [`maintenance`](./packages/maintenance/) | ✅ | 382 | VACUUM, ANALYZE, REINDEX scheduling |
 | [`auth`](./packages/auth/) | ✅ | 32 | Authentication providers and credential management |
-| [`security`](./packages/security/) | ✅ | 42 | TLS, encryption, RBAC, rate limiting, compliance |
-| [`audit`](./packages/audit/) | ✅ | 20 | Immutable audit trails with export |
-| [`observability`](./packages/observability/) | ✅ | 21 | Distributed tracing (W3C TraceContext), telemetry |
-| [`otel`](./packages/otel/) | ✅ | 18 | OpenTelemetry bridge for metrics and traces |
-| [`autotuner`](./packages/autotuner/) | ✅ | 15 | Automatic parameter tuning based on workload analysis |
-| [`autoscaler`](./packages/autoscaler/) | ✅ | 12 | Dynamic resource scaling based on metrics |
-| [`chaosengine`](./packages/chaosengine/) | ✅ | 14 | Fault injection and chaos experiment runner |
-| [`circuitbreaker`](./packages/circuitbreaker/) | ✅ | 11 | Circuit breaker pattern for external dependencies |
-| [`configwatcher`](./packages/configwatcher/) | ✅ | 10 | Runtime configuration reload and validation |
-| [`memoryguard`](./packages/memoryguard/) | ✅ | 9 | Memory pressure monitoring and GC optimization |
-| [`rollingupgrade`](./packages/rollingupgrade/) | ✅ | 16 | Zero-downtime rolling upgrades |
+| [`security`](./packages/security/) | ✅ | 630 | TLS, encryption, RBAC, rate limiting, compliance |
+| [`audit`](./packages/audit/) | ✅ | 209 | Immutable audit trails with export |
+| [`observability`](./packages/observability/) | ✅ | 44 | Distributed tracing (W3C TraceContext), telemetry |
+| [`otel`](./packages/otel/) | ✅ | 16 | OpenTelemetry bridge for metrics and traces |
+| [`autotuner`](./packages/autotuner/) | ✅ | 27 | Automatic parameter tuning based on workload analysis |
+| [`autoscaler`](./packages/autoscaler/) | ✅ | 167 | Dynamic resource scaling based on metrics |
+| [`chaosengine`](./packages/chaosengine/) | ✅ | 128 | Fault injection and chaos experiment runner |
+| [`circuitbreaker`](./packages/circuitbreaker/) | ✅ | 15 | Circuit breaker pattern for external dependencies |
+| [`configwatcher`](./packages/configwatcher/) | ✅ | 107 | Runtime configuration reload and validation |
+| [`memoryguard`](./packages/memoryguard/) | ✅ | 13 | Memory pressure monitoring and GC optimization |
+| [`rollingupgrade`](./packages/rollingupgrade/) | ✅ | 121 | Zero-downtime rolling upgrades |
 | [`slacollector`](./packages/slacollector/) | ✅ | 13 | SLA metric collection and violation detection |
 
-**Total: `pnpm coverage` reports 128 files and 2 956 tests, 0 failures** (`test:unit`: 109 files /
-2 625; `test:integration`: 19 files / 331). The per-package counts above are the units each
-package contributes.
+**Total: `pnpm coverage` reports 147 files and 3 155 tests, 0 failures** (`test:unit`: 128 files /
+2 824; `test:integration`: 19 files / 331). Each row above is that package's contribution, so the
+column adds up to the total. The counts were recounted from the test runner's JSON report in
+iteration 54 — the table before it had drifted by an order of magnitude in both directions, and no
+gate compares a table to a test run.
 
 ---
 
@@ -146,6 +172,7 @@ db-operations/
 │   ├── logger/            # Structured logging with trace context
 │   ├── monitor/           # Slow query, deadlock, connection pool, alerts
 │   ├── backup/            # Backup orchestration, PITR, S3 storage
+│   ├── federation/        # Cross-datacenter replication (HLC, outbox)
 │   ├── maintenance/       # VACUUM, ANALYZE, REINDEX scheduling
 │   ├── auth/              # Authentication and credential management
 │   ├── security/          # TLS, encryption, RBAC, rate limiting
@@ -208,7 +235,7 @@ packages/monitor/src/
 ## Testing
 
 ```bash
-npm test              # 146 files, 3 149 tests
+npm test              # 147 files, 3 155 tests
 npm run test:mutation # Stryker over the thirteen modules that decide deletion, durability and timing
 npm run bench         # Performance benchmarks
 npm run bench:ycsb    # YCSB-style benchmarks
