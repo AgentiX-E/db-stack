@@ -553,10 +553,18 @@ engine and abandons queued changes, counting them as `dropped` with reason
 
 `CDCSubscriptionPumpStatus`: `started`, `subscriptions`, `unopened`, `pending`
 (per subscription), `delivered`, `failed`, `dropped`, `evictedFailures`. A
-`CDCPumpEvent` is `{ type, subscriptionId, timestamp, eventId?, lsn?, table?,
+`CDCPumpEvent` is `{ type, subscriptionId?, timestamp, eventId?, lsn?, table?,
 attempts?, error?, reason?, dropped? }` with `type` one of `subscription_opened`,
 `subscription_closed`, `subscription_failed`, `delivered`, `delivery_failed`,
 `overflow`, and `reason` one of `queue-full`, `stopped`, `unsubscribed`.
+
+`projection_failed` is the seventh type and the only one without a
+`subscriptionId`: the projection runs once per change, before the pump knows
+which subscriptions admit it. It is also the only failure the pump absorbs on
+the engine's behalf — `onChange` runs inside the engine's listener loop, where a
+throw would abandon every listener registered after the pump, so a broken
+`project` is reported and counted instead of breaking the engine for every other
+subscriber.
 
 ### `projectChangeEvent`
 

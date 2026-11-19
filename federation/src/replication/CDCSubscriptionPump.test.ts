@@ -37,7 +37,7 @@ import { InMemoryCDCSink } from './InMemoryCDCSink';
 import { CDCSubscriptionPump, projectChangeEvent } from './CDCSubscriptionPump';
 import type { CDCPumpEvent } from './CDCSubscriptionPump';
 import type { ICDCSink, CDCSinkEvent } from '../interfaces/replication/ICDCSink';
-import type { CDCSubscription } from '../interfaces/replication/ICDCManager';
+import type { CDCChangeEvent, CDCSubscription } from '../interfaces/replication/ICDCManager';
 
 // ── Test sinks ─────────────────────────────────────────────
 //
@@ -634,6 +634,46 @@ describe('CDCSubscriptionPump — edges that only a hostile sink reaches', () =>
     await settle();
 
     expect(h.pump.getFailures()[0]!.error).toBe('upstream said no');
+  });
+});
+
+describe('CDCSubscriptionPump — a projection that throws', () => {
+  it('AC 48.29 — a broken projection is reported instead of breaking the engine', async () => {
+    // `onChange` runs inside the engine's listener loop. A throw there abandons
+    // every listener registered after this pump, so one caller's broken
+    // projection would stop the engine's changes reaching anybody else.
+    const engine = new CDCEngine({ nodeId: 'n' });
+    const registry = new CDCPublicationRegistry({ nodeId: 'n', engine });
+    await registry.createPublication('pub', ['orders']);
+    await registry.createSubscription('sub', 'pub', 'test://sub');
+
+    const other: CDCChangeEvent[] = [];
+    engine.onChange((event) => other.push(event));
+
+    const pump = new CDCSubscriptionPump({
+      engine,
+      registry,
+      resolveSink: () => new RecordingSink(),
+      project: () => {
+        throw new Error('no such column');
+      },
+    });
+    pumps.push(pump);
+    await pump.start();
+
+    const events: CDCPumpEvent[] = [];
+    pump.onEvent((event) => events.push(event));
+
+    const appended = engine.appendChange(change('orders'));
+    await settle();
+
+    expect(other).toHaveLength(1);
+    expect(events.find((e) => e.type === 'projection_failed')).toMatchObject({
+      lsn: appended.lsn,
+      table: 'orders',
+      error: 'no such column',
+    });
+    expect(pump.getStatus()).toMatchObject({ delivered: 0, failed: 1 });
   });
 });
 

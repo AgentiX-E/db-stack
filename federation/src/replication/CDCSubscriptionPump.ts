@@ -85,14 +85,27 @@ export interface CDCSubscriptionPumpConfig {
 }
 
 export type CDCPumpEventType =
-  'subscription_opened' | 'subscription_closed' | 'subscription_failed' | 'delivered' | 'delivery_failed' | 'overflow';
+  | 'subscription_opened'
+  | 'subscription_closed'
+  | 'subscription_failed'
+  | 'delivered'
+  | 'delivery_failed'
+  | 'overflow'
+  | 'projection_failed';
 
 /** Why a change did not reach the sink it was queued for. */
 export type CDCPumpDropReason = 'queue-full' | 'stopped' | 'unsubscribed';
 
 export interface CDCPumpEvent {
   type: CDCPumpEventType;
-  subscriptionId: string;
+  /**
+   * The subscription this event is about.
+   *
+   * Absent on `projection_failed`: the projection runs once per change, before
+   * the pump knows which subscriptions admit it, so there is no single
+   * subscription to name.
+   */
+  subscriptionId?: string;
   timestamp: number;
   /** Sink event id (`lsn:txId`) of the change this event is about */
   eventId?: string;
@@ -362,7 +375,23 @@ export class CDCSubscriptionPump {
   // ── Routing ──────────────────────────────────────────────
 
   private onChange(event: CDCChangeEvent): void {
-    const projected = this.project(event);
+    let projected: CDCSinkEvent;
+    try {
+      projected = this.project(event);
+    } catch (error) {
+      // `onChange` runs inside the engine's own listener loop: a throw here
+      // would abandon every listener after this one, so a caller's broken
+      // projection would break the engine for everybody else. The event is
+      // reported as failed and the stream continues.
+      this.failed += 1;
+      this.emit({
+        type: 'projection_failed',
+        lsn: event?.lsn,
+        table: event?.tableName,
+        error: messageOf(error),
+      });
+      return;
+    }
 
     for (const opened of this.opened.values()) {
       if (!admits(opened.subscription, event)) continue;

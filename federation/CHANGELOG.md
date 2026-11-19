@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subscription's DSN through a factory the caller supplies, connects the sink, and routes the
   engine's changes to the subscriptions that admit them — one FIFO queue per subscription, one
   `emit()` per change, a retry budget, a bounded failure log and a queue cap that reports the change
-  it could not hold instead of dropping it quietly.
+  it could not hold instead of dropping it quietly. A projection that throws is the one failure the
+  pump absorbs: `onChange` runs inside the engine's listener loop, where a throw would abandon every
+  listener after the pump, so it is reported as `projection_failed` and counted instead.
 - **The sink side of change capture is exported.** `ICDCSink`, `CDCSinkEvent`, `InMemoryCDCSink`,
   `CDCSinkResolver` and their configuration/health/failure types were reachable only from their own
   tests; a consumer could not implement a sink or use the retry wrapper.
