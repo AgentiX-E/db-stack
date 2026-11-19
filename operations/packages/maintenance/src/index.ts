@@ -13,6 +13,7 @@ export type {
   WindowInstance,
   WindowOccurrence,
   WindowConflict,
+  ConflictSide,
   MaintenanceSchedulerStats,
   PauseRequest,
   ResumeRequest,

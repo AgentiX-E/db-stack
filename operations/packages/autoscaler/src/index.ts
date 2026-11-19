@@ -7,6 +7,7 @@ export type {
   ScalingEvent,
   CooldownState,
   ScaleDirection,
+  ScalingStrategy,
 } from './interfaces/types.js';
 export { InMemoryAutoScaler } from './impl/InMemoryAutoScaler.js';
 export { PredictiveScalingEngine } from './impl/PredictiveScalingEngine.js';

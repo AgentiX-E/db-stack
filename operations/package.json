@@ -19,7 +19,6 @@
     "clean": "rm -rf dist packages/*/dist coverage",
     "bench": "tsx bench/run-all.ts",
     "bench:ycsb": "tsx bench/ops-ycsb.ts",
-    "docs": "typedoc",
     "test:mutation": "pnpm -w run test:mutation:operations"
   },
   "devDependencies": {

@@ -19,13 +19,13 @@ interface QuotaEntry {
   };
 }
 
-interface ResourceQuotaConfig {
+export interface ResourceQuotaConfig {
   maxMemoryMB?: number;
   maxQueriesPerSec?: number;
   maxConnections?: number;
 }
 
-interface ResourceUsage {
+export interface ResourceUsage {
   memoryMB: number;
   queriesPerSec: number;
   connections: number;

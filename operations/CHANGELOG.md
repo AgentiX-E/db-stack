@@ -5,6 +5,29 @@ All notable changes to @agentix-e/db-operations will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Twenty-four types that public signatures named and no package exported.** The security package
+  returned `RotationEvent`, `KeyRotationState`, `AuditEvent`, `RBACDecision`, `RBACStats` and
+  fifteen more from methods a consumer calls, without exporting any of them; `monitor` did the same
+  with `PoolStat`, `ResourceQuotaConfig` and `ResourceUsage`, `backup` with `VerifyResult`,
+  `VerifyOptions`, `RetentionOutcome` and `S3StorageBackendConfig`, and `autoscaler`, `autotuner`,
+  `health`, `maintenance` and `metrics` with one or two each. They are exported now, and
+  `pnpm check:public-types` fails the build if a package grows another.
+
+### Removed
+
+- **`"docs": "typedoc"` from all three packages.** None of them depended on TypeDoc, so the script
+  had never run: `pnpm --filter @agentix-e/db-federation docs` exited `sh: 1: typedoc: not found`,
+  and the two API reference pages told readers to run it. A generated reference was the plan when
+  the script was written; the reference pages are now curated and compiler-checked by
+  `pnpm check:docs-api`, which is the stronger guarantee, so the uninstallable path is gone rather
+  than published. `pnpm check:script-bins` now refuses a script whose command is not installed —
+  the same question `check:gates` asks about a tsconfig no script references, asked from the other
+  end.
+
 ## [1.11.3] — 2026-11-18
 
 ### Added

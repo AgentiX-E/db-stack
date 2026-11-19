@@ -31,7 +31,7 @@ export interface AutoTunerWorkerConfig {
   minConfidence?: number;
 }
 
-interface AppliedRecommendation {
+export interface AppliedRecommendation {
   parameter: string;
   appliedAt: number;
   oldValue: number;

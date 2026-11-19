@@ -50,3 +50,36 @@ export { RotationAuditor } from './impl/RotationAuditor.js';
 export type { AuditEntry, AuditVerificationResult, ComplianceReport } from './impl/RotationAuditor.js';
 export { AuditLogManager } from './impl/AuditLogManager.js';
 export { RBACEngine } from './impl/RBACEngine.js';
+
+// The three interfaces behind those classes were reachable only as return types:
+// `getState()`, `query()`, `checkPermission()` handed a consumer an object whose
+// type it could not import. These are the names those signatures use.
+export type {
+  KeyRotationPolicy,
+  RotationTrigger,
+  RotationPriority,
+  RotationEvent,
+  KeyRotationState,
+  RotationStats,
+  ReEncryptionOutcome,
+  ReEncryptionResult,
+} from './interfaces/IKeyRotationManager.js';
+export type {
+  AuditEvent,
+  AuditCategory,
+  AuditSeverity,
+  AuditQuery,
+  AuditStats,
+  AuditIntegrityResult,
+  AuditRetentionAnchor,
+} from './interfaces/IAuditLogger.js';
+export type {
+  RBACRole,
+  RBACPermission,
+  RBACIdentity,
+  RBACEvaluationContext,
+  RBACDecision,
+  RBACConstraint,
+  ConstraintType,
+  RBACStats,
+} from './interfaces/IRBACEngine.js';

@@ -17,7 +17,7 @@ interface PoolState {
   maxSize: number;
 }
 
-interface PoolStat {
+export interface PoolStat {
   poolId: string;
   status: ConnectionPoolStatus;
 }
