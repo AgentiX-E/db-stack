@@ -158,7 +158,7 @@ export function auditPackage(entryPath, packageRoot, options = {}) {
     const symbol = type.getSymbol() ?? type.aliasSymbol;
     if (symbol && !(symbol.flags & ts.SymbolFlags.TypeParameter)) {
       const fresh = record(symbol, via);
-      if (fresh || exported.has(symbol))
+      if (fresh || exportedAnywhere(symbol))
         walkMembers(symbol, `${via} → ${symbol.getName()}`, depth + 1);
     }
 
