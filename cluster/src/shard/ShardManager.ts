@@ -25,11 +25,13 @@ interface ShardEntry {
   updatedAt: number;
 }
 
-interface ShardAssignedCallback {
+/** Called with the shard id and the nodes now holding it, after an assignment commits. */
+export interface ShardAssignedCallback {
   (shardId: string, nodeIds: string[]): void;
 }
 
-interface ShardRemovedCallback {
+/** Called with the shard id once it no longer has an assigned owner. */
+export interface ShardRemovedCallback {
   (shardId: string): void;
 }
 

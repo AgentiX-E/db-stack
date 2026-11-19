@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Forty-three types that appeared in public signatures and could not be imported.**
+  `RaftGroup.readSnapshotMeta()`, `RaftGroup.getLearners()`, `RaftGroup.transferLeadership()`,
+  `HealthProbe`, `RaftMetricsCollector`, `PitrManager`, `WalStreamer`, `ShardManager`,
+  `HAFailoverDetector` and a dozen more all returned or accepted types declared in the package and
+  exported from its entry point by nothing. A consumer could call the method and could not write
+  down its result: `import type { LearnerInfo } from '@agentix-e/db-cluster'` failed, and the
+  compiler's only suggestion was a `dist/…` path the package's `exports` map does not publish.
+  Every one is now exported, and `pnpm check:public-types` walks the compiler's view of each
+  package's exported signatures so the next one cannot ship.
+- **`RaftMessage` and `RaftEntry` are now the wire types.** The package exported a `RaftMessage`
+  from `interfaces/types.ts` — a protocol sketch with a `'request_vote'` discriminator that nothing
+  in the package produced or consumed — while `RaftTcpTransport.send()` took a *different*
+  `RaftMessage` from `MessageCodec`. The name a caller imported was not the type the transport
+  accepted. `interfaces/types.ts`'s copy is gone, the codec's is exported under that name.
+- **`OutboundMessage`** — the envelope `ConnectionPool.broadcast()/sendTo()` stamp numeric peer ids
+  onto, named so it cannot be confused with the wire type above.
+
+### Changed
+
+- **`RaftTcpTransportConfig` has one declaration.** `RaftAdapter` carried a second one, structurally
+  a subset of the transport's, and copied it field by field when it built the transport. The copy
+  omitted `compression` and `tls.verify`: a caller who set either through `init(tcpConfig)` got a
+  node that silently did not compress and one that silently ignored the certificate-identity policy
+  it had asked for. The config is now forwarded whole.
+- **`RaftAdapter`'s `SnapshotMeta` is `ShardSnapshotMeta`.** The package publishes a `SnapshotMeta`
+  (for `ISnapshotManager`, keyed by `groupId`) and a `RaftSnapshotMeta` (raft-core's log record), and
+  this third shape had borrowed the first name — so the name the package exported was not the type
+  `readSnapshotMeta()` returned.
+
+### Fixed
+
+- **Two settings `init()` accepted and dropped.** Covered under Changed: `compression` and
+  `tls.verify` never reached the transport.
+
+### Removed
+
+- **`ITransportReceiver`.** A declaration-only interface for a ZeroMQ transport this package does not
+  have, exported from the entry point, implemented by nothing, and covered by one test that listed
+  its own method names back at itself. Its `RaftMessage` went with it.
+- **`RaftAdapter`'s duplicate `RaftTcpTransportConfig`** — see Changed.
+
+### Added
+
 - **Membership changes over a live cluster** — `RaftAdapter.addServer(nodeId, address, asLearner)`,
   `promoteServer(nodeId)`, `removeServer(nodeId)`, `getMembership()` and `refreshMembership()`.
   Each change answers `{ changed, reason }` where `reason` is one of `not-leader`, `no-quorum`,

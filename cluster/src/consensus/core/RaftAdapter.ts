@@ -23,6 +23,7 @@ import { ObservedTransport } from '../transport/ObservedTransport';
 import { SwappableTransport } from '../transport/SwappableTransport';
 import { BatchedRaftTransport } from '../transport/BatchedRaftTransport';
 import { RaftTcpTransport as OriginalRaftTcpTransport } from '../transport/RaftTcpTransport';
+import type { RaftTcpTransportConfig } from '../transport/RaftTcpTransport';
 import { SqlVecError, SqlVecErrorCode } from '../../interfaces/types';
 import type { SharedTransport } from '../../interfaces/types';
 import type { ApplyEntry } from '../../interfaces/IShardReplica';
@@ -125,25 +126,6 @@ export interface QuorumHealth {
   hasQuorum: boolean;
   /** Members that are silent: never heard from, or heard from too long ago. */
   unheardPeers: number[];
-}
-
-export interface RaftTcpTransportConfig {
-  /** Local node info */
-  node: { id: number; host: string; port: number };
-  /** Peer node list */
-  peers: Array<{ id: number; host: string; port: number }>;
-  /** mTLS certificates */
-  tls: {
-    cert: Buffer | string;
-    key: Buffer | string;
-    ca: Buffer | string;
-  };
-  /** Connection timeout (ms, default 5000) */
-  connectTimeoutMs?: number;
-  /** Initial retry interval (ms, default 100) */
-  initialRetryMs?: number;
-  /** Max retry interval (ms, default 30000) */
-  maxRetryMs?: number;
 }
 
 export interface RaftConfig {
@@ -250,7 +232,19 @@ export interface CommittedEntry {
   data: string;
 }
 
-export interface SnapshotMeta {
+/**
+ * What this node recorded about a snapshot it took: which shard, which node,
+ * and the log position the snapshot covers.
+ *
+ * Named `ShardSnapshotMeta` because the package already publishes two other
+ * types called `SnapshotMeta` and one called `RaftSnapshotMeta`: the first
+ * (`interfaces/types.ts`, `groupId` but no `nodeId`) belongs to
+ * `ISnapshotManager`, the second (`storage/SqliteStorage`, `snapshotIndex` plus
+ * raft-core's `hardState`) belongs to the log store. Three shapes under two
+ * names meant the names the package exported were not the types these
+ * signatures returned.
+ */
+export interface ShardSnapshotMeta {
   lastIncludedIndex: number;
   lastIncludedTerm: number;
   nodeId: number;
@@ -507,15 +501,13 @@ export class RaftAdapter {
         const { SharedBatchedTransport } = await import('../transport/SharedBatchedTransport');
         raftTransport = new SharedBatchedTransport(st, shardId, String(this.config.id));
       } else if (tcpConfig) {
-        // TCP + mTLS — BatchedRaftTransport wraps the single RaftTcpTransport instance
-        raftTransport = new BatchedRaftTransport({
-          node: tcpConfig.node,
-          peers: tcpConfig.peers,
-          tls: tcpConfig.tls,
-          connectTimeoutMs: tcpConfig.connectTimeoutMs,
-          initialRetryMs: tcpConfig.initialRetryMs,
-          maxRetryMs: tcpConfig.maxRetryMs,
-        });
+        // TCP + mTLS — BatchedRaftTransport wraps the single RaftTcpTransport instance.
+        // The config is forwarded whole. It used to be copied field by field from a
+        // second `RaftTcpTransportConfig` declared in this file, which had no
+        // `compression` and no `tls.verify`: a caller who set either through
+        // `init()` got a node that silently did not compress, and — worse — one
+        // that silently ignored the certificate-identity policy it had asked for.
+        raftTransport = new BatchedRaftTransport(tcpConfig);
 
         // Wait for connections before starting Raft to avoid heartbeat drops
         const batchedTransport = raftTransport as BatchedRaftTransport;
@@ -1775,7 +1767,7 @@ export class RaftAdapter {
   /**
    * Encode snapshot metadata as Uint8Array for persistence.
    */
-  static encodeSnapshotData(meta: SnapshotMeta): Uint8Array {
+  static encodeSnapshotData(meta: ShardSnapshotMeta): Uint8Array {
     return new TextEncoder().encode(JSON.stringify(meta));
   }
 }

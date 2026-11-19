@@ -12,7 +12,7 @@
  *   C4: Leader Transfer — graceful leadership handoff
  */
 
-import { RaftAdapter, RaftConfig, SnapshotMeta } from './RaftAdapter';
+import { RaftAdapter, RaftConfig, ShardSnapshotMeta } from './RaftAdapter';
 import { IShardReplica, ApplyEntry } from '../../interfaces/IShardReplica';
 import { IOutboxWriter, OutboxRecord } from '../../interfaces/IOutboxWriter';
 import { SqliteStorage } from '../storage/SqliteStorage';
@@ -856,7 +856,7 @@ export class RaftGroup {
    * `timestamp` is when this node observed the snapshot, not a wall-clock stamp
    * written at capture time: the snapshot's own index and term are the facts.
    */
-  readSnapshotMeta(): SnapshotMeta | null {
+  readSnapshotMeta(): ShardSnapshotMeta | null {
     const meta = this.raft.getSnapshotMeta();
     if (!meta) return null;
     return {

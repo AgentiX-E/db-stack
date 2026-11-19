@@ -89,7 +89,15 @@ export interface ConnectionPoolConfig {
   circuitResetTimeoutMs?: number;
 }
 
-export interface RaftMessage {
+/**
+ * A message envelope on its way out, before the pool stamps routing onto it.
+ *
+ * Not `RaftMessage`: the package already publishes the wire shape of that name
+ * (`consensus/transport/MessageCodec`), whose ids are decimal strings. This one
+ * carries whatever the caller serialises and is stamped with numeric peer ids by
+ * `broadcast()`, so it is a different type with a different contract.
+ */
+export interface OutboundMessage {
   type: string;
   from?: number;
   to?: number;
@@ -604,7 +612,7 @@ export class ConnectionPool {
    * This can be called for heartbeat or vote requests.
    * We serialize to JSON automatically.
    */
-  async broadcast(fromId: number, msgs: RaftMessage[]): Promise<void> {
+  async broadcast(fromId: number, msgs: OutboundMessage[]): Promise<void> {
     if (this._stopped) return;
 
     const promises: Array<Promise<void>> = [];
@@ -623,7 +631,7 @@ export class ConnectionPool {
    * Send a single message to a specific peer.
    * If the connection is down, the message is queued.
    */
-  async sendTo(peerId: number, msg: RaftMessage): Promise<void> {
+  async sendTo(peerId: number, msg: OutboundMessage): Promise<void> {
     if (this._stopped) return;
 
     const data = Buffer.from(JSON.stringify(msg), 'utf-8');

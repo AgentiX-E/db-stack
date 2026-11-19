@@ -23,6 +23,7 @@ export type {
   Membership,
   MembershipChangeReason,
   MembershipChangeResult,
+  ShardSnapshotMeta,
 } from './consensus/core/RaftAdapter';
 export { RaftGroup } from './consensus/core/RaftGroup';
 export type { RaftGroupQuorumResult } from './consensus/core/RaftGroup';
@@ -41,6 +42,8 @@ export type {
   TransitionResult,
   TransitionOptions,
   MembershipChangeEvent,
+  PeerConfig,
+  TransitionProgress,
 } from './consensus/joint-consensus/IClusterMembershipTransition';
 
 // ── Consensus extensions ──────────────────────────────────
@@ -69,8 +72,11 @@ export type {
   SnapshotRestoredEvent,
   RoleChangedEvent,
   MembershipChangedEvent,
+  IEventBus,
+  IDisposable,
 } from './consensus/events/EventBus';
 export { WatchApi } from './consensus/watch/WatchApi';
+export type { WatchOptions } from './consensus/watch/WatchApi';
 export { AdaptiveElectionTimeout } from './consensus/opt/AdaptiveElectionTimeout';
 export { PeerCircuitBreakerWrapper } from './consensus/opt/CircuitBreaker';
 export type { CircuitBreakerMetric, PeerCircuitBreakerOptions } from './consensus/opt/CircuitBreaker';
@@ -79,11 +85,18 @@ export type { CircuitBreakerMetric, PeerCircuitBreakerOptions } from './consensu
 export { RaftTcpTransport } from './consensus/transport/RaftTcpTransport';
 export type { RaftTcpTransportConfig, RaftNodeConfig } from './consensus/transport/RaftTcpTransport';
 export { BatchedRaftTransport } from './consensus/transport/BatchedRaftTransport';
+export type { TransportPeerStats } from './consensus/transport/BatchedRaftTransport';
 export { SharedBatchedTransport } from './consensus/transport/SharedBatchedTransport';
 export { NodeTransport } from './consensus/transport/NodeTransport';
 export { MessageCodec } from './consensus/transport/MessageCodec';
+export type { RaftMessage, RaftEntry } from './consensus/transport/MessageCodec';
 export { ConnectionPool, PeerConnection } from './consensus/transport/ConnectionPool';
-export type { PeerInfo, PeerTlsVerifyOptions } from './consensus/transport/ConnectionPool';
+export type {
+  PeerInfo,
+  PeerTlsVerifyOptions,
+  ConnectionPoolConfig,
+  OutboundMessage,
+} from './consensus/transport/ConnectionPool';
 export { MessageCompressor } from './consensus/helpers/MessageCompressor';
 export { crc32 } from './consensus/helpers/crc32';
 
@@ -106,26 +119,38 @@ export {
 
 // ── High availability ─────────────────────────────────────
 export { HAFailoverDetector } from './ha/HAFailoverDetector';
+export type { FailoverEvent, FailoverEventType } from './ha/HAFailoverDetector';
 export { HAFailoverCoordinator } from './ha/HAFailoverCoordinator';
+export type { HAStatus } from './ha/HAFailoverCoordinator';
 export { HAClientManager } from './ha/HAClientManager';
+export type { HAClientConfig } from './ha/HAClientManager';
 export { HAConsistencyVerifier } from './ha/HAConsistencyVerifier';
 export { ClockCompensator } from './ha/ClockCompensator';
+export type { ClockCompensatorConfig } from './ha/ClockCompensator';
 
 // ── Sharding ──────────────────────────────────────────────
 export { ShardManager } from './shard/ShardManager';
+export type { ShardAssignedCallback, ShardRemovedCallback } from './shard/ShardManager';
 export { ReshardPlanner } from './shard/ReshardPlanner';
 export { OnlineShardMigration } from './shard/OnlineShardMigration';
 export { HashShardStrategy, RangeShardStrategy, ConsistentHashStrategy } from './shard/ShardStrategy';
+export type { RangeShardBoundary } from './shard/ShardStrategy';
 
 // ── Snapshots / streaming / PITR ──────────────────────────
 export { SnapshotManager } from './snapshot/SnapshotManager';
+export type { SnapshotDescriptor, VerificationResult } from './snapshot/ISnapshotManager';
 export { WalStreamer } from './stream/WalStreamer';
+export type { StreamAck, StreamFilter, StreamSubscription } from './stream/IWalStreamer';
 export { PITRManager } from './pitr/PITRManager';
+export type { PITRCheckpoint, PITRRestoreResult, WALEntry } from './pitr/PITRManager';
 
 // ── Observability ─────────────────────────────────────────
 export { HealthProbe } from './observability/HealthProbe';
+export type { HealthStatus, ProbeResult } from './observability/HealthProbe';
 export { LoggingAdapter, traceContext } from './observability/LoggingAdapter';
+export type { ILogger } from './observability/interfaces';
 export { RaftMetricsCollector } from './observability/RaftMetricsCollector';
+export type { RaftMetricsSnapshot } from './observability/RaftMetricsCollector';
 
 // ── Storage engines (engine-agnostic SPI) ─────────────────
 export { MemoryStorageEngine } from './engines/MemoryStorageEngine';
@@ -138,6 +163,8 @@ export {
 export type { EngineBackedReplicaOptions, SnapshotEnvelope } from './engines/EngineBackedReplica';
 export type { IStorageEngine, EngineApplyContext } from './interfaces/IStorageEngine';
 export type { IShardReplica, ApplyEntry } from './interfaces/IShardReplica';
+export type { IPITRHook } from './interfaces/IPITRHook';
+export type { Entry, IMerkleTreeSync } from './interfaces/IMerkleTreeSync';
 
 // ── Interfaces & shared types ─────────────────────────────
 export { IConsensusLayer, TopologyChange, IClusterTopology } from './consensus/interfaces/interfaces';
@@ -157,15 +184,26 @@ export {
 export { IHAClientManager } from './interfaces/ha/IHAClientManager';
 export { IHAConsistencyVerifier, IVerificationResult } from './interfaces/ha/IHAConsistencyVerifier';
 export { IFencingManager } from './interfaces/ha/IFencingManager';
-export { ITransportReceiver } from './interfaces/transport/ITransportReceiver';
 export { MerkleTree } from './consensus/anti-entropy/MerkleTree';
 export {
   ConsensusRole,
   MembershipChange,
   LogEntry,
-  RaftMessage,
   SnapshotMeta,
   NodeHealth,
   OperationResult,
   SqlVecError,
+  RaftConsensusPhase,
+  SqlVecErrorCode,
+} from './interfaces/types';
+export type {
+  AdaptiveElectionConfig,
+  CompressionConfig,
+  FlexibleQuorumConfig,
+  InstallSnapshotRequest,
+  InstallSnapshotResponse,
+  LeaderTransferResult,
+  LearnerInfo,
+  SharedTransport,
+  TransitionalConfig,
 } from './interfaces/types';

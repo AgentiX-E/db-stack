@@ -25,7 +25,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { InstallSnapshotRequest, InstallSnapshotResponse } from '../../interfaces/types';
-import { RaftAdapter, SnapshotMeta } from '../core/RaftAdapter';
+import { RaftAdapter, ShardSnapshotMeta } from '../core/RaftAdapter';
 
 import pino from 'pino';
 import { getErrorMessage } from '../helpers/errorUtils';
@@ -105,7 +105,7 @@ export class InstallSnapshotHandler {
   async handleChunk(
     req: InstallSnapshotRequest,
     raft: RaftAdapter,
-    installSnapshotCallback: (snapshotData: Buffer, meta: SnapshotMeta, raft: RaftAdapter) => Promise<void>,
+    installSnapshotCallback: (snapshotData: Buffer, meta: ShardSnapshotMeta, raft: RaftAdapter) => Promise<void>,
   ): Promise<InstallSnapshotResponse> {
     const term = await raft.getTerm();
     const leaderTerm = Number(req.term);
@@ -201,7 +201,7 @@ export class InstallSnapshotHandler {
           logger.info(`[InstallSnapshot] Full snapshot checksum: ${snapshotChecksum} (${fullSnapshot.length} bytes)`);
         }
 
-        const meta: SnapshotMeta = {
+        const meta: ShardSnapshotMeta = {
           lastIncludedIndex: Number(req.lastIncludedIndex),
           lastIncludedTerm: Number(req.lastIncludedTerm),
           nodeId: this.nodeId,
@@ -246,7 +246,7 @@ export class InstallSnapshotHandler {
    */
   async *createChunks(
     snapshotPath: string,
-    meta: SnapshotMeta,
+    meta: ShardSnapshotMeta,
     leaderId: string,
     chunkSize?: number,
   ): AsyncGenerator<InstallSnapshotRequest> {
@@ -326,7 +326,7 @@ export class InstallSnapshotHandler {
     raft: RaftAdapter,
     targetNodeId: string,
     snapshotPath: string,
-    meta: SnapshotMeta,
+    meta: ShardSnapshotMeta,
   ): Promise<boolean> {
     if (!fs.existsSync(snapshotPath)) {
       logger.warn(`[InstallSnapshot] Snapshot file not found: ${snapshotPath}`);

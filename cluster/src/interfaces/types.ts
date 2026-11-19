@@ -33,15 +33,6 @@ export interface LogEntry {
   timestamp: number;
 }
 
-/** Internal Raft protocol message */
-export interface RaftMessage {
-  type: 'request_vote' | 'request_vote_response' | 'append_entries' | 'append_entries_response' | 'install_snapshot';
-  term: number;
-  from: string;
-  to: string;
-  payload: unknown;
-}
-
 /** Snapshot metadata */
 export interface SnapshotMeta {
   lastIncludedIndex: number;
