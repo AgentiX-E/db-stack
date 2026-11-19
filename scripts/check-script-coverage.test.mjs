@@ -265,7 +265,11 @@ test("run prints the table, the debt and the verdict", () => {
     assert.equal(code, 0);
     assert.match(
       lines[0],
-      /Script coverage — floor 95% on lines \/ branches \/ functions, 2 script\(s\)/,
+      // The engine is named with the number: V8's branch accounting changed inside
+      // the 22.x line, so a percentage without its ruler is not comparable.
+      new RegExp(
+        `Script coverage on v${process.versions.node} — floor 95% on lines / branches / functions, 2 script\\(s\\)`,
+      ),
     );
     assert.match(
       lines.join("\n"),
@@ -312,21 +316,18 @@ test("the repository's own debt lists are the defaults, and they still hold", ()
   // No `unmeasured` / `belowFloor` override: this is the gate's real bookkeeping.
   // When a debt is paid the paid-debt rule fires and this case fails, which is the
   // point — the lists are read by something other than the gate that writes them.
-  const files = [
-    "check-gates.mjs",
-    "check-package.mjs",
-    "check-public-types.mjs",
-  ];
+  const files = ["check-package.mjs", "check-public-types.mjs"];
   const rows = new Map([["check-public-types.mjs", row(100, 93.94, 100)]]);
 
   const { findings, debt } = check(files, rows);
 
   assert.deepEqual(findings, []);
-  assert.equal(debt.length, 3);
-  assert.match(debt[0], /^check-gates\.mjs: unmeasured \(P3-45\) — /);
-  assert.match(debt[1], /^check-package\.mjs: unmeasured \(P3-45\) — /);
+  assert.equal(debt.length, 2);
+  // `check-gates` was the first entry in this list. Measuring it was the fix, not an
+  // edit to this case: the paid-debt rule refuses an entry for a file that is measured.
+  assert.match(debt[0], /^check-package\.mjs: unmeasured \(P3-45\) — /);
   assert.match(
-    debt[2],
+    debt[1],
     /^check-public-types\.mjs: branches 93\.94% \(floor 95%, recorded 93\.94%\) — P3-44/,
   );
 });

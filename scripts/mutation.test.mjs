@@ -22,7 +22,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { main, runOne, strykerBin } from "./mutation.mjs";
+import { isEntryPoint, main, runOne, strykerBin } from "./mutation.mjs";
+import { TARGETS as REPOSITORY_TARGETS } from "../mutation/targets.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const TARGETS = { cluster: {}, operations: {} };
@@ -235,6 +236,9 @@ test("a child that closes without a code and without a signal is a failure", asy
 test("main runs its own runner when none is injected", async () => {
   const { spawn, calls } = fakeSpawn({}, 0);
 
+  // The default runner is `runOne` with this object, so injecting the process it
+  // spawns is enough to reach the default: the branch is a real code path and not a
+  // line only the command line can take.
   const code = await main(["operations", "--mutate", "src/a.ts"], {
     targets: TARGETS,
     cwd: ROOT,
@@ -278,4 +282,34 @@ test("the default runner really starts a process and reads its exit code", async
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the defaults are the repository: every declared target, from the root", async () => {
+  // No `targets`, no `cwd`, no `root`: the command line's own shape, exercised with
+  // the runner injected so that nothing is spawned.
+  const ran = [];
+  const code = await main(["all"], {
+    error: () => {},
+    run: async (target) => {
+      ran.push(target);
+      return 0;
+    },
+  });
+
+  assert.equal(code, 0);
+  assert.deepEqual(ran, Object.keys(REPOSITORY_TARGETS));
+  assert.ok(ran.length >= 3);
+});
+
+test("the Stryker binary is resolved from the install when the caller names none", async () => {
+  const { spawn, calls } = fakeSpawn({}, 0);
+
+  assert.equal(await runOne("cluster", [], { spawn, root: ROOT }), 0);
+  assert.match(calls[0].args[0], /bin[\\/]stryker\.js$/);
+});
+
+test("the entry check answers for this module, another file, and no file at all", () => {
+  assert.equal(isEntryPoint(resolve(ROOT, "scripts/mutation.mjs")), true);
+  assert.equal(isEntryPoint(resolve(ROOT, "scripts/check-english.mjs")), false);
+  assert.equal(isEntryPoint(undefined), false);
 });

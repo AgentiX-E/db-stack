@@ -47,14 +47,6 @@ const FLOOR = 95;
  */
 export const UNMEASURED = [
   {
-    file: "check-gates.mjs",
-    reason:
-      "reads a whole workspace layout — pnpm-workspace, turbo.json, the workflows and the stryker " +
-      "config — and every rule is currently asserted by running it against this repository rather " +
-      "than by a fixture",
-    roadmap: "P3-45",
-  },
-  {
     file: "check-package.mjs",
     reason:
       "imports built `dist/` artefacts, and the Quality job does not build the workspace",
@@ -289,7 +281,12 @@ export function run(options) {
   const { findings, debt } = check(files, rows, options);
 
   log(
-    `Script coverage — floor ${options.floor ?? FLOOR}% on ${DIMENSIONS.join(" / ")}, ${files.length} script(s)`,
+    // The percentage is a property of the engine that counted it. V8's branch
+    // accounting changed between two 22.x minors: this suite reported `audit-policy`
+    // at 95.45 % branches on 22.13.1 and 93.48 % on 22.23.4, from the same commit
+    // and the same cases. A number without its ruler is not comparable, so the ruler
+    // is printed with it.
+    `Script coverage on ${process.version} — floor ${options.floor ?? FLOOR}% on ${DIMENSIONS.join(" / ")}, ${files.length} script(s)`,
   );
   log("");
   log("| Script | Lines | Branches | Functions |");

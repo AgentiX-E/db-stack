@@ -78,6 +78,10 @@ export function runOne(target, forwarded, options = {}) {
  * The command line as a function: which targets to run, from where, and what to
  * report when the answer is "not like this".
  */
+export function isEntryPoint(entry, moduleUrl = import.meta.url) {
+  return entry ? moduleUrl === pathToFileURL(entry).href : false;
+}
+
 export async function main(argv = process.argv.slice(2), options = {}) {
   const error = options.error ?? console.error;
   const targets = options.targets ?? TARGETS;
@@ -109,6 +113,9 @@ export async function main(argv = process.argv.slice(2), options = {}) {
   // `all` stops at the first failure: a gate that reports three scores and exits 0
   // because the last one passed is not a gate.
   const queue = requested === "all" ? names : [requested];
+  // The default runner is `runOne` with the *caller's* options, so it is reachable
+  // from a test that injects `spawn` and `bin` — a default nobody can reach is a
+  // default nobody has measured.
   const run = options.run ?? ((target) => runOne(target, forwarded, options));
   for (const target of queue) {
     const code = await run(target);
@@ -117,6 +124,6 @@ export async function main(argv = process.argv.slice(2), options = {}) {
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  process.exit(await main());
+if (isEntryPoint(process.argv[1])) {
+  main().then((code) => process.exit(code));
 }

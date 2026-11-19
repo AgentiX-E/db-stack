@@ -821,3 +821,48 @@ test("the umbrella's own packages are discovered from operations/packages", () =
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("an exports map is read in the three shapes it is written in", (t) => {
+  const root = fixtureTree({
+    // No `exports` at all: a package that publishes nothing is not a package whose
+    // entries can be resolved, and the gate has nothing to say about it.
+    "plain/package.json": JSON.stringify({ name: "plain" }),
+    "plain/src/index.ts": "export const value = 1;\n",
+    // A string target names the file directly; a subpath key resolves through its
+    // own directory when the string does not exist.
+    "stringy/package.json": JSON.stringify({
+      name: "stringy",
+      exports: { ".": "./dist/index.d.ts", "./beta": "./dist/beta.d.ts" },
+    }),
+    "stringy/src/index.ts": "export const value = 1;\n",
+    "stringy/src/beta/index.ts": "export const beta = 1;\n",
+    // A conditional target with no `types` is a runtime-only export: it names no
+    // declaration, so there is no entry for the documentation rules to compare.
+    "runtime/package.json": JSON.stringify({
+      name: "runtime",
+      exports: { ".": { import: "./dist/index.mjs" } },
+    }),
+    "runtime/src/index.ts": "export const value = 1;\n",
+    // `./package.json` is the manifest, not an entry point.
+    "manifest/package.json": JSON.stringify({
+      name: "manifest",
+      exports: {
+        ".": { types: "./dist/index.d.ts" },
+        "./package.json": "./package.json",
+      },
+    }),
+    "manifest/src/index.ts": "export const value = 1;\n",
+  });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  assert.deepEqual(exportEntries(join(root, "plain")), []);
+  assert.deepEqual(exportEntries(join(root, "runtime")), []);
+  assert.deepEqual(
+    exportEntries(join(root, "stringy")).map((entry) => entry.key),
+    [".", "./beta"],
+  );
+  assert.deepEqual(
+    exportEntries(join(root, "manifest")).map((entry) => entry.key),
+    ["."],
+  );
+});

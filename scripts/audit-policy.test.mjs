@@ -24,6 +24,7 @@ import {
   advisories,
   evaluate,
   idOf,
+  isEntryPoint,
   replay,
   run,
   toMap,
@@ -339,4 +340,48 @@ test("the command line exits with the policy's verdict over a recording", () => 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("an advisory with no title is still named by a sentence that reads", () => {
+  const { failures } = evaluate({
+    all: new Map(),
+    production: new Map([
+      ["1", { id: 1, module_name: "left-pad", severity: "high" }],
+    ]),
+    allow: new Map(),
+  });
+
+  assert.match(
+    failures[0],
+    /no title\. No exception can cover a dependency that ships\.$/,
+  );
+});
+
+test("a registry that answers nothing is re-thrown, not read as no advisories", () => {
+  // `pnpm audit` exits non-zero whenever it has news, so the failure path is the
+  // normal one and the JSON still arrives. No stdout at all is a different event —
+  // an offline runner — and a policy gate that passes when it could not look is a
+  // gate that always passes.
+  assert.throws(
+    () =>
+      advisories([], () => {
+        throw new Error("offline");
+      }),
+    /offline/,
+  );
+
+  const withStdout = advisories([], () => {
+    const error = new Error("advisories found");
+    error.stdout = JSON.stringify({
+      advisories: { 9: { id: 9, severity: "low" } },
+    });
+    throw error;
+  });
+  assert.deepEqual([...withStdout.keys()], ["9"]);
+});
+
+test("the entry check answers for this module, another file, and no file at all", () => {
+  assert.equal(isEntryPoint(resolve(ROOT, "scripts/audit-policy.mjs")), true);
+  assert.equal(isEntryPoint(resolve(ROOT, "scripts/check-english.mjs")), false);
+  assert.equal(isEntryPoint(undefined), false);
 });

@@ -137,9 +137,12 @@ export function replay(path) {
   };
 }
 
-export function run(argv = process.argv.slice(2), options = {}) {
-  const log = options.log ?? console.log;
-  const error = options.error ?? console.error;
+export function isEntryPoint(entry, moduleUrl = import.meta.url) {
+  return entry ? moduleUrl === pathToFileURL(entry).href : false;
+}
+
+export function run(argv, options) {
+  const { log, error } = options;
   const allow =
     (
       options.pkg ??
@@ -156,10 +159,11 @@ export function run(argv = process.argv.slice(2), options = {}) {
     }
     ({ all, production } = replay(argv[at + 1]));
   } else {
-    // `read` is the module's own reader unless a caller supplies one, which is
-    // how the live path is exercised without a registry: a policy gate that can
-    // only be tested against today's advisories is tested by the weather.
-    const read = options.advisories ?? advisories;
+    // The reader is a parameter, and the command line is the only place that names
+    // the live one. A default of `advisories` here would be a branch no test can
+    // reach — reaching it means calling a registry — which is how a gate ends up
+    // with one code path nobody has ever measured.
+    const read = options.advisories;
     all = read([]);
     production = read(["--prod"]);
   }
@@ -184,6 +188,12 @@ export function run(argv = process.argv.slice(2), options = {}) {
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  process.exit(run());
+if (isEntryPoint(process.argv[1])) {
+  process.exit(
+    run(process.argv.slice(2), {
+      log: console.log,
+      error: console.error,
+      advisories,
+    }),
+  );
 }
