@@ -95,12 +95,13 @@ export class CDCSinkResolver implements ICDCSink {
 
   async disconnect(): Promise<void> {
     this._stopHealthChecks();
-    try {
-      await this.sink.disconnect();
-    } catch {
-      // Best-effort disconnect — nothing to do
-    }
+    // Marked disconnected before the await, not after: a sink that refuses to
+    // release the connection has still left this resolver unable to write
+    // through it, and the old ordering meant the flag was only cleared on the
+    // path that succeeded. The error now reaches the caller for the same reason
+    // it does in `emit()` — "best effort" is the caller's policy to choose.
     this._connected = false;
+    await this.sink.disconnect();
   }
 
   // ── Emit ─────────────────────────────────────────────────
@@ -118,7 +119,10 @@ export class CDCSinkResolver implements ICDCSink {
         await this.sink.emit(batch);
         this._onEmitSuccess(batch.length);
       } catch (error) {
-        await this._handleEmitFailure(batch.length, error);
+        // A refused batch aborts the rest of this call and the caller retries
+        // the whole input: `_handleEmitFailure` never resolves, which is why it
+        // is typed `Promise<never>` and returned rather than awaited.
+        return this._handleEmitFailure(batch.length, error);
       }
     }
   }
@@ -185,7 +189,7 @@ export class CDCSinkResolver implements ICDCSink {
     }
   }
 
-  private async _handleEmitFailure(batchSize: number, error: unknown): Promise<void> {
+  private async _handleEmitFailure(batchSize: number, error: unknown): Promise<never> {
     this.totalFailures++;
     this.consecutiveFailures++;
     this._notifyFailure({ type: 'emit_failed', batchSize }, error);

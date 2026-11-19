@@ -83,16 +83,12 @@ describe('CDCSinkResolver — getHealth uptime', () => {
   });
 });
 
-describe('CDCSinkResolver — disconnect best-effort', () => {
-  it('swallows a throwing sink.disconnect', async () => {
-    const sink = new ScriptedSink();
-    sink.disconnectThrows = true;
-    const r = new CDCSinkResolver(sink, { maxRetries: 3 });
-    await r.connect();
-    await r.disconnect(); // should not throw despite sink.disconnect error
-    expect(r.connected).toBe(false);
-  });
-});
+// The "disconnect best-effort" block that lived here asserted that a throwing
+// `sink.disconnect()` produced a resolved `disconnect()` and a cleared flag. It
+// was withdrawn in iteration 53: the flag was cleared *after* the await, so the
+// only thing the case proved was that the resolver stayed connected to a sink
+// that had already let go. AC 48.41 below asserts the behaviour that replaced
+// it — the error reaches the caller and the resolver refuses to write.
 
 describe('CDCSinkResolver — emit failure reconnect', () => {
   it('emits connection_lost when reconnect after emit failure also fails', async () => {
@@ -220,5 +216,52 @@ describe('CDCSinkResolver — AC 48.22: a refusal during a disconnect', () => {
 
     await expect(emitted).rejects.toThrow('refused after disconnect');
     expect(resolver.getHealth().totalFailures).toBe(1);
+  });
+});
+
+describe('CDCSinkResolver — AC 48.41: a disconnect the sink refuses', () => {
+  it('reports the refusal and still refuses to write afterwards', async () => {
+    // The flag was cleared *after* the await, and the await was wrapped in an
+    // empty catch. A sink that throws from disconnect() left the resolver
+    // believing it was connected: `emit()` passed its guard, and the write went
+    // to a connection the sink had already given up on.
+    const sink: ICDCSink = {
+      name: 'refusing-to-close',
+      connect: async () => undefined,
+      disconnect: async () => {
+        throw new Error('peer closed first');
+      },
+      emit: async () => undefined,
+    };
+
+    const resolver = new CDCSinkResolver(sink, { healthCheckIntervalMs: 0 });
+    await resolver.connect();
+
+    await expect(resolver.disconnect()).rejects.toThrow('peer closed first');
+    expect(resolver.connected).toBe(false);
+    await expect(resolver.emit([evt('e1')])).rejects.toThrow('cannot emit when disconnected');
+  });
+});
+
+describe('CDCSinkResolver — AC 48.42: a failure subscription that ends', () => {
+  it('stops notifying once the caller disposes of it', async () => {
+    const seen: FailureEvent[] = [];
+    const sink = new ScriptedSink();
+    const resolver = new CDCSinkResolver(sink, {
+      maxRetries: 1,
+      retryBaseMs: 0,
+      retryStrategy: 'none',
+      healthCheckIntervalMs: 0,
+    });
+    const dispose = resolver.onFailure((event) => seen.push(event));
+
+    await resolver.connect();
+    sink.emitBehavior = 'fail';
+    await expect(resolver.emit([evt('e1')])).rejects.toThrow();
+    expect(seen).toHaveLength(1);
+
+    dispose();
+    await expect(resolver.emit([evt('e2')])).rejects.toThrow();
+    expect(seen).toHaveLength(1);
   });
 });
