@@ -12,6 +12,7 @@
  * class claimed to "deliver change events to the appropriate subscriptions"
  * while delivering none of them, and carried both `onSlotInvalid` and the
  * `fireSlotInvalid()` hook that existed only to make that event testable.
+ *
  * Delivery is `ExactlyOnceCDCPipeline` (engine → outbox → transport → dedup),
  * which owns ordering, retry and checkpoints; a catalogue that also delivered
  * would be a second, weaker path.
@@ -74,7 +75,21 @@ export class CDCPublicationRegistry implements ICDCManager {
     this.publications.delete(name);
   }
 
-  async createSubscription(name: string, publicationName: string, targetDsn: string): Promise<CDCSubscription> {
+  /**
+   * Record a subscription over a publication's tables.
+   *
+   * `operations` defaults to all three, which is what PostgreSQL's
+   * `CREATE SUBSCRIPTION` gives you. It used to be *pinned* to all three with no
+   * parameter at all, so the field could hold one value: a subscription that
+   * wanted inserts and not deletes had no way to say so. `CDCSubscriptionPump`
+   * reads it, so it is a decision the caller makes here.
+   */
+  async createSubscription(
+    name: string,
+    publicationName: string,
+    targetDsn: string,
+    operations: CDCSubscription['operations'] = ['insert', 'update', 'delete'],
+  ): Promise<CDCSubscription> {
     if (this.subscriptions.has(name)) {
       throw new Error(`Subscription "${name}" already exists`);
     }
@@ -87,8 +102,8 @@ export class CDCPublicationRegistry implements ICDCManager {
     const sub: CDCSubscription = {
       subscriptionId: name,
       tables: [...pub.tables],
-      operations: ['insert', 'update', 'delete'],
-      webhookUrl: targetDsn.startsWith('http') ? targetDsn : undefined,
+      operations: [...operations],
+      targetDsn,
       createdAt: Date.now(),
     };
 

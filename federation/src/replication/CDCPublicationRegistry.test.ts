@@ -108,17 +108,20 @@ describe('CDCPublicationRegistry — subscription lifecycle', () => {
     const sub = await manager.createSubscription('sub-webhook', 'pub', 'https://hooks.example.com/cdc');
 
     expect(sub.subscriptionId).toBe('sub-webhook');
-    expect(sub.webhookUrl).toBe('https://hooks.example.com/cdc');
+    expect(sub.targetDsn).toBe('https://hooks.example.com/cdc');
   });
 
-  it('should not set webhookUrl for non-http DSN', async () => {
+  it('should keep a DSN whose scheme is not http', async () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
     const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
 
     await manager.createPublication('pub', ['t']);
     const sub = await manager.createSubscription('sub-db', 'pub', 'postgres://localhost:5432/db');
 
-    expect(sub.webhookUrl).toBeUndefined();
+    // The catalogue stores what it was given. It used to reduce the DSN to
+    // `webhookUrl` when it started with `http` and drop it otherwise, so a
+    // subscription to a database target recorded no destination at all.
+    expect(sub.targetDsn).toBe('postgres://localhost:5432/db');
   });
 
   it('should drop a subscription', async () => {

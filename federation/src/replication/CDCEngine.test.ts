@@ -277,7 +277,7 @@ describe('CDCPublicationRegistry — AC 45.3: Subscriptions', () => {
     expect(sub.subscriptionId).toBe('sub1');
     expect(sub.tables).toEqual(['users']);
     expect(sub.operations).toEqual(['insert', 'update', 'delete']);
-    expect(sub.webhookUrl).toBeUndefined();
+    expect(sub.targetDsn).toBe('postgres://target/db');
   });
 
   it('should create a webhook subscription from HTTP DSN', async () => {
@@ -286,7 +286,7 @@ describe('CDCPublicationRegistry — AC 45.3: Subscriptions', () => {
 
     await mgr.createPublication('pub1', ['orders']);
     const sub = await mgr.createSubscription('webhook1', 'pub1', 'https://hooks.example.com/cdc');
-    expect(sub.webhookUrl).toBe('https://hooks.example.com/cdc');
+    expect(sub.targetDsn).toBe('https://hooks.example.com/cdc');
   });
 
   it('should reject duplicate subscriptions', async () => {

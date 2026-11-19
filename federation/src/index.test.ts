@@ -283,12 +283,12 @@ describe('@agentix-e/db-federation replication types', () => {
       subscriptionId: 'sub-1',
       tables: ['orders', 'payments'],
       operations: ['insert', 'update'],
-      webhookUrl: 'https://hooks.example.com/cdc',
+      targetDsn: 'https://hooks.example.com/cdc',
       createdAt: Date.now(),
     };
     expect(sub.subscriptionId).toBe('sub-1');
     expect(sub.tables).toContain('orders');
-    expect(sub.webhookUrl).toBeDefined();
+    expect(sub.targetDsn).toBe('https://hooks.example.com/cdc');
   });
 
   it('should export ICDCEngine interface with all methods', () => {
