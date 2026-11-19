@@ -554,3 +554,38 @@ describe('ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline', () => 
     await pipeline2.cleanup();
   });
 });
+
+describe('ExactlyOnceCDCPipeline — AC 48.23: an option passed as undefined', () => {
+  it('keeps the default instead of overwriting it with undefined', async () => {
+    // `{ ...defaults, ...config }` cannot tell "absent" from "explicitly
+    // undefined", and TypeScript lets a caller write the latter for an optional
+    // field. `checkpointDir: undefined` used to reach `path.join` and throw at
+    // construction; the same trap turned `dedupTtlMs` into `undefined` inside
+    // `DedupRing`, where a default that is missing is a ring that never expires.
+    cleanDir();
+
+    const config: ExactlyOnceCDCPipelineConfig = {
+      ...makePipelineConfig(),
+      checkpointDir: undefined,
+      dedupTtlMs: undefined,
+      pumpIntervalMs: undefined,
+      pumpBatchSize: undefined,
+      maxPending: undefined,
+    };
+
+    const pipeline = new ExactlyOnceCDCPipeline(config);
+    await pipeline.start();
+
+    expect(existsSync(path.join(TEST_DIR, 'outbox', 'cdc-checkpoint.json'))).toBe(true);
+    pipeline.watchTable('users');
+    const event = pipeline.appendChange({
+      tableName: 'users',
+      operation: 'insert',
+      oldValues: null,
+      newValues: { id: 1 },
+    });
+    expect(event.lsn).toBeTruthy();
+
+    await pipeline.cleanup();
+  });
+});

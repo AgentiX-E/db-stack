@@ -8,7 +8,7 @@
  *   - Health checks and liveness probes
  */
 
-import type { ICDCSink, CDCEvent } from '../interfaces/replication/ICDCSink';
+import type { ICDCSink, CDCSinkEvent } from '../interfaces/replication/ICDCSink';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -105,7 +105,7 @@ export class CDCSinkResolver implements ICDCSink {
 
   // ── Emit ─────────────────────────────────────────────────
 
-  async emit(events: CDCEvent[]): Promise<void> {
+  async emit(events: CDCSinkEvent[]): Promise<void> {
     if (!this._connected) throw new Error(`${this.name}: cannot emit when disconnected`);
 
     if (events.length === 0) return;
@@ -190,10 +190,13 @@ export class CDCSinkResolver implements ICDCSink {
     this.consecutiveFailures++;
     this._notifyFailure({ type: 'emit_failed', batchSize }, error);
 
-    // If sink becomes disconnected during emit, attempt reconnect
-    if (!this._connected) return;
+    // A sink that refused a batch has to be reported as refused, always. This
+    // branch used to `return`, which let `emit()` continue to the next batch and
+    // resolve normally — a refusal that a caller could not observe, in the one
+    // place whose whole purpose is to make failures observable. It is reachable
+    // when `disconnect()` lands while an emit is in flight.
+    if (!this._connected) throw error;
 
-    // Reconnect after emit failure
     this._connected = false;
     try {
       await this._connectWithRetry();
@@ -202,8 +205,9 @@ export class CDCSinkResolver implements ICDCSink {
       throw error;
     }
 
-    // Retry the failed batch after reconnect
-    throw error; // Let caller handle retry
+    // Reconnected, but the failed batch was still refused: the caller decides
+    // whether to retry it, so the refusal leaves through the same door.
+    throw error;
   }
 
   private _onEmitSuccess(count: number): void {
@@ -215,11 +219,11 @@ export class CDCSinkResolver implements ICDCSink {
 
   // ── Internal: Batching ────────────────────────────────────
 
-  private _splitBatches(events: CDCEvent[]): CDCEvent[][] {
+  private _splitBatches(events: CDCSinkEvent[]): CDCSinkEvent[][] {
     const max = this.config.maxBatchSize;
     if (events.length <= max) return [events];
 
-    const batches: CDCEvent[][] = [];
+    const batches: CDCSinkEvent[][] = [];
     for (let i = 0; i < events.length; i += max) {
       batches.push(events.slice(i, i + max));
     }

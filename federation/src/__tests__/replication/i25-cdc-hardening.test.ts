@@ -13,7 +13,7 @@ import { CDCSinkResolver, type ResolverHealth, type FailureEvent } from '../../r
 import { CDCBenchRunner, type CDCBenchReport } from '../../replication/CDCBenchRunner';
 import { CDCFailureInjector, type FailureConfig } from '../../replication/CDCFailureInjector';
 import { InMemoryCDCSink } from '../../replication/InMemoryCDCSink';
-import type { ICDCSink, CDCEvent } from '../../interfaces/replication/ICDCSink';
+import type { ICDCSink, CDCSinkEvent } from '../../interfaces/replication/ICDCSink';
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function makeEvents(count: number, startIdx = 0): CDCEvent[] {
+function makeEvents(count: number, startIdx = 0): CDCSinkEvent[] {
   return Array.from({ length: count }, (_, i) => ({
     id: `evt-${startIdx + i}`,
     type: 'insert' as const,
@@ -59,7 +59,7 @@ class FailingSink implements ICDCSink {
     this._connected = false;
   }
 
-  async emit(events: CDCEvent[]): Promise<void> {
+  async emit(events: CDCSinkEvent[]): Promise<void> {
     if (!this._connected) throw new Error('not connected');
     if (this.emitFails < this.failCount) {
       this.emitFails++;

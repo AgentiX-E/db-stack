@@ -12,9 +12,9 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { CDCSinkResolver, type FailureEvent, type ResolverHealth } from '../../replication/CDCSinkResolver';
-import type { ICDCSink, CDCEvent } from '../../interfaces/replication/ICDCSink';
+import type { ICDCSink, CDCSinkEvent } from '../../interfaces/replication/ICDCSink';
 
-const evt = (id: string): CDCEvent => ({
+const evt = (id: string): CDCSinkEvent => ({
   id,
   type: 'insert',
   table: 't',
@@ -43,7 +43,7 @@ class ScriptedSink implements ICDCSink {
     this.connected = false;
   }
 
-  async emit(events: CDCEvent[]): Promise<void> {
+  async emit(events: CDCSinkEvent[]): Promise<void> {
     if (!this.connected) throw new Error('not connected');
     if (this.emitBehavior === 'fail') throw new Error('emit refused');
   }
@@ -183,5 +183,42 @@ describe('CDCSinkResolver — health checks & listener guards', () => {
       throw new Error('failure listener boom');
     });
     await expect(r.connect()).rejects.toThrow(); // _notifyFailure guards the throw
+  });
+});
+
+describe('CDCSinkResolver — AC 48.22: a refusal during a disconnect', () => {
+  it('reports the refusal instead of resolving as if the batch had landed', async () => {
+    // The sink refuses only after a disconnect has begun, which is the one
+    // window in which `_connected` is already false when the emit rejects.
+    // `_handleEmitFailure` returned early there, so `emit()` resolved normally
+    // and the caller had no way to learn that nothing had been written.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const sink: ICDCSink = {
+      name: 'gated-refusing-sink',
+      connect: async () => undefined,
+      disconnect: async () => undefined,
+      emit: async () => {
+        await gate;
+        throw new Error('refused after disconnect');
+      },
+    };
+
+    const resolver = new CDCSinkResolver(sink, {
+      maxRetries: 1,
+      healthCheckIntervalMs: 0,
+      retryStrategy: 'none',
+    });
+    await resolver.connect();
+
+    const emitted = resolver.emit([evt('e1')]);
+    await resolver.disconnect();
+    release();
+
+    await expect(emitted).rejects.toThrow('refused after disconnect');
+    expect(resolver.getHealth().totalFailures).toBe(1);
   });
 });

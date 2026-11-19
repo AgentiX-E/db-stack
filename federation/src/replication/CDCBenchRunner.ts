@@ -9,7 +9,7 @@
  *   - Batching efficiency factor
  */
 
-import type { ICDCSink, CDCEvent } from '../interfaces/replication/ICDCSink';
+import type { ICDCSink, CDCSinkEvent } from '../interfaces/replication/ICDCSink';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -161,8 +161,8 @@ export class CDCBenchRunner {
     }
   }
 
-  private _generateEvents(count: number, startIdx: number): CDCEvent[] {
-    const events: CDCEvent[] = [];
+  private _generateEvents(count: number, startIdx: number): CDCSinkEvent[] {
+    const events: CDCSinkEvent[] = [];
     for (let i = 0; i < count; i++) {
       events.push({
         id: `evt-${startIdx + i}`,

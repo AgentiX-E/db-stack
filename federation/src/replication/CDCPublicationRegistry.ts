@@ -13,9 +13,15 @@
  * while delivering none of them, and carried both `onSlotInvalid` and the
  * `fireSlotInvalid()` hook that existed only to make that event testable.
  *
- * Delivery is `ExactlyOnceCDCPipeline` (engine → outbox → transport → dedup),
- * which owns ordering, retry and checkpoints; a catalogue that also delivered
- * would be a second, weaker path.
+ * Delivery lives elsewhere, in two shapes that do not overlap:
+ *   - `CDCSubscriptionPump` — engine → per-subscription sink, resolved from the
+ *     subscription's `targetDsn`. In-process fan-out to webhooks, queues and
+ *     downstream consumers, ordered and at-most-once per subscription.
+ *   - `ExactlyOnceCDCPipeline` — engine → outbox → transport → dedup. The
+ *     cross-datacenter path, which owns checkpoints and replay.
+ *
+ * The catalogue stores the DSN and stops there; it is the pump that resolves
+ * it, because resolving needs a factory and a factory belongs to the caller.
  */
 
 import type { ICDCManager, ICDCPublication, CDCSubscription, ICDCEngine } from '../interfaces/replication/ICDCManager';

@@ -178,13 +178,21 @@ export class ExactlyOnceCDCPipeline {
   // ── Constructor ──────────────────────────────────────────
 
   constructor(config: ExactlyOnceCDCPipelineConfig) {
+    // Field by field, not `{ ...defaults, ...config }`. An optional field may be
+    // passed explicitly as `undefined`, and the spread would then overwrite the
+    // default with it: `dedupTtlMs: undefined` reaches `new DedupRing({ ttlMs })`
+    // and the ring stops expiring, with no error anywhere.
     this.config = {
-      dedupTtlMs: 600_000,
-      pumpIntervalMs: 500,
-      pumpBatchSize: 100,
-      maxPending: 10_000,
-      checkpointDir: config.outboxConfig.dataDir,
-      ...config,
+      nodeId: config.nodeId,
+      cdcConfig: config.cdcConfig,
+      outboxConfig: config.outboxConfig,
+      dedupTtlMs: config.dedupTtlMs ?? 600_000,
+      transport: config.transport,
+      remoteNodeId: config.remoteNodeId,
+      checkpointDir: config.checkpointDir ?? config.outboxConfig.dataDir,
+      pumpIntervalMs: config.pumpIntervalMs ?? 500,
+      pumpBatchSize: config.pumpBatchSize ?? 100,
+      maxPending: config.maxPending ?? 10_000,
     };
 
     this.cdc = new CDCEngine(this.config.cdcConfig);

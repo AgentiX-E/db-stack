@@ -10,7 +10,7 @@
  *   - Reorder injection (out-of-order events)
  */
 
-import type { ICDCSink, CDCEvent } from '../interfaces/replication/ICDCSink';
+import type { ICDCSink, CDCSinkEvent } from '../interfaces/replication/ICDCSink';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ export class CDCFailureInjector implements ICDCSink {
 
   // ── Emit ─────────────────────────────────────────────────
 
-  async emit(events: CDCEvent[]): Promise<void> {
+  async emit(events: CDCSinkEvent[]): Promise<void> {
     if (!this._connected) throw new Error(`${this.name}: not connected`);
 
     this.emitCount++;

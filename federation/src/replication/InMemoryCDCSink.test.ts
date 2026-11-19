@@ -12,9 +12,9 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { InMemoryCDCSink } from './InMemoryCDCSink';
-import type { CDCEvent } from '../interfaces/replication/ICDCSink';
+import type { CDCSinkEvent } from '../interfaces/replication/ICDCSink';
 
-function makeEvent(overrides: Partial<CDCEvent> = {}): CDCEvent {
+function makeEvent(overrides: Partial<CDCSinkEvent> = {}): CDCSinkEvent {
   return {
     id: overrides.id ?? 'evt-1',
     type: overrides.type ?? 'insert',

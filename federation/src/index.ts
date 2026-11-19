@@ -97,6 +97,34 @@ export type {
   CDCPipelineEventHandler,
 } from './replication/ExactlyOnceCDCPipeline';
 
+// CDC sinks. None of these were exported, so no consumer could implement a sink
+// or reach the retry/batching wrapper: the interface, the in-memory sink and the
+// resolver were reachable only from their own tests.
+export type { ICDCSink, CDCSinkEvent } from './interfaces/replication/ICDCSink';
+export { InMemoryCDCSink } from './replication/InMemoryCDCSink';
+export { CDCSinkResolver } from './replication/CDCSinkResolver';
+export type {
+  CDCSinkResolverConfig,
+  ResolverHealth,
+  RetryStrategy,
+  SinkFailureMode,
+  FailureEvent,
+} from './replication/CDCSinkResolver';
+// The edge between a subscription's target DSN and a sink. Without it a
+// subscription recorded a destination that nothing delivered to.
+export { CDCSubscriptionPump, projectChangeEvent } from './replication/CDCSubscriptionPump';
+export type {
+  CDCSubscriptionPumpConfig,
+  CDCSubscriptionPumpStatus,
+  CDCSinkFactory,
+  CDCSinkProjection,
+  CDCPumpDropReason,
+  CDCPumpEvent,
+  CDCPumpEventHandler,
+  CDCPumpEventType,
+  CDCPumpFailure,
+} from './replication/CDCSubscriptionPump';
+
 // AntiEntropy
 export { AntiEntropy } from './replication/AntiEntropy';
 export type { MerkleNode, DataEntry, DataProvider } from './replication/AntiEntropy';
