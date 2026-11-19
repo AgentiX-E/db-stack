@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`@agentix-e/db-federation/testing` — the fault injector, published, without the lies it told.**
+  `CDCFailureInjector` implements `ICDCSink` and had no entry point and no production caller; it now
+  ships from a subpath, because the delivery rules this package promises are only checkable by a
+  consumer who can make their own sink misbehave. Four defects went with it: `maxFailures` was a
+  global counter compared against a per-entry limit, so a `latency_spike` could exhaust the
+  `connection_drop` configured beside it and the drop never fired; two entries of the same type were
+  accepted with the second silently dead; `disconnect()` swallowed the wrapped sink's error; and
+  `connection_drop` could not distinguish a failed handshake from a refused write. `on` names the
+  point, `maxFailures` is per entry, duplicate entries and nonsensical numbers are refused at
+  construction, and errors propagate.
 - **`CDCSubscriptionPump` — the edge a subscription's `targetDsn` never had.**
   `createSubscription()` recorded a destination and nothing in the package could turn it into a
   sink: `ICDCSink`, `InMemoryCDCSink` and `CDCSinkResolver` had no production caller and were not
@@ -40,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   early when the sink was already disconnected, so `emit()` resolved normally and the caller could
   not learn that nothing had been written. Reachable whenever a `disconnect()` lands while an emit
   is in flight.
+- **`CDCSinkResolver.disconnect()` reports a refusal and always refuses to write afterwards.** The
+  flag was cleared after the await and the await was wrapped in an empty `catch`, so a sink that
+  threw left the resolver believing it was connected: `emit()` passed its guard and the write went to
+  a connection the sink had already given up on.
+- **`@agentix-e/db-federation/transport` publishes a barrel, not a module file.** A subpath pointing
+  at `TcpSecureTransport.js` published every module-level export of it, including `retryDelayMs` —
+  which is marked `@internal` and exists for its own suite. A tag the package's own subpath
+  contradicts is not a decision; the subpath now exports the transport and its four types.
 - **Optional configuration is merged field by field.** `{ ...defaults, ...config }` cannot tell
   "absent" from "explicitly `undefined`", and TypeScript lets a caller write the latter:
   `checkpointDir: undefined` reached `path.join` and threw at construction, and `dedupTtlMs:

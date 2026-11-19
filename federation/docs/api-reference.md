@@ -11,6 +11,10 @@ heading on this page is checked against that surface by
 mentioned here for the gate to pass, so the page cannot drift back into
 describing classes that were never written.
 
+Two subpaths are published beside the root. `./transport` exports
+`TcpSecureTransport` and its four types; `./testing` exports the fault injector
+described in [testing.md](./testing.md).
+
 ## How the pieces fit
 
 ```

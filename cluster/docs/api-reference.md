@@ -13,6 +13,10 @@ document — `RaftCluster`, `ClusterConfig`, `FencingToken` and `ITransport` —
 were never written; the check exists because a reference page is a promise about
 the package.
 
+The published subpaths are documented in their own places: `./testing` in
+[testing.md](./testing.md), and `./raft`, `./transport` and `./storage` re-export
+`RaftAdapter`, `RaftTcpTransport` and `SqliteStorage`, each documented below.
+
 ## How the pieces fit
 
 ```
@@ -75,6 +79,14 @@ class RaftAdapter {
 lower bound, returns an empty slice past the head, and returns an empty slice
 rather than throwing when compaction lands mid-read — a learner pulling entries
 must be able to tell "nothing there yet" from "I lost the race".
+
+Two defaults are published because a caller may want to state them explicitly
+rather than inherit them:
+
+| Constant | Value | Meaning |
+|---|---:|---|
+| `DEFAULT_LOG_SLICE` | 128 | Entries one learner pull carries when the caller asks for no particular count. Raising it shortens catch-up at the cost of larger responses. |
+| `DEFAULT_SNAPSHOT_INTERVAL` | 200 | Committed entries between snapshots. Lower keeps the log a restart replays short and pays for it in capture cost; higher does the reverse. `bench/snapshot-threshold-sweep.ts` measures the curve. |
 
 ### `RaftGroup`
 
@@ -607,6 +619,11 @@ class SqliteStorage {
 
 `verifyLogChecksums()` returns the indexes whose CRC does not match, which is
 what turns silent disk corruption into a reportable failure.
+
+`openSqliteHandleCount` reports how many SQLite handles this process holds. It
+exists so a suite can assert that its own teardown returns the count to where it
+started — every open should be matched by a close. There is deliberately no
+reset: a reset would let a leak be cleared instead of fixed.
 
 ### `SqliteNodeStorage`
 

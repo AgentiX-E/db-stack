@@ -104,6 +104,7 @@ solves three problems that a single consensus group cannot:
 | **CDCManager** | `src/core/` | One change-capture engine per remote DC, with lag backpressure |
 | **CDCPublicationRegistry** | `src/replication/` | Publication and subscription catalogue (records destinations, delivers nothing) |
 | **CDCSubscriptionPump** | `src/replication/` | Resolves each subscription's DSN to an `ICDCSink` and delivers engine changes to it, in order, once each |
+| **CDCFailureInjector** | `src/testing/` | Published from `@agentix-e/db-federation/testing`: wraps any sink and injects the faults you name, so you can check the delivery rules yourself |
 | **CDCSinkResolver** | `src/replication/` | Retry, batch splitting and health around any `ICDCSink` |
 | **OutboxStore** | `src/replication/` | LMDB-backed outbox with batch read/write |
 | **DedupRing** | `src/replication/` | In-memory deduplication ring with configurable TTL |

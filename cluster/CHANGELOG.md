@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`docs/testing.md` — the harness subpath, documented.** `@agentix-e/db-cluster/testing` has
+  published fifteen symbols since it was introduced — a real cluster you can partition and kill, the
+  waiting and linearizability checks, and an engine-conformance suite — and not one of them appeared
+  in any page. The new page covers all of it, including the three option traps the harness carries:
+  `snapshotInterval` left unset on purpose, `checkQuorum` read by nothing, and `portAllocator` the
+  only way to reach the port-retry path.
+- **`DEFAULT_LOG_SLICE` and `DEFAULT_SNAPSHOT_INTERVAL` are documented**, as are
+  `openSqliteHandleCount` and the `./storage`, `./raft` and `./transport` subpaths.
 - **`droppedFrames` and `bufferedFrames` on `RaftTcpTransport.getStatus()`**, plus a
   `frames-dropped` event. The transport buffers frames for an unreachable peer, and until now
   nothing said how many it was holding or how many it had given up on: a dropped Raft frame is a

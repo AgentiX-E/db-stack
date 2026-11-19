@@ -21,13 +21,19 @@
  * What this script checks, per package that has a `docs/` tree:
  *
  *   1. every `##`–`####` heading that opens with a backticked identifier names
- *      something the package root exports, or a public member of something it
- *      exports. Headings are the API surface a reader navigates by; prose is
- *      free to mention internals.
+ *      something the package exports from *any* entry point, or a public member
+ *      of something it exports. Headings are the API surface a reader navigates
+ *      by; prose is free to mention internals.
  *   2. every file named `api-reference.md` mentions every exported *value*
- *      (class, function, const, enum) at least once. A reference page that
- *      omits a third of the surface sends the reader to the source, which is
- *      where the sketch above came from.
+ *      (class, function, const, enum) of the package root at least once. A
+ *      reference page that omits a third of the surface sends the reader to the
+ *      source, which is where the sketch above came from.
+ *   3. every published subpath (`./testing`, `./raft`, …) mentions each of its
+ *      own exported values somewhere under `docs/`. The first version of this
+ *      script read `src/index.ts` and nothing else, so the thirteen symbols
+ *      `@agentix-e/db-cluster/testing` publishes — the harness a downstream
+ *      package is expected to build against — were checked by no gate at all.
+ *      A subpath nobody documents is a subpath nobody can use.
  *
  * The export surface is read through the TypeScript compiler, not by pattern
  * matching: `export * as core from …` and re-exported aliases have to resolve,
@@ -86,6 +92,30 @@ export function workspacePackages(root = ROOT) {
   return packages
     .map((dir) => ({ dir, abs: join(root, dir) }))
     .filter((pkg) => existsSync(join(pkg.abs, "src", "index.ts")));
+}
+
+/**
+ * Every entry point the package publishes, resolved from its `exports` map.
+ *
+ * The map is the promise; `src/` is where the source of that promise lives.
+ * `./dist/x/Y.d.ts` maps back to `src/x/Y.ts`, and an entry whose target is a
+ * directory index maps to `src/<key>/index.ts`.
+ */
+export function exportEntries(pkgAbs) {
+  const manifest = JSON.parse(readFileSync(join(pkgAbs, "package.json"), "utf8"));
+  const entries = [];
+  for (const [key, target] of Object.entries(manifest.exports ?? {})) {
+    if (key === "./package.json") continue;
+    const types = typeof target === "string" ? target : target.types;
+    if (typeof types !== "string") continue;
+    const candidates = [
+      types.replace(/^\.\/dist\//, "src/").replace(/\.d\.ts$/, ".ts"),
+      key === "." ? "src/index.ts" : join("src", key.replace(/^\.\//, ""), "index.ts"),
+    ];
+    const found = candidates.map((c) => join(pkgAbs, c)).find((abs) => existsSync(abs));
+    if (found) entries.push({ key, path: found });
+  }
+  return entries;
 }
 
 /** Every markdown file under `<pkg>/docs`, recursively. */
@@ -217,7 +247,30 @@ function describe(problem) {
       `does not export and no exported type declares`
     );
   }
+  if (problem.kind === "undocumented-subpath-export") {
+    return `${problem.file} never mentions \`${problem.name}\`, which the subpath publishes`;
+  }
   return `${problem.file} never mentions \`${problem.name}\`, which the package exports`;
+}
+
+/**
+ * Subpath values no page mentions.
+ *
+ * A subpath is a second promise on the same package, and until this rule existed
+ * the gate read `src/index.ts` and stopped: `@agentix-e/db-cluster/testing`
+ * published fifteen symbols — a whole harness a downstream package is expected
+ * to build against — and not one of them was checked. A published symbol nobody
+ * documents is a symbol nobody can find.
+ */
+export function undocumentedSubpathExports(surfaces, mentioned) {
+  const findings = [];
+  for (const { entry, surface } of surfaces) {
+    if (entry.key === ".") continue;
+    for (const name of [...surface.values].sort()) {
+      if (!mentioned.has(name)) findings.push({ entryKey: entry.key, name });
+    }
+  }
+  return findings;
 }
 
 export function run(root = ROOT) {
@@ -227,20 +280,61 @@ export function run(root = ROOT) {
   for (const pkg of workspacePackages(root)) {
     const docs = markdownFiles(join(pkg.abs, "docs"));
     if (docs.length === 0) continue;
-    const surface = exportSurface(join(pkg.abs, "src", "index.ts"));
+
+    const entries = exportEntries(pkg.abs);
+    if (entries.length === 0) continue;
+
+    // Headings resolve against every entry point at once: a reference page may
+    // document `./testing` beside the root, and a reader does not care which
+    // import specifier a symbol comes from.
+    const surfaces = entries.map((entry) => ({ entry, surface: exportSurface(entry.path) }));
+    const union = {
+      exported: new Set(surfaces.flatMap(({ surface }) => [...surface.exported])),
+      members: new Set(surfaces.flatMap(({ surface }) => [...surface.members])),
+      values: new Set(surfaces.flatMap(({ surface }) => [...surface.values])),
+    };
+
     notes.push(
-      `${pkg.dir}: ${surface.exported.size} exports, ${docs.length} document(s)`,
+      `${pkg.dir}: ${entries.length} entry point(s), ${union.exported.size} exports, ${docs.length} document(s)`,
     );
-    for (const file of docs) {
-      const text = readFileSync(file, "utf8");
+
+    const rootEntry = surfaces.find(({ entry }) => entry.key === ".");
+    const texts = docs.map((file) => ({ file, text: readFileSync(file, "utf8") }));
+
+    for (const { file, text } of texts) {
       failures.push(
         ...auditDocument({
           text,
           file: relative(root, file),
-          surface,
-          requireFullCoverage: file.endsWith("api-reference.md"),
+          surface: union,
+          // `api-reference.md` must cover the package root in full.
+          requireFullCoverage: false,
         }),
       );
+      if (file.endsWith("api-reference.md") && rootEntry) {
+        failures.push(
+          ...auditDocument({
+            text,
+            file: relative(root, file),
+            surface: rootEntry.surface,
+            requireFullCoverage: true,
+          }),
+        );
+      }
+    }
+
+    // A published subpath has to be mentioned somewhere under `docs/`, by
+    // whichever page its author chose.
+    const mentionedEverywhere = new Set(
+      texts.flatMap(({ text }) => [...mentionedNames(text)]),
+    );
+    for (const finding of undocumentedSubpathExports(surfaces, mentionedEverywhere)) {
+      failures.push({
+        file: `${pkg.dir}: docs/ (subpath ${finding.entryKey})`,
+        line: 0,
+        name: finding.name,
+        kind: "undocumented-subpath-export",
+      });
     }
   }
 

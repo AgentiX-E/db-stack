@@ -271,6 +271,9 @@ parted.isolate([2]);            // peer 2 is unreachable in both directions
 parted.heal();
 ```
 
+The full harness — the cluster, the partition wrapper, the agreement and linearizability checks,
+and the engine conformance suite — is documented in [docs/testing.md](docs/testing.md).
+
 An installed transport is expected to wrap the current one. One that does not is accepted, but the
 quorum observer is re-installed outside it — and an outer layer that answers without delivering then
 stops being evidence of contact, which is a lost quorum rather than a healthy peer.

@@ -20,10 +20,13 @@ import { resolve } from "node:path";
 
 import {
   auditDocument,
+  exportEntries,
   exportSurface,
   markdownFiles,
   mentionedNames,
+  run,
   symbolicHeadings,
+  undocumentedSubpathExports,
   workspacePackages,
 } from "./check-docs-api.mjs";
 
@@ -144,4 +147,59 @@ test("resolves re-exported namespaces, not just local declarations", () => {
   const operations = exportSurface(resolve(ROOT, "operations", "src", "index.ts"));
   assert.ok(operations.exported.size > 0);
   assert.ok(operations.exported.has("core"));
+});
+
+test("resolves every published entry point, not just the package root", () => {
+  // The gate used to read `src/index.ts` and stop there, so everything a
+  // subpath published went unchecked — thirteen symbols of harness that a
+  // downstream package is expected to import.
+  const cluster = exportEntries(resolve(ROOT, "cluster"));
+  const keys = cluster.map((entry) => entry.key);
+  assert.ok(keys.includes("."), "the root is an entry point");
+  assert.ok(keys.includes("./testing"), "the harness subpath is an entry point");
+  for (const entry of cluster) {
+    assert.ok(entry.path.endsWith(".ts"), `${entry.key} resolves to a source file`);
+  }
+
+  const federation = exportEntries(resolve(ROOT, "federation"));
+  assert.ok(federation.some((entry) => entry.key === "./testing"));
+});
+
+test("a subpath publishes what it means to, not a whole module", () => {
+  // `./transport` used to point at the module file, which publishes every
+  // module-level export of it — including `retryDelayMs`, marked `@internal`.
+  // A tag that the package's own subpath contradicts is not a decision.
+  const entry = exportEntries(resolve(ROOT, "federation")).find(
+    (candidate) => candidate.key === "./transport",
+  );
+  assert.ok(entry, "./transport is published");
+  const surface = exportSurface(entry.path);
+  assert.ok(surface.exported.has("TcpSecureTransport"), "the transport is published");
+  assert.equal(
+    surface.exported.has("retryDelayMs"),
+    false,
+    "an @internal helper is not part of the published surface",
+  );
+});
+
+test("names the subpath values no page mentions", () => {
+  const surfaces = [
+    { entry: { key: "." }, surface: { values: new Set(["Root"]) } },
+    { entry: { key: "./testing" }, surface: { values: new Set(["Documented", "Forgotten"]) } },
+  ];
+
+  const findings = undocumentedSubpathExports(surfaces, new Set(["Root", "Documented"]));
+  assert.deepEqual(findings, [{ entryKey: "./testing", name: "Forgotten" }]);
+
+  // The root is checked by `api-reference.md` instead; it must not appear twice.
+  assert.equal(
+    findings.some((finding) => finding.name === "Root"),
+    false,
+  );
+});
+
+test("the real repository passes, subpaths included", () => {
+  // A gate that only ever prints "passed" is the same defect one layer out.
+  // This runs the whole rule set over the working tree.
+  assert.equal(run(ROOT), 0);
 });

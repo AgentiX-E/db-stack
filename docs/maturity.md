@@ -79,7 +79,20 @@ number and the instrument that produced it are stated together.
 | Fencing (stale leader cannot write)     | U · I        | Epoch and lease fencing                             |
 | Consistency verification after failover | U · I        | Divergence detection reports, never repairs blindly |
 
-### 1.4 Storage engine SPI
+### 1.4 Published test harness
+
+| Capability                                | Verification | Notes                                                                                      |
+| ----------------------------------------- | ------------ | ------------------------------------------------------------------------------------------ |
+| Real multi-node cluster, partition and kill | I · E       | `TestCluster` starts real nodes on real ports over mutual TLS; `PartitionTransport` models a silent partition rather than a dead node |
+| Agreement waiting                         | U · I        | `awaitAgreement`, `pollUntil`, `ConvergenceTimeoutError` with the last observation and the round count |
+| Linearizability checking                  | U · I · B    | Bounded search returning `'unknown'` when the bound is hit; `fuzzyCheck` for the long runs where the full checker cannot finish |
+| Engine conformance suite                  | C            | `runEngineConformance` registers into any framework and injects its own failure, so the engine under test needs no test hooks |
+
+The subpath is published, so it is documented like one: `docs/testing.md`, and the docs gate
+now reads every entry point in each package's `exports` map rather than only `src/index.ts`
+(see §4).
+
+### 1.5 Storage engine SPI
 
 | Capability                               | Verification  | Notes                                                                                     |
 | ---------------------------------------- | ------------- | ----------------------------------------------------------------------------------------- |
@@ -101,6 +114,7 @@ number and the instrument that produced it are stated together.
 | CDC capture (engine-agnostic)              | U · I        | `ICDCEngine` with a monotonic LSN — a counter, not a clock reading, so two changes in the same millisecond still have an order. The engine shipped here **simulates** WAL (`appendChange`); a deployment supplies an engine that decodes a real log |
 | Publication/subscription catalogue         | U            | Keeps the two maps and watches their tables, and records each subscription's `targetDsn` verbatim. It delivers nothing; a slot-invalid event is **not** observed here, because nothing in this package reads PostgreSQL slots |
 | Subscription delivery to a sink            | U · I        | `CDCSubscriptionPump` resolves the DSN through a caller-supplied factory and delivers per subscription: one FIFO queue, one `emit()` per change, retry then a bounded failure log, a queue cap that reports the change it could not hold. `CDCSinkResolver` wraps any sink with retry, batching and health |
+| Fault injection for sink delivery          | U            | `CDCFailureInjector`, published from `./testing`: five fault types, per-entry budgets, refusals that report instead of passing. It is both the tool a consumer checks their sink with and the instrument the pump's retry cases use |
 | Outbox-before-send delivery                | U · I · E    | Durable enqueue, then send                        |
 | Exactly-once application                   | U · I · E    | Dedup ring keyed by `(origin, lsn)`               |
 | Hybrid logical clocks                      | U · I        | Monotonic across skew                             |
@@ -145,14 +159,14 @@ so it works with any engine that registers the providers it needs.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-All four rows are from the iteration-52 run: `cluster` 99.42/99.42/99.70/98.15,
-`federation` 99.35/99.35/99.77/98.73, `operations` 99.47/99.47/99.87/98.51. The gate covers four packages, not three: the end-to-end harness is measured as well,
+All four rows are from the iteration-53 run: `cluster` 99.42/99.42/99.70/98.15,
+`federation` 99.44/99.44/99.77/98.95, `operations` 99.47/99.47/99.87/98.51. The gate covers four packages, not three: the end-to-end harness is measured as well,
 because a harness bug produces confident, meaningless acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
 | `cluster`       | 99.42% | 99.42%     | 99.70%    | 98.15%   |
-| `federation`    | 99.35% | 99.35%     | 99.77%    | 98.73%   |
+| `federation`    | 99.44% | 99.44%     | 99.77%    | 98.95%   |
 | `operations`    | 99.47% | 99.47%     | 99.87%    | 98.51%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
@@ -202,6 +216,16 @@ compiler rather than by pattern matching, and requires a file named `api-referen
 every exported value. Both pages were rewritten against it, and the check is what keeps them
 honest.
 
+It read `src/index.ts` and stopped there, which left a second promise on every package
+unchecked: a subpath. `@agentix-e/db-cluster/testing` had been publishing fifteen symbols — a
+whole harness a downstream package is expected to build against — and no gate looked at any of
+them; its first page was written in iteration 53, after the gate learned to read the `exports`
+map. Every entry point is now resolved from `package.json`, headings may name a symbol from any
+of them, `api-reference.md` still has to cover the package root in full, and each subpath's own
+values have to appear somewhere under `docs/`. Twenty findings, all real, all now closed — and
+the gate's own suite pins both directions, including `run()` over the working tree, because a
+gate that only ever prints "passed" is the same defect one layer out.
+
 ---
 
 ## 5. What is **not** covered
@@ -211,7 +235,7 @@ honest.
 | **Per-file coverage floor**                              | Gated (from iteration 25)  | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added. |
 | **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)     | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream. |
 | **Operations process-level acceptance**                  | Partially covered (iteration 35) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. Batching did not widen that gap: a burst of concurrent writes is acknowledged by **one** sync, and `GC.8` pins the case with one caller at a time to the same one-sync-per-write it always paid, so the throughput gain is concurrency and not a weaker promise. No other operations package has an out-of-process case yet. |
-| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (**94.26 %**, **94.10 %**, **98.09 %** as reported, gates at 70, 70 and 86). In operations thirteen of 21 *modules* are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. In cluster and federation one module each is mutated — the SQLite log and the TLS wire — because those are the two places a green suite can be green for the wrong reason. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. Iteration 52 hand-checked `CDCSubscriptionPump` against five mutations — the queue cap, the retry budget, the operation filter, the table filter, and the post-close accounting — and every one of them failed at least one named case, so it is the next entry in that queue. |
+| **Mutation testing over the rest of operations**         | Partially covered          | All three packages are gated by Stryker in CI (**94.26 %**, **94.10 %**, **98.09 %** as reported, gates at 70, 70 and 86). In operations thirteen of 21 *modules* are mutated, chosen by the selection rule *mutate what decides deletion, durability, or when work runs*; the other 9 have unit, integration and coverage gates but no mutant measures their assertions. In cluster and federation one module each is mutated — the SQLite log and the TLS wire — because those are the two places a green suite can be green for the wrong reason. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. Iteration 52 hand-checked `CDCSubscriptionPump` against five mutations — the queue cap, the retry budget, the operation filter, the table filter, and the post-close accounting — and every one of them failed at least one named case, so it is the next entry in that queue. Iteration 53 did the same to `CDCFailureInjector`: a global instead of a per-entry budget (two cases), no duplicate-entry check, no injection-point filter, a swallowed disconnect, and a budget spent by a fault that could not fire — five edits, five named failures. |
 | **TLA+ model checking**                                  | Manual                     | The specs exist and run locally; they are not part of CI.                                                                                                                                          |
 | **Dependency advisories**                              | Covered                    | `pnpm audit:policy` holds the *production* tree to zero high and critical advisories with no allowlist that can reach it, and requires a named, dated entry for anything in the dev tree — the test toolchain, which cannot always be fixed on the day an advisory lands because a transitive dependency may have no patched release. An entry that matches no advisory fails the gate, so the list cannot rot into an exemption nobody re-read; the two failure modes were checked by removing the entry and by adding a bogus one. |
 

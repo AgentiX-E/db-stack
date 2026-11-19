@@ -160,6 +160,46 @@ const TARGETS = [
   },
   { dir: "federation", entry: "./transport", expect: ["TcpSecureTransport"] },
   {
+    dir: "federation",
+    entry: "./testing",
+    expect: ["CDCFailureInjector"],
+    // The instrument is only useful if it injects: import proves the symbol is
+    // exported, and this builds one over a real sink, forces a drop and checks
+    // that the wrapped sink received nothing.
+    behaviour: async ({ loaded, assert }) => {
+      // A sink written inline rather than imported: the claim is that the
+      // injector wraps *any* ICDCSink, and a probe that used the package's own
+      // reference sink would pass even if it only worked with that one.
+      const events = [];
+      const sink = {
+        name: "probe-sink",
+        connect: async () => undefined,
+        disconnect: async () => undefined,
+        emit: async (batch) => {
+          events.push(...batch);
+        },
+      };
+      const injector = new loaded.CDCFailureInjector(sink, [
+        { type: "connection_drop", failEveryN: 1, maxFailures: 1, on: "emit" },
+      ]);
+      await injector.connect();
+
+      let refused = false;
+      try {
+        await injector.emit([
+          { id: "e1", table: "t", operation: "insert", data: {}, timestamp: 1, lsn: "0/1" },
+        ]);
+      } catch {
+        refused = true;
+      }
+
+      assert.equal(refused, true, "the configured drop must refuse the write");
+      assert.equal(injector.injectedBy("connection_drop"), 1, "the drop is counted");
+      assert.equal(events.length, 0, "nothing reached the wrapped sink");
+      assert.equal(injector.connected, false, "the injector is disconnected afterwards");
+    },
+  },
+  {
     dir: "operations",
     entry: ".",
     expect: [
