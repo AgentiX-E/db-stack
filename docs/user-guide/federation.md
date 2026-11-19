@@ -55,13 +55,75 @@ Publications and subscriptions group tables:
 ```ts
 const registry = new CDCPublicationRegistry({ engine, nodeId: 'dc-east-1' });
 await registry.createPublication('orders-pub', ['orders', 'order_items']);
-await registry.createSubscription('to-west', 'orders-pub', 'dc-west-1');
+await registry.createSubscription('to-west', 'orders-pub', 'https://hooks.example.com/cdc');
+await registry.createSubscription('inserts-only', 'orders-pub', 'memory://audit', ['insert']);
 ```
 
 `CDCPublicationRegistry` keeps the named objects; `CDCManager` streams the
 changes. They are separate because a publication outlives any one streaming
 session — the registry even survives a `FederationManager.stop()`, whereas the
 manager's engines do not.
+
+### Delivering the changes to a sink
+
+The catalogue records a destination; `CDCSubscriptionPump` uses it. You supply one
+function — DSN to sink — and the pump does the rest: it connects a sink per
+subscription, filters the engine's stream by table and by operation, and delivers
+each change once, in order.
+
+```ts
+class WebhookSink implements ICDCSink {
+  readonly name = 'webhook';
+  constructor(private readonly url: string) {}
+  async connect() {}
+  async disconnect() {}
+  async emit(events: CDCSinkEvent[]) {
+    const response = await fetch(this.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(events, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+    });
+    if (!response.ok) throw new Error(`${this.url}: ${response.status}`); // refused, not delivered
+  }
+}
+
+const pump = new CDCSubscriptionPump({
+  engine,
+  registry,
+  resolveSink: (dsn) => new CDCSinkResolver(new WebhookSink(dsn)),
+});
+await pump.start();
+
+// From here on, whatever your engine appends is delivered to the subscription's
+// sink — in LSN order, once per change.
+```
+
+Throwing from `emit()` is how a sink says *no*. The pump retries the same change
+`maxEmitAttempts` times, then records it in a bounded failure log
+(`pump.getFailures()`) and moves on — one bad change does not block the ones
+behind it, and it never disappears silently:
+
+```ts
+const status = pump.getStatus();
+// { started: true, subscriptions: 2, unopened: [], pending: { 'to-west': 0 },
+//   delivered: 412, failed: 1, dropped: 0, evictedFailures: 0 }
+
+const [failure] = pump.getFailures();
+// { subscriptionId: 'to-west', eventId: '0/0000019C:9f2c…', table: 'orders',
+//   attempts: 3, error: 'https://hooks.example.com/cdc: 503', at: … }
+```
+
+A subscription created after `start()` is picked up by `await pump.sync()`; one
+dropped from the catalogue is closed by the same call. A DSN the factory cannot
+resolve does not stop the other subscriptions — it lands in
+`getStatus().unopened` and is retried by the next `sync()`.
+
+Two things the pump deliberately leaves to you. It does not invent a primary
+key: `CDCChangeEvent` names no key column, so the default projection leaves
+`CDCSinkEvent.key` empty and you supply `project` if your sink needs row
+identity. And it does not own the DSN schemes: a factory you write decides what
+`https://`, `kafka://` or `memory://` mean, which is what keeps this middleware
+free of any one destination's client library.
 
 ---
 

@@ -32,6 +32,16 @@ long partitions left behind. Each layer has its own interface (`ITransport`,
 `IReplicationSlotManager`), so a deployment can replace any of them — a Kafka
 outbox, an S3 transport — without touching the rest.
 
+Change capture has two exits, and they are different destinations rather than
+different qualities:
+
+```
+ CDCEngine ──┬─► ExactlyOnceCDCPipeline ──► OutboxStore ──► transport ──► another DC
+             │      (checkpoints and replay; durability across a restart)
+             └─► CDCSubscriptionPump ────► ICDCSink ────► webhook / queue / database
+                    (per-subscription fan-out, in process)
+```
+
 ## Transports
 
 ### `ITransport`
@@ -328,9 +338,12 @@ interface ICDCEngine {
   unwatchTable(tableName: string): void;
   getWatchedTables(): string[];
   onChange(callback: (event: CDCChangeEvent) => void): () => void;
-  appendChange(change: Omit<CDCChangeEvent, 'lsn' | 'timestamp' | 'txId'>): CDCChangeEvent;
 }
 ```
+
+`appendChange()` is not on the interface. It is how the default engine is fed —
+by a WAL decoder, or by a test — and an engine backed by a real replication
+stream has nothing to append to.
 
 ### `CDCEngine`
 
@@ -385,15 +398,21 @@ registry.
 
 It is a catalogue and nothing else: it keeps the maps and watches the
 publications' tables on the engine, but it does not subscribe to the change
-stream and delivers no events. Delivery with ordering, retry and checkpoints is
-`ExactlyOnceCDCPipeline`.
+stream and delivers no events. The DSN a subscription records is resolved by
+`CDCSubscriptionPump`; cross-datacenter delivery with ordering, checkpoints and
+replay is `ExactlyOnceCDCPipeline`.
 
 ```typescript
 class CDCPublicationRegistry {
   constructor(config: CDCPublicationRegistryConfig);
   createPublication(name: string, tables: string[]): Promise<ICDCPublication>;
   dropPublication(name: string): Promise<void>;
-  createSubscription(name: string, publicationName: string, targetDsn: string): Promise<CDCSubscription>;
+  createSubscription(
+    name: string,
+    publicationName: string,
+    targetDsn: string,
+    operations?: CDCSubscription['operations'],
+  ): Promise<CDCSubscription>;
   dropSubscription(name: string): Promise<void>;
   getSubscriptions(): Promise<CDCSubscription[]>;
   getPublications(): Promise<ICDCPublication[]>;
@@ -401,6 +420,170 @@ class CDCPublicationRegistry {
 ```
 
 `CDCPublicationRegistryConfig`: `nodeId`, `engine`.
+
+`operations` defaults to all three, and is what `CDCSubscriptionPump` filters on.
+A `CDCSubscription` is `{ subscriptionId, tables, operations, targetDsn,
+createdAt }` — `targetDsn` is stored exactly as given, whatever its scheme.
+
+### `ICDCSink`
+
+The destination side of change capture: anything that can connect, disconnect
+and accept a batch of `CDCSinkEvent`s. Implement it to write changes to a
+webhook, a queue, another database, or a test double.
+
+```typescript
+interface ICDCSink {
+  readonly name: string;
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  emit(events: CDCSinkEvent[]): Promise<void>;
+}
+```
+
+Throwing from `emit` means *refused*. `CDCSubscriptionPump` turns a refusal into
+a retry and, once the budget is spent, into a recorded failure; a sink that
+returns normally is taken to have accepted the batch.
+
+`CDCSinkEvent` is `{ id, type, table, key, data, timestamp }` — `id` is
+`<lsn>:<txId>`, `timestamp` is the HLC wall time as a `bigint`. It is a
+different shape from `CDCManager`'s `CDCEvent` and was renamed from `CDCEvent`
+so that both can be exported from the package root without one shadowing the
+other.
+
+### `InMemoryCDCSink`
+
+An `ICDCSink` that keeps what it is given, in order. For tests, development and
+benchmarks where an external destination would only add latency.
+
+```typescript
+class InMemoryCDCSink implements ICDCSink {
+  constructor(name?: string);
+  readonly name: string;
+  readonly connected: boolean;
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  emit(events: CDCSinkEvent[]): Promise<void>;
+  getEvents(): CDCSinkEvent[];
+  clear(): void;
+}
+```
+
+### `CDCSinkResolver`
+
+Wraps any `ICDCSink` with the parts a real destination needs: connection retry
+with `'fixed' | 'exponential' | 'none'` backoff, batch splitting at
+`maxBatchSize`, a periodic liveness probe, and a health/failure stream. It is
+itself an `ICDCSink`, so it drops into `CDCSubscriptionPump`'s `resolveSink`
+without the pump knowing.
+
+```typescript
+class CDCSinkResolver implements ICDCSink {
+  constructor(sink: ICDCSink, config?: Partial<CDCSinkResolverConfig>);
+  readonly name: string;
+  readonly connected: boolean;
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  emit(events: CDCSinkEvent[]): Promise<void>;
+  getHealth(): ResolverHealth;
+  onHealthChange(callback: (health: ResolverHealth) => void): () => void;
+  onFailure(callback: (event: FailureEvent) => void): () => void;
+}
+```
+
+`CDCSinkResolverConfig`: `name?`, `maxRetries` (5), `retryBaseMs` (100),
+`retryMaxMs` (30 000), `retryStrategy` (`'exponential'`), `maxBatchSize` (1 000),
+`healthCheckIntervalMs` (30 000; `0` disables). `ResolverHealth` is
+`{ connected, lastEmitTimestamp, totalEmitted, totalFailures,
+consecutiveFailures, uptimeMs }`; a `FailureEvent` carries a `SinkFailureMode`
+(`connection_lost`, `emit_failed`, `retry_exhausted`), a timestamp and the error
+text.
+
+`emit` rejects when a batch is refused — including the case where the resolver
+is disconnected by the time the refusal arrives. There is no path through this
+class on which a refused batch resolves.
+
+### `CDCSubscriptionPump`
+
+The edge between a subscription and a sink. For every subscription in the
+catalogue it resolves `targetDsn` through `resolveSink`, connects the result, and
+routes the engine's changes to the sinks whose subscription admits them — by
+table and by operation.
+
+```typescript
+class CDCSubscriptionPump {
+  constructor(config: CDCSubscriptionPumpConfig);
+  start(): Promise<void>;
+  sync(): Promise<void>;
+  stop(): Promise<void>;
+  getStatus(): CDCSubscriptionPumpStatus;
+  getFailures(): CDCPumpFailure[];
+  onEvent(handler: CDCPumpEventHandler): () => void;
+}
+```
+
+`CDCSubscriptionPumpConfig`: `engine`, `registry`, `resolveSink`, `project?`,
+`maxPendingPerSubscription?` (1 024), `maxEmitAttempts?` (3), `retryBaseMs?` (20),
+`maxFailureLog?` (100).
+
+Delivery rules, each of which is a test rather than a claim:
+
+- **Order.** One FIFO queue and one drain loop per subscription, so a sink sees
+  changes in the order the engine produced them. `CDCEngine` assigns a monotonic
+  LSN, so that order is LSN order.
+- **One emit per change.** A change reaches a sink through exactly one
+  successful `emit()` call, or none. Retries re-send the same single-event call,
+  never a batch, so a retry cannot duplicate an accepted change or half-apply a
+  batch.
+- **No silent loss.** A refusal is retried `maxEmitAttempts` times and then
+  recorded in the bounded failure log (`getFailures()`) and reported as
+  `delivery_failed`. A queue that overflows drops the *newest* change — the
+  consumer keeps a contiguous prefix — and reports `overflow` with the id of the
+  first change that found no room.
+- **No stall.** A poisoned change leaves the queue after its budget is spent, so
+  the ones behind it are still attempted. Holding the head would convert one bad
+  event into an outage for the whole subscription.
+
+`start()` opens every subscription the catalogue holds and does not throw for a
+single one that cannot be opened: an unresolvable DSN or a failed `connect()`
+appears in `getStatus().unopened` and as a `subscription_failed` event, and the
+next `sync()` retries it. `sync()` also opens subscriptions created after
+`start()` and closes ones dropped from the catalogue. `stop()` detaches from the
+engine and abandons queued changes, counting them as `dropped` with reason
+`stopped`.
+
+`CDCSubscriptionPumpStatus`: `started`, `subscriptions`, `unopened`, `pending`
+(per subscription), `delivered`, `failed`, `dropped`, `evictedFailures`. A
+`CDCPumpEvent` is `{ type, subscriptionId, timestamp, eventId?, lsn?, table?,
+attempts?, error?, reason?, dropped? }` with `type` one of `subscription_opened`,
+`subscription_closed`, `subscription_failed`, `delivered`, `delivery_failed`,
+`overflow`, and `reason` one of `queue-full`, `stopped`, `unsubscribed`.
+
+### `projectChangeEvent`
+
+The default projection from `CDCChangeEvent` to `CDCSinkEvent`:
+`id` is `<lsn>:<txId>`, `type` is the operation, `table` the table name, `data`
+the new row (`newValues`, falling back to `oldValues`), `timestamp` the HLC wall
+time.
+
+```typescript
+function projectChangeEvent(event: CDCChangeEvent): CDCSinkEvent;
+```
+
+`key` is left empty: `CDCChangeEvent` names no key column, and a default that
+read `id` would be right for the schemas that happen to have one and silently
+wrong for the rest. Supply `project` when your sink needs row identity:
+
+```typescript
+const pump = new CDCSubscriptionPump({
+  engine,
+  registry,
+  resolveSink: (dsn) => new MySink(dsn),
+  project: (event) => ({
+    ...projectChangeEvent(event),
+    key: String((event.newValues as { id?: string })?.id ?? ''),
+  }),
+});
+```
 
 ### `ExactlyOnceCDCPipeline`
 

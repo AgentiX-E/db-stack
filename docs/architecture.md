@@ -88,7 +88,8 @@ halves of the outcome: every key is back, and the cluster accepts writes.
 
 | Area | Principal components | Responsibility |
 |---|---|---|
-| Change capture | `CDCEngine`, `CDCManager`, `CDCPublicationRegistry`, `ExactlyOnceCDCPipeline` | Table-level change streams, per-DC streaming, publication/subscription bookkeeping, exactly-once delivery |
+| Change capture | `CDCEngine`, `CDCManager`, `CDCPublicationRegistry`, `ExactlyOnceCDCPipeline` | Table-level change streams, per-DC streaming, publication/subscription bookkeeping, exactly-once cross-DC delivery |
+| Change fan-out | `CDCSubscriptionPump`, `CDCSinkResolver`, `ICDCSink` | Resolve a subscription's DSN to a sink and deliver to it: ordered per subscription, one `emit` per change, refusals retried then recorded |
 | Durable delivery | `OutboxStore` (LMDB-backed), `DedupRing` | Outbox-before-send, at-least-once with bounded dedup |
 | Conflict handling | `ConflictResolver` (+ CRDT types), `HLC` | LWW on hybrid logical clocks, CRDT merge, custom resolvers |
 | Reconciliation | `AntiEntropy` (+ Merkle trees), `Convergence` | Detect and repair divergence after partitions |

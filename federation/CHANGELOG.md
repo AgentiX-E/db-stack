@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`CDCSubscriptionPump` — the edge a subscription's `targetDsn` never had.**
+  `createSubscription()` recorded a destination and nothing in the package could turn it into a
+  sink: `ICDCSink`, `InMemoryCDCSink` and `CDCSinkResolver` had no production caller and were not
+  exported, so a subscription was a row describing a delivery nobody performed. The pump resolves a
+  subscription's DSN through a factory the caller supplies, connects the sink, and routes the
+  engine's changes to the subscriptions that admit them — one FIFO queue per subscription, one
+  `emit()` per change, a retry budget, a bounded failure log and a queue cap that reports the change
+  it could not hold instead of dropping it quietly.
+- **The sink side of change capture is exported.** `ICDCSink`, `CDCSinkEvent`, `InMemoryCDCSink`,
+  `CDCSinkResolver` and their configuration/health/failure types were reachable only from their own
+  tests; a consumer could not implement a sink or use the retry wrapper.
+- **`createSubscription(..., operations?)`.** The field existed and held one value — all three
+  operations, with no parameter to change it. The pump filters on it, so it is now a decision.
+
+### Changed
+
+- **`CDCSubscription.webhookUrl` is `CDCSubscription.targetDsn`.** The catalogue reduced the DSN to
+  `webhookUrl` when it started with `http` and dropped it otherwise, so a subscription to a
+  `postgres://` or `memory://` target recorded no destination at all. A scheme the type could not
+  express was a destination the object did not keep.
+- **`CDCEngine` assigns a sequence number, not a clock reading.** The LSN was
+  `0/${(Date.now() * 1000).toString(16)}`, so two changes appended in the same millisecond carried
+  the same LSN: "delivered in LSN order" was true and meaningless at once, and a checkpoint compared
+  with `<=` could not tell them apart. The LSN is now `0/` plus a zero-padded hex counter — fixed
+  width, so lexicographic order is numeric order — and the counter survives `stop()`/`start()`.
+- **`CDCSinkResolver.emit()` always rejects when a batch is refused.** The failure path returned
+  early when the sink was already disconnected, so `emit()` resolved normally and the caller could
+  not learn that nothing had been written. Reachable whenever a `disconnect()` lands while an emit
+  is in flight.
+- **Optional configuration is merged field by field.** `{ ...defaults, ...config }` cannot tell
+  "absent" from "explicitly `undefined`", and TypeScript lets a caller write the latter:
+  `checkpointDir: undefined` reached `path.join` and threw at construction, and `dedupTtlMs:
+  undefined` reached `DedupRing` as a ring that never expires. `ExactlyOnceCDCPipeline` and
+  `CDCSubscriptionPump` now fill their defaults with `??`.
+
+### Added
+
 - **`CDCManager` is now the manager the package actually runs.** `index.ts` exported a different
   class of that name — `replication/CDCManager`, the publication/subscription bookkeeping — while
   `FederationManager.getCDC()` returned the streaming manager in `core/`, which no consumer could

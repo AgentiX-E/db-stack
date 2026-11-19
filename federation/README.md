@@ -102,13 +102,15 @@ solves three problems that a single consensus group cannot:
 | **ExactlyOnceCDCPipeline** | `src/replication/` | Primary CDC pipeline with exactly-once guarantees |
 | **CDCEngine** | `src/replication/` | Change data capture engine — table watching, polling |
 | **CDCManager** | `src/core/` | One change-capture engine per remote DC, with lag backpressure |
-| **CDCPublicationRegistry** | `src/replication/` | Publication and subscription catalogue (delivery is the pipeline's job) |
+| **CDCPublicationRegistry** | `src/replication/` | Publication and subscription catalogue (records destinations, delivers nothing) |
+| **CDCSubscriptionPump** | `src/replication/` | Resolves each subscription's DSN to an `ICDCSink` and delivers engine changes to it, in order, once each |
+| **CDCSinkResolver** | `src/replication/` | Retry, batch splitting and health around any `ICDCSink` |
 | **OutboxStore** | `src/replication/` | LMDB-backed outbox with batch read/write |
 | **DedupRing** | `src/replication/` | In-memory deduplication ring with configurable TTL |
 | **MultiLeaderReplication** | `src/replication/` | Multi-leader setup with conflict resolution |
 | **ConflictResolver** | `src/replication/` | LWW, CRDT-merge, and custom conflict strategies |
 | **AntiEntropy** | `src/replication/` | Merkle-tree based reconciliation and gap repair |
-| **InMemoryCDCSink** | `src/replication/` | Test sink for CDC events |
+| **InMemoryCDCSink** | `src/replication/` | Reference `ICDCSink` that keeps what it is given, for tests and development |
 
 ---
 
@@ -118,7 +120,8 @@ solves three problems that a single consensus group cannot:
 |-------|-----------|-----------|
 | CDC capture | At-least-once | CDCEngine polls source, OutboxStore persists before marking |
 | Transport | At-least-once | Outbox-before-send pattern, retry with backoff |
-| Delivery | Exactly-once | DedupRing filters duplicates by messageId |
+| Delivery (cross-DC) | Exactly-once | DedupRing filters duplicates by messageId |
+| Delivery (to a sink) | One `emit` per change, ordered | One FIFO queue per subscription; a refusal is retried then recorded, never dropped quietly |
 | Crash recovery | No data loss | Checkpoint restores last confirmed LSN, OutboxStore replays unacked |
 | End-to-end | Exactly-once | CDCEngine → OutboxStore → Transport → DedupRing → Consumer |
 
