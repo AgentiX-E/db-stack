@@ -167,6 +167,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   idempotency key recovered from the payload so a learner's replay stays idempotent.
   `getRetainedLogLength()` now derives from `getLogBounds()` instead of reading the two bounds itself.
 
+- **The API reference now describes this package.** `docs/api-reference.md` opened with
+  `RaftCluster`, `ClusterConfig`, `FencingToken` and `ITransport` — four types that have never
+  existed in this package, wrapped around a `propose(command): Promise<ProposeResult>` signature no
+  class here offers. A reader who followed the page wrote code that failed on its first line. The
+  page is now built from the real export surface: all 56 exported values appear, each with its
+  constructor and the methods it is actually called through, and `pnpm check:docs-api` resolves
+  every heading against `src/index.ts` through the TypeScript compiler so the next sketch cannot
+  survive a CI run.
+
 ### Fixed
 
 - **Three published features called `require` from an ESM package.** This package ships as

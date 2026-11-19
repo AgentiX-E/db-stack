@@ -42,6 +42,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The API reference now describes this package.** `docs/api-reference.md` documented
+  `FederationEngine`, `FederationConfig`, `DataChange`, `PipelineBuilder`, `HeartbeatStatus` and
+  `SessionManager` — six types that were never written — plus an `OutboxStore` constructor taking
+  `(db, tableName)`, a `DedupRing` whose methods were `checkAndMark`/`reset` where the real one has
+  `put`/`sweep`, an `HLC` exposing `wallClock` where the type has `wallTime: bigint`, a metrics
+  table of eight `fed_*` series the package never emits, and an eleven-class error hierarchy in a
+  package that defines no error classes at all. The page is now built from the real export surface:
+  all 21 exported values appear with their constructors and the methods they are called through,
+  and `pnpm check:docs-api` resolves every heading against `src/index.ts` through the TypeScript
+  compiler so a design sketch cannot pass as documentation again.
+
 - **The retry schedule is a function, not three lines inside a reconnect.** `retryDelayMs(attempt,
   baseMs, maxMs, maxRetries)` is exported so the boundary can be asserted directly: attempt
   `maxRetries` still doubles, attempt `maxRetries + 1` is capped. Reaching that boundary through
