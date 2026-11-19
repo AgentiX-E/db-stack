@@ -187,6 +187,18 @@ A structural check, `pnpm check:gates`, fails the build if any `tsconfig` in the
 referenced by no script — the exact shape of the defect that hid those 1 192 errors: a
 configuration file that looked like a gate and ran nowhere.
 
+The same applied to the API references. `cluster/docs/api-reference.md` opened with four classes
+that were never written (`RaftCluster`, `ClusterConfig`, `FencingToken`, `ITransport`), and
+`federation/docs/api-reference.md` documented five more (`FederationEngine`, `FederationConfig`,
+`DataChange`, `PipelineBuilder`, `HeartbeatStatus`) plus a constructor, a dedup ring and an error
+hierarchy the package does not have. Both pages had been written from a design sketch before the
+code existed and were never compared to it; a reader following either one wrote code that failed
+on the first line. `pnpm check:docs-api` now resolves every `##`–`####` heading that opens with a
+backticked identifier against the package's real export surface, read through the TypeScript
+compiler rather than by pattern matching, and requires a file named `api-reference.md` to mention
+every exported value. Both pages were rewritten against it, and the check is what keeps them
+honest.
+
 ---
 
 ## 5. What is **not** covered
@@ -203,6 +215,7 @@ configuration file that looked like a gate and ran nowhere.
 | **Cross-version upgrade path**                           | Partially covered          | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
 | **Quorum-loss step-down**                                | Covered                    | raft-core 0.2.1 has no check-quorum, so an isolated leader keeps reporting `isLeader() === true` while committing nothing (measured: 16 s, commit index frozen, write refused at 5 028 ms). `checkQuorum` is now real: contact is a completed round trip through the *real* transport, `isLeader()` answers from the role **and** from a majority inside one election timeout, `getLeader()` returns `null` while that is not true, and a write is refused with `QUORUM_FAILED` instead of waiting out the library's commit timeout. Seven cases in `quorum-loss.test.ts` drive it against a real 3-node TLS cluster. |
+| **Documentation fidelity**                               | Covered (iteration 49)     | `pnpm check:docs-api` fails the build when an API heading names a symbol the package does not export, and when `api-reference.md` omits an exported value. Not covered: the prose around a signature, and the field-level detail of a config interface — a page can name the right class and describe the wrong default. The generated reference is not built in CI either: the three `docs` scripts run TypeDoc, which is not installed, and TypeDoc already reports 66 warnings in cluster and 13 in federation — nine of the federation warnings are types the public API references but never exports (P3-34). |
 | **Harness `.mjs` child programs**                        | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
 
 Each row is tracked in the roadmap in
@@ -216,6 +229,7 @@ an owner and an exit criterion; none of them is hidden behind a passing badge.
 ```bash
 pnpm install --frozen-lockfile && pnpm build
 pnpm check:gates                                     # no orphan configs, no dangling scripts
+pnpm check:docs-api                                  # every API heading resolves to a real export
 pnpm typecheck && pnpm typecheck:tests               # static gates, production and tests
 pnpm lint && pnpm format:check
 pnpm audit:policy                                    # production tree to zero, dev exceptions dated
