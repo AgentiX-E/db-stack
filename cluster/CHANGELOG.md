@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Forty-three types that appeared in public signatures and could not be imported.**
+- **Forty-four types that appeared in public signatures and could not be imported.**
   `RaftGroup.readSnapshotMeta()`, `RaftGroup.getLearners()`, `RaftGroup.transferLeadership()`,
   `HealthProbe`, `RaftMetricsCollector`, `PitrManager`, `WalStreamer`, `ShardManager`,
   `HAFailoverDetector` and a dozen more all returned or accepted types declared in the package and

@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Twenty-four types that public signatures named and no package exported.** The security package
+- **Thirty-seven types that public signatures named and no package exported.** The security package
   returned `RotationEvent`, `KeyRotationState`, `AuditEvent`, `RBACDecision`, `RBACStats` and
-  fifteen more from methods a consumer calls, without exporting any of them; `monitor` did the same
+  eighteen more from methods a consumer calls, without exporting any of them; `monitor` did the same
   with `PoolStat`, `ResourceQuotaConfig` and `ResourceUsage`, `backup` with `VerifyResult`,
   `VerifyOptions`, `RetentionOutcome` and `S3StorageBackendConfig`, and `autoscaler`, `autotuner`,
   `health`, `maintenance` and `metrics` with one or two each. They are exported now, and
