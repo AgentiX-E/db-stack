@@ -109,8 +109,9 @@ verification options the connection pool accepts).
 ### `IOutboxStore`
 
 The contract `MultiLeaderReplication` and `ExactlyOnceCDCPipeline` depend on.
-`addBatch`, `fetchAndFlush` and `markFailed` are optional so an implementation
-can skip the fast paths, but a store without `markFailed` cannot dead-letter.
+`addBatch` and `fetchAndFlush` are optional so an implementation can skip the
+fast paths; `markFailed` is not, because a store that cannot record a failure
+cannot dead-letter.
 
 ```typescript
 interface IOutboxStore {
@@ -254,7 +255,7 @@ class DedupRing {
   constructor(config?: DedupRingConfig);
   readonly size: number;
   contains(msgId: string): boolean;
-  put(msgId: string): boolean;    // true when the id was already present
+  put(msgId: string): boolean;    // true when the id was new, false when it was a duplicate
   delete(msgId: string): boolean;
   clear(): void;
   getStats(): {

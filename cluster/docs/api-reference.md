@@ -317,8 +317,8 @@ primitive a client-lease or a "leader still alive" check builds on.
 class SessionManager {
   constructor(config: SessionConfig);
   create(id: string, metadata?: Record<string, unknown>): SessionEntry;
-  get(id: string): SessionEntry | undefined;
-  delete(id: string): SessionEntry | undefined;
+  get(id: string): SessionEntry | null;
+  delete(id: string): SessionEntry | null;
   extend(id: string): boolean;
   onExpiry(handler: SessionExpiryHandler): () => void;
   activeCount(): number;
