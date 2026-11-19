@@ -222,8 +222,8 @@ installs atomically. Stale partial assemblies are reaped.
 class InstallSnapshotHandler {
   constructor(snapshotDir: string, nodeId: number, config?: Partial<InstallSnapshotHandlerConfig>);
   handleChunk(req: InstallSnapshotRequest, raft: RaftAdapter, installSnapshotCallback: InstallSnapshotCallback): Promise<SnapshotChunkResult>;
-  createChunks(snapshotPath: string, meta: SnapshotMeta, leaderId: string, chunkSize?: number): AsyncGenerator<InstallSnapshotRequest>;
-  sendSnapshot(raft: RaftAdapter, targetNodeId: string, snapshotPath: string, meta: SnapshotMeta): Promise<boolean>;
+  createChunks(snapshotPath: string, meta: ShardSnapshotMeta, leaderId: string, chunkSize?: number): AsyncGenerator<InstallSnapshotRequest>;
+  sendSnapshot(raft: RaftAdapter, targetNodeId: string, snapshotPath: string, meta: ShardSnapshotMeta): Promise<boolean>;
   getAssemblyProgress(): { key: string; chunks: number; bytesReceived: number; elapsedMs: number }[];
   cleanStaleStates(): void;
   reset(): void;
@@ -504,8 +504,8 @@ class ConnectionPool {
   addNode(peer: PeerInfo): void;
   removeNode(peerId: number): void;
   getConnection(peerId: number): Promise<PeerConnection>;
-  sendTo(peerId: number, msg: RaftMessage): Promise<void>;
-  broadcast(fromId: number, msgs: RaftMessage[]): Promise<void>;
+  sendTo(peerId: number, msg: OutboundMessage): Promise<void>;
+  broadcast(fromId: number, msgs: OutboundMessage[]): Promise<void>;
   onIncoming(peerId: number, socket: TLSSocket): Promise<PeerConnection>;
   markStale(peerId: number): void;
   enqueuePending(peerId: number, msg: Buffer): void;
@@ -1081,12 +1081,18 @@ The three Raft roles: `ConsensusRole.Follower`, `ConsensusRole.Candidate`,
 | `RaftGroupQuorumResult` | `{ quorumMet, required, actual, total, type }` |
 | `LearnerInfo` | A learner's matched index and catch-up state |
 | `SnapshotMeta` / `SnapshotDescriptor` / `SnapshotEnvelope` | Snapshot position, on-disk record, and the checksummed wire form |
+| `ShardSnapshotMeta` | What a node recorded about a snapshot it took: shard, node, log position and timestamp |
+| `RaftSnapshotMeta` | raft-core's log-level snapshot record: `snapshotIndex`, `snapshotTerm` and the `hardState` beside it |
 | `TransitionPhase` / `TransitionResult` / `TransitionOptions` | Joint-consensus phase, outcome, and retry policy |
 | `FencingConfig` / `FencingStatus` / `FenceState` | Lease length, escalation action, and the state machine |
 | `SessionConfig` / `SessionEntry` / `ISessionManager` | Session TTL, the entry, and the interface |
 | `RaftEvent` and its variants | `LeaderElectedEvent`, `LeaderLostEvent`, `StepDownEvent`, `ProposalCommittedEvent`, `ProposalAppliedEvent`, `SnapshotCreatedEvent`, `SnapshotRestoredEvent`, `RoleChangedEvent`, `MembershipChangedEvent` |
 | `IConsensusLayer` / `IClusterTopology` / `IOutboxWriter` / `IShardReplica` | The seams the HA and consensus layers are built on |
 | `IShardStrategy` / `IShardManager` / `IReshardPlanner` / `IOnlineShardMigration` | The sharding seams |
+| `RaftMessage` / `RaftEntry` | The wire shape a transport sends: numeric `msgType`, decimal-string ids, and the entries it carries |
+| `OutboundMessage` | The envelope `ConnectionPool` stamps numeric peer ids onto before framing it |
+| `RaftConsensusPhase` | The phase a joint-consensus transition is in: `stable`, `joint`, `transitional` |
+| `SqlVecErrorCode` | The stable codes `SqlVecError` carries across the package boundary |
 | `OperationResult` | `{ success, error? }` — the sharding layer's non-throwing result |
 
 ## Where the exhaustive list lives

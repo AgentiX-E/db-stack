@@ -353,9 +353,9 @@ class CDCEngine implements ICDCEngine {
 
 ### `CDCManager`
 
-Fans several watched tables into one buffered stream, applies backpressure when
-the buffer fills or lag exceeds the limit, and owns the publication and
-subscription bookkeeping a PostgreSQL-style replication slot needs.
+One change-capture engine per remote DC, feeding a single buffered stream, with
+backpressure when the buffer fills. This is what `FederationManager.getCDC()`
+returns once the manager has started.
 
 ```typescript
 class CDCManager {
@@ -369,6 +369,23 @@ class CDCManager {
   isBackpressured(): boolean;
   getEngineCount(): number;
   isStarted(): boolean;
+}
+```
+
+`CDCManagerConfig`: `nodeId`, `hlc`, `maxBufferSize?`, `tickMs?`, `maxLagMs?`.
+
+### `CDCPublicationRegistry`
+
+The publication and subscription bookkeeping a PostgreSQL-style replication
+slot needs: named publications over table sets, subscriptions pointing at a
+target DSN, and the slot-invalid event a subscriber has to hear about. It is a
+separate object from `CDCManager` because the two jobs have different lifetimes —
+publications outlive any one streaming session — and because a manager that
+answers `getPublications()` with an empty array is not a registry.
+
+```typescript
+class CDCPublicationRegistry {
+  constructor(config: CDCPublicationRegistryConfig);
   createPublication(name: string, tables: string[]): Promise<ICDCPublication>;
   dropPublication(name: string): Promise<void>;
   createSubscription(name: string, publicationName: string, targetDsn: string): Promise<CDCSubscription>;
@@ -376,10 +393,11 @@ class CDCManager {
   getSubscriptions(): Promise<CDCSubscription[]>;
   getPublications(): Promise<ICDCPublication[]>;
   onSlotInvalid(callback: (subscriptionId: string) => void): () => void;
+  fireSlotInvalid(subscriptionId: string): void;
 }
 ```
 
-`CDCManagerConfig`: `nodeId`, `hlc`, `maxBufferSize?`, `tickMs?`, `maxLagMs?`.
+`CDCPublicationRegistryConfig`: `nodeId`, `engine`.
 
 ### `ExactlyOnceCDCPipeline`
 

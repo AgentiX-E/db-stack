@@ -142,15 +142,15 @@ so it works with any engine that registers the providers it needs.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-The `cluster` row is from the iteration-48 run; the other rows are unchanged because neither
-package was touched by it. The gate covers four packages, not three: the end-to-end harness is measured as well,
+All four rows are from the iteration-50 run: `cluster` 99.40/99.40/99.70/98.18,
+`federation` 99.32/99.32/99.76/98.59, `operations` 99.47/99.47/99.87/98.51. The gate covers four packages, not three: the end-to-end harness is measured as well,
 because a harness bug produces confident, meaningless acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
-| `cluster`       | 99.47% | 99.47%     | 99.70%    | 98.22%   |
-| `federation`    | 99.19% | 99.19%     | 99.76%    | 98.52%   |
-| `operations`    | 99.46% | 99.46%     | 99.87%    | 98.49%   |
+| `cluster`       | 99.40% | 99.40%     | 99.70%    | 98.18%   |
+| `federation`    | 99.32% | 99.32%     | 99.76%    | 98.59%   |
+| `operations`    | 99.47% | 99.47%     | 99.87%    | 98.51%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
 The `e2e` row covers `e2e/harness/support.ts` — process supervision, IPC, port allocation,
@@ -215,7 +215,7 @@ honest.
 | **Cross-version upgrade path**                           | Partially covered          | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
 | **Sustained soak beyond CI limits**                      | Scheduled only             | Multi-hour runs exist (`test:soak`) but do not gate a pull request.                                                                                                                                |
 | **Quorum-loss step-down**                                | Covered                    | raft-core 0.2.1 has no check-quorum, so an isolated leader keeps reporting `isLeader() === true` while committing nothing (measured: 16 s, commit index frozen, write refused at 5 028 ms). `checkQuorum` is now real: contact is a completed round trip through the *real* transport, `isLeader()` answers from the role **and** from a majority inside one election timeout, `getLeader()` returns `null` while that is not true, and a write is refused with `QUORUM_FAILED` instead of waiting out the library's commit timeout. Seven cases in `quorum-loss.test.ts` drive it against a real 3-node TLS cluster. |
-| **Documentation fidelity**                               | Covered (iteration 49)     | `pnpm check:docs-api` fails the build when an API heading names a symbol the package does not export, and when `api-reference.md` omits an exported value. Not covered: the prose around a signature, and the field-level detail of a config interface — a page can name the right class and describe the wrong default. The generated reference is not built in CI either: the three `docs` scripts run TypeDoc, which is not installed, and TypeDoc already reports 66 warnings in cluster and 13 in federation — nine of the federation warnings are types the public API references but never exports (P3-34). |
+| **Documentation fidelity**                               | Covered (iteration 50)     | `pnpm check:docs-api` fails the build when an API heading names a symbol the package does not export, and when `api-reference.md` omits an exported value. `pnpm check:public-types` closes the other half: every type a public signature names must be importable from the package root, which is how the two `CDCManager` classes and forty-three unnameable cluster types were found. `pnpm check:script-bins` fails a script whose command is not installed — that is how the three `docs` scripts running an absent TypeDoc were found, and they are gone rather than fixed: the curated pages are compiler-checked now, so a generated second surface would only be a second thing to keep honest. Not covered: the prose around a signature, and the field-level detail of a config interface — a page can name the right class and describe the wrong default. |
 | **Harness `.mjs` child programs**                        | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
 
 Each row is tracked in the roadmap in
@@ -230,6 +230,8 @@ an owner and an exit criterion; none of them is hidden behind a passing badge.
 pnpm install --frozen-lockfile && pnpm build
 pnpm check:gates                                     # no orphan configs, no dangling scripts
 pnpm check:docs-api                                  # every API heading resolves to a real export
+pnpm check:public-types                              # every type a public signature names is exported
+pnpm check:script-bins                               # every script's binary is installed
 pnpm typecheck && pnpm typecheck:tests               # static gates, production and tests
 pnpm lint && pnpm format:check
 pnpm audit:policy                                    # production tree to zero, dev exceptions dated

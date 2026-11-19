@@ -19,7 +19,6 @@
     "build": "tsc -p tsconfig.build.json && node ../scripts/fix-esm-extensions.mjs dist",
     "clean": "rm -rf dist coverage",
     "coverage": "vitest run --coverage",
-    "docs": "typedoc",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "lint": "eslint .",
     "test": "vitest run",

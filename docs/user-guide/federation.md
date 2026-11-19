@@ -53,10 +53,15 @@ callback. See [engine adapters](engine-adapters.md#3-change-capture-for-federati
 Publications and subscriptions group tables:
 
 ```ts
-const manager = new CDCManager({ engine, nodeId: 'dc-east-1' });
-await manager.createPublication('orders-pub', ['orders', 'order_items']);
-await manager.createSubscription('to-west', 'orders-pub', 'dc-west-1');
+const registry = new CDCPublicationRegistry({ engine, nodeId: 'dc-east-1' });
+await registry.createPublication('orders-pub', ['orders', 'order_items']);
+await registry.createSubscription('to-west', 'orders-pub', 'dc-west-1');
 ```
+
+`CDCPublicationRegistry` keeps the named objects; `CDCManager` streams the
+changes. They are separate because a publication outlives any one streaming
+session — the registry even survives a `FederationManager.stop()`, whereas the
+manager's engines do not.
 
 ---
 

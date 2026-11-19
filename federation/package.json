@@ -24,7 +24,6 @@
     "clean": "rm -rf dist coverage",
     "bench": "tsx bench/run-all.ts",
     "bench:ycsb": "tsx bench/federation-ycsb.ts",
-    "docs": "typedoc",
     "test:perf": "vitest run --testTimeout=1800000 src/__tests__/performance",
     "test:mutation": "pnpm -w run test:mutation:federation"
   },

@@ -88,7 +88,7 @@ halves of the outcome: every key is back, and the cluster accepts writes.
 
 | Area | Principal components | Responsibility |
 |---|---|---|
-| Change capture | `CDCEngine`, `CDCManager`, `ExactlyOnceCDCPipeline` | Table-level change streams, publications/subscriptions, exactly-once delivery |
+| Change capture | `CDCEngine`, `CDCManager`, `CDCPublicationRegistry`, `ExactlyOnceCDCPipeline` | Table-level change streams, per-DC streaming, publication/subscription bookkeeping, exactly-once delivery |
 | Durable delivery | `OutboxStore` (LMDB-backed), `DedupRing` | Outbox-before-send, at-least-once with bounded dedup |
 | Conflict handling | `ConflictResolver` (+ CRDT types), `HLC` | LWW on hybrid logical clocks, CRDT merge, custom resolvers |
 | Reconciliation | `AntiEntropy` (+ Merkle trees), `Convergence` | Detect and repair divergence after partitions |
