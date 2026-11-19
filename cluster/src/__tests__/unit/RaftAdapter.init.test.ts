@@ -183,10 +183,17 @@ vi.mock('../../consensus/transport/SharedBatchedTransport', () => {
 vi.mock('../../consensus/transport/BatchedRaftTransport', () => {
   const { MockTransport: MT } = require('@maboke123/raft-core/testing');
   return {
+    // The constructor argument is recorded because it is the thing under test:
+    // `RaftAdapter.init()` used to hand this constructor a copy of seven fields
+    // from a locally declared config type, and the two settings that type did not
+    // declare never reached the transport.
+    transportConfigs: [] as unknown[],
     BatchedRaftTransport: class {
       private inner = new MT('tcp');
       public underlying: any;
       constructor(config: any) {
+        (globalThis as any).__transportConfigs ??= [];
+        (globalThis as any).__transportConfigs.push(config);
         this.underlying = {
           start: async () => {},
           waitForConnections: async () => {},
@@ -543,6 +550,45 @@ describe('RaftAdapter.init — shared transport & tcp transport', () => {
     await adapter.init(undefined, tcpConfig);
     expect((adapter as any).originalTcpTransport).not.toBeNull();
     expect((adapter as any).node).not.toBeNull();
+    await adapter.stop();
+  });
+
+  // AC 34.53: the caller's transport config reaches the transport whole.
+  //
+  // `init()` used to copy seven fields out of a second, locally declared
+  // `RaftTcpTransportConfig` and hand that copy to `BatchedRaftTransport`. The
+  // local declaration had no `compression` and no `tls.verify`, so both were
+  // accepted at the call site and dropped before the transport ever saw them: a
+  // node that quietly did not compress, and one that quietly ignored the
+  // certificate-identity policy it had asked for. Identity is the assertion
+  // rather than field-by-field equality, because a copy that happens to carry the
+  // right values today is the defect waiting to reappear.
+  it('init forwards the transport config to the transport without rebuilding it', async () => {
+    const tcpConfig = {
+      node: { id: 1, host: '127.0.0.1', port: 5001 },
+      peers: [{ id: 2, host: '127.0.0.1', port: 5002 }],
+      tls: {
+        cert: Buffer.from('c'),
+        key: Buffer.from('k'),
+        ca: Buffer.from('a'),
+        verify: { allowedSANPrefixes: ['raft-node-'] },
+      },
+      connectTimeoutMs: 1000,
+      initialRetryMs: 50,
+      maxRetryMs: 1000,
+      compression: { enabled: true, algorithm: 'zstd' as const, threshold: 128, level: 3 },
+    };
+    const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, peers: [2] }));
+    await adapter.init(undefined, tcpConfig);
+
+    expect((adapter as any).originalTcpTransport).not.toBeNull();
+
+    const configs = (globalThis as any).__transportConfigs as unknown[];
+    const forwarded = configs[configs.length - 1] as typeof tcpConfig;
+    expect(forwarded).toBe(tcpConfig);
+    expect(forwarded.compression).toEqual({ enabled: true, algorithm: 'zstd', threshold: 128, level: 3 });
+    expect(forwarded.tls.verify).toEqual({ allowedSANPrefixes: ['raft-node-'] });
+
     await adapter.stop();
   });
 
