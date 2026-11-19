@@ -1,24 +1,23 @@
 /**
- * CDCPublicationRegistry — CDC publication & subscription management.
+ * CDCPublicationRegistry — the CDC publication catalogue.
  *
- * Manages the lifecycle of CDC publications and subscriptions:
- *   - createPublication: declare a named set of tables to track
- *   - dropPublication: remove a publication
- *   - createSubscription: create a subscription targeting a DSN/webhook
+ * Keeps the two maps that describe what is being captured:
+ *   - createPublication: declare a named set of tables to track (and watch them)
+ *   - dropPublication: remove a publication, unwatching tables nobody else reads
+ *   - createSubscription: record a subscription and the DSN it targets
  *   - dropSubscription: remove a subscription
- *   - onSlotInvalid: event when a replication slot becomes invalid
  *
- * The manager delegates table watching to CDCEngine and delivers
- * change events to the appropriate subscriptions.
+ * It delivers nothing, and says so. It used to subscribe to the engine's change
+ * stream and filter events into a loop whose body only held `continue` — the
+ * class claimed to "deliver change events to the appropriate subscriptions"
+ * while delivering none of them, and carried both `onSlotInvalid` and the
+ * `fireSlotInvalid()` hook that existed only to make that event testable.
+ * Delivery is `ExactlyOnceCDCPipeline` (engine → outbox → transport → dedup),
+ * which owns ordering, retry and checkpoints; a catalogue that also delivered
+ * would be a second, weaker path.
  */
 
-import type {
-  ICDCManager,
-  ICDCPublication,
-  CDCSubscription,
-  ICDCEngine,
-  CDCChangeEvent,
-} from '../interfaces/replication/ICDCManager';
+import type { ICDCManager, ICDCPublication, CDCSubscription, ICDCEngine } from '../interfaces/replication/ICDCManager';
 
 export type CDCPublicationRegistryConfig = {
   nodeId: string;
@@ -29,16 +28,9 @@ export class CDCPublicationRegistry implements ICDCManager {
   private readonly engine: ICDCEngine;
   private readonly publications = new Map<string, ICDCPublication>();
   private readonly subscriptions = new Map<string, CDCSubscription>();
-  private readonly slotInvalidCallbacks = new Set<(subscriptionId: string) => void>();
-  private readonly unsubFromEngine: () => void;
 
   constructor(config: CDCPublicationRegistryConfig) {
     this.engine = config.engine;
-
-    // Subscribe to engine changes and dispatch to subscriptions
-    this.unsubFromEngine = this.engine.onChange((event: CDCChangeEvent) => {
-      this.dispatch(event);
-    });
   }
 
   async createPublication(name: string, tables: string[]): Promise<ICDCPublication> {
@@ -117,36 +109,5 @@ export class CDCPublicationRegistry implements ICDCManager {
 
   async getPublications(): Promise<ICDCPublication[]> {
     return Array.from(this.publications.values());
-  }
-
-  onSlotInvalid(callback: (subscriptionId: string) => void): () => void {
-    this.slotInvalidCallbacks.add(callback);
-    return () => {
-      this.slotInvalidCallbacks.delete(callback);
-    };
-  }
-
-  /**
-   * Simulate a slot becoming invalid (for testing).
-   */
-  fireSlotInvalid(subscriptionId: string): void {
-    for (const cb of this.slotInvalidCallbacks) {
-      cb(subscriptionId);
-    }
-  }
-
-  /**
-   * Internal: dispatch a CDC event to matching subscriptions.
-   */
-  private dispatch(event: CDCChangeEvent): void {
-    for (const [, sub] of this.subscriptions) {
-      // Check if subscription covers this table
-      if (!sub.tables.includes(event.tableName)) continue;
-      // Check if subscription covers this operation
-      if (!sub.operations.includes(event.operation)) continue;
-
-      // For webhook-based subscriptions, future: async delivery
-      // For now, all subscriptions receive inline
-    }
   }
 }

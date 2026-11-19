@@ -4,10 +4,7 @@
  * Coverage:
  *   - create/drop publication lifecycle
  *   - create/drop subscription lifecycle
- *   - dispatch events to matching subscriptions
- *   - dispatch filtering by table name
- *   - dispatch filtering by operation type
- *   - onSlotInvalid event
+ *   - the catalogue is not an event source (delivery belongs to the pipeline)
  *   - error on duplicate publication
  *   - error on non-existent publication
  *   - HLC timestamp ordering via engine
@@ -170,101 +167,38 @@ describe('CDCPublicationRegistry — subscription lifecycle', () => {
   });
 });
 
-describe('CDCPublicationRegistry — event dispatch', () => {
-  it('should dispatch events to matching subscriptions by table name', () => {
+describe('CDCPublicationRegistry — catalogue, not a stream', () => {
+  it('leaves delivery to the caller: the engine emitter still reaches its own subscribers', () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
-    const hlc = new HLC('test-node');
+    const registry = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
+    const seen: CDCChangeEvent[] = [];
+    engine.onChange((e) => seen.push(e));
 
-    // Create publication + subscription for "users" table
-    manager.createPublication('pub-users', ['users']);
-    manager.createSubscription('sub-users', 'pub-users', 'postgres://...');
+    registry.createPublication('pub-users', ['users']);
 
-    // Events for "users" should match; events for "orders" should not
-    // The dispatch is internal — we verify by injecting via engine and
-    // checking that the subscription doesn't throw (no handler crash).
-
-    // This is a smoke test that dispatch runs without error
-    const event = engine.appendChange({
+    engine.appendChange({
       tableName: 'users',
       operation: 'insert',
       oldValues: null,
       newValues: { id: 1, name: 'alice' },
     });
 
-    expect(event.tableName).toBe('users');
-    expect(event.operation).toBe('insert');
+    // The catalogue neither swallows the event nor delivers a copy of it: the
+    // one subscriber above is exactly one delivery, which is the property that
+    // was missing while `dispatch()` looped over subscriptions and did nothing.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.tableName).toBe('users');
   });
 
-  it('should not throw when no subscriptions match', () => {
+  it('publishes no slot-invalid event, because nothing observes a slot', () => {
     const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
+    const registry = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
+    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(registry));
 
-    manager.createPublication('pub-orders', ['orders']);
-    manager.createSubscription('sub-orders', 'pub-orders', 'postgres://...');
-
-    // Event for an unwatched table — should dispatch silently with no match
-    expect(() => {
-      engine.appendChange({
-        tableName: 'unwatched_table',
-        operation: 'insert',
-        oldValues: null,
-        newValues: { id: 1 },
-      });
-    }).not.toThrow();
-  });
-
-  it('should filter by operation type', () => {
-    const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
-
-    manager.createPublication('pub', ['users']);
-    manager.createSubscription('sub', 'pub', 'postgres://...');
-
-    // The CDCPublicationRegistry dispatch is fire-and-forget — current implementation
-    // delivers all matching events inline. Verify no error for each op type.
-    expect(() => {
-      engine.appendChange({
-        tableName: 'users',
-        operation: 'insert',
-        oldValues: null,
-        newValues: { id: 1 },
-      });
-      engine.appendChange({
-        tableName: 'users',
-        operation: 'update',
-        oldValues: { id: 1 },
-        newValues: { id: 1, name: 'bob' },
-      });
-      engine.appendChange({
-        tableName: 'users',
-        operation: 'delete',
-        oldValues: { id: 1 },
-        newValues: null,
-      });
-    }).not.toThrow();
-  });
-});
-
-describe('CDCPublicationRegistry — onSlotInvalid', () => {
-  it('should register and fire slotInvalid callbacks', () => {
-    const engine = new CDCEngine({ nodeId: 'test-node' });
-    const manager = new CDCPublicationRegistry({ nodeId: 'test-node', engine });
-
-    const callback = vi.fn();
-    const unsub = manager.onSlotInvalid(callback);
-
-    // The CDCPublicationRegistry has a fireSlotInvalid method for testing
-    manager['fireSlotInvalid']('sub-1');
-    manager['fireSlotInvalid']('sub-2');
-
-    expect(callback).toHaveBeenCalledTimes(2);
-    expect(callback).toHaveBeenCalledWith('sub-1');
-    expect(callback).toHaveBeenCalledWith('sub-2');
-
-    unsub();
-    manager['fireSlotInvalid']('sub-3');
-    expect(callback).toHaveBeenCalledTimes(2); // unsubscribed
+    // `fireSlotInvalid()` lived on this class only so a suite could drive a
+    // callback no deployment could ever receive. Both halves are gone; this
+    // assertion is what stops either from creeping back as a convenience.
+    expect(methods.filter((m) => /slot/i.test(m))).toEqual([]);
   });
 });
 

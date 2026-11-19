@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`CDCPublicationRegistry` is documented as a catalogue.** Its reference entry, its README row and
+  its header comment now say it keeps publications and subscriptions and delivers nothing, instead
+  of claiming a delivery path that did not exist.
 - **`FederationEnvelope` was called `RaftMessage`.** A second `RaftMessage` in this package — text
   `type`, numeric `term` — with the same name as the wire type `@agentix-e/db-cluster` publishes
   under it. The gateway's envelope has its own name.
@@ -34,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`CDCPublicationRegistry.onSlotInvalid()` and its `fireSlotInvalid()` hook**, and the member on
+  `ICDCManager`. A slot that goes invalid is a PostgreSQL event this package does not observe: the
+  callback set had no source, and the only thing that ever fired it was a public method on a
+  production class that existed so a test could reach it. A deployment could subscribe to an event
+  that could never arrive.
+- **`CDCPublicationRegistry`'s change dispatching.** The class subscribed to the engine's change
+  stream and filtered events into a loop whose body was three `continue`s — it advertised delivering
+  "change events to the appropriate subscriptions" and delivered none. The subscription, the empty
+  loop and the claim are gone; `ExactlyOnceCDCPipeline` is where delivery lives, with the ordering,
+  retry and checkpoint that a second path would not have had.
 - **Seven `ICDCManager` stubs on the streaming manager.** `getPublications()` returned `[]` for every
   caller forever, `dropPublication()` did nothing, and `createPublication()` built an object it then
   discarded. Publishing that class under the name `CDCManager` would have published the fakes, so the

@@ -326,7 +326,6 @@ describe('@agentix-e/db-federation replication types', () => {
       dropSubscription: vi.fn().mockResolvedValue(undefined),
       getSubscriptions: vi.fn().mockResolvedValue([]),
       getPublications: vi.fn().mockResolvedValue([]),
-      onSlotInvalid: vi.fn().mockReturnValue(vi.fn()),
     };
     expect(typeof manager.createPublication).toBe('function');
     expect(typeof manager.dropPublication).toBe('function');
@@ -334,7 +333,6 @@ describe('@agentix-e/db-federation replication types', () => {
     expect(typeof manager.dropSubscription).toBe('function');
     expect(typeof manager.getSubscriptions).toBe('function');
     expect(typeof manager.getPublications).toBe('function');
-    expect(typeof manager.onSlotInvalid).toBe('function');
   });
 
   it('should validate ReplicationSlot structure', () => {

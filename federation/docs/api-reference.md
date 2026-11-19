@@ -376,12 +376,17 @@ class CDCManager {
 
 ### `CDCPublicationRegistry`
 
-The publication and subscription bookkeeping a PostgreSQL-style replication
-slot needs: named publications over table sets, subscriptions pointing at a
-target DSN, and the slot-invalid event a subscriber has to hear about. It is a
-separate object from `CDCManager` because the two jobs have different lifetimes —
-publications outlive any one streaming session — and because a manager that
-answers `getPublications()` with an empty array is not a registry.
+The publication and subscription catalogue a PostgreSQL-style replication setup
+needs: named publications over table sets, and subscriptions pointing at a
+target DSN. It is a separate object from `CDCManager` because the two jobs have
+different lifetimes — publications outlive any one streaming session — and
+because a manager that answers `getPublications()` with an empty array is not a
+registry.
+
+It is a catalogue and nothing else: it keeps the maps and watches the
+publications' tables on the engine, but it does not subscribe to the change
+stream and delivers no events. Delivery with ordering, retry and checkpoints is
+`ExactlyOnceCDCPipeline`.
 
 ```typescript
 class CDCPublicationRegistry {
@@ -392,8 +397,6 @@ class CDCPublicationRegistry {
   dropSubscription(name: string): Promise<void>;
   getSubscriptions(): Promise<CDCSubscription[]>;
   getPublications(): Promise<ICDCPublication[]>;
-  onSlotInvalid(callback: (subscriptionId: string) => void): () => void;
-  fireSlotInvalid(subscriptionId: string): void;
 }
 ```
 

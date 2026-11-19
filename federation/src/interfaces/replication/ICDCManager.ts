@@ -37,6 +37,17 @@ export interface ICDCPublication {
   createdAt: number;
 }
 
+/**
+ * The publication catalogue: which tables are tracked, and which subscriptions
+ * read them.
+ *
+ * It carries no event stream. `onSlotInvalid` used to be declared here, and the
+ * only thing that ever fired it was a test hook on the implementation: a slot
+ * that goes invalid is a PostgreSQL event this package does not observe, so the
+ * member was a promise with no source. Delivery of changes is
+ * `ExactlyOnceCDCPipeline`'s job (engine → outbox → transport), not the
+ * catalogue's.
+ */
 export interface ICDCManager {
   createPublication(name: string, tables: string[]): Promise<ICDCPublication>;
   dropPublication(name: string): Promise<void>;
@@ -44,6 +55,4 @@ export interface ICDCManager {
   dropSubscription(name: string): Promise<void>;
   getSubscriptions(): Promise<CDCSubscription[]>;
   getPublications(): Promise<ICDCPublication[]>;
-  /** Event: fires when a subscription's replication slot becomes invalid */
-  onSlotInvalid(callback: (subscriptionId: string) => void): () => void;
 }

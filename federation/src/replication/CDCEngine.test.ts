@@ -7,7 +7,6 @@
  * AC 45.4 — CDC change events carry HLC timestamps
  * AC 45.5 — Subscription filtering by table and operation
  *     — CDCEngine start/stop lifecycle
- *     — CDCPublicationRegistry onSlotInvalid event
  *     — Duplicate publication/subscription rejection
  */
 
@@ -368,30 +367,5 @@ describe('CDCPublicationRegistry — AC 45.5: Event Dispatch', () => {
     expect(onEngineCb).toHaveBeenCalledTimes(1);
     const event = onEngineCb.mock.calls[0]![0] as CDCChangeEvent;
     expect(event.tableName).toBe('users');
-  });
-});
-
-describe('CDCPublicationRegistry — onSlotInvalid', () => {
-  it('should fire onSlotInvalid event', () => {
-    const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
-
-    const invalidSlots: string[] = [];
-    mgr.onSlotInvalid((subId) => invalidSlots.push(subId));
-
-    mgr.fireSlotInvalid('sub1');
-    expect(invalidSlots).toEqual(['sub1']);
-  });
-
-  it('should allow unsubscription from onSlotInvalid', () => {
-    const engine = new CDCEngine({ nodeId: 'n1' });
-    const mgr = new CDCPublicationRegistry({ nodeId: 'n1', engine });
-
-    const invalidSlots: string[] = [];
-    const unsub = mgr.onSlotInvalid((subId) => invalidSlots.push(subId));
-    unsub();
-
-    mgr.fireSlotInvalid('sub1');
-    expect(invalidSlots).toHaveLength(0);
   });
 });
