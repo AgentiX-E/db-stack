@@ -165,18 +165,33 @@ describe('SessionManager', () => {
 
   // ── Sliding expiry ──────────────────────────────────────────────
 
-  it('sliding expiry: every access resets the TTL', async () => {
-    const shortSm = new SessionManager({ ttlMs: 50, slidingExpiry: true });
-    shortSm.create('s1');
+  // Wall-clock proof of this property is a coin toss: 50 ms of TTL against ten
+  // 10 ms sleeps means one stalled event-loop turn — a coverage run with 134
+  // files in flight has thousands — expires the session and the case fails for a
+  // reason that is not the code's. The clock is the variable, so it is the thing
+  // under control here: the timers are fake, every access is followed by an exact
+  // assertion on the new deadline, and no assertion depends on how fast the
+  // machine is.
+  it('sliding expiry: every access moves the deadline a full TTL ahead', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const ttlMs = 50;
+      const shortSm = new SessionManager({ ttlMs, slidingExpiry: true });
+      shortSm.create('s1');
 
-    // Access repeatedly; each access extends the TTL
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 10));
-      expect(shortSm.get('s1')).not.toBeNull();
+      for (let i = 0; i < 10; i++) {
+        vi.advanceTimersByTime(10);
+        const entry = shortSm.get('s1');
+        expect(entry).not.toBeNull();
+        expect(entry!.expiresAt).toBe(Date.now() + ttlMs);
+        expect(entry!.lastAccessAt).toBe(Date.now());
+      }
+
+      shortSm.shutdown();
+    } finally {
+      vi.useRealTimers();
     }
-
-    expect(shortSm.get('s1')!.lastAccessAt).toBeGreaterThan(0);
-    shortSm.shutdown();
   });
 
   // ── Concurrent capacity ─────────────────────────────────────────
