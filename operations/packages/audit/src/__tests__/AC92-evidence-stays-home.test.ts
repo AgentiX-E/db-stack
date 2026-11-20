@@ -136,7 +136,7 @@ describe('AC 92 — a path the store writes is pinned and whole', () => {
 
     await store.write(entry('INSERT'));
     await store.write(entry('UPDATE'));
-    await store.flush();
+    await store.close();
 
     expect(recorder.paths.length).toBeGreaterThan(0);
     for (const path of recorder.paths) {
@@ -173,7 +173,7 @@ describe('AC 92 — a path the store writes is pinned and whole', () => {
        const store = new FileAuditStore({ dataDir: 'named' });
        process.chdir(${JSON.stringify(elsewhere)});
        await store.write({ operation: 'LOGIN', actor: 'admin', resource: '/api/login', result: 'success' });
-       await store.flush();
+       await store.close();
        const files = (dir) => readdirSync(dir).filter((name) => name.endsWith('.ndjson'));
        console.log(JSON.stringify({ named: files(${JSON.stringify(named)}), elsewhere: files(${JSON.stringify(elsewhere)}) }));`,
       PACKAGE_DIR,
@@ -200,7 +200,7 @@ describe('AC 92 — a path the store writes is pinned and whole', () => {
       `${STORE_IMPORT}
        const store = new FileAuditStore({ dataDir: ${JSON.stringify(dataDir)} });
        await store.write({ operation: 'DELETE', actor: 'ops', resource: '/db/rows', result: 'success' });
-       await store.flush();
+       await store.close();
        console.log(JSON.stringify({ cwd: process.cwd() }));`,
       work,
     );
