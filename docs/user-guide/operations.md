@@ -57,7 +57,7 @@ not editing call sites.
 | `maintenance`    | VACUUM/ANALYZE/REINDEX windows and scheduling                            | `MaintenanceWindowScheduler`                                                                                  |
 | `security`       | TLS, key management, encryption at rest, RBAC, rate limiting, compliance | `KeyManager`, `KeyRotationManager`, `EnvelopeEncryptionProvider`, `AES256GCMEncryptionProvider`, `RBACEngine` |
 | `auth`           | Authentication providers and session tokens                              | provider interfaces, JWT/static providers                                                                     |
-| `audit`          | Tamper-evident audit log, export, query                                  | `InMemoryAuditStore`, `FileAuditStore`, `JsonAuditExporter`                                                   |
+| `audit`          | Append-only audit log: crash-safe segments, rotation, export, query      | `InMemoryAuditStore`, `FileAuditStore`, `JsonAuditExporter`                                                   |
 | `autoscaler`     | Reactive + predictive scaling decisions                                  | `AutoScaler`, `PredictiveScalingEngine`                                                                       |
 | `autotuner`      | Configuration tuning from observed load                                  | `AutoTunerWorker`                                                                                             |
 | `configwatcher`  | Live configuration reload with validation                                | watchers, validators                                                                                          |
