@@ -41,6 +41,10 @@
  *   AC 34.69 promoteServer reports rejected when raft refuses, and commits when it accepts
  *   AC 34.70 removeServer reports not-started, not-leader, and unsupported ids
  *   AC 34.71 removeServer reports rejected when raft refuses, and commits when it accepts
+ *   AC 34.89 a refused change leaves no trace in the membership or the majority this
+ *            adapter reports (the single-step requirement, measured)
+ *   AC 34.90 checkQuorum: false answers leadership from the role and reads no
+ *            configuration
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -349,6 +353,45 @@ describe('RaftAdapter membership', () => {
     await expect(promoted.adapter.promoteServer(4)).resolves.toEqual({ changed: true });
     expect(promoted.node.promoteServer).toHaveBeenCalledWith('4');
     expect(promoted.watchdog.majority).toBe(3);
+  });
+
+  it('AC 34.89 — a refused membership change leaves nothing behind that this adapter reports', async () => {
+    // raft-core appends a *single-step* configuration: the new voter set is in force
+    // for the commit that admits it, so a promotion needs the existing voters to
+    // answer. When they cannot, the library reports the change as uncommitted — and
+    // the entry it appended may still be its in-memory active configuration. Nothing
+    // this package reports may follow that uncommitted view: `getMembership()` reads
+    // the committed configuration, and the watchdog's majority stays the one raft can
+    // actually commit with. The single-step requirement is therefore visible to a
+    // caller as "rejected", never as a cluster that grew.
+    const refused = harness();
+    refused.store.read.mockResolvedValue(persisted([{ id: '1' }, { id: '2' }, { id: '3' }]));
+    refused.node.promoteServer.mockResolvedValue(false);
+
+    const before = await refused.adapter.getMembership();
+    await expect(refused.adapter.promoteServer(4)).resolves.toEqual({ changed: false, reason: 'rejected' });
+
+    const after = await refused.adapter.getMembership();
+    expect(after).toEqual(before);
+    expect(after.voters).toEqual([1, 2, 3]);
+    // Three voters, two answers: the majority raft can commit with, not the four-voter
+    // majority the refused entry would have created.
+    expect(refused.watchdog.majority).toBe(2);
+    expect(refused.watchdog.size).toBe(3);
+  });
+
+  it('AC 34.90 — checkQuorum: false answers leadership from the role, and reads no configuration', async () => {
+    // Accounting off is a decision with a cost attached: the adapter must not pay for
+    // a configuration read on every routing call to compute an answer it was told not
+    // to compute. The store is the observable: a read here would be work nobody asked
+    // for, once per `isLeader()`.
+    const off = harness({ checkQuorum: false });
+    (off.adapter as any).watchdog = null;
+    off.store.read.mockClear();
+
+    await expect(off.adapter.isLeader()).resolves.toBe(true);
+    expect(off.store.read).not.toHaveBeenCalled();
+    expect(off.adapter.getQuorumHealth()).toBeNull();
   });
 
   it('AC 34.70 — removeServer answers not-started, not-leader and unsupported ids', async () => {

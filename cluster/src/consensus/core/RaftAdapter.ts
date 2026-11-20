@@ -160,6 +160,18 @@ export interface RaftConfig {
    */
   checkQuorum?: boolean;
   /**
+   * The other voting members, for modes that do not declare them in `peers`.
+   *
+   * A group on a shared transport keeps its membership in the manager that routes
+   * for it, so a caller can build an adapter whose `peers` is empty and whose
+   * cluster has three voters. Quorum arithmetic needs a denominator, and the
+   * committed configuration is the authority — this option exists for the window
+   * before the first one is read, when a node has peers to count but nothing
+   * persisted to read them from. It is merged with `peers`, never replaces it, so
+   * declaring the set twice cannot produce two different majorities.
+   */
+  quorumMembers?: readonly number[];
+  /**
    * Entries between snapshots (default `DEFAULT_SNAPSHOT_INTERVAL` = 200).
    *
    * Lower keeps the log a restart replays short and pays for it in capture cost
@@ -343,6 +355,8 @@ export class RaftAdapter {
   private observer: ObservedTransport | null = null;
   /** What the leader knows about who answered it lately. */
   private watchdog: QuorumWatchdog | null = null;
+  /** How long an answer counts as contact, kept so a watchdog can be built later. */
+  private quorumWindowMs = 0;
   private originalTcpTransport: OriginalRaftTcpTransport | null = null;
 
   /**
@@ -967,9 +981,11 @@ export class RaftAdapter {
   /**
    * Who this node has heard from lately, and whether that is a majority.
    *
-   * Null when quorum accounting is off (`checkQuorum: false`) or impossible (a
-   * configuration with no peer list, such as a shared-transport group whose members
-   * live in another manager).
+   * Null when quorum accounting is off (`checkQuorum: false`), and null until the
+   * node knows who its voters are. That window is short and real: a shared-transport
+   * group declares no peers, so its watchdog exists only after the first committed
+   * configuration has been read, which happens on the first `isLeader()` call and
+   * inside every membership change.
    */
   getQuorumHealth(): QuorumHealth | null {
     const watchdog = this.watchdog;
@@ -986,6 +1002,11 @@ export class RaftAdapter {
   /** Settings that were accepted but cannot take effect, with the reason. */
   getIgnoredSettings(): Array<{ setting: string; reason: string }> {
     return this.ignoredSettings.map((entry) => ({ ...entry }));
+  }
+
+  /** Whether quorum accounting was asked for. Off means "answer from the role only". */
+  private get accounting(): boolean {
+    return this.config.checkQuorum !== false;
   }
 
   /** Whether this node currently hears from a majority. True when not accounted for. */
@@ -1012,8 +1033,11 @@ export class RaftAdapter {
       if (!(await this.node.isLeader())) return false;
       // The member set decides what a majority is, and it changes while a leader
       // serves. Refreshing here is what keeps this answer about the cluster that
-      // exists rather than the one that existed at `init()`.
-      if (this.watchdog) await this.refreshMembership();
+      // exists rather than the one that existed at `init()` — and for a node whose
+      // peers were never declared, it is the first moment a member set exists at
+      // all, which is why it runs whenever accounting is on rather than only when a
+      // watchdog was already built.
+      if (this.accounting) await this.refreshMembership();
       return this.hasQuorum();
     } catch {
       return false;
@@ -1021,22 +1045,72 @@ export class RaftAdapter {
   }
 
   /**
-   * Install the seam around `transport` and, when quorum accounting is possible,
-   * the observer inside it. Returns the object raft-core must be constructed with.
+   * Install the seam around `transport` and, when quorum accounting is on, the
+   * observer inside it. Returns the object raft-core must be constructed with.
+   *
+   * The observer is installed even when the member set is empty, because the
+   * member set is not a constructor argument that has to be right — it is a fact
+   * the node learns. A group on a shared transport declares no peers, so the only
+   * true voter set is the one raft commits, and a watchdog built at `init()` from
+   * an empty list used to mean "no accounting at all" for that mode: the routing
+   * hazard P3-20 closed for a TCP cluster stayed open for the single-process
+   * multi-group cluster. The observer costs one wrapper and makes the later
+   * {@link adoptMembership} able to see traffic that arrived before it.
    */
   private attachTransport(transport: Transport, peerIds: readonly number[], windowMs: number): Transport {
-    const members = [...new Set(peerIds.filter((peer) => peer !== this.config.id))];
-    if (this.config.checkQuorum === false || members.length === 0) {
-      // No member list means no arithmetic: a shared-transport group keeps its
-      // members in another manager, so claiming to judge its quorum would be a guess.
-      // It keeps today's behaviour and says so through getQuorumHealth() === null.
+    if (!this.accounting) {
+      // Accounting off is a statement, not a gap: `getQuorumHealth()` answers null
+      // and `isLeader()` reports the library's role untouched.
       this.transportProxy = new SwappableTransport(transport);
       return this.transportProxy;
     }
-    this.watchdog = new QuorumWatchdog({ selfId: this.config.id, peers: members, windowMs });
+
+    this.quorumWindowMs = windowMs;
+    const declared = [...new Set([...peerIds, ...(this.config.quorumMembers ?? [])])].filter(
+      (peer) => peer !== this.config.id,
+    );
+    // A declared set is used immediately: an operator who passes `quorumMembers`
+    // is answering the question the committed configuration would answer one
+    // election later, and a leader that cannot count for its first term is a
+    // leader whose `isLeader()` lies for its first term.
+    if (declared.length > 0) {
+      this.watchdog = new QuorumWatchdog({ selfId: this.config.id, peers: declared, windowMs });
+    }
     this.observer = new ObservedTransport(transport, (peer) => this.watchdog?.observe(peer));
     this.transportProxy = new SwappableTransport(this.observer);
     return this.transportProxy;
+  }
+
+  /**
+   * Point quorum accounting at the voters raft actually committed.
+   *
+   * This is the only way a watchdog comes into existence after `init()`, and it is
+   * what makes the member set a fact rather than a promise: a shared-transport
+   * group declares no peers, and the configuration it commits — written by the
+   * leader that admitted it, read from this node's storage — is the same list every
+   * other node in that group votes with. Counting anything else would let a node
+   * compute a majority raft cannot commit with, which is the false positive
+   * direction and the reason `setMembers` exists at all.
+   */
+  private adoptMembership(voters: readonly number[]): void {
+    if (this.watchdog) {
+      this.watchdog.setMembers(voters);
+      return;
+    }
+    // A watchdog with no observations yet: every peer is silent until it answers,
+    // so a fresh node reports no quorum until it has actually heard from one. The
+    // alternative — assuming contact because a configuration mentions a peer — is
+    // the assumption this class exists to refuse.
+    //
+    // `voters` is never empty: the only caller reads a committed configuration, and
+    // a row with no voters is treated there as corrupt rather than as a cluster of
+    // nobody — a watchdog with no peers would be a watchdog of one, which claims a
+    // quorum for every isolated node.
+    this.watchdog = new QuorumWatchdog({
+      selfId: this.config.id,
+      peers: voters,
+      windowMs: this.quorumWindowMs,
+    });
   }
 
   /**
@@ -1520,7 +1594,7 @@ export class RaftAdapter {
     // Only a persisted configuration may replace the watchdog's member set. The
     // bootstrap fallback is what `init()` already used, and a storage that could not
     // be read says nothing about who votes — the last real answer is the better one.
-    if (persisted) this.watchdog?.setMembers(persisted.voters);
+    if (persisted && this.accounting) this.adoptMembership(persisted.voters);
     return persisted ?? this.bootstrapMembership();
   }
 
@@ -1658,7 +1732,10 @@ export class RaftAdapter {
     const id = Number(nodeId);
     if (!Number.isInteger(id) || id <= 0) return 'unsupported';
     if (!(await this.node.isLeader())) return 'not-leader';
-    if (this.watchdog) {
+    if (this.accounting) {
+      // The same reason `isLeader()` refreshes: a membership change is exactly when
+      // the voter set is in question, and a node that has never adopted one has to
+      // adopt it before it can honestly say whether it has a majority to change it.
       await this.refreshMembership();
       if (!this.hasQuorum()) return 'no-quorum';
     }

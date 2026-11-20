@@ -19,6 +19,10 @@
  *             current one is taken as it is, anything else gets a fresh observer
  *   AC 34.49: preVote: false is recorded as a setting that cannot take effect, not
  *             only logged
+ *   AC 34.85: quorumMembers gives accounting to a node whose peers are undeclared
+ *   AC 34.86: a node with neither peers nor quorumMembers reports no accounting
+ *   AC 34.87: checkQuorum: false answers null even when the members are declared
+ *   AC 34.88: a persisted configuration is adopted by a node that declared nothing
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -553,7 +557,7 @@ describe('RaftAdapter.init — shared transport & tcp transport', () => {
     await adapter.stop();
   });
 
-  // AC 34.53: the caller's transport config reaches the transport whole.
+  // AC 34.81: the caller's transport config reaches the transport whole.
   //
   // `init()` used to copy seven fields out of a second, locally declared
   // `RaftTcpTransportConfig` and hand that copy to `BatchedRaftTransport`. The
@@ -614,6 +618,124 @@ describe('RaftAdapter.init — shared transport & tcp transport', () => {
     const adapter = new RaftAdapter(minimalConfig({ useInMemoryStorage: true, transport, peers: undefined }));
     await adapter.init();
     expect((adapter as any).node).not.toBeNull();
+    await adapter.stop();
+  });
+});
+
+describe('RaftAdapter quorum membership', () => {
+  afterEach(() => {
+    MockTransport.reset();
+    vi.restoreAllMocks();
+  });
+
+  // AC 34.85: an explicit member set accounts for a node that declares no peers.
+  it('AC 34.85 — quorumMembers gives accounting to a node whose peers are undeclared', async () => {
+    // The shared-transport shape: the members live in the manager that routes for
+    // this group, so `peers` is empty and a watchdog built from it would be a
+    // watchdog of one. The declared set is merged with `peers`, and `size` counts
+    // this node too, so a three-voter group answers 3 and needs 2.
+    const adapter = new RaftAdapter(
+      minimalConfig({
+        useInMemoryStorage: true,
+        peers: [],
+        quorumMembers: [1, 2, 3],
+        transport: new MockTransport('1'),
+      }),
+    );
+    await adapter.init();
+
+    const health = adapter.getQuorumHealth();
+    expect(health).not.toBeNull();
+    expect(health!.size).toBe(3);
+    expect(health!.majority).toBe(2);
+    // Nobody has answered yet, and a configuration is not contact.
+    expect(health!.hasQuorum).toBe(false);
+    expect(health!.unheardPeers).toEqual([2, 3]);
+
+    await adapter.stop();
+  });
+
+  // AC 34.86: no member set at all is reported as no accounting, not as quorum.
+  it('AC 34.86 — a node with neither peers nor quorumMembers reports no accounting', async () => {
+    // Honest silence beats a fabricated majority: with no member list the only
+    // arithmetic available is "one of one", which is true of every isolated node.
+    const adapter = new RaftAdapter(
+      minimalConfig({ useInMemoryStorage: true, peers: undefined, transport: new MockTransport('1') }),
+    );
+    await adapter.init();
+
+    expect(adapter.getQuorumHealth()).toBeNull();
+
+    await adapter.stop();
+  });
+
+  // AC 34.87: checkQuorum: false is a decision that outranks a member set.
+  it('AC 34.87 — checkQuorum: false answers null even when the members are declared', async () => {
+    const adapter = new RaftAdapter(
+      minimalConfig({
+        useInMemoryStorage: true,
+        peers: [],
+        quorumMembers: [1, 2, 3],
+        checkQuorum: false,
+        transport: new MockTransport('1'),
+      }),
+    );
+    await adapter.init();
+
+    expect(adapter.getQuorumHealth()).toBeNull();
+
+    // Turning accounting off is not "until a configuration says otherwise": a
+    // committed configuration read afterwards must not switch it back on, because
+    // the observer that would have made it meaningful was never installed.
+    const storage = (adapter as any).nodeStorage as InMemoryNodeStorage;
+    await storage.open();
+    await storage.config.write(
+      [
+        { id: '1', address: 'node-1:0' },
+        { id: '2', address: 'node-2:0' },
+      ],
+      [],
+    );
+    await adapter.refreshMembership();
+    expect(adapter.getQuorumHealth()).toBeNull();
+
+    await adapter.stop();
+  });
+
+  // AC 34.88: the committed configuration creates the accounting a declared list
+  // would have created, because it is the only list that is a fact.
+  it('AC 34.88 — a persisted configuration is adopted by a node that declared nothing', async () => {
+    const adapter = new RaftAdapter(
+      minimalConfig({ useInMemoryStorage: true, peers: undefined, transport: new MockTransport('1') }),
+    );
+    await adapter.init();
+    expect(adapter.getQuorumHealth()).toBeNull();
+
+    const storage = (adapter as any).nodeStorage as InMemoryNodeStorage;
+    // The mocked node never opens its storage, so the test opens it: what is being
+    // measured is the adapter's reading of a committed configuration, not raft's
+    // lifecycle.
+    await storage.open();
+    await storage.config.write(
+      [
+        { id: '1', address: 'node-1:0' },
+        { id: '2', address: 'node-2:0' },
+        { id: '4', address: 'node-4:0' },
+      ],
+      [],
+    );
+
+    const membership = await adapter.refreshMembership();
+    expect(membership.source).toBe('persisted');
+    expect(membership.voters).toEqual([1, 2, 4]);
+
+    const health = adapter.getQuorumHealth();
+    expect(health, 'a node that read its configuration must be able to count it').not.toBeNull();
+    expect(health!.size).toBe(3);
+    // The adopted members are the ones raft committed, not the ones the constructor
+    // was told: 3 is absent from this configuration and must not be counted.
+    expect(health!.unheardPeers).toEqual([2, 4]);
+
     await adapter.stop();
   });
 });

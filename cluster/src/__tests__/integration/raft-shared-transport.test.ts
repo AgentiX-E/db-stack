@@ -31,11 +31,15 @@
  *   AC 12.4: Entries proposed to shard 1 commit on all 3 nodes of shard 1
  *   AC 12.5: Cross-shard isolation — shard 0 entries don't appear in shard 1 committed log
  *   AC 12.6: All adapters cleanly stop (no port leaks)
+ *   AC 12.7: every shard accounts for its own three voters on the shared transport
+ *   AC 12.8: isolating one group's leader flips its leadership and leaves the other
+ *            group's leader untouched, and the group commits again after healing
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { RaftAdapter } from '../../consensus/core/RaftAdapter';
 import { NodeTransport, NodeTransportConfig } from '../../consensus/transport/NodeTransport';
+import { PartitionTransport } from '../../testing/partition';
 import { generateClusterCerts } from './test-certs';
 import { getFreePorts, createTempDir, cleanupTempDir } from './test-utils';
 import { join } from 'node:path';
@@ -282,6 +286,86 @@ describe('Single-process multi-RaftGroup via SharedBatchedTransport', () => {
       }
     }
   }, 60_000);
+
+  it(
+    'AC 12.7: every shard on a shared transport accounts for its own three voters',
+    async () => {
+      // The mode this file exists for: six adapters, three transports. Quorum
+      // accounting is arithmetic over a member set, and nothing about a shared
+      // transport changes the arithmetic — but it does change where the set comes
+      // from, so the number is asserted rather than assumed. A group whose health is
+      // `null` here would be a group whose `isLeader()` answers the library's role
+      // and nothing else.
+      for (const shardIndex of [0, 1]) {
+        const group = getShardGroup(cluster, shardIndex);
+        for (const shard of group) {
+          const health = shard.adapter.getQuorumHealth();
+          expect(health, `node${shard.nodeId}shard${shardIndex} reports no accounting`).not.toBeNull();
+          expect(health!.size).toBe(NODE_COUNT);
+          expect(health!.majority).toBe(2);
+        }
+        const leader = await waitForLeaderInGroup(group, LEADER_TIMEOUT_MS);
+        expect(leader.adapter.getQuorumHealth()!.hasQuorum).toBe(true);
+      }
+    },
+    LEADER_TIMEOUT_MS + 5000,
+  );
+
+  it(
+    'AC 12.8: isolating one shard group leader flips its leadership and leaves the other group alone',
+    async () => {
+      // The P3-20 measurement, repeated on the mode P3-21 named. Two groups share a
+      // process and a socket; only one of them is partitioned, and the other must not
+      // notice — that is the difference between "this group lost its quorum" and
+      // "this process stopped talking to the network".
+      const shardGroup0 = getShardGroup(cluster, 0);
+      const shardGroup1 = getShardGroup(cluster, 1);
+      const leader0 = await waitForLeaderInGroup(shardGroup0, LEADER_TIMEOUT_MS);
+      const leader1 = await waitForLeaderInGroup(shardGroup1, LEADER_TIMEOUT_MS);
+
+      // Everything the other group claims must keep claiming it. Captured before the
+      // partition so a later failure can tell "wrong before" from "broken by this".
+      expect(await leader1.adapter.isLeader()).toBe(true);
+
+      const parted = new PartitionTransport(leader0.adapter.getTransport()!);
+      leader0.adapter.setTransport(parted);
+      parted.isolate();
+
+      try {
+        // One election timeout is `electionTick * tickIntervalMs` = 500 ms; the
+        // watchdog's window is that plus two ticks. Ten seconds is the bound a
+        // reader would call "immediately" rather than a number tuned to pass.
+        const deadline = Date.now() + 10_000;
+        let stillLeader = true;
+        while (Date.now() < deadline && stillLeader) {
+          stillLeader = await leader0.adapter.isLeader();
+          if (stillLeader) await sleep(100);
+        }
+
+        expect(stillLeader, 'an isolated group leader still claims leadership after 10 s').toBe(false);
+        expect(leader0.adapter.getQuorumHealth()!.hasQuorum).toBe(false);
+        expect(leader0.adapter.getQuorumHealth()!.unheardPeers).toEqual(
+          [1, 2, 3].filter((id) => id !== leader0.nodeId),
+        );
+
+        // The other group shares the process and the socket, and is untouched.
+        expect(await leader1.adapter.isLeader()).toBe(true);
+        expect(leader1.adapter.getQuorumHealth()!.hasQuorum).toBe(true);
+      } finally {
+        parted.heal();
+      }
+
+      // Healing is not restoration of the same node's leadership: the other two
+      // members may have elected a new leader meanwhile, which is what a partition
+      // costs. What the group owes a caller is a leader that can commit.
+      const newLeader = await waitForLeaderInGroup(
+        shardGroup0.filter((s) => s.nodeId !== leader0.nodeId),
+        LEADER_TIMEOUT_MS,
+      );
+      await proposeAndWait(newLeader, shardGroup0, 'entry-after-shard0-partition');
+    },
+    LEADER_TIMEOUT_MS + 60_000,
+  );
 
   it('AC 12.6: All adapters cleanly stop (no port leaks)', async () => {
     // Stop all adapters
