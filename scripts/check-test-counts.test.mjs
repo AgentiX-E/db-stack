@@ -384,6 +384,64 @@ test("--write on a page that is already right changes nothing", () => {
   }
 });
 
+test("a report with no test results is zero cases, not a crash", () => {
+  // The `?? []` is the difference between a run that collected nothing and a gate
+  // that threw: `vitest` omits `testResults` when every file failed to collect.
+  const measured = measure({});
+  assert.deepEqual(measured.total, { cases: 0, files: 0 });
+  assert.equal(measured.packages.size, 0);
+});
+
+test("a page the caller supplies is named by the path the caller supplied", () => {
+  const dir = mkdtempSync(join(tmpdir(), "test-counts-page-"));
+  try {
+    const pagePath = join(dir, "README.md");
+    const reportPath = join(dir, "test-report.json");
+    // One number off, so the finding has to name the page it came from: a page
+    // outside the repository named `operations/README.md` would send the reader to
+    // a file the finding is not about.
+    writeFileSync(pagePath, PAGE.replace("2 files and 2 tests", "4 files and 2 tests"));
+    writeFileSync(reportPath, JSON.stringify(reportOf([CORE, 2], [HEALTH, null])));
+
+    const errors = [];
+    const code = run(["--report", reportPath], {
+      page: pagePath,
+      log: () => {},
+      error: (line) => errors.push(line),
+    });
+
+    assert.equal(code, 1);
+    assert.match(errors[0], /✗ test-counts: 1 finding\(s\)/);
+    assert.ok(
+      errors.some((line) => line.includes(pagePath)),
+      `a finding about a supplied page names that page, got: ${errors.join(" / ")}`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the default report path is this tree's report, and its absence names it", () => {
+  // `--report` is the escape hatch; the path the gate takes with no arguments is
+  // the one every reader of the log sees. Pointing the gate at a temporary tree is
+  // the only way to assert it without asserting something about this checkout.
+  const dir = mkdtempSync(join(tmpdir(), "test-counts-default-"));
+  try {
+    const errors = [];
+    const code = run([], {
+      root: dir,
+      log: () => {},
+      error: (line) => errors.push(line),
+    });
+
+    assert.equal(code, 1);
+    assert.match(errors[0], /no report at operations\/coverage\/test-report\.json/);
+    assert.match(errors[0], /writes one\.$/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the command line is the command line: a missing report exits 1 and says what to run", () => {
   // The entry point is six lines no import can reach, and it is the half of the
   // gate a person actually runs. Spawning it is the only way to assert that the

@@ -294,7 +294,11 @@ export function loadReport(path) {
 export function run(argv = process.argv.slice(2), options = {}) {
   const log = options.log ?? console.log;
   const error = options.error ?? console.error;
-  const pagePath = options.page ?? resolve(root, PAGE);
+  // The tree is a parameter for the same reason the streams are: the default
+  // report path is a branch, and the only way to reach it from a test is to point
+  // the gate at a tree instead of at this one.
+  const base = options.root ?? root;
+  const pagePath = options.page ?? resolve(base, PAGE);
   const write = options.write ?? argv.includes("--write");
 
   const at = argv.indexOf("--report");
@@ -304,12 +308,12 @@ export function run(argv = process.argv.slice(2), options = {}) {
   }
   const reportPath =
     options.report ??
-    (at === -1 ? resolve(root, REPORT) : resolve(argv[at + 1]));
+    (at === -1 ? resolve(base, REPORT) : resolve(argv[at + 1]));
 
   const report = loadReport(reportPath);
   if (!report) {
     error(
-      `✗ test-counts: no report at ${relative(root, reportPath)}.\n` +
+      `✗ test-counts: no report at ${relative(base, reportPath)}.\n` +
         `The gate counts what a run measured, so it needs a run: ` +
         `\`pnpm --filter @agentix-e/db-operations run coverage\` writes one.`,
     );
