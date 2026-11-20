@@ -33,10 +33,51 @@ const PARENT_ERR = process.stderr;
 
 export interface NodeMessage {
   type:
-    'ready' | 'applied' | 'proposed' | 'status' | 'error' | 'leader' | 'stopped' | 'replicated' | 'conflict' | 'read';
+    | 'ready'
+    | 'applied'
+    | 'proposed'
+    | 'status'
+    | 'error'
+    | 'leader'
+    | 'stopped'
+    | 'replicated'
+    | 'conflict'
+    | 'read'
+    | 'membership';
   nodeId: number | string;
   data?: unknown;
   fatal?: boolean;
+}
+
+/**
+ * A node's answer to "what is the committed configuration, in your view?".
+ *
+ * Structural rather than imported: this harness loads the *published* build, and a
+ * type imported from the source tree would let the test agree with a declaration
+ * the artefact does not have.
+ */
+export interface MembershipReport {
+  voters: number[];
+  learners: number[];
+  source: 'persisted' | 'bootstrap';
+}
+
+/** What one node says about its ability to hear a majority. */
+export interface QuorumHealthReport {
+  size: number;
+  majority: number;
+  windowMs: number;
+  hasQuorum: boolean;
+  unheardPeers: number[];
+}
+
+/** One membership change, as the node that was asked reports it. */
+export interface MembershipChangeReply {
+  command: 'add' | 'promote' | 'remove';
+  request: { nodeId: number; address?: string };
+  result: { changed: boolean; reason?: string };
+  elapsedMs: number;
+  membership: MembershipReport;
 }
 
 /**
@@ -205,16 +246,87 @@ export class ChildNode {
     this.process.send?.(message as Parameters<NonNullable<typeof this.process.send>>[0]);
   }
 
-  /** Ask the node for a status snapshot. */
-  async status<T = Record<string, unknown>>(timeoutMs = 15_000): Promise<T> {
-    const before = this.messages.filter((m) => m.type === 'status').length;
-    this.send({ cmd: 'status' });
+  /**
+   * Send a command and wait for the reply it causes.
+   *
+   * The reply is matched from `messages.length` onward, not by identity: every
+   * caller of `status` receives a `status` message, so a wait that matched the
+   * first one in the buffer would answer this request with the previous request's
+   * data — and every assertion built on it would be about a moment already past.
+   */
+  async request<T = Record<string, unknown>>(
+    cmd: string,
+    payload: Record<string, unknown>,
+    replyType: NodeMessage['type'],
+    timeoutMs = 15_000,
+  ): Promise<T> {
+    const start = this.messages.length;
+    this.send({ cmd, ...payload });
     const msg = await this.waitFor(
-      (m) => m.type === 'status' && this.messages.filter((x) => x.type === 'status').indexOf(m) >= before,
+      (m) => m.type === replyType && this.messages.indexOf(m) >= start,
       timeoutMs,
-      'status',
+      replyType,
     );
     return msg.data as T;
+  }
+
+  /** Ask the node for a status snapshot. */
+  async status<T = Record<string, unknown>>(timeoutMs = 15_000): Promise<T> {
+    return this.request<T>('status', {}, 'status', timeoutMs);
+  }
+
+  /**
+   * Propose a command and return the node's answer, whether it accepted it or not.
+   *
+   * `propose` answers with `proposed` or with `error`; a caller that waits only for
+   * the first one turns "this node is no longer the leader" into a thirty-second
+   * timeout with no diagnosis — which is exactly how the first run of the membership
+   * suite reported a cluster that had simply moved its leader.
+   */
+  async propose(data: string, timeoutMs = 30_000): Promise<{ ok: true; index: number } | { ok: false; error: string }> {
+    const start = this.messages.length;
+    this.send({ cmd: 'propose', data });
+    const msg = await this.waitFor(
+      (m) => (m.type === 'proposed' || m.type === 'error') && this.messages.indexOf(m) >= start,
+      timeoutMs,
+      'a proposal answer',
+    );
+    if (msg.type === 'error') return { ok: false, error: String(msg.data) };
+    // No fallback for a missing index: the child answers a proposal with the index
+    // raft assigned it, and a harness that invented `-1` would turn a broken reply
+    // into a passing assertion about index -1.
+    return { ok: true, index: (msg.data as { index: number }).index };
+  }
+
+  /** What this node believes the committed configuration is. */
+  async membership(timeoutMs = 15_000): Promise<MembershipReport> {
+    // Required, not optional: every node the harness spawns reports its configuration,
+    // so an absent one is a broken child rather than a cluster with no members, and
+    // substituting an empty set here would make that brokenness look like a fact.
+    const status = await this.status<{ membership: MembershipReport }>(timeoutMs);
+    return status.membership;
+  }
+
+  /**
+   * Ask this node to change the cluster's membership, and read its answer.
+   *
+   * A refusal is data, not an error: "not the leader", "no quorum" and "the entry
+   * did not commit" are three different facts, and a caller that only sees a
+   * rejected promise cannot tell which one it is holding.
+   */
+  change(
+    command: 'add' | 'promote' | 'remove',
+    nodeId: number,
+    options: { address?: string; asLearner?: boolean } = {},
+  ): Promise<MembershipChangeReply> {
+    // Thirty seconds, not the request default: raft-core's own commit budget is five
+    // seconds, and a change that is waiting for it must be allowed to answer.
+    return this.request<MembershipChangeReply>(
+      command,
+      { nodeId, address: options.address, asLearner: options.asLearner },
+      'membership',
+      30_000,
+    );
   }
 
   async terminate(): Promise<void> {

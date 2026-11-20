@@ -280,6 +280,19 @@ jobs:
       # sibling processes were live rather than on the code.
       - name: Engine durability across restart (AC-C7..C9)
         run: pnpm --filter @agentix-e/db-stack-e2e run test:engine
+      # The three published features that once shipped green while broken (a
+      # `require` in an ESM artefact, a trace id lost across an async boundary, a
+      # subscription pump that delivered to no sink). They used to live inside the
+      # packaging gate, whose own tests run in a job with no `dist/` — so they were
+      # the part of a gate no test could reach. Here there is a build, and the probe
+      # resolves the package by name, which is one step further than the gate goes.
+      - name: Published artefacts behave (AC-P1..P2)
+        run: pnpm --filter @agentix-e/db-stack-e2e run test:artefact
+      # Five voters, six processes, real signals. A configuration change is the one
+      # operation whose answer depends on how the *other* processes reply, so it is
+      # the one operation no single-node test can judge.
+      - name: Membership change in a five-voter cluster (AC-C10..C13)
+        run: pnpm --filter @agentix-e/db-stack-e2e run test:membership
       - name: Upload E2E logs
         if: failure()
         uses: actions/upload-artifact@v4

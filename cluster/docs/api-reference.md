@@ -109,13 +109,30 @@ voter, one answer is a majority, and `hasQuorum` is `true` because it has to be.
 
 `addServer` / `promoteServer` / `removeServer` append a **single-step**
 configuration — the new voter set is in force for the commit that admits it — so a
-change needs the *existing* voters to answer. With a voter down, a promotion can
-report `rejected` after raft-core's commit timeout. That refusal leaves nothing
-behind in what this package reports: `getMembership()` reads the committed
-configuration and the watchdog keeps the majority raft can commit with, so a caller
-never sees a cluster that grew without committing. For the two-phase path (C_old →
-C_old,new → C_new, with rollback) use `RaftGroup.proposeMembershipChange`, which
-drives the joint-consensus engine.
+change commits when the *enlarged* set can answer, not when every existing voter
+can. The arithmetic has a consequence worth stating plainly, because the intuitive
+reading is the opposite one: promoting a reachable learner needs
+`⌊(n+1)/2⌋ + 1` acknowledgements out of `n+1` voters, and the learner is one of
+them, so a single voter being down does not block the promotion. Measured, not
+argued: `e2e/tests/cluster-membership.test.ts` (AC-C11) kills one voter of a
+six-voter cluster and promotes a seventh, on five real processes over mTLS, in under
+a second.
+
+What a change does not survive is *losing the quorum it would need*, and that case
+is refused by name rather than by timeout. `removeServer` on a leader that can no
+longer hear a majority answers `{ changed: false, reason: 'no-quorum' }` in about a
+millisecond and appends nothing (AC-C12) — the guard reads the watchdog before
+raft-core is asked, because a node that keeps reporting itself leader after losing
+its majority is precisely the state it exists for.
+
+One residue is worth knowing. If a change does reach raft-core and fails to commit —
+an entry appended in the window between losing a majority and the watchdog noticing
+it — raft-core keeps that configuration in its in-memory active set, so the node
+refuses further changes with `rejected` until it restarts and re-reads the committed
+configuration. `getMembership()` is unaffected either way: it reports what was
+committed, and the watchdog keeps the majority raft can commit with. For the
+two-phase path (C_old → C_old,new → C_new, with rollback) use
+`RaftGroup.proposeMembershipChange`, which drives the joint-consensus engine.
 
 Two defaults are published because a caller may want to state them explicitly
 rather than inherit them:

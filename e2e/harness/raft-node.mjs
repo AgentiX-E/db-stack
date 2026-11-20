@@ -9,8 +9,16 @@
  *
  * IPC contract
  * ------------
- *   parent → node : { cmd: 'propose', data }  | { cmd: 'status' } | { cmd: 'stop' }
- *   node → parent : { type: 'ready' | 'applied' | 'status' | 'error' | 'leader', ... }
+ *   parent → node : { cmd: 'propose', data } | { cmd: 'status' } | { cmd: 'stop' }
+ *                 | { cmd: 'add' | 'promote' | 'remove', nodeId, address? }
+ *   node → parent : { type: 'ready' | 'applied' | 'status' | 'error' | 'leader'
+ *                         | 'membership', ... }
+ *
+ * The membership commands exist because a configuration change is the one
+ * operation no single-node unit test can judge: the answer ("committed",
+ * "refused because there is no quorum", "refused after the commit timeout") is a
+ * property of how the *other* processes answer, and only a real cluster produces
+ * one.
  */
 
 import { mkdirSync } from 'node:fs';
@@ -140,12 +148,14 @@ async function main() {
       } else if (msg.cmd === 'status') {
         // `getStatus` refreshes the snapshot view along the way; `getSnapshotMeta`
         // alone is a cache.
-        const [isLeader, term, commitIndex, progress, raftStatus] = await Promise.all([
+        const [isLeader, term, commitIndex, progress, raftStatus, membership, quorum] = await Promise.all([
           adapter.isLeader(),
           adapter.getTerm(),
           adapter.getCommitIndex(),
           adapter.getProgress(),
           adapter.getStatus(),
+          adapter.getMembership(),
+          adapter.getQuorumHealth(),
         ]);
         send({
           type: 'status',
@@ -163,6 +173,36 @@ async function main() {
             stateSize: await countKeys(),
             appliedIndex: replica.lastAppliedIndex(),
             engineName: engine.name,
+            // The two answers a membership change is judged by: what this node
+            // believes the committed configuration is, and whether it can still
+            // hear a majority. Read from every node, because a change that only
+            // one process knows about is not a cluster configuration.
+            membership,
+            quorum,
+          },
+        });
+      } else if (msg.cmd === 'add' || msg.cmd === 'promote' || msg.cmd === 'remove') {
+        const startedAt = Date.now();
+        const nodeId = Number(msg.nodeId);
+        const result =
+          msg.cmd === 'add'
+            ? await adapter.addServer(nodeId, String(msg.address ?? ''), msg.asLearner !== false)
+            : msg.cmd === 'promote'
+              ? await adapter.promoteServer(nodeId)
+              : await adapter.removeServer(nodeId);
+        send({
+          type: 'membership',
+          nodeId: cfg.id,
+          data: {
+            command: msg.cmd,
+            request: { nodeId, address: msg.address },
+            result,
+            // How long the answer took is part of the answer: a refusal that arrives
+            // in six milliseconds ("there is no quorum") and one that arrives after
+            // five seconds ("the entry never committed") are different facts about
+            // the cluster, and only the duration separates them.
+            elapsedMs: Date.now() - startedAt,
+            membership: await adapter.getMembership(),
           },
         });
       } else if (msg.cmd === 'stop') {
