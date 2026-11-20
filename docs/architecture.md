@@ -97,16 +97,23 @@ halves of the outcome: every key is back, and the cluster accepts writes.
 | Transport | `TcpSecureTransport` (mTLS), `InProcessTransport` | Wire transport, swappable for tests |
 | Operations | `HealthMonitor`, `ChannelHealth`, `QueryRouter` | Per-channel health scoring, cross-cluster query routing |
 
-### 2.3 `@agentix-e/db-operations` (21 publishable packages)
+### 2.3 `@agentix-e/db-operations` (three publishable packages)
 
-| Group | Packages |
+The split is by a question, not by domain: **does this code need to know how many nodes
+exist?**
+
+| Package | Contents |
 |---|---|
-| Foundation | `core` (typed provider registry), `logger`, `observability`, `otel` |
-| Reliability | `health`, `monitor`, `circuitbreaker`, `memoryguard`, `chaosengine` |
-| Data protection | `backup` (full + PITR abstractions, S3/local backends), `maintenance` |
-| Security & compliance | `security` (TLS, keys, encryption at rest, RBAC), `auth`, `audit` |
-| Capacity & change | `autoscaler`, `autotuner`, `configwatcher`, `rollingupgrade`, `slacollector` |
-| Multi-cluster | `federation` (schema federation, cross-cluster query planning) |
+| `@agentix-e/db-operations-node` | Twenty modules whose implementation is about one process: `core`, `logger`, `observability`, `otel`, `health`, `monitor`, `metrics`, `circuitbreaker`, `memoryguard`, `chaosengine`, `backup`, `maintenance`, `security`, `auth`, `audit`, `autoscaler`, `autotuner`, `configwatcher`, `rollingupgrade`, `slacollector` |
+| `@agentix-e/db-operations-cluster` | The multi-node assembly: `ClusterScalingExecutor` (apply a scaling decision to a live member set), `ClusterRolloutPlanner` (order an upgrade without losing quorum), `RaftFaultTranslator` (realise a fault through `IChaosTransport`), majority arithmetic |
+| `@agentix-e/db-operations-federation` | The cross-datacenter binding: `FederatedNode`, `FederatedQueryRouter`, schema federation |
+
+The boundary is enforced by what the packages can see, not by convention: nothing in
+`node` receives a member list, and the two modules that produce multi-node decisions —
+`autoscaler` and `rollingupgrade` — return *data* (`ScaleAction.targetCount`,
+`RollingUpgradePlan.nodes`) that `cluster` turns into a sequence. A node-local module
+therefore has no way to take a group's quorum away, and a cluster deployment does not
+reimplement majority arithmetic in every caller.
 
 Every package is independently publishable, has no dependency on a database engine, and
 exposes its engine-facing seams as interfaces behind the `core` provider registry.

@@ -248,8 +248,8 @@ test("finds the workspace packages, and finds more than one", () => {
   const packages = [
     "cluster",
     "federation",
-    "operations/packages/security",
-    "operations/packages/backup",
+    "operations/packages/node",
+    "operations/packages/cluster",
   ];
   for (const dir of packages) {
     const result = auditPackage(

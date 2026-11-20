@@ -8,7 +8,7 @@
     "paths": {
       "@agentix-e/db-cluster": ["./src/index.ts"],
       "@agentix-e/db-cluster/*": ["./src/*"],
-      "@agentix-e/db-operations-chaosengine": ["../operations/packages/chaosengine/src/index.ts"]
+      "@agentix-e/db-operations-node/chaosengine": ["../operations/packages/node/src/chaosengine/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "bench/**/*.ts"],

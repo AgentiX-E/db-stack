@@ -1,6 +1,6 @@
 {
   "name": "@agentix-e/db-operations",
-  "version": "1.11.3",
+  "version": "2.0.0",
   "private": false,
   "engines": {
     "node": ">=20.11"
@@ -36,7 +36,7 @@
     "url": "git+https://github.com/AgentiX-E/db-stack.git",
     "directory": "operations"
   },
-  "description": "Unified, engine-agnostic database operations framework \u2014 21 packages",
+  "description": "Unified, engine-agnostic database operations framework \u2014 three packages: node, cluster, federation",
   "keywords": [
     "database",
     "operations",
@@ -57,27 +57,9 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@agentix-e/db-operations-audit": "workspace:*",
-    "@agentix-e/db-operations-auth": "workspace:*",
-    "@agentix-e/db-operations-autoscaler": "workspace:*",
-    "@agentix-e/db-operations-autotuner": "workspace:*",
-    "@agentix-e/db-operations-backup": "workspace:*",
-    "@agentix-e/db-operations-chaosengine": "workspace:*",
-    "@agentix-e/db-operations-circuitbreaker": "workspace:*",
-    "@agentix-e/db-operations-configwatcher": "workspace:*",
-    "@agentix-e/db-operations-core": "workspace:*",
-    "@agentix-e/db-operations-federation": "workspace:*",
-    "@agentix-e/db-operations-health": "workspace:*",
-    "@agentix-e/db-operations-logger": "workspace:*",
-    "@agentix-e/db-operations-maintenance": "workspace:*",
-    "@agentix-e/db-operations-memoryguard": "workspace:*",
-    "@agentix-e/db-operations-metrics": "workspace:*",
-    "@agentix-e/db-operations-monitor": "workspace:*",
-    "@agentix-e/db-operations-observability": "workspace:*",
-    "@agentix-e/db-operations-otel": "workspace:*",
-    "@agentix-e/db-operations-rollingupgrade": "workspace:*",
-    "@agentix-e/db-operations-security": "workspace:*",
-    "@agentix-e/db-operations-slacollector": "workspace:*"
+    "@agentix-e/db-operations-node": "workspace:*",
+    "@agentix-e/db-operations-cluster": "workspace:*",
+    "@agentix-e/db-operations-federation": "workspace:*"
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -89,7 +71,6 @@
     "dist",
     "README.md",
     "CHANGELOG.md",
-    "packages/*/dist",
     "docs"
   ]
 }

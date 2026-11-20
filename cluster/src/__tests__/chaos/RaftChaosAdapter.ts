@@ -16,7 +16,7 @@
  *   RCHAOS3 — Zero new dependencies on Raft internals beyond transport ref
  */
 
-import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from '@agentix-e/db-operations-chaosengine';
+import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from '@agentix-e/db-operations-node/chaosengine';
 
 // ── Internal interface (what we receive from the harness) ────
 

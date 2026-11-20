@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type { MigrationDescriptor, MigrationPlan } from '@agentix-e/db-operations-core';
+import type { MigrationDescriptor, MigrationPlan } from '@agentix-e/db-operations-node/core';
 import { SchemaFederator } from '../impl/SchemaFederator.js';
 import type { SchemaSnapshot, SchemaDrift, DriftRepair, SchemaRule } from '../interfaces/schema-federation.js';
 

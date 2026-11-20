@@ -2,12 +2,12 @@
  * C6 Schema Federation — cross-shard schema version sync, drift detection,
  * coordinated migration orchestration, and schema repair.
  *
- * Builds on MigrationsDescriptor/MigrationPlan from @agentix-e/db-operations-core.
+ * Builds on MigrationsDescriptor/MigrationPlan from @agentix-e/db-operations-node/core.
  *
  * @module @agentix-e/db-operations-federation/interfaces
  */
 
-import type { MigrationDescriptor, MigrationPlan } from '@agentix-e/db-operations-core';
+import type { MigrationDescriptor, MigrationPlan } from '@agentix-e/db-operations-node/core';
 
 // Re-export for convenience
 export type { MigrationDescriptor, MigrationPlan };

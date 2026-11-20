@@ -16,11 +16,7 @@
  *   FCHAOS3 — Zero new dependencies beyond PartitioningTransport ref
  */
 
-import type {
-  IChaosTransport,
-  ChaosTransportStats,
-  ChaosFaultV2,
-} from '../../../../operations/packages/chaosengine/src/index';
+import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from '@agentix-e/db-operations-node/chaosengine';
 
 // ── Internal interface for PartitioningTransport ─────────────
 

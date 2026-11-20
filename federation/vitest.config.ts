@@ -48,16 +48,16 @@ export default defineConfig({
       '@agentix-e/db-federation': path.resolve(root, 'src/index.ts'),
       '@agentix-e/db-cluster/testing': path.resolve(root, '../cluster/src/testing/index.ts'),
       '@agentix-e/db-cluster': path.resolve(root, '../cluster/src/index.ts'),
-      '@agentix-e/db-operations-core': path.resolve(root, '../operations/packages/core/src/index.ts'),
-      '@agentix-e/db-operations-audit': path.resolve(root, '../operations/packages/audit/src/index.ts'),
-      '@agentix-e/db-operations-backup': path.resolve(root, '../operations/packages/backup/src/index.ts'),
-      '@agentix-e/db-operations-observability': path.resolve(
+      '@agentix-e/db-operations-node/core': path.resolve(root, '../operations/packages/node/src/core/index.ts'),
+      '@agentix-e/db-operations-node/audit': path.resolve(root, '../operations/packages/node/src/audit/index.ts'),
+      '@agentix-e/db-operations-node/backup': path.resolve(root, '../operations/packages/node/src/backup/index.ts'),
+      '@agentix-e/db-operations-node/observability': path.resolve(
         root,
-        '../operations/packages/observability/src/index.ts',
+        '../operations/packages/node/src/observability/index.ts',
       ),
-      '@agentix-e/db-operations-chaosengine': path.resolve(
+      '@agentix-e/db-operations-node/chaosengine': path.resolve(
         root,
-        '../operations/packages/chaosengine/src/index.ts',
+        '../operations/packages/node/src/chaosengine/index.ts',
       ),
     },
   },

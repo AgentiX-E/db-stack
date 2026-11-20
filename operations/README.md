@@ -1,21 +1,24 @@
 # db-operations — Unified Database Operations Framework
 
-**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 3 158 test
-cases in 148 files, every coverage dimension at or above 95 %.**
+**A production-grade, engine-agnostic operations abstraction layer — 3 packages, 3 239 test
+cases in 154 files, every coverage dimension at or above 95 %.**
 
-**Mutation score:** 97.96 % across the thirteen modules that decide what gets deleted, whether a
-backup can be restored, which key material survives at all, which key a blob was sealed with,
-whether a compliance window passed, whether evidence is tamper-evident, and when a maintenance
-window runs — `backupChain.ts` 100 %, `cron.ts` 100 %, `RetentionPolicyEvaluator.ts` 100 %,
-`DurableFileSystem.ts` 100 %, `KeyRotationManager.ts` 99.16 %, `MaintenanceWindowScheduler.ts`
-99.03 %, `InMemoryBackupManager.ts` 98.94 %, `AES256GCMEncryptionProvider.ts` 97.53 %,
-`RotationAuditor.ts` 97.52 %, `EnvelopeEncryptionProvider.ts` 98.18 %, `FileAuditStore.ts`
-96.97 %, `AuditLogManager.ts` 96.44 %, `KeyManager.ts` 94.12 %; gate at 86.
+**Mutation score:** 98.04 % across seventeen files — the thirteen that decide what gets deleted,
+whether a backup can be restored, which key material survives at all, which key a blob was sealed
+with, whether a compliance window passed, whether evidence is tamper-evident, and when a maintenance
+window runs, plus the four cluster assemblers that decide what a majority is, which member leaves,
+which batch runs and which partition is emitted — `backupChain.ts` 100 %, `cron.ts` 100 %,
+`RetentionPolicyEvaluator.ts` 100 %, `DurableFileSystem.ts` 100 %, `quorum.ts` 100 %,
+`ClusterScalingExecutor.ts` 100 %, `RaftFaultTranslator.ts` 100 %, `KeyRotationManager.ts` 99.16 %,
+`MaintenanceWindowScheduler.ts` 99.03 %, `InMemoryBackupManager.ts` 98.94 %,
+`EnvelopeEncryptionProvider.ts` 98.18 %, `AES256GCMEncryptionProvider.ts` 97.53 %,
+`RotationAuditor.ts` 97.52 %, `FileAuditStore.ts` 96.69 %, `AuditLogManager.ts` 96.44 %,
+`KeyManager.ts` 94.12 %, `ClusterRolloutPlanner.ts` 93.28 %; gate at 86.
 
-Of the 2 992 judged mutants, 102 are not kills and every one has an answer: 58 survived (each with
-an argument in `docs/maturity.md` — sixteen families, no test can tell the versions apart), 41 are
-`Timeout` verdicts that were replayed one by one (5 fail when asked again, 36 are loops no timer can
-interrupt, **0 pass**), and 3 no test reaches. The replay is
+Of the 3 563 judged mutants, 70 are not kills and every one has an answer: 67 survived (each with an
+argument in `docs/maturity.md`, grouped into families where one property explains several) and 3 no
+test reaches. The 50 `Timeout` verdicts are replayed one by one, because there is no score that
+answers "did a test object" for a run that stopped. The replay is
 `node operations/scripts/resolve-timeouts.mjs --target operations --record`; the record it writes,
 `mutation/timeouts.json`, is a cache that CI consults with `pnpm check:mutation-timeouts` — a known
 abort is answered from it, an unknown one is replayed on the spot, and the build fails only if a suite
@@ -28,7 +31,7 @@ Replace ad-hoc `ops/` directories with a canonical interface suite that every da
 engine implements via adapters.
 
 Package: `@agentix-e/db-operations`  
-Version: 1.11.3  
+Version: 2.0.0  
 License: MIT
 
 ---
@@ -40,16 +43,16 @@ npm install @agentix-e/db-operations
 ```
 
 ```typescript
-import { ProviderRegistry, token } from '@agentix-e/db-operations-core';
-import type { ILogger } from '@agentix-e/db-operations-logger';
-import { InMemoryLogger } from '@agentix-e/db-operations-logger';
-import { HealthOrchestrator, componentProbe } from '@agentix-e/db-operations-health';
-import { MetricsRegistry } from '@agentix-e/db-operations-metrics';
+import { ProviderRegistry, token } from '@agentix-e/db-operations-node/core';
+import type { ILogger } from '@agentix-e/db-operations-node/logger';
+import { InMemoryLogger } from '@agentix-e/db-operations-node/logger';
+import { HealthOrchestrator, componentProbe } from '@agentix-e/db-operations-node/health';
+import { MetricsRegistry } from '@agentix-e/db-operations-node/metrics';
 import {
   InMemoryBackupManager,
   InMemoryStorageBackend,
   RetentionPolicyEvaluator,
-} from '@agentix-e/db-operations-backup';
+} from '@agentix-e/db-operations-node/backup';
 
 // 1. One registry, keyed by interface token rather than by class name.
 const registry = new ProviderRegistry();
@@ -104,7 +107,7 @@ Without a shared framework, each engine implements these from scratch — with
 incompatible APIs, inconsistent error handling, and duplicated testing effort.
 
 **db-operations solves this** with an interface-first, composable, pluggable
-architecture that 21 packages deliver as a cohesive whole.
+architecture that three packages deliver as a cohesive whole.
 
 ### Design Principles
 
@@ -129,35 +132,44 @@ architecture that 21 packages deliver as a cohesive whole.
 
 ## Packages
 
+Three packages, split by the question each one answers.
+
 | Package | Status | Tests | Description |
 |---------|--------|-------|-------------|
-| [`core`](./packages/core/) | ✅ | 549 | Base types, provider registry, error hierarchy |
-| [`health`](./packages/health/) | ✅ | 78 | Component probes, orchestration, K8s-style liveness |
-| [`logger`](./packages/logger/) | ✅ | 55 | Structured logging with levels, child loggers, backends |
-| [`metrics`](./packages/metrics/) | ✅ | 38 | Counters, gauges, histograms with label support |
-| [`monitor`](./packages/monitor/) | ✅ | 129 | Slow queries, deadlock detection, alerts, resource quotas |
-| [`backup`](./packages/backup/) | ✅ | 190 | Backup orchestration, PITR, retention policies, S3 backend |
-| [`federation`](./packages/federation/) | ✅ | 212 | Cross-datacenter replication (HLC, outbox, conflict resolution) |
-| [`maintenance`](./packages/maintenance/) | ✅ | 382 | VACUUM, ANALYZE, REINDEX scheduling |
-| [`auth`](./packages/auth/) | ✅ | 32 | Authentication providers and credential management |
-| [`security`](./packages/security/) | ✅ | 630 | TLS, encryption, RBAC, rate limiting, compliance |
-| [`audit`](./packages/audit/) | ✅ | 212 | Immutable audit trails with export |
-| [`observability`](./packages/observability/) | ✅ | 44 | Distributed tracing (W3C TraceContext), telemetry |
-| [`otel`](./packages/otel/) | ✅ | 16 | OpenTelemetry bridge for metrics and traces |
-| [`autotuner`](./packages/autotuner/) | ✅ | 27 | Automatic parameter tuning based on workload analysis |
-| [`autoscaler`](./packages/autoscaler/) | ✅ | 167 | Dynamic resource scaling based on metrics |
-| [`chaosengine`](./packages/chaosengine/) | ✅ | 128 | Fault injection and chaos experiment runner |
-| [`circuitbreaker`](./packages/circuitbreaker/) | ✅ | 15 | Circuit breaker pattern for external dependencies |
-| [`configwatcher`](./packages/configwatcher/) | ✅ | 107 | Runtime configuration reload and validation |
-| [`memoryguard`](./packages/memoryguard/) | ✅ | 13 | Memory pressure monitoring and GC optimization |
-| [`rollingupgrade`](./packages/rollingupgrade/) | ✅ | 121 | Zero-downtime rolling upgrades |
-| [`slacollector`](./packages/slacollector/) | ✅ | 13 | SLA metric collection and violation detection |
+| [`node`](./packages/node/) | ✅ | 2951 | Twenty modules whose implementation never needs to know how many nodes exist |
+| [`cluster`](./packages/cluster/) | ✅ | 76 | Multi-node assembly: scaling against a live member set, rollout order, fault realisation |
+| [`federation`](./packages/federation/) | ✅ | 212 | Cross-datacenter binding: `FederatedNode`, `FederatedQueryRouter` |
 
-**Total: `pnpm coverage` reports 148 files and 3 158 tests, 0 failures** (`test:unit`: 129 files /
-2 827; `test:integration`: 19 files / 331). Each row above is that package's contribution, so the
+**Total: `pnpm coverage` reports 154 files and 3 239 tests, 0 failures** (`test:unit`: 135 files /
+2 908; `test:integration`: 19 files / 331). Each row above is that package's contribution, so the
 column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
 any of these numbers disagrees with it — the table before iteration 54 had drifted by an order of
 magnitude in both directions, and nothing compared it to a test run.
+
+### What is in `node`
+
+| Module | What it is |
+|--------|-----------|
+| `core` | Base types, provider registry, error hierarchy |
+| `health` | Component probes, orchestration, K8s-style liveness |
+| `logger` | Structured logging with levels, child loggers, backends |
+| `metrics` | Counters, gauges, histograms with label support |
+| `monitor` | Slow queries, deadlock detection, alerts, resource quotas |
+| `backup` | Backup orchestration, PITR, retention policies, S3 backend |
+| `maintenance` | VACUUM, ANALYZE, REINDEX scheduling |
+| `auth` | Authentication providers and credential management (interfaces) |
+| `security` | TLS, encryption, RBAC, rate limiting, compliance — implements `auth` |
+| `audit` | Append-only audit trails with rotation and export |
+| `observability` | Distributed tracing (W3C TraceContext), telemetry |
+| `otel` | OpenTelemetry bridge for metrics and traces |
+| `autotuner` | Automatic parameter tuning based on workload analysis |
+| `autoscaler` | Scaling decisions from multi-dimensional metrics |
+| `chaosengine` | Fault definitions and the chaos experiment runner |
+| `circuitbreaker` | Circuit breaker pattern for external dependencies |
+| `configwatcher` | Runtime configuration reload and validation |
+| `memoryguard` | Memory pressure monitoring and GC optimisation |
+| `rollingupgrade` | Upgrade plans, batching and health gating |
+| `slacollector` | SLA metric collection and violation detection |
 
 ---
 
@@ -166,27 +178,36 @@ magnitude in both directions, and nothing compared it to a test run.
 ```
 db-operations/
 ├── packages/
-│   ├── core/              # Base types, provider registry, DI tokens
-│   ├── health/            # Health probes (K8s-style liveness + deep readiness)
-│   ├── metrics/           # Prometheus-style counters, gauges, histograms
-│   ├── logger/            # Structured logging with trace context
-│   ├── monitor/           # Slow query, deadlock, connection pool, alerts
-│   ├── backup/            # Backup orchestration, PITR, S3 storage
-│   ├── federation/        # Cross-datacenter replication (HLC, outbox)
-│   ├── maintenance/       # VACUUM, ANALYZE, REINDEX scheduling
-│   ├── auth/              # Authentication and credential management
-│   ├── security/          # TLS, encryption, RBAC, rate limiting
-│   ├── audit/             # Immutable audit trails with export
-│   ├── observability/     # Distributed tracing (W3C TraceContext)
-│   ├── otel/              # OpenTelemetry metrics/traces bridge
-│   ├── autotuner/         # Workload-based auto-tuning
-│   ├── autoscaler/        # Dynamic resource scaling
-│   ├── chaosengine/       # Chaos experiment framework
-│   ├── circuitbreaker/    # Circuit breaker for external deps
-│   ├── configwatcher/     # Runtime config reload
-│   ├── memoryguard/       # Memory pressure monitoring
-│   ├── rollingupgrade/    # Zero-downtime upgrades
-│   └── slacollector/      # SLA metric tracking
+│   ├── node/              # @agentix-e/db-operations-node — 20 modules
+│   │   └── src/
+│   │       ├── core/      # Base types, provider registry, DI tokens
+│   │       ├── health/    # Health probes (K8s-style liveness + deep readiness)
+│   │       ├── metrics/   # Prometheus-style counters, gauges, histograms
+│   │       ├── logger/    # Structured logging with trace context
+│   │       ├── monitor/   # Slow query, deadlock, connection pool, alerts
+│   │       ├── backup/    # Backup orchestration, PITR, S3 storage
+│   │       ├── maintenance/   # VACUUM, ANALYZE, REINDEX scheduling
+│   │       ├── auth/      # Authentication interfaces
+│   │       ├── security/  # TLS, encryption, RBAC, rate limiting
+│   │       ├── audit/     # Append-only audit trails with export
+│   │       ├── observability/ # Distributed tracing (W3C TraceContext)
+│   │       ├── otel/      # OpenTelemetry metrics/traces bridge
+│   │       ├── autotuner/ # Workload-based auto-tuning
+│   │       ├── autoscaler/# Scaling decisions
+│   │       ├── chaosengine/   # Fault definitions and scenario runner
+│   │       ├── circuitbreaker/ # Breaker state per call site
+│   │       ├── configwatcher/  # Runtime config reload
+│   │       ├── memoryguard/    # Memory pressure monitoring
+│   │       ├── rollingupgrade/ # Upgrade plans and batching
+│   │       └── slacollector/   # SLA metric tracking
+│   ├── cluster/           # @agentix-e/db-operations-cluster — multi-node assembly
+│   │   └── src/
+│   │       ├── interfaces/    # ClusterMember, IClusterTopology
+│   │       ├── membership/    # majority arithmetic, reference topology
+│   │       ├── scaling/       # scale a decision against a live member set
+│   │       ├── rollout/       # sequence an upgrade without losing quorum
+│   │       └── chaos/         # realise a fault through IChaosTransport
+│   └── federation/        # @agentix-e/db-operations-federation — cross-DC binding
 ├── docs/
 │   ├── DESIGN.md
 │   ├── ARCHITECTURE.md
@@ -197,12 +218,12 @@ db-operations/
 
 ### Adapter Pattern
 
-Each engine provides adapter implementations. These live inside db-operations
-but have zero engine dependency — they accept engine-specific config at
+Each engine provides adapter implementations. These live inside the `monitor`
+module but have zero engine dependency — they accept engine-specific config at
 construction time:
 
 ```
-packages/monitor/src/
+packages/node/src/monitor/
   interfaces/     ← canonical interfaces (no engine deps)
   impl/           ← general-purpose implementations
   adapters/
@@ -235,7 +256,7 @@ packages/monitor/src/
 ## Testing
 
 ```bash
-npm test              # 148 files, 3 158 tests
+npm test              # 154 files, 3 239 tests
 npm run test:mutation # Stryker over the thirteen modules that decide deletion, durability and timing
 npm run bench         # Performance benchmarks
 npm run bench:ycsb    # YCSB-style benchmarks

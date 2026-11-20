@@ -61,6 +61,9 @@ importers:
 
   cluster:
     dependencies:
+      '@agentix-e/db-operations-node':
+        specifier: workspace:*
+        version: link:../operations/packages/node
       '@maboke123/raft-core':
         specifier: ^0.2.1
         version: 0.2.1(patch_hash=ef408eb0c8799b42dc4a2d06edd3827a64c2757240b9f6e8e7675a169888cc2f)
@@ -86,9 +89,6 @@ importers:
         specifier: ^9.0.0
         version: 9.14.0
     devDependencies:
-      '@agentix-e/db-operations-chaosengine':
-        specifier: workspace:*
-        version: link:../operations/packages/chaosengine
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.15.0(jiti@2.7.0))
@@ -144,9 +144,9 @@ importers:
       '@agentix-e/db-federation':
         specifier: workspace:*
         version: link:../federation
-      '@agentix-e/db-operations-audit':
+      '@agentix-e/db-operations-node':
         specifier: workspace:*
-        version: link:../operations/packages/audit
+        version: link:../operations/packages/node
     devDependencies:
       '@types/node':
         specifier: ^22.15.0
@@ -169,6 +169,9 @@ importers:
       '@agentix-e/db-cluster':
         specifier: workspace:*
         version: link:../cluster
+      '@agentix-e/db-operations-node':
+        specifier: workspace:*
+        version: link:../operations/packages/node
       lmdb:
         specifier: ^3.2.6
         version: 3.5.10
@@ -176,15 +179,6 @@ importers:
         specifier: ^6.2.1
         version: 6.8.0
     devDependencies:
-      '@agentix-e/db-operations-audit':
-        specifier: workspace:*
-        version: link:../operations/packages/audit
-      '@agentix-e/db-operations-backup':
-        specifier: workspace:*
-        version: link:../operations/packages/backup
-      '@agentix-e/db-operations-observability':
-        specifier: workspace:*
-        version: link:../operations/packages/observability
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.15.0(jiti@2.7.0))
@@ -212,69 +206,15 @@ importers:
 
   operations:
     dependencies:
-      '@agentix-e/db-operations-audit':
+      '@agentix-e/db-operations-cluster':
         specifier: workspace:*
-        version: link:packages/audit
-      '@agentix-e/db-operations-auth':
-        specifier: workspace:*
-        version: link:packages/auth
-      '@agentix-e/db-operations-autoscaler':
-        specifier: workspace:*
-        version: link:packages/autoscaler
-      '@agentix-e/db-operations-autotuner':
-        specifier: workspace:*
-        version: link:packages/autotuner
-      '@agentix-e/db-operations-backup':
-        specifier: workspace:*
-        version: link:packages/backup
-      '@agentix-e/db-operations-chaosengine':
-        specifier: workspace:*
-        version: link:packages/chaosengine
-      '@agentix-e/db-operations-circuitbreaker':
-        specifier: workspace:*
-        version: link:packages/circuitbreaker
-      '@agentix-e/db-operations-configwatcher':
-        specifier: workspace:*
-        version: link:packages/configwatcher
-      '@agentix-e/db-operations-core':
-        specifier: workspace:*
-        version: link:packages/core
+        version: link:packages/cluster
       '@agentix-e/db-operations-federation':
         specifier: workspace:*
         version: link:packages/federation
-      '@agentix-e/db-operations-health':
+      '@agentix-e/db-operations-node':
         specifier: workspace:*
-        version: link:packages/health
-      '@agentix-e/db-operations-logger':
-        specifier: workspace:*
-        version: link:packages/logger
-      '@agentix-e/db-operations-maintenance':
-        specifier: workspace:*
-        version: link:packages/maintenance
-      '@agentix-e/db-operations-memoryguard':
-        specifier: workspace:*
-        version: link:packages/memoryguard
-      '@agentix-e/db-operations-metrics':
-        specifier: workspace:*
-        version: link:packages/metrics
-      '@agentix-e/db-operations-monitor':
-        specifier: workspace:*
-        version: link:packages/monitor
-      '@agentix-e/db-operations-observability':
-        specifier: workspace:*
-        version: link:packages/observability
-      '@agentix-e/db-operations-otel':
-        specifier: workspace:*
-        version: link:packages/otel
-      '@agentix-e/db-operations-rollingupgrade':
-        specifier: workspace:*
-        version: link:packages/rollingupgrade
-      '@agentix-e/db-operations-security':
-        specifier: workspace:*
-        version: link:packages/security
-      '@agentix-e/db-operations-slacollector':
-        specifier: workspace:*
-        version: link:packages/slacollector
+        version: link:packages/node
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -301,89 +241,26 @@ importers:
         specifier: 3.2.6
         version: 3.2.6(@types/node@22.20.5)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  operations/packages/audit:
+  operations/packages/cluster:
     dependencies:
-      '@agentix-e/db-operations-core':
+      '@agentix-e/db-operations-node':
         specifier: workspace:*
-        version: link:../core
+        version: link:../node
 
-  operations/packages/auth: {}
-
-  operations/packages/autoscaler: {}
-
-  operations/packages/autotuner: {}
-
-  operations/packages/backup:
+  operations/packages/federation:
     dependencies:
-      '@agentix-e/db-operations-core':
+      '@agentix-e/db-operations-node':
         specifier: workspace:*
-        version: link:../core
+        version: link:../node
+
+  operations/packages/node:
+    devDependencies:
       '@aws-sdk/client-s3':
         specifier: ^3.1089.0
         version: 3.1169.0
       '@aws-sdk/lib-storage':
         specifier: ^3.1089.0
         version: 3.1169.0(@aws-sdk/client-s3@3.1169.0)
-
-  operations/packages/chaosengine: {}
-
-  operations/packages/circuitbreaker: {}
-
-  operations/packages/configwatcher: {}
-
-  operations/packages/core: {}
-
-  operations/packages/federation:
-    dependencies:
-      '@agentix-e/db-operations-core':
-        specifier: workspace:*
-        version: link:../core
-
-  operations/packages/health:
-    dependencies:
-      '@agentix-e/db-operations-core':
-        specifier: workspace:*
-        version: link:../core
-
-  operations/packages/logger:
-    dependencies:
-      '@agentix-e/db-operations-core':
-        specifier: workspace:*
-        version: link:../core
-
-  operations/packages/maintenance:
-    dependencies:
-      '@agentix-e/db-operations-core':
-        specifier: workspace:*
-        version: link:../core
-
-  operations/packages/memoryguard: {}
-
-  operations/packages/metrics:
-    dependencies:
-      '@agentix-e/db-operations-core':
-        specifier: workspace:*
-        version: link:../core
-
-  operations/packages/monitor:
-    dependencies:
-      '@agentix-e/db-operations-core':
-        specifier: workspace:*
-        version: link:../core
-
-  operations/packages/observability: {}
-
-  operations/packages/otel: {}
-
-  operations/packages/rollingupgrade: {}
-
-  operations/packages/security:
-    dependencies:
-      '@agentix-e/db-operations-core':
-        specifier: workspace:*
-        version: link:../core
-
-  operations/packages/slacollector: {}
 
 packages:
 

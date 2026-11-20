@@ -374,7 +374,7 @@ const SCOPE = "@agentix-e/";
 const IMPORT_STATEMENT =
   /^[ \t]*import\s+(?:type\s+)?(?:[\w$]+\s*,\s*)?\{\s*([\s\S]*?)\}\s*from\s*['"]([^'"]+)['"]/gm;
 
-/** `@agentix-e/db-operations-core/types` → `{ name, key }`. */
+/** `@agentix-e/db-operations-node/core/types` → `{ name, key }`. */
 export function splitSpecifier(specifier) {
   const parts = specifier.split("/");
   const scoped = specifier.startsWith("@");

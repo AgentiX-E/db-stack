@@ -29,9 +29,9 @@ Pick the path that matches what you are doing.
                 │                             │
 ┌───────────────▼─────────────┐   ┌───────────▼─────────────────────┐
 │ @agentix-e/db-operations    │   │ @agentix-e/db-cluster           │
-│ 21 engine-agnostic packages │   │ Raft consensus per shard,       │
-│ health · backup · metrics · │   │ mTLS transport, WAL + snapshots,│
-│ security · monitor · …      │   │ sharding, HA/fencing, PITR      │
+│ node: 20 modules            │   │ Raft consensus per shard,       │
+│ cluster: quorum, rollout    │   │ mTLS transport, WAL + snapshots,│
+│ federation: query routing   │   │ sharding, HA/fencing, PITR      │
 └───────────────┬─────────────┘   └───────────┬─────────────────────┘
                 │                             │
                 │                 ┌───────────▼─────────────────────┐

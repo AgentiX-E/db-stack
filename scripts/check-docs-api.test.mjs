@@ -422,7 +422,7 @@ const REAL_TREE_INDEX = packageIndex(ROOT);
 
 test("a documented name the package does not export is reported", () => {
   const findings = unresolvedImports(
-    '```ts\nimport { HealthOrchestrator, ComponentProbe } from "@agentix-e/db-operations-health";\n```\n',
+    '```ts\nimport { HealthOrchestrator, ComponentProbe } from "@agentix-e/db-operations-node/health";\n```\n',
     REAL_TREE_INDEX,
   );
   assert.deepEqual(
@@ -433,12 +433,12 @@ test("a documented name the package does not export is reported", () => {
 
 test("a subpath that is not published is reported", () => {
   const findings = unresolvedImports(
-    'import { X } from "@agentix-e/db-operations-core/internal";\n',
+    'import { X } from "@agentix-e/db-operations-node/core/internal";\n',
     REAL_TREE_INDEX,
   );
   assert.deepEqual(
     findings.map((finding) => [finding.kind, finding.name]),
-    [["unknown-subpath", "@agentix-e/db-operations-core/internal"]],
+    [["unknown-subpath", "@agentix-e/db-operations-node/core/internal"]],
   );
 });
 
@@ -464,13 +464,21 @@ test("an import from outside this repository's scope is left alone", () => {
 });
 
 test("a specifier splits into a package name and an entry key", () => {
-  assert.deepEqual(splitSpecifier("@agentix-e/db-operations-core"), {
-    name: "@agentix-e/db-operations-core",
+  // The package name is the scope plus one segment; everything after it is an
+  // entry key. It used to be the whole string, because every package had exactly
+  // one entry — and a gate that cannot see a subpath cannot check that the
+  // subpath exists.
+  assert.deepEqual(splitSpecifier("@agentix-e/db-operations-node"), {
+    name: "@agentix-e/db-operations-node",
     key: ".",
   });
-  assert.deepEqual(splitSpecifier("@agentix-e/db-operations-core/types"), {
-    name: "@agentix-e/db-operations-core",
-    key: "./types",
+  assert.deepEqual(splitSpecifier("@agentix-e/db-operations-node/core"), {
+    name: "@agentix-e/db-operations-node",
+    key: "./core",
+  });
+  assert.deepEqual(splitSpecifier("@agentix-e/db-operations-node/core/types"), {
+    name: "@agentix-e/db-operations-node",
+    key: "./core/types",
   });
   assert.deepEqual(splitSpecifier("@agentix-e/db-cluster/testing"), {
     name: "@agentix-e/db-cluster",
@@ -480,7 +488,7 @@ test("a specifier splits into a package name and an entry key", () => {
 
 test("the line number of a bad import is the line the reader sees", () => {
   const findings = unresolvedImports(
-    '# Title\n\nIntro.\n\n```ts\nimport { Nope } from "@agentix-e/db-operations-core";\n```\n',
+    '# Title\n\nIntro.\n\n```ts\nimport { Nope } from "@agentix-e/db-operations-node/core";\n```\n',
     REAL_TREE_INDEX,
   );
   assert.equal(findings[0].line, 6);

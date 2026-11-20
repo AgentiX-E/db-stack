@@ -16,7 +16,7 @@
  *                   | { type: 'error', data: string }
  */
 
-import { FileAuditStore } from '@agentix-e/db-operations-audit';
+import { FileAuditStore } from '@agentix-e/db-operations-node/audit';
 
 const RAW = process.env.AUDIT_WRITER_CONFIG;
 if (!RAW) {

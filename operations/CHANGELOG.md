@@ -7,8 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Twenty-one packages are three.** `@agentix-e/db-operations-<module>` is now
+  `@agentix-e/db-operations-node/<module>` for the twenty modules that do not need to know how
+  many nodes exist, and the two categories that do are packages of their own:
+  `@agentix-e/db-operations-cluster` (membership arithmetic, scale-down, rollout order, chaos
+  translation) and `@agentix-e/db-operations-federation` (federated identity, cross-cluster query
+  routing, repair). Every import changes name exactly once — `from '@agentix-e/db-operations-audit'`
+  becomes `from '@agentix-e/db-operations-node/audit'` — and no subpath is renamed, because the
+  modules keep their names. The line is a question rather than a domain: `autoscaler` still returns
+  a `ScaleAction` and `rollingupgrade` still returns a `RollingUpgradePlan`, because data about a
+  group is not authority over one; `ClusterScalingExecutor` and `ClusterRolloutPlanner` are what
+  turn those into members added, members removed, and an order that keeps quorum. Twenty package
+  names for code that cannot be misused without a topology were twenty version numbers and twenty
+  release notes describing one decision.
+- **`@aws-sdk/client-s3` and `@aws-sdk/lib-storage` are optional peer dependencies.** They were
+  `dependencies` of the package that held `backup`, which meant every consumer installed the AWS SDK
+  whether or not it used S3 — and because the umbrella entry point re-exports `backup`, a static
+  import would have kept them mandatory even as peers. The import is deferred to first use now:
+  constructing `S3StorageBackend` costs nothing and resolves nothing, and reaching an S3 path without
+  the SDK is refused with a message naming both packages and the `npm install` line that fixes it.
+  `health()` reports that refusal as `{ ok: false }` instead of throwing, so a readiness probe says
+  "missing peer" the way it says "unreachable bucket".
+
 ### Added
 
+- **`@agentix-e/db-operations-cluster` is new.** `ClusterScalingExecutor` applies a `ScaleAction` to
+  the members it observes rather than to the members a plan named — a plan is an opinion and the
+  member set is the fact — clamps at `max(minNodes, quorumOf(voters))`, never removes the leader,
+  and drains learners before voters. `ClusterRolloutPlanner` orders a restart learners-first,
+  interleaves followers, and sizes each batch by the failures quorum tolerates, so a plan whose
+  budget is zero is reported `feasible: false` instead of being issued. `RaftFaultTranslator` turns
+  a chaos fault into transport instructions in both directions — `isolate` on `n1` does not stop
+  `n2` sending to `n1` — and refuses a fault the transport cannot express rather than returning an
+  empty list that reads as "injected, no effect".
 - **Documentation for ten packages that shipped none.** `autoscaler`, `autotuner`, `chaosengine`,
   `circuitbreaker`, `configwatcher`, `federation`, `memoryguard`, `otel`, `rollingupgrade` and
   `slacollector` published 17 exported values behind no `docs/` tree at all, and a `docs/`-less
@@ -24,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the package and entry point it names. `operations/docs/getting-started.md` told a reader to
   `import { HealthOrchestrator, ComponentProbe }` from the health package, which exports
   `componentProbe`; another snippet imported `IBackupManager` and a `BackupType` that exists
-  nowhere from `@agentix-e/db-operations-core/types`, and returned `{ snapshotId, type, state }`
+  nowhere from `@agentix-e/db-operations-node/core/types`, and returned `{ snapshotId, type, state }`
   where `BackupResult` is `{ success, snapshot }`. The heading rule could not see any of it — a
   fenced block has no headings.
 - **Thirty-seven types that public signatures named and no package exported.** The security package
@@ -55,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **Nineteen internals from `@agentix-e/db-operations-audit`'s root.** `segmentPattern`,
+- **Nineteen internals from `@agentix-e/db-operations-node/audit`'s root.** `segmentPattern`,
   `readableSegmentsNewestFirst`, `newestOpenSegment`, `fileIdentity`, `isUnlinkRefusal`,
   `unlinkIfUnchanged`, `readView`, `repairFor`, `shadowedPairs`, `relateTwin`, `listDirectory`,
   `isRegularFile`, `mtimeOf`, `removeFile`, `readSegmentFromDisk`, `PARTIAL_ARCHIVE_SUFFIX`,
@@ -360,7 +393,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`FileAuditStoreConfig.segmentReader` is the only way segments are read.** The store no longer
   calls `readFileSync` itself; the default value is `readSegmentFromDisk`, exported from
-  `@agentix-e/db-operations-audit`, so a wrapper keeps identical semantics. A store that cannot read
+  `@agentix-e/db-operations-node/audit`, so a wrapper keeps identical semantics. A store that cannot read
   a segment contributes no entries from it — the port's contract is text or `null`, and throwing
   means the same thing.
 - **`AuditLogManager` and `FileAuditStore` are unchanged in behaviour, but two documented promises
@@ -387,7 +420,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The production implementations are now on the package surface.** `KeyManager`,
   `AES256GCMEncryptionProvider`, `EnvelopeEncryptionProvider`, `KeyRotationManager`, `RotationAuditor`,
   `AuditLogManager` and `RBACEngine` — plus the four bound constants and their configuration types —
-  are exported from `@agentix-e/db-operations-security`, and the audit package also exports
+  are exported from `@agentix-e/db-operations-node/security`, and the audit package also exports
   `FileAuditStoreConfig`, `FileIdentity`, `segmentPattern`, `readableSegmentsNewestFirst` and
   `newestOpenSegment`.
 - **`tsconfig.json` maps `@agentix-e/db-operations`** to the umbrella barrel, so a test can import the
@@ -492,7 +525,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replacement text. The report is the only place that says *which* edit was judged; a line number is
   not enough, and iteration 30's "the runner disagrees with the suite" conclusion came from exactly
   that mistake (see *Corrected* below).
-- **`unlinkIfUnchanged` and `fileIdentity` exported from `@agentix-e/db-operations-audit`** — the
+- **`unlinkIfUnchanged` and `fileIdentity` exported from `@agentix-e/db-operations-node/audit`** — the
   measure-then-delete pair is useful to any caller doing the same dance, and it is now part of the
   package's surface rather than an internal detail reached through a test.
 
@@ -741,7 +774,7 @@ Mutation: **7 modules** behind the published rule — `backupChain.ts` 100 %, `c
   `scheduled`, and `completed` was only reachable by never having started. A `pending` instance
   is refused, because approval is the step that authorises taking the database offline. AC 64.
 - **`parseCron`, `parseCronField` and `CronSchedule`** exported from
-  `@agentix-e/db-operations-maintenance`. The five-field grammar is now a module with its own
+  `@agentix-e/db-operations-node/maintenance`. The five-field grammar is now a module with its own
   tests rather than an inner function of the scheduler, so an expression can be checked before a
   window is registered, and every rule of the grammar has an assertion of its own. AC 63.
 - **Mutation covers five modules instead of four.** `maintenance/cron.ts` joins the list under the
@@ -795,7 +828,7 @@ Mutation: **7 modules** behind the published rule — `backupChain.ts` 100 %, `c
 ### Added
 
 - **`dependentsOf`, `unrestorableReason`, `newestCompletedSnapshot`** — the chain primitives, exported
-  from `@agentix-e/db-operations-backup`. `dependentsOf(inventory, id)` answers "what would I lose if
+  from `@agentix-e/db-operations-node/backup`. `dependentsOf(inventory, id)` answers "what would I lose if
   I deleted this"; `unrestorableReason(inventory, snapshot)` answers "can this be replayed, and if
   not, which link is missing". Both are pure functions over `BackupMetadata[]`, so an adapter for a
   non-JS or non-in-memory store can use them without adopting the manager.

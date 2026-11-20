@@ -24,7 +24,7 @@
   "dependencies": {
     "@agentix-e/db-cluster": "workspace:*",
     "@agentix-e/db-federation": "workspace:*",
-    "@agentix-e/db-operations-audit": "workspace:*"
+    "@agentix-e/db-operations-node": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

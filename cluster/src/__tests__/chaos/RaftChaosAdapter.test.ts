@@ -260,7 +260,7 @@ describe('RaftChaosScenarios', () => {
 
 describe('E2E — RaftChaosAdapter + ChaosEngineV2', () => {
   it('E2E — inject partition via engine, heal via engine', async () => {
-    const { ChaosEngineV2 } = await import('@agentix-e/db-operations-chaosengine');
+    const { ChaosEngineV2 } = await import('@agentix-e/db-operations-node/chaosengine');
     const engine = new ChaosEngineV2();
 
     const mock0 = new MockChaosTransport();
@@ -284,7 +284,7 @@ describe('E2E — RaftChaosAdapter + ChaosEngineV2', () => {
   });
 
   it('E2E — crash and restart via engine', async () => {
-    const { ChaosEngineV2 } = await import('@agentix-e/db-operations-chaosengine');
+    const { ChaosEngineV2 } = await import('@agentix-e/db-operations-node/chaosengine');
     const engine = new ChaosEngineV2();
 
     const mocks = [new MockChaosTransport(), new MockChaosTransport(), new MockChaosTransport()];
@@ -304,7 +304,7 @@ describe('E2E — RaftChaosAdapter + ChaosEngineV2', () => {
   });
 
   it('E2E — scenario runner with Raft adapters', async () => {
-    const { ChaosEngineV2 } = await import('@agentix-e/db-operations-chaosengine');
+    const { ChaosEngineV2 } = await import('@agentix-e/db-operations-node/chaosengine');
     const engine = new ChaosEngineV2();
 
     const mocks = [new MockChaosTransport(), new MockChaosTransport()];

@@ -67,13 +67,11 @@
   },
   "dependencies": {
     "@agentix-e/db-cluster": "workspace:*",
+    "@agentix-e/db-operations-node": "workspace:*",
     "lmdb": "^3.2.6",
     "zeromq": "^6.2.1"
   },
   "devDependencies": {
-    "@agentix-e/db-operations-audit": "workspace:*",
-    "@agentix-e/db-operations-backup": "workspace:*",
-    "@agentix-e/db-operations-observability": "workspace:*",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.15.0",
     "@vitest/coverage-v8": "3.2.6",

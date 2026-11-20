@@ -3,9 +3,9 @@
 ## Installation
 
 ```bash
-npm install @agentix-e/db-operations-core
-npm install @agentix-e/db-operations-health
-npm install @agentix-e/db-operations-backup
+npm install @agentix-e/db-operations-node
+npm install @agentix-e/db-operations-node
+npm install @agentix-e/db-operations-node
 # ... etc for each package you need
 ```
 
@@ -14,22 +14,22 @@ npm install @agentix-e/db-operations-backup
 ```typescript
 import { DB_OPERATIONS_VERSION } from '@agentix-e/db-operations';
 
-console.log(DB_OPERATIONS_VERSION); // e.g. "1.11.3"
+console.log(DB_OPERATIONS_VERSION); // e.g. "2.0.0"
 ```
 
-`DB_OPERATIONS_VERSION` is the **umbrella's** version. The 21 packages version
-independently — `@agentix-e/db-operations-audit` is at 1.5.0 while the umbrella is
-at 1.11.3 — so a deployment that needs to know which audit build it is running
-reads that package's own `package.json`. The constant is asserted against
-`operations/package.json` by `AC 79.8`, because a version constant nobody compares
-is a number that drifts.
+`DB_OPERATIONS_VERSION` is the **umbrella's** version. The three packages version
+together — the modules inside `@agentix-e/db-operations-node` are directories, not
+packages, so a deployment that needs to know which audit build it is running reads
+`@agentix-e/db-operations-node`'s own `package.json`. The constant is asserted against
+`operations/package.json` by `AC 79.8`, because a version constant nobody compares is a
+number that drifts.
 
 ## Minimal Setup (3 minutes)
 
 ### 1. Provider Registry
 
 ```typescript
-import { ProviderRegistry, token } from '@agentix-e/db-operations-core';
+import { ProviderRegistry, token } from '@agentix-e/db-operations-node/core';
 
 const registry = new ProviderRegistry();
 ```
@@ -37,10 +37,10 @@ const registry = new ProviderRegistry();
 ### 2. Register Services
 
 ```typescript
-import type { ILogger } from '@agentix-e/db-operations-logger';
-import { InMemoryLogger } from '@agentix-e/db-operations-logger';
-import { HealthOrchestrator, componentProbe } from '@agentix-e/db-operations-health';
-import { MetricsRegistry } from '@agentix-e/db-operations-metrics';
+import type { ILogger } from '@agentix-e/db-operations-node/logger';
+import { InMemoryLogger } from '@agentix-e/db-operations-node/logger';
+import { HealthOrchestrator, componentProbe } from '@agentix-e/db-operations-node/health';
+import { MetricsRegistry } from '@agentix-e/db-operations-node/metrics';
 
 // Services that a caller looks up *by interface* go in the registry.
 const ILoggerToken = token<ILogger>('ILogger');
@@ -74,7 +74,7 @@ import {
   InMemoryBackupManager,
   InMemoryStorageBackend,
   RetentionPolicyEvaluator,
-} from '@agentix-e/db-operations-backup';
+} from '@agentix-e/db-operations-node/backup';
 
 const backup = new InMemoryBackupManager(
   new InMemoryStorageBackend(),
@@ -113,8 +113,8 @@ class DatabaseOperations {
 ### Custom adapter skeleton
 
 ```typescript
-import type { IBackupManager, CreateBackupOptions } from '@agentix-e/db-operations-backup';
-import type { BackupResult } from '@agentix-e/db-operations-core/types';
+import type { IBackupManager, CreateBackupOptions } from '@agentix-e/db-operations-node/backup';
+import type { BackupResult } from '@agentix-e/db-operations-node/core/types';
 
 class MyDatabaseBackupAdapter implements IBackupManager {
   async createBackup(options: CreateBackupOptions): Promise<BackupResult> {
@@ -141,7 +141,7 @@ class MyDatabaseBackupAdapter implements IBackupManager {
 
 `IBackupManager` is defined by the `backup` package, not by `core`; `core` owns the
 shapes (`BackupResult`, `BackupMetadata`, `SnapshotType`). An earlier version of
-this snippet imported both from `@agentix-e/db-operations-core/types`, named a
+this snippet imported both from `@agentix-e/db-operations-node/core/types`, named a
 `BackupType` that exists nowhere, and returned `{ snapshotId, type, state }` where
 the real shape is `{ success, snapshot }` — three errors a reader would have
 discovered only after wiring their first adapter.
@@ -150,4 +150,4 @@ discovered only after wiring their first adapter.
 
 - See each package's README for specific API docs
 - Read the [architecture doc](../../docs/architecture.md) for design details
-- Read the [operations guide](../../docs/user-guide/operations.md) for the 21 packages
+- Read the [operations guide](../../docs/user-guide/operations.md) for the three packages

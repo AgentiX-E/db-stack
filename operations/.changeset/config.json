@@ -3,9 +3,11 @@
   "changelog": "@changesets/cli/changelog",
   "commit": true,
   "fixed": [
-    {
-      "*": ["@agentix-e/db-operations-*"]
-    }
+    [
+      "@agentix-e/db-operations-node",
+      "@agentix-e/db-operations-cluster",
+      "@agentix-e/db-operations-federation"
+    ]
   ],
   "linked": [],
   "access": "public",

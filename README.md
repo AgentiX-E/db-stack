@@ -2,12 +2,12 @@
 
 One monorepo for the three layers of the AgentiX-E database platform:
 
-| Package                    | Directory     | Role                                                                                      |
-| -------------------------- | ------------- | ----------------------------------------------------------------------------------------- |
-| `@agentix-e/db-cluster`    | `cluster/`    | Raft consensus, sharding, HA/fencing, WAL + PITR, transport (mTLS)                        |
-| `@agentix-e/db-federation` | `federation/` | Cross-datacenter replication: CDC, outbox, conflict resolution, anti-entropy              |
-| `@agentix-e/db-operations` | `operations/` | Engine-agnostic operations framework — 21 packages (health, backup, metrics, security, …) |
-| `@agentix-e/db-stack-e2e`  | `e2e/`        | End-to-end acceptance suites + benchmarks (private, not published)                        |
+| Package                    | Directory     | Role                                                                                                |
+| -------------------------- | ------------- | --------------------------------------------------------------------------------------------------- |
+| `@agentix-e/db-cluster`    | `cluster/`    | Raft consensus, sharding, HA/fencing, WAL + PITR, transport (mTLS)                                  |
+| `@agentix-e/db-federation` | `federation/` | Cross-datacenter replication: CDC, outbox, conflict resolution, anti-entropy                        |
+| `@agentix-e/db-operations` | `operations/` | Engine-agnostic operations framework — three packages: `node` (20 modules), `cluster`, `federation` |
+| `@agentix-e/db-stack-e2e`  | `e2e/`        | End-to-end acceptance suites + benchmarks (private, not published)                                  |
 
 The layers depend in one direction only:
 
@@ -73,7 +73,7 @@ packages can build real clusters in their own tests instead of copying internals
 | [docs/architecture.md](docs/architecture.md)                                   | High-level architecture and component inventory                           |
 | [docs/user-guide/cluster.md](docs/user-guide/cluster.md)                       | Consensus, sharding, snapshots, HA/fencing, sessions, watch, PITR         |
 | [docs/user-guide/federation.md](docs/user-guide/federation.md)                 | CDC, outbox, conflict resolution, anti-entropy, topology                  |
-| [docs/user-guide/operations.md](docs/user-guide/operations.md)                 | The 21 engine-agnostic operations packages                                |
+| [docs/user-guide/operations.md](docs/user-guide/operations.md)                 | The three operations packages: node modules, cluster assembly, federation |
 | [docs/user-guide/engine-adapters.md](docs/user-guide/engine-adapters.md)       | Plugging **your** database engine into the middleware                     |
 | [docs/user-guide/production-runbook.md](docs/user-guide/production-runbook.md) | Certificates, capacity, monitoring, failure handling, DR                  |
 | [docs/maturity.md](docs/maturity.md)                                           | Feature-by-feature verification matrix, measured coverage, and the gaps   |
@@ -104,7 +104,9 @@ federation/
   src/__tests__/      unit · integration · chaos · performance
 
 operations/
-  packages/*/         21 independently publishable packages
+  packages/node/      20 modules, one manifest, 22 entry points
+  packages/cluster/   membership, scaling, rollout, chaos translation
+  packages/federation/ federated identity, query routing, repair
   src/index.ts        umbrella entry (namespaced re-exports)
 
 e2e/

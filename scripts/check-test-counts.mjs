@@ -34,7 +34,12 @@ import { pathToFileURL } from "node:url";
 const root = resolve(import.meta.dirname, "..");
 const PAGE = "operations/README.md";
 const REPORT = "operations/coverage/test-report.json";
-const SUITE = "src/__tests__/e2e/";
+// The integration suite, wherever a package keeps it. It was `src/__tests__/e2e/`
+// while every module was its own package; the modules now sit one level deeper
+// (`packages/node/src/core/__tests__/e2e/`), and a constant that still required the
+// suite to start immediately under `src/` reported zero integration files for a
+// suite of nineteen.
+const SUITE = "/__tests__/e2e/";
 
 /** A count as a page writes it: `3 155`, `3,155`, `3155`, `2 824`. */
 export function parseCount(text) {

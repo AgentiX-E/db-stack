@@ -37,15 +37,15 @@ import { HLC } from '../../hlc/HLC';
 // ── New: I7 modules ─────────────────────────────────────────
 import { ChannelHealthCalculator } from '../../monitoring/ChannelHealth';
 import { EdgeReplica } from '../../replication/EdgeReplica';
-import { W3CTraceContextProvider } from '@agentix-e/db-operations-observability';
-import { BackupVerifier } from '@agentix-e/db-operations-backup';
+import { W3CTraceContextProvider } from '@agentix-e/db-operations-node/observability';
+import { BackupVerifier } from '@agentix-e/db-operations-node/backup';
 
 // ── Repo C: db-operations ───────────────────────────────────
-import { FileAuditStore } from '@agentix-e/db-operations-audit';
+import { FileAuditStore } from '@agentix-e/db-operations-node/audit';
 import { SessionManager } from '@agentix-e/db-cluster';
 import { EventBus } from '@agentix-e/db-cluster';
-import { InMemoryBackupManager } from '@agentix-e/db-operations-backup';
-import { InMemoryAuditStore } from '@agentix-e/db-operations-audit';
+import { InMemoryBackupManager } from '@agentix-e/db-operations-node/backup';
+import { InMemoryAuditStore } from '@agentix-e/db-operations-node/audit';
 
 // ── Constants ───────────────────────────────────────────────
 

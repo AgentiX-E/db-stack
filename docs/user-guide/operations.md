@@ -1,14 +1,13 @@
 # Operations guide
 
-`@agentix-e/db-operations` is an **engine-agnostic operations framework**: 21 independently
-publishable packages that give every database the same operational surface — health,
-backup, metrics, security, maintenance, upgrades — without tying your application to one
-vendor's admin API.
+`@agentix-e/db-operations` is an **engine-agnostic operations framework**: three packages
+that give every database the same operational surface — health, backup, metrics, security,
+maintenance, upgrades — without tying your application to one vendor's admin API.
 
 ```bash
 npm install @agentix-e/db-operations
 # or install only what you need
-npm install @agentix-e/db-operations-health @agentix-e/db-operations-metrics
+npm install @agentix-e/db-operations-node
 ```
 
 ---
@@ -18,9 +17,9 @@ npm install @agentix-e/db-operations-health @agentix-e/db-operations-metrics
 Every package resolves its dependencies through typed tokens rather than constructors:
 
 ```ts
-import { ProviderRegistry, token } from "@agentix-e/db-operations-core";
-import { HealthOrchestrator } from "@agentix-e/db-operations-health";
-import { InMemoryLogger, type ILogger } from "@agentix-e/db-operations-logger";
+import { ProviderRegistry, token } from "@agentix-e/db-operations-node/core";
+import { HealthOrchestrator } from "@agentix-e/db-operations-node/health";
+import { InMemoryLogger, type ILogger } from "@agentix-e/db-operations-node/logger";
 
 const registry = new ProviderRegistry();
 registry.register(token<ILogger>("ILogger"), new InMemoryLogger("operations"));
@@ -41,7 +40,18 @@ not editing call sites.
 
 ## 2. Package map
 
-| Package          | What it gives you                                                        | Key entry points                                                                                              |
+Three packages, and the split is by a question rather than by domain: **does the code need
+to know how many nodes exist?**
+
+- `@agentix-e/db-operations-node` — no. Twenty modules, one process each.
+- `@agentix-e/db-operations-cluster` — yes. A member set, a leader, a majority.
+- `@agentix-e/db-operations-federation` — a set of *datacenters*.
+
+### 2.1 `@agentix-e/db-operations-node` — twenty modules
+
+Import the module, not the package root: `@agentix-e/db-operations-node/audit`.
+
+| Module           | What it gives you                                                        | Key entry points                                                                                              |
 | ---------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
 | `core`           | Registry, tokens, lifecycle, shared types                                | `ProviderRegistry`, `token`, `LifecyclePhase`                                                                 |
 | `logger`         | Structured logs with trace context                                       | `InMemoryLogger`, `PinoLogger`, `NoopLogger`                                                                  |
@@ -52,18 +62,40 @@ not editing call sites.
 | `metrics`        | Counter, gauge, histogram, registry                                      | `MetricsRegistry`, `Counter`, `Histogram`                                                                     |
 | `circuitbreaker` | Failure isolation with half-open probing                                 | breaker factory, state listeners                                                                              |
 | `memoryguard`    | Heap pressure detection and shedding                                     | guard policies                                                                                                |
-| `chaosengine`    | Fault injection for your own test suites                                 | fault schedules                                                                                               |
+| `chaosengine`    | Fault definitions for your own test suites                               | fault schedules                                                                                               |
 | `backup`         | Full/incremental backup abstractions, integrity verification             | `BackupManager`, `S3StorageBackend`, `InMemoryStorageBackend`, `BackupVerifier`                               |
 | `maintenance`    | VACUUM/ANALYZE/REINDEX windows and scheduling                            | `MaintenanceWindowScheduler`                                                                                  |
 | `security`       | TLS, key management, encryption at rest, RBAC, rate limiting, compliance | `KeyManager`, `KeyRotationManager`, `EnvelopeEncryptionProvider`, `AES256GCMEncryptionProvider`, `RBACEngine` |
-| `auth`           | Authentication providers and session tokens                              | provider interfaces, JWT/static providers                                                                     |
+| `auth`           | Authentication interfaces — `security` implements them                   | provider interfaces, JWT/static providers                                                                     |
 | `audit`          | Append-only audit log: crash-safe segments, rotation, export, query      | `InMemoryAuditStore`, `FileAuditStore`, `JsonAuditExporter`                                                   |
 | `autoscaler`     | Reactive + predictive scaling decisions                                  | `AutoScaler`, `PredictiveScalingEngine`                                                                       |
 | `autotuner`      | Configuration tuning from observed load                                  | `AutoTunerWorker`                                                                                             |
 | `configwatcher`  | Live configuration reload with validation                                | watchers, validators                                                                                          |
-| `rollingupgrade` | Quorum-safe rolling upgrade orchestration                                | `RollingUpgradeOrchestrator`                                                                                  |
+| `rollingupgrade` | Upgrade plans, batching and health gating                                | `RollingUpgradeOrchestrator`                                                                                  |
 | `slacollector`   | SLI recording and SLO/error-budget computation                           | `SLACollector`                                                                                                |
-| `federation`     | Cross-cluster schema federation and query planning                       | schema registry, query planner                                                                                |
+
+### 2.2 `@agentix-e/db-operations-cluster` — the multi-node half
+
+| Export                   | The question it answers                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------------------- |
+| `ClusterScalingExecutor` | A scaler said "five nodes". What does the cluster actually have, and which members leave? |
+| `ClusterRolloutPlanner`  | Which batch runs first, and does the group still commit while it does?                    |
+| `RaftFaultTranslator`    | A fault says "partition `n1`". Which transports does that mean, in which direction?       |
+| `InMemoryClusterTopology`| The reference `IClusterTopology` for a fixed member set.                                  |
+| `quorumOf`, `tolerableFailures`, `holdsQuorumOf` | Majority arithmetic, in one place.                              |
+
+`autoscaler` and `rollingupgrade` produce *decisions*; the two assemblers above apply them
+to a live member set. That separation is why the node modules can be used by a single-node
+deployment without dragging a consensus system in, and why a cluster deployment does not
+reimplement quorum arithmetic per caller.
+
+### 2.3 `@agentix-e/db-operations-federation` — cross-datacenter
+
+| Export                 | What it gives you                                    |
+| ---------------------- | ---------------------------------------------------- |
+| `FederatedNode`        | A node bound to shard ids and roles across DCs       |
+| `FederatedQueryRouter` | Fan-out query planning over federated shards         |
+| schema federation      | Migration descriptors and plans shared across DCs    |
 
 ---
 
@@ -75,7 +107,7 @@ not editing call sites.
 import {
   HealthOrchestrator,
   componentProbe,
-} from "@agentix-e/db-operations-health";
+} from "@agentix-e/db-operations-node/health";
 
 const health = new HealthOrchestrator();
 
@@ -107,7 +139,7 @@ a field an in-process sample updates, and the probe reads the field.
 ### 3.2 Metrics
 
 ```ts
-import { MetricsRegistry } from "@agentix-e/db-operations-metrics";
+import { MetricsRegistry } from "@agentix-e/db-operations-node/metrics";
 
 const metrics = new MetricsRegistry();
 const writes = metrics.counter("db_writes_total", { db: "orders" });
@@ -132,7 +164,7 @@ import {
   RetentionPolicyEvaluator,
   S3StorageBackend,
   BackupVerifier,
-} from "@agentix-e/db-operations-backup";
+} from "@agentix-e/db-operations-node/backup";
 
 const backups = new InMemoryBackupManager(
   new S3StorageBackend({ bucket: "db-backups", region: "eu-west-1" }),
@@ -156,10 +188,25 @@ would be a manager whose backups are gone at the next restart.
 Verify on creation **and** on a schedule — a backup that was never restored is a hypothesis,
 not a backup.
 
+#### The S3 backend needs two optional peers
+
+`S3StorageBackend` speaks S3 through `@aws-sdk/client-s3` and `@aws-sdk/lib-storage`, which are
+optional peer dependencies of the package rather than dependencies of it:
+
+```bash
+npm install @aws-sdk/client-s3 @aws-sdk/lib-storage
+```
+
+That is why the snippet above imports and constructs the backend without them being installed
+anywhere in the other twelve storage paths. The import is resolved on first use, so constructing a
+backend resolves nothing; the first request without the SDK is refused with a message that names
+both packages, and `health()` reports the same sentence as `{ ok: false }` so a readiness probe
+fails for the reason a reader can act on.
+
 #### Retention: floors are floors
 
 ```ts
-import { RetentionPolicyEvaluator } from "@agentix-e/db-operations-backup";
+import { RetentionPolicyEvaluator } from "@agentix-e/db-operations-node/backup";
 
 const retention = new RetentionPolicyEvaluator({
   maxFullSnapshots: 7,
@@ -247,7 +294,7 @@ The chain primitives are exported, so an adapter for a store that is not this ma
 same questions:
 
 ```ts
-import { dependentsOf, unrestorableReason } from "@agentix-e/db-operations-backup";
+import { dependentsOf, unrestorableReason } from "@agentix-e/db-operations-node/backup";
 
 // What would I lose if I deleted this snapshot?
 const dependents = dependentsOf(inventory, snapshotId);
@@ -261,7 +308,7 @@ The chain primitives are exported, so an adapter for a store that is not this ma
 same questions:
 
 ```ts
-import { dependentsOf, unrestorableReason } from "@agentix-e/db-operations-backup";
+import { dependentsOf, unrestorableReason } from "@agentix-e/db-operations-node/backup";
 
 // What would I lose if I deleted this snapshot?
 const dependents = dependentsOf(inventory, snapshotId);
@@ -281,7 +328,7 @@ import {
   KeyManager,
   EnvelopeEncryptionProvider,
   KeyRotationManager,
-} from "@agentix-e/db-operations-security";
+} from "@agentix-e/db-operations-node/security";
 
 const keys = new KeyManager({ masterSecret: process.env.DB_MASTER_SECRET! });
 const encryption = new EnvelopeEncryptionProvider({
@@ -619,7 +666,7 @@ by a key that was born after the wipe.
 ### 3.5 Audit trail: what retention is allowed to delete
 
 ```ts
-import { AuditLogManager } from "@agentix-e/db-operations-security";
+import { AuditLogManager } from "@agentix-e/db-operations-node/security";
 
 const audit = new AuditLogManager({
   logFilePath: "/var/lib/db/audit.jsonl",
@@ -691,7 +738,7 @@ than silently reinterpreted.
 #### Compliance reports that can only pass on checks that ran
 
 ```ts
-import { RotationAuditor } from "@agentix-e/db-operations-security";
+import { RotationAuditor } from "@agentix-e/db-operations-node/security";
 
 const auditor = new RotationAuditor();
 rotation.on("rotation", (event) => auditor.record(event));
@@ -721,7 +768,7 @@ const report = auditor.generateReport("PCI-DSS");
 ### 3.6 Rolling upgrade
 
 ```ts
-import { RollingUpgradeOrchestrator } from "@agentix-e/db-operations-rollingupgrade";
+import { RollingUpgradeOrchestrator } from "@agentix-e/db-operations-node/rollingupgrade";
 
 const upgrade = new RollingUpgradeOrchestrator({ minBakeMs: 30_000 });
 const stats = await upgrade.execute({
@@ -747,7 +794,7 @@ long-lived orchestrator runs more than one upgrade.
 ### 3.7 Maintenance windows
 
 ```ts
-import { MaintenanceWindowScheduler } from "@agentix-e/db-operations-maintenance";
+import { MaintenanceWindowScheduler } from "@agentix-e/db-operations-node/maintenance";
 
 const scheduler = new MaintenanceWindowScheduler();
 scheduler.registerWindow({
@@ -809,7 +856,7 @@ in UTC. The grammar is its own module (`parseCron` / `parseCronField` are export
 check an expression before you register a window:
 
 ```ts
-import { parseCron } from "@agentix-e/db-operations-maintenance";
+import { parseCron } from "@agentix-e/db-operations-node/maintenance";
 
 parseCron("*/15 0-6 * * 1-5").minutes; // Set { 0, 15, 30, 45 }
 parseCron("0 3 * *"); // throws: expected 5 fields

@@ -54,8 +54,9 @@ const PACKAGE_ROOTS = [
   "federation",
   "operations",
   "e2e",
-  "operations/packages/chaosengine",
-  "operations/packages/slacollector",
+  "operations/packages/node",
+  "operations/packages/cluster",
+  "operations/packages/federation",
 ];
 
 const SOURCE_EXTENSIONS = [".ts", ".mts", ".js", ".mjs"];

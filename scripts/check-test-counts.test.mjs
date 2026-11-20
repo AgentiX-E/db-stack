@@ -44,45 +44,58 @@ const reportOf = (...files) => ({
   })),
 });
 
-const CORE = "/repo/operations/packages/core/src/__tests__/registry.test.ts";
-const HEALTH = "/repo/operations/packages/health/src/__tests__/probe.test.ts";
-const E2E = "/repo/operations/packages/core/src/__tests__/e2e/cluster.test.ts";
+// The fixtures follow the layout: a module is a directory inside a package, so the
+// package a file counts towards is the first segment under `packages/`, not the
+// module name. `registry.test.ts` and `probe.test.ts` belong to `node`; the e2e
+// suite under `core` belongs to `node` as well.
+const CORE =
+  "/repo/operations/packages/node/src/core/__tests__/registry.test.ts";
+const HEALTH =
+  "/repo/operations/packages/node/src/health/__tests__/probe.test.ts";
+const E2E =
+  "/repo/operations/packages/node/src/core/__tests__/e2e/cluster.test.ts";
+const FEDERATION =
+  "/repo/operations/packages/federation/src/__tests__/router.test.ts";
 const LOOSE = "/repo/operations/src/loose.test.ts";
 
 /** A page that states all five numbers the gate reads, and states them right. */
 const PAGE = `# Operations
 
-**A production-grade layer — 2 packages, 2 test cases in 2 files, every
+**A production-grade layer — 2 packages, 2 test cases in 3 files, every
 coverage dimension at or above 95 %.**
 
 ## Packages
 
 | Package | Status | Tests | Description |
 |---------|--------|-------|-------------|
-| [\`core\`](./packages/core/) | ✅ | 2 | Base types |
-| [\`health\`](./packages/health/) | ✅ | 0 | Probes |
+| [\`node\`](./packages/node/) | ✅ | 2 | Node-local modules |
+| [\`federation\`](./packages/federation/) | ✅ | 0 | Cross-datacenter binding |
 
-**Total: \`pnpm coverage\` reports 2 files and 2 tests, 0 failures** (\`test:unit\`: 2 files /
+**Total: \`pnpm coverage\` reports 3 files and 2 tests, 0 failures** (\`test:unit\`: 3 files /
 2; \`test:integration\`: 0 files / 0).
 
 ## Testing
 
 \`\`\`bash
-npm test              # 2 files, 2 tests
+npm test              # 3 files, 2 tests
 \`\`\`
 `;
 
-const measuredOf = () => measure(reportOf([CORE, 2], [HEALTH, null]));
+const measuredOf = () =>
+  measure(reportOf([CORE, 2], [HEALTH, null], [FEDERATION, null]));
 
 const messages = (findings) =>
   findings.map((finding) => finding.message).join("\n");
 
 test("counts cases and files per package", () => {
-  const measured = measure(reportOf([CORE, 3], [HEALTH, 2], [E2E, 1]));
+  const measured = measure(
+    reportOf([CORE, 3], [HEALTH, 2], [E2E, 1], [FEDERATION, 4]),
+  );
 
-  assert.deepEqual(measured.packages.get("core"), { cases: 4, files: 2 });
-  assert.deepEqual(measured.packages.get("health"), { cases: 2, files: 1 });
-  assert.deepEqual(measured.total, { cases: 6, files: 3 });
+  // Two modules of one package, one integration file, one other package.
+  assert.deepEqual(measured.packages.get("node"), { cases: 6, files: 3 });
+  assert.deepEqual(measured.packages.get("federation"), { cases: 4, files: 1 });
+  assert.deepEqual(measured.total, { cases: 10, files: 4 });
 });
 
 test("splits the suites at the e2e directory", () => {
@@ -105,7 +118,7 @@ test("a test file outside every package is reported, not dropped", () => {
 test("a file that failed to collect still counts as a file, with no cases", () => {
   const measured = measure(reportOf([HEALTH, null]));
 
-  assert.deepEqual(measured.packages.get("health"), { cases: 0, files: 1 });
+  assert.deepEqual(measured.packages.get("node"), { cases: 0, files: 1 });
   assert.deepEqual(measured.total, { cases: 0, files: 1 });
 });
 
@@ -135,8 +148,8 @@ test("a page whose five statements agree produces no finding", () => {
 
 test("a total the run disagrees with is a finding at the sentence that states it", () => {
   const text = PAGE.replace(
-    "2 packages, 2 test cases in 2 files",
-    "2 packages, 3 149 test cases in 2 files",
+    "2 packages, 2 test cases in 3 files",
+    "2 packages, 3 149 test cases in 3 files",
   );
   const { findings } = auditPage(text, measuredOf());
 
@@ -146,36 +159,36 @@ test("a total the run disagrees with is a finding at the sentence that states it
 });
 
 test("the unit and integration split is checked too", () => {
-  const text = PAGE.replace("`test:unit`: 2 files /", "`test:unit`: 3 files /");
+  const text = PAGE.replace("`test:unit`: 3 files /", "`test:unit`: 4 files /");
   const { findings } = auditPage(text, measuredOf());
 
   assert.equal(findings.length, 1);
-  assert.match(findings[0].message, /says `3` where the run reports `2`/);
+  assert.match(findings[0].message, /says `4` where the run reports `3`/);
   assert.match(
     findings[0].message,
-    /\(2 files and 2 tests, unit 2 files \/ 2, integration 0 files \/ 0\)/,
+    /\(3 files and 2 tests, unit 3 files \/ 2, integration 0 files \/ 0\)/,
   );
 });
 
 test("a row that understates a package is a finding on that row", () => {
   const text = PAGE.replace(
-    "| [`core`](./packages/core/) | ✅ | 2 |",
-    "| [`core`](./packages/core/) | ✅ | 549 |",
+    "| [`node`](./packages/node/) | ✅ | 2 |",
+    "| [`node`](./packages/node/) | ✅ | 549 |",
   );
   const { findings } = auditPage(text, measuredOf());
 
   assert.equal(findings.length, 1);
   assert.match(
     findings[0].message,
-    /`core` has 549 test case\(s\); the run reports 2/,
+    /`node` has 549 test case\(s\); the run reports 2/,
   );
   assert.equal(findings[0].line, 10);
 });
 
 test("a row for a package with no test file is a finding", () => {
   const text = PAGE.replace(
-    "| [`health`](./packages/health/) | ✅ | 0 | Probes |",
-    "| [`health`](./packages/health/) | ✅ | 0 | Probes |\n| [`logger`](./packages/logger/) | ✅ | 55 | Logs |",
+    "| [`federation`](./packages/federation/) | ✅ | 0 | Cross-datacenter binding |",
+    "| [`federation`](./packages/federation/) | ✅ | 0 | Cross-datacenter binding |\n| [`logger`](./packages/logger/) | ✅ | 55 | Logs |",
   );
   const { findings } = auditPage(text, measuredOf());
 
@@ -188,7 +201,7 @@ test("a row for a package with no test file is a finding", () => {
 
 test("a package the run measured and the table omits is a finding", () => {
   const text = PAGE.replace(
-    "| [`health`](./packages/health/) | ✅ | 0 | Probes |\n",
+    "| [`federation`](./packages/federation/) | ✅ | 0 | Cross-datacenter binding |\n",
     "",
   );
   const { findings } = auditPage(text, measuredOf());
@@ -196,24 +209,24 @@ test("a package the run measured and the table omits is a finding", () => {
   assert.equal(findings.length, 1);
   assert.match(
     findings[0].message,
-    /has a package `health` with 0 test case\(s\) and no row/,
+    /has a package `federation` with 0 test case\(s\) and no row/,
   );
 });
 
 test("a table that lists the same package twice is a finding", () => {
   const text = PAGE.replace(
-    "| [`health`](./packages/health/) | ✅ | 0 | Probes |",
-    "| [`health`](./packages/health/) | ✅ | 0 | Probes |\n| [`health`](./packages/health/) | ✅ | 0 | Probes again |",
+    "| [`federation`](./packages/federation/) | ✅ | 0 | Cross-datacenter binding |",
+    "| [`federation`](./packages/federation/) | ✅ | 0 | Cross-datacenter binding |\n| [`federation`](./packages/federation/) | ✅ | 0 | Again |",
   );
   const { findings } = auditPage(text, measuredOf());
 
   assert.equal(findings.length, 1);
-  assert.match(findings[0].message, /lists `health` twice/);
+  assert.match(findings[0].message, /lists `federation` twice/);
 });
 
 test("a page that dropped a sentence fails instead of passing vacuously", () => {
   const text = PAGE.replace(
-    "npm test              # 2 files, 2 tests",
+    "npm test              # 3 files, 2 tests",
     "npm test",
   );
   const { findings } = auditPage(text, measuredOf());
@@ -221,23 +234,25 @@ test("a page that dropped a sentence fails instead of passing vacuously", () => 
   assert.equal(findings.length, 1);
   assert.match(
     findings[0].message,
-    /no longer states npm test runs 2 files, 2 tests/,
+    /no longer states npm test runs 3 files, 2 tests/,
   );
 });
 
 test("an unowned test file is a finding, because no row can describe it", () => {
-  const measured = measure(reportOf([CORE, 2], [HEALTH, null], [LOOSE, 1]));
+  const measured = measure(
+    reportOf([CORE, 2], [HEALTH, null], [FEDERATION, null], [LOOSE, 1]),
+  );
   // The page has to be right about everything else, or the case would pass for
   // the wrong reason: nine findings would include the one under test.
   const page = PAGE.replaceAll(
-    "2 test cases in 2 files",
-    "3 test cases in 3 files",
+    "2 test cases in 3 files",
+    "3 test cases in 4 files",
   )
-    .replace("reports 2 files and 2 tests", "reports 3 files and 3 tests")
-    .replace("`test:unit`: 2 files /\n2;", "`test:unit`: 3 files /\n3;")
+    .replace("reports 3 files and 2 tests", "reports 4 files and 3 tests")
+    .replace("`test:unit`: 3 files /\n2;", "`test:unit`: 4 files /\n3;")
     .replace(
-      "npm test              # 2 files, 2 tests",
-      "npm test              # 3 files, 3 tests",
+      "npm test              # 3 files, 2 tests",
+      "npm test              # 4 files, 3 tests",
     );
   const { findings } = auditPage(page, measured);
 
@@ -252,14 +267,17 @@ test("--write is what the fixture needs: it rewrites and reports how many number
     const page = join(dir, "README.md");
     const report = join(dir, "report.json");
     const wrong = PAGE.replace(
-      "2 packages, 2 test cases in 2 files",
+      "2 packages, 2 test cases in 3 files",
       "2 packages, 3 149 test cases in 146 files",
     ).replace(
-      "| [`core`](./packages/core/) | ✅ | 2 |",
-      "| [`core`](./packages/core/) | ✅ | 22 |",
+      "| [`node`](./packages/node/) | ✅ | 2 |",
+      "| [`node`](./packages/node/) | ✅ | 22 |",
     );
     writeFileSync(page, wrong);
-    writeFileSync(report, JSON.stringify(reportOf([CORE, 2], [HEALTH, null])));
+    writeFileSync(
+      report,
+      JSON.stringify(reportOf([CORE, 2], [HEALTH, null], [FEDERATION, null])),
+    );
 
     const lines = [];
     const code = run(["--write"], {
@@ -302,8 +320,11 @@ test("a page the run disagrees with exits non-zero and names the page", () => {
   try {
     const page = join(dir, "README.md");
     const report = join(dir, "report.json");
-    writeFileSync(page, PAGE.replace("2 files, 2 tests", "2 files, 9 tests"));
-    writeFileSync(report, JSON.stringify(reportOf([CORE, 2], [HEALTH, null])));
+    writeFileSync(page, PAGE.replace("3 files, 2 tests", "3 files, 9 tests"));
+    writeFileSync(
+      report,
+      JSON.stringify(reportOf([CORE, 2], [HEALTH, null], [FEDERATION, null])),
+    );
 
     const errors = [];
     const code = run([], { page, report, error: (line) => errors.push(line) });
@@ -350,8 +371,8 @@ test("the repository's table adds up to the totals the page states, by its own a
 
   assert.equal(
     rows.length,
-    21,
-    "the table has 21 rows: one per package in operations/packages",
+    3,
+    "the table has three rows: one per package in operations/packages",
   );
   assert.equal(
     sum,
@@ -366,7 +387,10 @@ test("--write on a page that is already right changes nothing", () => {
     const page = join(dir, "README.md");
     const report = join(dir, "report.json");
     writeFileSync(page, PAGE);
-    writeFileSync(report, JSON.stringify(reportOf([CORE, 2], [HEALTH, null])));
+    writeFileSync(
+      report,
+      JSON.stringify(reportOf([CORE, 2], [HEALTH, null], [FEDERATION, null])),
+    );
 
     const lines = [];
     const code = run(["--write"], {
@@ -377,7 +401,7 @@ test("--write on a page that is already right changes nothing", () => {
 
     assert.equal(code, 0);
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /✓ test-counts: 2 cases in 2 files/);
+    assert.match(lines[0], /✓ test-counts: 2 cases in 3 files/);
     assert.equal(readFileSync(page, "utf8"), PAGE);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -402,11 +426,11 @@ test("a page the caller supplies is named by the path the caller supplied", () =
     // a file the finding is not about.
     writeFileSync(
       pagePath,
-      PAGE.replace("2 files and 2 tests", "4 files and 2 tests"),
+      PAGE.replace("3 files and 2 tests", "4 files and 2 tests"),
     );
     writeFileSync(
       reportPath,
-      JSON.stringify(reportOf([CORE, 2], [HEALTH, null])),
+      JSON.stringify(reportOf([CORE, 2], [HEALTH, null], [FEDERATION, null])),
     );
 
     const errors = [];

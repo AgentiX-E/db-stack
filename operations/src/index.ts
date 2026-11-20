@@ -1,40 +1,52 @@
 /**
  * @agentix-e/db-operations — umbrella entry point.
  *
- * The framework is delivered as 21 focused packages. This entry re-exports
- * every package under a stable namespace so consumers can either:
+ * The framework is delivered as three packages, split by the question each one
+ * answers:
  *
- *   1. depend on the umbrella and reach for `operations.health`,
- *      `operations.backup`, ... — convenient when several domains are used;
- *   2. depend on the individual package (`@agentix-e/db-operations-health`)
- *      to keep the dependency graph (and bundle) minimal.
+ *   - `@agentix-e/db-operations-node` — twenty modules whose implementation does
+ *     not need to know how many nodes exist. A probe probes its own process, a
+ *     breaker trips on its own call site, an audit store appends to its own
+ *     directory.
+ *   - `@agentix-e/db-operations-cluster` — the code that has to reason about a
+ *     *set* of nodes: which one is removed first, how many may be out at once
+ *     without losing quorum, what a fault on node 3 means for the leader.
+ *   - `@agentix-e/db-operations-federation` — the cross-datacenter binding:
+ *     `FederatedNode` and `FederatedQueryRouter`.
  *
- * Namespaced re-exports are intentional: several packages legitimately use
- * the same exported symbol names (e.g. `Counter`, `Probe`, `Config`).
- * Flattening them into a single module scope would create collisions and
- * silently drop APIs, so each package keeps its own namespace.
+ * The umbrella re-exports each *module* under its own namespace rather than
+ * re-exporting the three packages, so that `operations.health` keeps naming the
+ * same object it named before the split. Several modules legitimately use the
+ * same exported symbol names (`Counter`, `Probe`, `Config`); flattening them into
+ * a single module scope would create collisions and silently drop APIs, so each
+ * module keeps its own namespace.
+ *
+ * A consumer whose dependency graph should say what it uses imports the package
+ * it actually uses — `@agentix-e/db-operations-node/health` — and not this
+ * barrel.
  */
 
-export * as core from '@agentix-e/db-operations-core';
-export * as health from '@agentix-e/db-operations-health';
-export * as logger from '@agentix-e/db-operations-logger';
-export * as metrics from '@agentix-e/db-operations-metrics';
-export * as monitor from '@agentix-e/db-operations-monitor';
-export * as backup from '@agentix-e/db-operations-backup';
-export * as maintenance from '@agentix-e/db-operations-maintenance';
-export * as auth from '@agentix-e/db-operations-auth';
-export * as security from '@agentix-e/db-operations-security';
-export * as audit from '@agentix-e/db-operations-audit';
-export * as observability from '@agentix-e/db-operations-observability';
-export * as otel from '@agentix-e/db-operations-otel';
-export * as autotuner from '@agentix-e/db-operations-autotuner';
-export * as autoscaler from '@agentix-e/db-operations-autoscaler';
-export * as chaosengine from '@agentix-e/db-operations-chaosengine';
-export * as circuitbreaker from '@agentix-e/db-operations-circuitbreaker';
-export * as configwatcher from '@agentix-e/db-operations-configwatcher';
-export * as memoryguard from '@agentix-e/db-operations-memoryguard';
-export * as rollingupgrade from '@agentix-e/db-operations-rollingupgrade';
-export * as slacollector from '@agentix-e/db-operations-slacollector';
+export * as core from '@agentix-e/db-operations-node/core';
+export * as audit from '@agentix-e/db-operations-node/audit';
+export * as auth from '@agentix-e/db-operations-node/auth';
+export * as autoscaler from '@agentix-e/db-operations-node/autoscaler';
+export * as autotuner from '@agentix-e/db-operations-node/autotuner';
+export * as backup from '@agentix-e/db-operations-node/backup';
+export * as chaosengine from '@agentix-e/db-operations-node/chaosengine';
+export * as circuitbreaker from '@agentix-e/db-operations-node/circuitbreaker';
+export * as configwatcher from '@agentix-e/db-operations-node/configwatcher';
+export * as health from '@agentix-e/db-operations-node/health';
+export * as logger from '@agentix-e/db-operations-node/logger';
+export * as maintenance from '@agentix-e/db-operations-node/maintenance';
+export * as memoryguard from '@agentix-e/db-operations-node/memoryguard';
+export * as metrics from '@agentix-e/db-operations-node/metrics';
+export * as monitor from '@agentix-e/db-operations-node/monitor';
+export * as observability from '@agentix-e/db-operations-node/observability';
+export * as otel from '@agentix-e/db-operations-node/otel';
+export * as rollingupgrade from '@agentix-e/db-operations-node/rollingupgrade';
+export * as security from '@agentix-e/db-operations-node/security';
+export * as slacollector from '@agentix-e/db-operations-node/slacollector';
+export * as cluster from '@agentix-e/db-operations-cluster';
 export * as federation from '@agentix-e/db-operations-federation';
 
 /**
@@ -47,4 +59,4 @@ export * as federation from '@agentix-e/db-operations-federation';
  * constant nobody compares to the manifest is a number that drifts and a
  * deployment that cannot answer "which build am I running".
  */
-export const DB_OPERATIONS_VERSION = '1.11.3';
+export const DB_OPERATIONS_VERSION = '2.0.0';

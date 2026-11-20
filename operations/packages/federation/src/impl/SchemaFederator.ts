@@ -16,7 +16,7 @@
  * @module @agentix-e/db-operations-federation/impl
  */
 
-import type { MigrationDescriptor, MigrationPlan } from '@agentix-e/db-operations-core';
+import type { MigrationDescriptor, MigrationPlan } from '@agentix-e/db-operations-node/core';
 import type {
   ISchemaFederator,
   SchemaSnapshot,

@@ -39,7 +39,7 @@ import { HLC } from '../../hlc/HLC';
 import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry';
 
 // ── Repo C: db-operations ───────────────────────────────────
-import { FileAuditStore } from '@agentix-e/db-operations-audit';
+import { FileAuditStore } from '@agentix-e/db-operations-node/audit';
 
 // ── Constants ───────────────────────────────────────────────
 

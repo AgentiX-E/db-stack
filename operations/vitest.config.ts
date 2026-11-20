@@ -2,9 +2,10 @@ import { defineConfig } from 'vitest/config';
 import path from 'path';
 
 const root = __dirname;
-const pkg = (name: string) => path.resolve(root, 'packages', name, 'src', 'index.ts');
+const moduleOf = (name: string) => path.resolve(root, 'packages', 'node', 'src', name, 'index.ts');
 
-const PACKAGES = [
+/** The twenty modules `@agentix-e/db-operations-node` publishes. */
+const NODE_MODULES = [
   'audit',
   'auth',
   'autoscaler',
@@ -14,7 +15,6 @@ const PACKAGES = [
   'circuitbreaker',
   'configwatcher',
   'core',
-  'federation',
   'health',
   'logger',
   'maintenance',
@@ -28,11 +28,36 @@ const PACKAGES = [
   'slacollector',
 ];
 
-const aliases: Record<string, string> = {};
-for (const name of PACKAGES) {
-  aliases[`@agentix-e/db-operations-${name}`] = pkg(name);
-}
-aliases['@agentix-e/db-operations'] = path.resolve(root, 'src/index.ts');
+// Ordered: vitest takes the first alias whose `find` matches, so the two exact
+// subpaths come before the wildcard-shaped ones that would otherwise resolve
+// `…/node/core/types` to a directory this package does not have.
+// Vite matches aliases by prefix, not by equality, so the bare package name has to
+// come *after* every subpath of it: `@agentix-e/db-operations-node` is a prefix of
+// `@agentix-e/db-operations-node/core`, and the other order rewrites the subpath to
+// `…/node/src/index.ts/core`.
+const aliases = [
+  {
+    find: '@agentix-e/db-operations-node/core/types',
+    replacement: path.resolve(root, 'packages/node/src/core/types.ts'),
+  },
+  ...NODE_MODULES.map((name) => ({
+    find: `@agentix-e/db-operations-node/${name}`,
+    replacement: moduleOf(name),
+  })),
+  {
+    find: '@agentix-e/db-operations-node',
+    replacement: path.resolve(root, 'packages/node/src/index.ts'),
+  },
+  { find: '@agentix-e/db-operations', replacement: path.resolve(root, 'src/index.ts') },
+  {
+    find: '@agentix-e/db-operations-cluster',
+    replacement: path.resolve(root, 'packages/cluster/src/index.ts'),
+  },
+  {
+    find: '@agentix-e/db-operations-federation',
+    replacement: path.resolve(root, 'packages/federation/src/index.ts'),
+  },
+];
 
 export default defineConfig({
   // Pinned to this file's directory rather than taken from `process.cwd()`.
@@ -47,7 +72,8 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./vitest.setup.ts'],
     // Node 24 + tinypool fork mode leaks heap across files; a single thread
-    // keeps memory flat for the 21-package suite.
+    // keeps memory flat. Three packages now rather than twenty-one, and the same
+    // ~3 000 cases.
     pool: 'threads',
     poolOptions: {
       threads: {
@@ -71,9 +97,13 @@ export default defineConfig({
         'packages/*/src/**/*.spec.ts',
         'packages/*/src/**/__tests__/**',
         'packages/*/src/**/*.d.ts',
-        // Barrel / declaration-only modules.
+        // Barrels and declaration-only modules. Each of these is a re-export or a
+        // type file: no line in one can be executed, and counting them as
+        // uncovered lines made the per-file gate measure how many modules a
+        // package has.
         'packages/*/src/index.ts',
-        'packages/*/src/interfaces/**',
+        'packages/*/src/**/index.ts',
+        'packages/*/src/**/interfaces/**',
         'packages/*/src/types.ts',
         'packages/*/src/**/types.ts',
       ],

@@ -38,13 +38,13 @@ import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry';
 import { HLC } from '../../hlc/HLC';
 
 // ── Repo C: db-operations ───────────────────────────────────
-import { FileAuditStore } from '@agentix-e/db-operations-audit';
+import { FileAuditStore } from '@agentix-e/db-operations-node/audit';
 import {
   InMemoryBackupManager,
   InMemoryStorageBackend,
   RetentionPolicyEvaluator,
-} from '@agentix-e/db-operations-backup';
-import { InMemoryAuditStore } from '@agentix-e/db-operations-audit';
+} from '@agentix-e/db-operations-node/backup';
+import { InMemoryAuditStore } from '@agentix-e/db-operations-node/audit';
 
 // ── Constants ───────────────────────────────────────────────
 

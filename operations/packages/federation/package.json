@@ -1,6 +1,6 @@
 {
   "name": "@agentix-e/db-operations-federation",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Federated query router and schema federation for db-operations",
   "type": "module",
   "private": false,
@@ -17,7 +17,7 @@
     }
   },
   "dependencies": {
-    "@agentix-e/db-operations-core": "workspace:*"
+    "@agentix-e/db-operations-node": "workspace:*"
   },
   "files": [
     "dist",

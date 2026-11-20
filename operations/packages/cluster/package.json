@@ -1,0 +1,41 @@
+{
+  "name": "@agentix-e/db-operations-cluster",
+  "version": "2.0.0",
+  "description": "Multi-node assembly for db-operations: scaling against a live member set, rollout sequencing, and fault realisation",
+  "type": "module",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../../scripts/fix-esm-extensions.mjs dist",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@agentix-e/db-operations-node": "workspace:*"
+  },
+  "peerDependencies": {},
+  "engines": {
+    "node": ">=20.11"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgentiX-E/db-stack.git",
+    "directory": "operations/packages/cluster"
+  }
+}

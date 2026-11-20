@@ -244,9 +244,10 @@ test("every published package maps its entry points to sources", () => {
   const aliases = sourceAliases(ROOT);
   assert.equal(aliases["@agentix-e/db-cluster"][0], "cluster/src/index.ts");
   assert.equal(
-    aliases["@agentix-e/db-operations-core"][0],
-    "operations/packages/core/src/index.ts",
+    aliases["@agentix-e/db-operations-node/core"][0],
+    "operations/packages/node/src/core/index.ts",
   );
+  // Twenty-two: the twenty node modules, the cluster package and the umbrella.
   assert.ok(
     Object.keys(aliases).length >= 20,
     `expected the whole workspace, got ${Object.keys(aliases).length} entries`,
@@ -262,9 +263,19 @@ test("the repository's own examples are all read", () => {
   assert.ok(
     pages.includes(resolve(ROOT, "docs", "user-guide", "operations.md")),
   );
+  // A module page lives one level deeper than it used to: `monitor` is a
+  // directory inside `db-operations-node`, not a package of its own.
   assert.ok(
     pages.includes(
-      resolve(ROOT, "operations", "packages", "monitor", "README.md"),
+      resolve(
+        ROOT,
+        "operations",
+        "packages",
+        "node",
+        "docs",
+        "monitor",
+        "README.md",
+      ),
     ),
   );
   assert.ok(pages.includes(resolve(ROOT, "operations", "README.md")));
