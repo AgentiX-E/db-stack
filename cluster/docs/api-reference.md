@@ -80,6 +80,43 @@ lower bound, returns an empty slice past the head, and returns an empty slice
 rather than throwing when compaction lands mid-read — a learner pulling entries
 must be able to tell "nothing there yet" from "I lost the race".
 
+### Where a quorum's member set comes from
+
+`getQuorumHealth()` is arithmetic over a member set, and the set has three sources,
+in this order:
+
+1. `RaftConfig.peers` — the declared cluster, which is what a node started with a
+   `tcpConfig` has;
+2. `RaftConfig.quorumMembers` — the same list for a mode that does not declare it,
+   such as a group whose members live in the `RaftGroupManager` that routes for it.
+   It is merged with `peers`, never a replacement: declaring the set twice cannot
+   produce two different majorities;
+3. the configuration raft **committed**, read from this node's storage. A node that
+   declared nothing adopts it on its first `isLeader()` and inside every membership
+   change.
+
+`null` means "no accounting", not "no quorum": it is what `checkQuorum: false` asks
+for, and what a node answers in the window before any of the three sources has
+produced a member set. That window is why a group on a shared transport used to be
+unaccounted — a watchdog built from an empty `peers` would have been a watchdog of
+one, which is true of every isolated node. The committed configuration is the only
+list that is a *fact*, so it is the one that wins.
+
+A single-node cluster is not that window: its committed configuration names one
+voter, one answer is a majority, and `hasQuorum` is `true` because it has to be.
+
+### Membership changes are single-step
+
+`addServer` / `promoteServer` / `removeServer` append a **single-step**
+configuration — the new voter set is in force for the commit that admits it — so a
+change needs the *existing* voters to answer. With a voter down, a promotion can
+report `rejected` after raft-core's commit timeout. That refusal leaves nothing
+behind in what this package reports: `getMembership()` reads the committed
+configuration and the watchdog keeps the majority raft can commit with, so a caller
+never sees a cluster that grew without committing. For the two-phase path (C_old →
+C_old,new → C_new, with rollback) use `RaftGroup.proposeMembershipChange`, which
+drives the joint-consensus engine.
+
 Two defaults are published because a caller may want to state them explicitly
 rather than inherit them:
 

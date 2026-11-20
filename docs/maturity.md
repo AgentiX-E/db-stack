@@ -993,10 +993,20 @@ acknowledge. `AC 8.21` is the whole lifecycle; `AC 8.22` is a node nobody can re
 entry exists and absent from the configuration afterwards (`addServer` waits for a socket, up to 3 s,
 before it appends).
 
-Still not covered: quorum accounting for a shared-transport group, whose members live in another
-manager, so `getQuorumHealth()` returns `null` (P3-21); and a membership change while the cluster is
-already missing a voter, which the library's single-step configuration cannot commit — the adapter
-reports `rejected` after its commit timeout rather than pretending otherwise (P3-28).
+Quorum accounting on a shared transport is covered, and the entry that said it was not is the finding:
+`AC 12.7` reads the health of all six adapters of a three-node, two-shard cluster over three
+`NodeTransport`s with real mTLS (three voters, majority two, leader quorate), and `AC 12.8` isolates one
+group's leader through the published seam — its `isLeader()` flips inside ten seconds while the *other*
+group's leader keeps claiming leadership, and the group commits again after healing. Both passed against
+unmodified source: those adapters declare their peers, so a watchdog was already built at `init()`. What
+had no denominator is the narrower state the entry should have named — a node that declares **nothing** —
+and it now takes the member set from `RaftConfig.quorumMembers` or, failing that, from the configuration
+raft committed, which is the only list that is a fact.
+
+Still not covered: a membership change while the cluster is already missing a voter, measured at cluster
+level — the library's single-step configuration cannot commit it, the adapter reports `rejected` after
+its commit timeout, and `AC 34.89` measures that the refusal leaves nothing behind in what this package
+reports, but the five-process provocation does not exist yet (P3-28).
 
 **A `require` that only the test runner had.** Three published features called the CommonJS `require`
 from a package that ships as ESM. None of them failed to compile, and none of them failed a test: the
