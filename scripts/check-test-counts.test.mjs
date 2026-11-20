@@ -388,17 +388,28 @@ test("the command line is the command line: a missing report exits 1 and says wh
   // The entry point is six lines no import can reach, and it is the half of the
   // gate a person actually runs. Spawning it is the only way to assert that the
   // exit code is 1 rather than an unhandled throw.
-  const child = spawnSync(
-    process.execPath,
-    [resolve(ROOT, "scripts/check-test-counts.mjs")],
-    {
-      encoding: "utf8",
-    },
-  );
+  //
+  // The report path is named rather than assumed. Without it this case asserted
+  // that the *working tree* has no `operations/coverage/test-report.json`, so it
+  // passed in the Quality job, which never writes one, and failed in any tree
+  // that had just run `pnpm coverage` — a red suite caused by a leftover file,
+  // which is the least useful kind of red.
+  const dir = mkdtempSync(join(tmpdir(), "test-counts-cli-"));
+  try {
+    const child = spawnSync(
+      process.execPath,
+      [
+        resolve(ROOT, "scripts/check-test-counts.mjs"),
+        "--report",
+        join(dir, "test-report.json"),
+      ],
+      { encoding: "utf8" },
+    );
 
-  assert.equal(child.status, 1);
-  assert.match(
-    child.stderr,
-    /no report at operations\/coverage\/test-report\.json/,
-  );
+    assert.equal(child.status, 1);
+    assert.match(child.stderr, /no report at .*test-report\.json/);
+    assert.match(child.stderr, /writes one\.$/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
