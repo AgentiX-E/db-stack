@@ -291,7 +291,7 @@ jobs:
       # Five voters, six processes, real signals. A configuration change is the one
       # operation whose answer depends on how the *other* processes reply, so it is
       # the one operation no single-node test can judge.
-      - name: Membership change in a five-voter cluster (AC-C10..C13)
+      - name: Membership change in a five-voter cluster (AC-C10..C14)
         run: pnpm --filter @agentix-e/db-stack-e2e run test:membership
       - name: Upload E2E logs
         if: failure()

@@ -8,6 +8,7 @@
  *           and leaves every member's configuration untouched
  *   AC-C13  after one node is restarted the cluster forms a quorum again and commits
  *           a further change — a refusal is not a wedge
+ *   AC-C14  a proposal sent to a follower is refused by name instead of waited on
  *
  * Why this file exists
  * --------------------
