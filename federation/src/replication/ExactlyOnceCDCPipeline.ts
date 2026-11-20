@@ -193,6 +193,17 @@ export class ExactlyOnceCDCPipeline {
    */
   private checkpoint: CDCCheckpoint = { lastConfirmedLSN: {}, updatedAt: 0, version: 1 };
 
+  /**
+   * Whether `loadCheckpoint()` has read (or created) the file yet.
+   *
+   * `stop()` flushes the working copy, and a pipeline whose `start()` was refused
+   * never read one: stopping it wrote the empty default over the file that caused
+   * the refusal. That is the same "replay from the beginning" decision this class
+   * refuses to make at start, taken through the back door when a caller cleans up
+   * after catching the refusal.
+   */
+  private checkpointLoaded = false;
+
   /** Pump state */
   private pumpTimer: ReturnType<typeof setInterval> | null = null;
   private pumpActive = false;
@@ -278,7 +289,7 @@ export class ExactlyOnceCDCPipeline {
     // A graceful stop waits for the appends already accepted from the engine:
     // dropping them would lose changes the log still reports as produced.
     await this.appendChain;
-    this.flushCheckpoint();
+    if (this.checkpointLoaded) this.flushCheckpoint();
   }
 
   // ── CDC control (delegated) ──────────────────────────────
@@ -362,7 +373,7 @@ export class ExactlyOnceCDCPipeline {
       // Payload is not a valid CDCChangeEvent
       this.emit('event_failed', {
         type: 'event_failed',
-        error: `Failed to decode CDC payload: ${err instanceof Error ? err.message : String(err)}`,
+        error: `Failed to decode CDC payload: ${describeError(err)}`,
         msgId,
         timestamp: Date.now(),
       });
@@ -553,7 +564,7 @@ export class ExactlyOnceCDCPipeline {
         // will retry it, which is the one state this pipeline must never enter
         // quietly. It is not counted as produced (no outbox holds it), and the
         // reason is kept.
-        this.lastAppendError = error instanceof Error ? error.message : String(error);
+        this.lastAppendError = describeError(error);
         this.emit('event_failed', {
           type: 'event_failed',
           lsn: event.lsn,
@@ -615,7 +626,7 @@ export class ExactlyOnceCDCPipeline {
           // receiver deduplicates on it — and the store's local sequence only
           // as a fallback for entries written without one.
           const msg: TransportMessage = {
-            messageId: entry.msgId ?? entry.id,
+            messageId: messageIdOf(entry),
             sourcePeerId: this.config.nodeId,
             targetPeerId: this.config.remoteNodeId ?? '',
             payload: entry.payload,
@@ -635,7 +646,7 @@ export class ExactlyOnceCDCPipeline {
           // outbox moves it to the dead-letter queue.
           const sent = await transport.send(msg);
           if (!sent) {
-            throw new Error(`Transport refused message to ${msg.targetPeerId ?? '(unknown)'}`);
+            throw new Error(`Transport refused message to ${msg.targetPeerId}`);
           }
 
           // G4: Mark delivered after successful transport
@@ -655,7 +666,7 @@ export class ExactlyOnceCDCPipeline {
             // Skip checkpoint advance if payload can't be decoded
           }
         } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
+          const errorMsg = describeError(err);
 
           // Mark as failed — OutboxStore handles maxRetries → dead letter
           const movedToDLQ = this.outbox.markFailed(entry.id, errorMsg);
@@ -663,7 +674,7 @@ export class ExactlyOnceCDCPipeline {
           this.emit('pump_error', {
             type: 'pump_error',
             error: errorMsg,
-            msgId: entry.msgId ?? entry.id,
+            msgId: messageIdOf(entry),
             lsn: lsnOf(entry),
             timestamp: Date.now(),
           });
@@ -672,7 +683,7 @@ export class ExactlyOnceCDCPipeline {
             this.emit('event_failed', {
               type: 'event_failed',
               error: `Moved to dead letter after max retries`,
-              msgId: entry.msgId ?? entry.id,
+              msgId: messageIdOf(entry),
               timestamp: Date.now(),
             });
           }
@@ -681,7 +692,7 @@ export class ExactlyOnceCDCPipeline {
     } catch (err) {
       this.emit('pump_error', {
         type: 'pump_error',
-        error: err instanceof Error ? err.message : String(err),
+        error: describeError(err),
         timestamp: Date.now(),
       });
     } finally {
@@ -705,9 +716,27 @@ export class ExactlyOnceCDCPipeline {
       fs.mkdirSync(path.dirname(this.checkpointPath), { recursive: true });
       this.checkpoint = defaultCheckpoint;
       this.writeCheckpointFile(defaultCheckpoint);
+      this.checkpointLoaded = true;
       return;
     }
 
+    this.checkpoint = ExactlyOnceCDCPipeline.parseCheckpoint(raw, this.checkpointPath);
+    this.checkpointLoaded = true;
+  }
+
+  /**
+   * The one definition of "a checkpoint this pipeline will start from".
+   *
+   * It was written twice — once in `loadCheckpoint`, once in `readCheckpoint` —
+   * and the copies had already drifted: one refused a file that is not JSON with
+   * a message naming the consequence, the other let `JSON.parse`'s own
+   * `SyntaxError` out, and only the second sanitised a checkpoint whose
+   * `updatedAt` or `version` is not a number. Two copies of a validation rule is
+   * two answers to "may I start?", so `readCheckpoint` — the public door, the one
+   * a deployment calls before it constructs an engine — is now the only one, and
+   * `loadCheckpoint` walks through it.
+   */
+  private static parseCheckpoint(raw: string, file: string): CDCCheckpoint {
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -716,23 +745,27 @@ export class ExactlyOnceCDCPipeline {
       // Treating it as one would replay the whole log and report a healthy
       // pipeline, and the operator would learn about it from duplicated rows.
       throw new Error(
-        `${this.checkpointPath}: checkpoint is not JSON (${String(error)}); ` +
+        `${file}: checkpoint is not JSON (${String(error)}); ` +
           `refusing to start — replaying from the beginning is a decision, not a default`,
       );
     }
 
-    const candidate = parsed as Partial<CDCCheckpoint>;
+    const candidate = parsed as Partial<CDCCheckpoint> | null;
     if (
       !candidate ||
       typeof candidate !== 'object' ||
       typeof candidate.lastConfirmedLSN !== 'object' ||
       candidate.lastConfirmedLSN === null
     ) {
-      throw new Error(`${this.checkpointPath}: checkpoint has no lastConfirmedLSN map`);
+      throw new Error(`${file}: checkpoint has no lastConfirmedLSN map`);
     }
 
-    this.checkpoint = {
+    return {
       lastConfirmedLSN: { ...(candidate.lastConfirmedLSN as Record<string, string>) },
+      // A checkpoint written by an older build, or edited by hand, may carry the
+      // fields as strings. The map is the part that decides where the tail
+      // resumes; the other two are bookkeeping, and refusing to start over them
+      // would turn a cosmetic problem into an outage.
       updatedAt: typeof candidate.updatedAt === 'number' ? candidate.updatedAt : 0,
       version: typeof candidate.version === 'number' ? candidate.version : 1,
     };
@@ -773,15 +806,7 @@ export class ExactlyOnceCDCPipeline {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw error;
     }
-    const parsed = JSON.parse(raw) as Partial<CDCCheckpoint>;
-    if (!parsed || typeof parsed.lastConfirmedLSN !== 'object' || parsed.lastConfirmedLSN === null) {
-      throw new Error(`${file}: checkpoint has no lastConfirmedLSN map`);
-    }
-    return {
-      lastConfirmedLSN: { ...(parsed.lastConfirmedLSN as Record<string, string>) },
-      updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
-      version: typeof parsed.version === 'number' ? parsed.version : 1,
-    };
+    return ExactlyOnceCDCPipeline.parseCheckpoint(raw, file);
   }
 
   /**
@@ -845,14 +870,45 @@ function isHighLowLsn(value: string): boolean {
 }
 
 /**
+ * Render a thrown value for an event or a log line.
+ *
+ * Extracted because it appeared at four call sites, and four copies of one
+ * decision are four branches: three of them could only ever see an `Error`,
+ * because the only throw they could observe was a `SyntaxError` from
+ * `JSON.parse`, so the `String(err)` arm was unreachable in three places and
+ * reachable in none by a test. A port can reject with anything — a transport
+ * that throws a string is a configuration this package accepts — and the
+ * decision now lives in one place, where one case covers it for all four.
+ */
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The id a receiver deduplicates on.
+ *
+ * Same reasoning as `describeError`: `entry.msgId ?? entry.id` was written out at
+ * three call sites plus once inside `lsnOf`, and the fallback — an entry stored
+ * by a producer that set no message id — is reachable only through the outbox,
+ * so three of those four copies were untested. One function, one case.
+ */
+function messageIdOf(entry: { id: string; msgId?: string }): string {
+  return entry.msgId ?? entry.id;
+}
+
+/**
  * The log position an outbox entry carries.
  *
  * The message id is `<lsn>:<txId>` when the producer set one; the store's own
  * `entry:<sequence>` is not a position and never was — `entry:12`.split(':')[0]
  * is `"entry"`, which is what the checkpoint used to record.
+ *
+ * An id with no separator is a position in a log that numbers its own records
+ * (a Kafka offset, a monotonic counter), which the checkpoint API supports; the
+ * whole id is the position there, not a prefix of it.
  */
 function lsnOf(entry: { id: string; msgId?: string }): string {
-  const source = entry.msgId ?? entry.id;
+  const source = messageIdOf(entry);
   const separator = source.indexOf(':');
   return separator > 0 ? source.slice(0, separator) : source;
 }

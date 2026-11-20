@@ -427,6 +427,24 @@ export function spawnCdcSinkServer(config: Record<string, unknown>, label: strin
   return new ChildNode(label, child);
 }
 
+/** Spawn the process that appends to a real audit trail. */
+export function spawnAuditWriter(config: Record<string, unknown>, label: string): ChildNode {
+  const child = spawn(process.execPath, [join(HARNESS_DIR, 'audit-writer.mjs')], {
+    env: { ...process.env, AUDIT_WRITER_CONFIG: JSON.stringify(config) },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  return new ChildNode(label, child);
+}
+
+/** Spawn the process that reads a trail another process left behind. */
+export function spawnAuditReader(config: Record<string, unknown>, label: string): ChildNode {
+  const child = spawn(process.execPath, [join(HARNESS_DIR, 'audit-reader.mjs')], {
+    env: { ...process.env, AUDIT_READER_CONFIG: JSON.stringify(config) },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  return new ChildNode(label, child);
+}
+
 /** Spawn one federation gateway process (Raft member + federation stack). */
 export function spawnGateway(config: Record<string, unknown>, label: string): ChildNode {
   const child = spawn(process.execPath, [join(HARNESS_DIR, 'federation-gateway.mjs')], {

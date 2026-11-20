@@ -177,7 +177,7 @@ would have pasted and watched fail. See §4.1 for what that found.
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
 All four rows are from a green run of this repository; `operations` was re-measured in
-iteration 54 (99.47/99.47/99.87/98.52), `federation` in iteration 59 (99.58/99.58/100/97.98) and
+iteration 54 (99.47/99.47/99.87/98.52), `federation` in iteration 60 (99.61/99.61/100/98.79) and
 `cluster` is unchanged since iteration 53 because it had no source change in either. The gate covers four packages, not three:
 the end-to-end harness is measured as well, because a harness bug produces confident, meaningless
 acceptance passes.
@@ -185,14 +185,15 @@ acceptance passes.
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
 | `cluster`       | 99.42% | 99.42%     | 99.70%    | 98.15%   |
-| `federation`    | 99.58% | 99.58%     | 100%      | 97.98%   |
+| `federation`    | 99.61% | 99.61%     | 100%      | 98.79%   |
 | `operations`    | 99.47% | 99.47%     | 99.87%    | 98.52%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
 The `e2e` row covers the TypeScript harness — `support.ts` (process supervision, IPC, port
 allocation, log capture) and `published-artefact.ts` (the runner for the published-behaviour
-probes). The six `.mjs` programs it spawns (`raft-node.mjs`, `federation-gateway.mjs`,
-`published-probes.mjs`, `change-writer.mjs`, `cdc-relay.mjs`, `cdc-sink-server.mjs`) run in
+probes). The eight `.mjs` programs it spawns (`raft-node.mjs`, `federation-gateway.mjs`,
+`published-probes.mjs`, `change-writer.mjs`, `cdc-relay.mjs`, `cdc-sink-server.mjs`,
+`audit-writer.mjs`, `audit-reader.mjs`) run in
 child processes and are therefore _not_ instrumented by the
 in-process v8 collector; they are exercised for real by every acceptance test, and they are
 verified by what those processes report — a probe that stops asserting fails the suite that
@@ -370,7 +371,7 @@ pnpm audit:policy                                    # production tree to zero, 
 pnpm coverage:e2e                                    # e2e harness, same 95 % thresholds
 pnpm coverage:gate                                   # all four packages, every dimension
 pnpm check:test-counts                               # the numbers on the README are this run's numbers
-pnpm e2e                                             # 56 real-process acceptance tests (TLS, HTTP)
+pnpm e2e                                             # 59 real-process acceptance tests (TLS, HTTP, SIGKILL)
 pnpm test:mutation                                   # mutation score, all three packages
 pnpm check:mutation-timeouts                         # every Timeout in those reports has been read
 (cd cluster && pnpm test:perf)                       # 22 benchmarks on a real 3-node TLS cluster
@@ -1133,3 +1134,71 @@ what it accepted to a file. `AC-C15`–`C19` assert on those files, not on
 counters: fifty changes, each once, in order; a `503` retried rather than
 dropped; the ledger balanced in the process that ran; the exposition parsing as
 Prometheus text and agreeing with the same process's counters.
+
+## The coverage gate read a file the package average had been hiding
+
+`ExactlyOnceCDCPipeline.ts` came out of iteration 59 at 88.97 % branches — the
+package reported 97.97 % and passed, the per-file row did not — and every one of
+the fifteen uncovered arms was a decision this file makes twice:
+
+- `err instanceof Error ? err.message : String(err)` appeared at four call sites.
+  Three of them could only ever see an `Error`, because the only throw they could
+  observe was `JSON.parse`'s `SyntaxError`, so the `String(err)` arm was
+  unreachable in three places and untested in the fourth. It is `describeError()`
+  now, and the transport port is what proves the arm: a transport that rejects
+  with a string is a configuration this package accepts.
+- `entry.msgId ?? entry.id` appeared at three call sites and once inside `lsnOf`.
+  The fallback is reachable only through the outbox — an entry stored by a
+  producer that set no message id — so three of the four copies were untested.
+  It is `messageIdOf()` now, and `AC 99.6` pumps an entry a real `OutboxStore`
+  stored without one.
+- The checkpoint was validated twice: `loadCheckpoint()` refused a file that is
+  not JSON with a message naming the consequence, `readCheckpoint()` let
+  `JSON.parse`'s own `SyntaxError` out and was the only one that sanitised a
+  checkpoint whose `updatedAt`/`version` are not numbers. Two copies of "may I
+  start?" is two answers, so both doors walk through `parseCheckpoint()` now, and
+  the public one — the one a deployment calls before it builds an engine — is
+  where the four refusals are asserted (`AC 99.1`–`99.3`).
+
+Writing them found one more defect, of the kind the arms were hiding: `stop()`
+flushed the working checkpoint unconditionally, and a pipeline whose `start()`
+was refused on an unreadable checkpoint never loaded one — so cleaning up after
+the refusal wrote `{ "lastConfirmedLSN": {} }` over the file that caused it. That
+is the replay-from-the-beginning decision the class refuses to make at start,
+taken through the back door by the caller who caught the refusal. `stop()` now
+flushes only what `loadCheckpoint()` actually read (`AC 99.4`), and the case
+asserts the directory is still a directory afterwards.
+
+## The operations layer had no process that could die
+
+`cluster` and `federation` have been measured by processes since Phase 3: a node
+that is killed is really gone, and every byte between peers crosses a mutual-TLS
+socket. The operations packages were measured in-process only. `FileAuditStore`'s
+`dataDir` pinning had one child-process case (`AC 92`), but nothing wrote a trail
+in one process, died without warning, and asked a *second* process what it could
+still read — which is the only question a durability recipe answers, because
+`close()` runs the code a crash skips.
+
+`AC-O1`–`O3` ask it. `audit-writer.mjs` appends entries and acknowledges each one
+only after the store synced it; the suite takes twenty acknowledgements, sends
+`SIGKILL`, and `audit-reader.mjs` — a process that never saw the writer — reports
+every acknowledged id exactly once and in order. `AC-O2` runs the same shape with
+4 KiB segments and 1 KiB entries so rotation and its compression happen under
+load, waits for the archive to exist, then kills the writer and asserts the
+archived segment is still readable from the other process. `AC-O3` plants the
+artefact a kill during compression leaves behind — a five-byte `.ndjson.gz.part`
+— and asserts the next process to open the directory sweeps it without losing a
+segment.
+
+Three cases, and the honest limit is stated rather than implied: what a kill can
+show is that acknowledged entries are *readable* afterwards, not that they
+reached the medium; the `fsync` order that decides the second question is
+`DurableFileSystem`'s, and `P2-19`/`DW.1` are where that is observed.
+
+The same exercise made a larger gap unavoidable, and it is registered as `P3-52`
+rather than fixed here: `InMemoryBackupManager.createBackup()` never touches the
+`IStorageBackend` it is constructed with. It sets `sizeBytes: 1024` and
+`state: 'completed'` after a five-millisecond sleep, `restoreFromSnapshot()`
+answers `{ success: true }` without downloading anything, and `pitr()` answers
+success for a recovery point it invented. A real-process restore probe over that
+manager would be a test of a simulator.
