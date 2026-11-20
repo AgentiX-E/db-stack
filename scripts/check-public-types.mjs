@@ -93,11 +93,18 @@ export function entryExports(program, entryPath) {
   return { checker, source, symbols, names };
 }
 
-/** True when every declaration of the symbol lives inside this package. */
+/**
+ * True when every declaration of the symbol lives inside this package.
+ *
+ * There is deliberately no "no declarations" guard. A symbol reaches this
+ * function only through `record`, which requires one of the named-type flags,
+ * and a named type is always declared somewhere — there is no anonymous
+ * interface. A guard for the empty list would be a branch no input reaches, and
+ * `[].every()` being vacuously true is not the reason to keep one: the reason is
+ * that the empty list cannot occur.
+ */
 export function isLocal(symbol, packageRoot) {
-  const declarations = symbol.declarations ?? [];
-  if (declarations.length === 0) return false;
-  return declarations.every((decl) =>
+  return symbol.declarations.every((decl) =>
     decl.getSourceFile().fileName.startsWith(packageRoot),
   );
 }
@@ -174,9 +181,11 @@ export function auditPackage(entryPath, packageRoot, options = {}) {
 
   function visitType(type, via, depth) {
     if (isUntouchable(type) || depth > 8) return;
-    const key = type.id ?? `${type.flags}:${checker.typeToString(type)}`;
-    if (walkedTypes.has(key)) return;
-    walkedTypes.add(key);
+    // Keyed by the type itself, not by `type.id`: inside one program the checker
+    // canonicalises types, so identity is exactly the notion of "already
+    // walked", and it cannot merge two distinct types the way a text key can.
+    if (walkedTypes.has(type)) return;
+    walkedTypes.add(type);
 
     const symbol = type.getSymbol() ?? type.aliasSymbol;
     if (symbol && !(symbol.flags & ts.SymbolFlags.TypeParameter)) {
@@ -216,10 +225,11 @@ export function auditPackage(entryPath, packageRoot, options = {}) {
     for (const property of declared.getProperties()) {
       const name = property.getName();
       if (IGNORED_MEMBERS.has(name) || name.startsWith("__@")) continue;
-      const declaration = property.declarations?.[0];
-      const modifiers = declaration
-        ? ts.getCombinedModifierFlags(declaration)
-        : 0;
+      // A member of a declared type always has a declaration: the members the
+      // checker synthesises are the symbol-keyed ones, named `__@…`, and they
+      // were skipped on the line above. Guarding for a missing declaration here
+      // would be a branch no input reaches.
+      const modifiers = ts.getCombinedModifierFlags(property.declarations[0]);
       if (modifiers & (ts.ModifierFlags.Private | ts.ModifierFlags.Protected))
         continue;
       const memberVia = `${via}.${name}`;
@@ -236,8 +246,7 @@ export function auditPackage(entryPath, packageRoot, options = {}) {
       visitSignature(signature, via, depth);
   }
 
-  for (const symbol of exported) {
-    const name = names.get(symbol) ?? symbol.getName();
+  for (const [symbol, name] of names) {
     const declared = checker.getDeclaredTypeOfSymbol(symbol);
     for (const signature of declared.getCallSignatures())
       visitSignature(signature, name, 0);

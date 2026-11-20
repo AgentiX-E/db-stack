@@ -43,16 +43,11 @@ const FLOOR = 95;
  * Scripts no test loads, and why.
  *
  * This is a debt list, not an allowlist: `check` below fails when an entry is
- * paid, so the only way to keep a line here is to keep the reason true.
+ * paid, so the only way to keep a line here is to keep the reason true. It is
+ * empty, and empty is the state worth defending: `check-package.mjs` was the last
+ * entry, and it was there because importing it *ran* the check.
  */
-export const UNMEASURED = [
-  {
-    file: "check-package.mjs",
-    reason:
-      "imports built `dist/` artefacts, and the Quality job does not build the workspace",
-    roadmap: "P3-45",
-  },
-];
+export const UNMEASURED = [];
 
 /**
  * Files that are measured and below the floor, with the number recorded.
@@ -63,17 +58,21 @@ export const UNMEASURED = [
  */
 export const BELOW_FLOOR = [
   {
-    file: "check-public-types.mjs",
-    dimension: "branches",
-    // The recorded number is the CI measurement, not the local one: the same cases on
-    // the same engine report 93.94 here and 93.28 on the runner, because V8 counts a
-    // few branch slots differently between builds of the same version. A ratchet has
-    // to hold the stricter of the two, or it is not a ratchet.
-    measured: 93.28,
+    file: "package-targets.mjs",
+    // Functions, not lines. The uncovered code is three `behaviour` closures and
+    // nothing else: they call the built artefact, the Quality job has no `dist/`,
+    // and a fixture standing in for the artefact would be a test of the fixture.
+    // They run in the E2E job, after `pnpm build`, where there is something to
+    // call. Functions is the dimension that names that debt exactly and cannot
+    // move for a reason unrelated to it — a line count for a data table shifts
+    // with which cases read it, and a ratchet that wobbles teaches people to
+    // re-record it without reading it.
+    dimension: "functions",
+    measured: 0,
     reason:
-      "the type walker still has defensive branches no fixture reaches — a symbol with no " +
-      "declaration, a type with no id — and they are reachable only from a compiler that changes",
-    roadmap: "P3-44",
+      "three `behaviour` closures call the built artefact, so the only process that can reach them is " +
+      "one that has `dist/`",
+    roadmap: "P3-46",
   },
 ];
 

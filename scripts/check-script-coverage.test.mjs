@@ -21,7 +21,9 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import {
+  BELOW_FLOOR,
   NESTED,
+  UNMEASURED,
   check,
   isEntryPoint,
   measure,
@@ -312,23 +314,41 @@ test("run prints a missing script as an empty row rather than dropping it", () =
   }
 });
 
-test("the repository's own debt lists are the defaults, and they still hold", () => {
-  // No `unmeasured` / `belowFloor` override: this is the gate's real bookkeeping.
-  // When a debt is paid the paid-debt rule fires and this case fails, which is the
-  // point — the lists are read by something other than the gate that writes them.
-  const files = ["check-package.mjs", "check-public-types.mjs"];
-  const rows = new Map([["check-public-types.mjs", row(100, 93.94, 100)]]);
+test("the repository's own bookkeeping accounts for every gate", () => {
+  // No `unmeasured` / `belowFloor` override: this is the gate's real bookkeeping
+  // read over the gate's real file list. A script added without a test fails here
+  // as well as in CI, and a debt that was paid fails the paid-debt rule.
+  const files = scripts(ROOT);
+  const rows = new Map(
+    files
+      .filter((file) => file !== "package-targets.mjs")
+      .map((file) => [file, row(100, 100, 100)]),
+  );
+  rows.set("package-targets.mjs", row(43.23, 100, 0));
 
   const { findings, debt } = check(files, rows);
 
   assert.deepEqual(findings, []);
-  assert.equal(debt.length, 2);
-  // `check-gates` was the first entry in this list. Measuring it was the fix, not an
-  // edit to this case: the paid-debt rule refuses an entry for a file that is measured.
-  assert.match(debt[0], /^check-package\.mjs: unmeasured \(P3-45\) — /);
+  assert.equal(debt.length, 1);
   assert.match(
-    debt[1],
-    /^check-public-types\.mjs: branches 93\.94% \(floor 95%, recorded 93\.28%\) — P3-44/,
+    debt[0],
+    /^package-targets\.mjs: functions 0\.00% \(floor 95%, recorded 0\.00%\) — P3-46/,
+  );
+});
+
+test("the only remaining debt is the one no fixture can reach", () => {
+  // The three closures in `package-targets.mjs` call the published artefact, and
+  // this job has no build. If that ever stops being true the list shrinks; if a
+  // fourth file joins it, this case says so by failing here rather than in a
+  // reader's head.
+  assert.deepEqual(
+    UNMEASURED.map((entry) => entry.file),
+    [],
+    "a gate with no test is a script that prints passed",
+  );
+  assert.deepEqual(
+    BELOW_FLOOR.map((entry) => [entry.file, entry.dimension]),
+    [["package-targets.mjs", "functions"]],
   );
 });
 

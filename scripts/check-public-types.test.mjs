@@ -823,3 +823,93 @@ test("call signatures, constructors and index members are all walked", () => {
     },
   );
 });
+
+test("construct signatures published by an interface are walked twice over", () => {
+  // A `new (): T` member is the fourth kind of signature a published type can
+  // carry, and it appears in two places: on the interface that declares it, and
+  // on any member whose type is that interface. Both are walked, and the type
+  // the constructor returns is the one a consumer has to name.
+  withPackage(
+    {
+      "cluster/package.json": JSON.stringify({
+        exports: { ".": { types: "./dist/index.d.ts" } },
+      }),
+      "cluster/src/index.ts": [
+        "interface Hidden { id: string }",
+        "export interface Ctor { new (): Hidden }",
+        "export interface Registry { make: Ctor }",
+        "export const registry: Registry = { make: () => ({ id: 'x' }) as unknown as Ctor };",
+        "",
+      ].join("\n"),
+    },
+    (dir) => {
+      const errors = [];
+      assert.equal(
+        run(dir, { log: () => {}, error: (line) => errors.push(line) }),
+        1,
+      );
+      assert.match(errors[1], /`Hidden` appears in a public signature/);
+      assert.equal(
+        errors.filter((line) => line.includes("appears in a public signature"))
+          .length,
+        1,
+        "the same type reached by two routes is still one finding",
+      );
+    },
+  );
+});
+
+test("a namespace another entry exports also makes its members nameable", () => {
+  // `Shapes.Point` is nameable when *any* published entry exports `Shapes`, so a
+  // subpath that publishes only `origin` must not be blamed for a type the root
+  // already publishes. Judged on its own the subpath fails; judged with the
+  // root's surface in `elsewhere` it passes, which is the only reading a
+  // consumer can act on.
+  const dir = mkdtempSync(join(tmpdir(), "public-types-namespace-"));
+  try {
+    mkdirSync(join(dir, "src", "testing"), { recursive: true });
+    writeFileSync(
+      join(dir, "src", "index.ts"),
+      [
+        "export namespace Shapes {",
+        "  export interface Point { x: number }",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(dir, "src", "testing", "index.ts"),
+      [
+        "import type { Shapes } from '../index';",
+        "export function origin(): Shapes.Point { return { x: 0 }; }",
+        "",
+      ].join("\n"),
+    );
+
+    const root = join(dir, "src", "index.ts");
+    const subpath = join(dir, "src", "testing", "index.ts");
+    const program = ts.createProgram([root, subpath], {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      skipLibCheck: true,
+      noEmit: true,
+    });
+
+    assert.deepEqual(
+      auditPackage(subpath, `${dir}/`, { program }).findings.map((f) => f.name),
+      ["Point"],
+      "the subpath alone cannot give a consumer the name `Point`",
+    );
+    assert.deepEqual(
+      auditPackage(subpath, `${dir}/`, {
+        program,
+        elsewhere: entryExports(program, root).symbols,
+      }).findings,
+      [],
+      "the root publishes Shapes, so Shapes.Point is importable",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

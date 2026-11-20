@@ -16,6 +16,14 @@
  * transform supplies a `require`; a consumer does not. So the last thing this
  * script does is run the artefact the way a consumer would.
  *
+ * It was the one gate no test loaded, and the reason was circular: importing the
+ * module ran the check, and the check needed a build, so the Quality job — which
+ * deliberately does not build — could not measure it. The driver is now a
+ * function, the process it starts is a parameter, and `check-package.test.mjs`
+ * builds throwaway packages with a real `dist/` and judges them. The rule that
+ * matters most, "a package ships its docs or the check fails", had never been
+ * shown to fail; a rule nobody has seen fire is a rule nobody knows still works.
+ *
  * Usage: node scripts/check-package.mjs
  */
 
@@ -24,234 +32,68 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { workspacePackages } from "./check-docs-api.mjs";
+import { TARGETS } from "./package-targets.mjs";
 
-const root = resolve(import.meta.dirname, "..");
+const ROOT = resolve(import.meta.dirname, "..");
 
-const TARGETS = [
-  {
-    dir: "cluster",
-    entry: ".",
-    expect: [
-      "RaftAdapter",
-      "RaftTcpTransport",
-      "SqliteStorage",
-      "RaftGroupManager",
-      "HAFailoverDetector",
-      "FencingManager",
-      "RaftJointConsensusEngine",
-      "MessageCompressor",
-      "EventBus",
-      "SessionManager",
-      "MerkleTree",
-      "traceContext",
-    ],
-    // The digest constant is computed independently, with node:crypto, not by
-    // calling the class: a tree compared with itself agrees with itself whatever
-    // it computes.
-    behaviour: async ({ loaded, assert }) => {
-      const tree = new loaded.MerkleTree();
-      tree.build([
-        { key: "a", hash: "h1" },
-        { key: "b", hash: "h2" },
-      ]);
-      assert.equal(
-        tree.size,
-        2,
-        "MerkleTree.build() must not double the leaf set",
-      );
-      assert.equal(
-        tree.computeRoot(),
-        "b6de7e0c3068589921fcafd415b705feb8e82bd72ce9d92413ef55e659259894",
-        "MerkleTree.computeRoot() must hash the leaves, which a CommonJS require cannot do here",
-      );
+export { TARGETS } from "./package-targets.mjs";
 
-      const seen = await loaded.traceContext.runWithAsync(
-        "trace-probe",
-        async () => {
-          await new Promise((done) => setTimeout(done, 1));
-          return loaded.traceContext.getTraceId();
-        },
-      );
-      assert.equal(
-        seen,
-        "trace-probe",
-        "trace ids must survive an async boundary in the published artefact",
-      );
-      assert.equal(
-        loaded.traceContext.getTraceId(),
-        undefined,
-        "trace ids must not leak outside runWithAsync",
-      );
-    },
-  },
-  {
-    dir: "cluster",
-    entry: "./testing",
-    expect: ["TestCluster", "generateClusterCerts", "LinearizabilityChecker"],
-  },
-  { dir: "cluster", entry: "./raft", expect: ["RaftAdapter"] },
-  { dir: "cluster", entry: "./transport", expect: ["RaftTcpTransport"] },
-  { dir: "cluster", entry: "./storage", expect: ["SqliteStorage"] },
-  {
-    dir: "federation",
-    entry: ".",
-    expect: [
-      "FederationManager",
-      "MultiLeaderReplication",
-      "OutboxStore",
-      "TcpSecureTransport",
-      "ExactlyOnceCDCPipeline",
-      "AntiEntropy",
-      "ConflictResolver",
-      "DedupRing",
-      "HLC",
-      "CDCSubscriptionPump",
-      "CDCPublicationRegistry",
-      "CDCEngine",
-      "InMemoryCDCSink",
-      "CDCSinkResolver",
-      "projectChangeEvent",
-    ],
-    // The pump is the one published feature whose job is an edge between two
-    // objects, and an edge cannot be verified by importing it: the probe builds
-    // a catalogue, a sink and a pump from the built artefact and checks that a
-    // change appended to the engine comes out at the sink.
-    behaviour: async ({ loaded, assert }) => {
-      const engine = new loaded.CDCEngine({ nodeId: "probe" });
-      const registry = new loaded.CDCPublicationRegistry({ nodeId: "probe", engine });
-      await registry.createPublication("probe-pub", ["orders"]);
-      await registry.createSubscription("probe-sub", "probe-pub", "memory://probe");
+/** `cluster`, `cluster/testing` — how a reader names the entry that failed. */
+export function labelOf(target) {
+  return `${target.dir}${target.entry === "." ? "" : `/${target.entry.slice(2)}`}`;
+}
 
-      const sink = new loaded.InMemoryCDCSink("probe");
-      const pump = new loaded.CDCSubscriptionPump({
-        engine,
-        registry,
-        resolveSink: () => new loaded.CDCSinkResolver(sink, { healthCheckIntervalMs: 0 }),
-      });
-      await pump.start();
-
-      const change = engine.appendChange({
-        tableName: "orders",
-        operation: "insert",
-        oldValues: null,
-        newValues: { id: 1 },
-      });
-
-      // Poll on the pump's own count: the sink receives the event inside
-      // emit(), a moment before the pump records the delivery, so a poll on the
-      // sink would read the pair half-finished.
-      for (let i = 0; i < 40 && pump.getStatus().delivered === 0; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-
-      assert.equal(
-        sink.getEvents().length,
-        1,
-        "a change appended to the engine must reach the subscription sink exactly once",
-      );
-      assert.equal(
-        sink.getEvents()[0].id,
-        change.lsn + ":" + change.txId,
-        "the delivered event must carry the LSN the engine assigned",
-      );
-      assert.equal(pump.getStatus().delivered, 1, "the pump must count the delivery");
-
-      await pump.stop();
-    },
-  },
-  { dir: "federation", entry: "./transport", expect: ["TcpSecureTransport"] },
-  {
-    dir: "federation",
-    entry: "./testing",
-    expect: ["CDCFailureInjector"],
-    // The instrument is only useful if it injects: import proves the symbol is
-    // exported, and this builds one over a real sink, forces a drop and checks
-    // that the wrapped sink received nothing.
-    behaviour: async ({ loaded, assert }) => {
-      // A sink written inline rather than imported: the claim is that the
-      // injector wraps *any* ICDCSink, and a probe that used the package's own
-      // reference sink would pass even if it only worked with that one.
-      const events = [];
-      const sink = {
-        name: "probe-sink",
-        connect: async () => undefined,
-        disconnect: async () => undefined,
-        emit: async (batch) => {
-          events.push(...batch);
-        },
-      };
-      const injector = new loaded.CDCFailureInjector(sink, [
-        { type: "connection_drop", failEveryN: 1, maxFailures: 1, on: "emit" },
-      ]);
-      await injector.connect();
-
-      let refused = false;
-      try {
-        await injector.emit([
-          { id: "e1", type: "insert", table: "t", key: "k1", data: {}, timestamp: 1n },
-        ]);
-      } catch {
-        refused = true;
-      }
-
-      assert.equal(refused, true, "the configured drop must refuse the write");
-      assert.equal(injector.injectedBy("connection_drop"), 1, "the drop is counted");
-      assert.equal(events.length, 0, "nothing reached the wrapped sink");
-      assert.equal(injector.connected, false, "the injector is disconnected afterwards");
-    },
-  },
-  {
-    dir: "operations",
-    entry: ".",
-    expect: [
-      "core",
-      "health",
-      "metrics",
-      "backup",
-      "audit",
-      "security",
-      "observability",
-      "chaosengine",
-      "slacollector",
-    ],
-  },
-];
-
-let failures = 0;
-
-for (const target of TARGETS) {
+/**
+ * What a target promises to publish, or the reason it cannot be checked.
+ *
+ * A returned finding rather than an exception: "the manifest names a file that
+ * was never emitted" is one of the defects this gate exists to report, and a
+ * check that dies on it reports nothing.
+ */
+export function resolveTarget(target, root) {
   const pkgDir = resolve(root, target.dir);
-  const label = `${target.dir}${target.entry === "." ? "" : `/${target.entry.slice(2)}`}`;
+  const label = labelOf(target);
 
-  const packageJsonPath = `${pkgDir}/package.json`;
-  if (!existsSync(packageJsonPath)) {
-    console.error(`\u2717 ${label}: package.json missing`);
-    failures += 1;
-    continue;
-  }
+  const manifestPath = join(pkgDir, "package.json");
+  if (!existsSync(manifestPath))
+    return { label, pkgDir, problem: "package.json missing" };
 
-  const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const subpath = manifest.exports?.[target.entry];
-  if (!subpath) {
-    console.error(`\u2717 ${label}: no "exports" entry for "${target.entry}"`);
-    failures += 1;
-    continue;
-  }
+  if (!subpath)
+    return {
+      label,
+      pkgDir,
+      problem: `no "exports" entry for "${target.entry}"`,
+    };
 
   // Resolve the file the package *publishes* for this subpath. Importing the
   // package name would additionally require a node_modules link that only
   // exists in a consumer install, so the check is anchored to the declared
   // target instead: it still fails when the path is not emitted, when an ESM
   // specifier lost its extension, or when an export is missing.
-  const entry = subpath.import ?? subpath.default ?? subpath;
-  const entryFile = resolve(pkgDir, entry);
-  if (!existsSync(entryFile)) {
-    console.error(`\u2717 ${label}: declared entry not emitted (${entry})`);
-    failures += 1;
-    continue;
-  }
+  const declared = subpath.import ?? subpath.default ?? subpath;
+  const entryFile = resolve(pkgDir, declared);
+  if (!existsSync(entryFile))
+    return {
+      label,
+      pkgDir,
+      problem: `declared entry not emitted (${declared})`,
+    };
 
-  const script = `
+  return { label, pkgDir, entryFile };
+}
+
+/**
+ * The module a consumer's plain Node process is asked to run.
+ *
+ * The behaviour probe travels as source, because the child cannot see the
+ * parent's closures. That is the point: the probe exists to run the artefact in
+ * a process the test transform has not touched, and sharing a module graph with
+ * the gate would undo exactly what it measures.
+ */
+export function probeModule(target, entryFile) {
+  return `
     const expected = ${JSON.stringify(target.expect)};
     const url = ${JSON.stringify(pathToFileURL(entryFile).href)};
     const probeSource = ${JSON.stringify(target.behaviour ? target.behaviour.toString() : null)};
@@ -269,31 +111,27 @@ for (const target of TARGETS) {
     console.log('ok (' + Object.keys(loaded).length + ' exports' +
       (probeSource ? ', behaviour verified' : '') + ')');
   `;
+}
 
-  const result = spawnSync(
-    process.execPath,
-    ["--input-type=module", "-e", script],
-    {
-      cwd: pkgDir,
-      encoding: "utf8",
-    },
-  );
+/** What a failing child says when it says something worth reading. */
+const DIAGNOSIS = /\b\w*Error\b|missing exports:/;
 
-  if (result.status !== 0) {
-    // Keep the assertion message: "AssertionError: MerkleTree.build() must not
-    // double the leaf set" is the whole diagnosis, and a stack trace truncated
-    // to three lines is not.
-    const detail = (result.stderr || result.stdout)
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .slice(0, 4)
-      .join(" | ");
-    console.error(`\u2717 ${label}: ${detail}`);
-    failures += 1;
-  } else {
-    console.log(`\u2713 ${label} ${result.stdout.trim()}`);
-  }
+/**
+ * The head of a failing child's output, with the diagnosis first.
+ *
+ * "AssertionError: MerkleTree.build() must not double the leaf set" is the whole
+ * diagnosis, and the first four lines of a crashed Node process are four frames
+ * of `node:internal/…` — so the line that names the failure is moved to the
+ * front rather than hoped for inside a fixed window.
+ */
+export function summarise(result) {
+  const lines = (result.stderr || result.stdout)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const diagnosis = lines.findIndex((line) => DIAGNOSIS.test(line));
+  if (diagnosis > 0) lines.unshift(...lines.splice(diagnosis, 1));
+  return lines.slice(0, 4).join(" | ");
 }
 
 /**
@@ -305,22 +143,28 @@ for (const target of TARGETS) {
  * engine-adapter guide) were readable on GitHub and absent from
  * `node_modules`, which is the first place a consumer looks.
  *
- * The assertion runs `npm pack`, not the manifest: `files` can name a directory
+ * The assertion reads `npm pack`, not the manifest: `files` can name a directory
  * that a `.npmignore` then empties, and only the tarball knows what a consumer
  * receives.
  */
-function checkPublishedDocs() {
+export function checkPublishedDocs(root, options = {}) {
+  const error = options.error ?? console.error;
+  const pack =
+    options.pack ??
+    ((dir) =>
+      spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+        cwd: dir,
+        encoding: "utf8",
+      }));
+
   let missing = 0;
 
   for (const pkg of workspacePackages(root)) {
     if (!existsSync(join(pkg.abs, "docs"))) continue;
 
-    const packed = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-      cwd: pkg.abs,
-      encoding: "utf8",
-    });
+    const packed = pack(pkg.abs);
     if (packed.status !== 0) {
-      console.error(`\u2717 ${pkg.dir}: npm pack failed`);
+      error(`\u2717 ${pkg.dir}: npm pack failed`);
       missing += 1;
       continue;
     }
@@ -329,14 +173,16 @@ function checkPublishedDocs() {
     try {
       paths = JSON.parse(packed.stdout)[0].files.map((file) => file.path);
     } catch {
-      console.error(`\u2717 ${pkg.dir}: could not read the pack manifest`);
+      error(`\u2717 ${pkg.dir}: could not read the pack manifest`);
       missing += 1;
       continue;
     }
 
     const pages = paths.filter((path) => path.startsWith("docs/"));
     if (pages.length === 0) {
-      console.error(`\u2717 ${pkg.dir}: docs/ exists in the repository but not in the tarball`);
+      error(
+        `\u2717 ${pkg.dir}: docs/ exists in the repository but not in the tarball`,
+      );
       missing += 1;
     }
   }
@@ -344,14 +190,65 @@ function checkPublishedDocs() {
   return missing;
 }
 
-const undocumented = checkPublishedDocs();
-failures += undocumented;
+/**
+ * Judge every target and say so.
+ *
+ * The two sinks and the process the artefacts run in are parameters. A gate
+ * whose only reachable path is the command line is a gate no test can start,
+ * and this one spent several iterations in exactly that state.
+ */
+export function run(root = ROOT, options = {}) {
+  const log = options.log ?? console.log;
+  const error = options.error ?? console.error;
+  const spawn = options.spawn ?? spawnSync;
+  const targets = options.targets ?? TARGETS;
 
-if (failures > 0) {
-  console.error(`\nPackage check FAILED (${failures} finding(s))`);
-  process.exit(1);
+  let failures = 0;
+
+  for (const target of targets) {
+    const resolved = resolveTarget(target, root);
+    if (resolved.problem) {
+      error(`\u2717 ${resolved.label}: ${resolved.problem}`);
+      failures += 1;
+      continue;
+    }
+
+    const result = spawn(
+      process.execPath,
+      ["--input-type=module", "-e", probeModule(target, resolved.entryFile)],
+      { cwd: resolved.pkgDir, encoding: "utf8" },
+    );
+
+    if (result.status !== 0) {
+      error(`\u2717 ${resolved.label}: ${summarise(result)}`);
+      failures += 1;
+    } else {
+      log(`\u2713 ${resolved.label} ${result.stdout.trim()}`);
+    }
+  }
+
+  failures += checkPublishedDocs(root, { error, pack: options.pack });
+
+  if (failures > 0) {
+    error(`\nPackage check FAILED (${failures} finding(s))`);
+    return 1;
+  }
+  log(
+    "\nPackage check passed: every published entry point is importable, its probe passes, " +
+      "and every package ships its documentation.",
+  );
+  return 0;
 }
-console.log(
-  "\nPackage check passed: every published entry point is importable, its probe passes, " +
-    "and every package ships its documentation.",
-);
+
+/**
+ * Whether this module was started as the program.
+ *
+ * Spelled out rather than inlined, so a test can ask the runtime's question.
+ */
+export function isEntryPoint(entry, moduleUrl = import.meta.url) {
+  return entry ? moduleUrl === pathToFileURL(entry).href : false;
+}
+
+if (isEntryPoint(process.argv[1])) {
+  process.exit(run(ROOT, { log: console.log, error: console.error }));
+}
