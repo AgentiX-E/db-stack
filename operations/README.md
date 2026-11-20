@@ -1,7 +1,7 @@
 # db-operations — Unified Database Operations Framework
 
-**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 3 155 test
-cases in 147 files, every coverage dimension at or above 95 %.**
+**A production-grade, engine-agnostic operations abstraction layer — 21 packages, 3 158 test
+cases in 148 files, every coverage dimension at or above 95 %.**
 
 **Mutation score:** 97.96 % across the thirteen modules that decide what gets deleted, whether a
 backup can be restored, which key material survives at all, which key a blob was sealed with,
@@ -141,7 +141,7 @@ architecture that 21 packages deliver as a cohesive whole.
 | [`maintenance`](./packages/maintenance/) | ✅ | 382 | VACUUM, ANALYZE, REINDEX scheduling |
 | [`auth`](./packages/auth/) | ✅ | 32 | Authentication providers and credential management |
 | [`security`](./packages/security/) | ✅ | 630 | TLS, encryption, RBAC, rate limiting, compliance |
-| [`audit`](./packages/audit/) | ✅ | 209 | Immutable audit trails with export |
+| [`audit`](./packages/audit/) | ✅ | 212 | Immutable audit trails with export |
 | [`observability`](./packages/observability/) | ✅ | 44 | Distributed tracing (W3C TraceContext), telemetry |
 | [`otel`](./packages/otel/) | ✅ | 16 | OpenTelemetry bridge for metrics and traces |
 | [`autotuner`](./packages/autotuner/) | ✅ | 27 | Automatic parameter tuning based on workload analysis |
@@ -153,8 +153,8 @@ architecture that 21 packages deliver as a cohesive whole.
 | [`rollingupgrade`](./packages/rollingupgrade/) | ✅ | 121 | Zero-downtime rolling upgrades |
 | [`slacollector`](./packages/slacollector/) | ✅ | 13 | SLA metric collection and violation detection |
 
-**Total: `pnpm coverage` reports 147 files and 3 155 tests, 0 failures** (`test:unit`: 128 files /
-2 824; `test:integration`: 19 files / 331). Each row above is that package's contribution, so the
+**Total: `pnpm coverage` reports 148 files and 3 158 tests, 0 failures** (`test:unit`: 129 files /
+2 827; `test:integration`: 19 files / 331). Each row above is that package's contribution, so the
 column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
 any of these numbers disagrees with it — the table before iteration 54 had drifted by an order of
 magnitude in both directions, and nothing compared it to a test run.
@@ -235,7 +235,7 @@ packages/monitor/src/
 ## Testing
 
 ```bash
-npm test              # 147 files, 3 155 tests
+npm test              # 148 files, 3 158 tests
 npm run test:mutation # Stryker over the thirteen modules that decide deletion, durability and timing
 npm run bench         # Performance benchmarks
 npm run bench:ycsb    # YCSB-style benchmarks

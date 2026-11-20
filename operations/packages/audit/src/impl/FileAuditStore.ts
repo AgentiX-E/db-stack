@@ -46,7 +46,7 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, resolve } from 'node:path';
 import { createGzip, gunzipSync } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import type { IAuditStore, WriteAuditEntryOptions, AuditQueryFilter } from '../interfaces/index.js';
@@ -855,7 +855,19 @@ export class FileAuditStore implements IAuditStore {
   private flushScheduled = false;
 
   constructor(config: FileAuditStoreConfig) {
-    this.dataDir = config.dataDir;
+    // Pinned to an absolute path at construction, once.
+    //
+    // A relative directory is a name whose meaning is `process.cwd()` — a value the
+    // *process* owns and any library in it can change. The store resolves the
+    // directory, reads it, adopts a segment name and then appends to a path built
+    // from it; if `cwd` moved between those steps, the append lands somewhere the
+    // store never looked, or nowhere at all. Measured before the fix: construct with
+    // `logs`, `chdir` away, write — `ENOENT`, and the evidence is lost with the
+    // caller holding a rejection it cannot act on. This is the same class as the
+    // `undefined.tmp` found in the working tree in iteration 54: a path that is not
+    // pinned to the place the caller named is evidence that can go to the wrong
+    // place.
+    this.dataDir = resolve(config.dataDir);
     this.maxFileSize = config.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
     this.maxAgeMs = config.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
     this.retentionDays = config.retentionDays ?? DEFAULT_RETENTION_DAYS;
