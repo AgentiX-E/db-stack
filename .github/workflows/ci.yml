@@ -20,12 +20,12 @@ env:
   # reported `audit-policy` at 95.45% branches on 22.13.1 against 93.48% on 22.23.4
   # from the same commit. A floor that drifts with the runtime is a floor that fails
   # on the day of a patch release, for no change in the code it measures.
-  NODE_VERSION: '22.13.1'
+  NODE_VERSION: "22.13.1"
   # The suites route their scratch data to /dev/shm (tmpfs) when it is
   # available, because a durable commit costs ~19ms on the workspace volume
   # versus ~0.03ms on tmpfs — the difference between a 30s and a 30min load
   # test. `DBSTACK_TEST_TMPDIR` pins the location if the default must change.
-  DBSTACK_TEST_TMPDIR: '' 
+  DBSTACK_TEST_TMPDIR: ""
 
 jobs:
   # ── Static analysis ────────────────────────────────────────────────
@@ -104,6 +104,8 @@ jobs:
         run: pnpm lint
       - name: Prettier
         run: pnpm format:check
+      - name: Prettier on the files no package owns (scripts, workflows, root pages)
+        run: pnpm format:check:repo
 
   # ── Unit tests (fast, isolated) ────────────────────────────────────
   unit:
@@ -459,7 +461,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mutation-reports
-          path: 'reports/mutation/*.json'
+          path: "reports/mutation/*.json"
           if-no-files-found: warn
           retention-days: 14
 
@@ -497,7 +499,23 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [typecheck, quality, unit, engine-conformance, integration, coverage, coverage-e2e, coverage-gate, e2e-cluster, e2e-federation, load, benchmark, mutation, security]
+    needs:
+      [
+        typecheck,
+        quality,
+        unit,
+        engine-conformance,
+        integration,
+        coverage,
+        coverage-e2e,
+        coverage-gate,
+        e2e-cluster,
+        e2e-federation,
+        load,
+        benchmark,
+        mutation,
+        security,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
