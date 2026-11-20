@@ -89,6 +89,12 @@ to a live member set. That separation is why the node modules can be used by a s
 deployment without dragging a consensus system in, and why a cluster deployment does not
 reimplement quorum arithmetic per caller.
 
+The protection lives in the executor, not in the decision. A caller that reads
+`ScaleAction.targetCount` and removes members itself gets none of it: no quorum floor, no
+leader exclusion, no learner-first order, no "already absent" accounting. If you have a
+cluster, apply the action through `ClusterScalingExecutor`; if you have one node, there is
+nothing to remove.
+
 ### 2.3 `@agentix-e/db-operations-federation` — cross-datacenter
 
 | Export                 | What it gives you                                    |

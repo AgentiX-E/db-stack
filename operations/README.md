@@ -3,7 +3,7 @@
 **A production-grade, engine-agnostic operations abstraction layer — 3 packages, 3 239 test
 cases in 154 files, every coverage dimension at or above 95 %.**
 
-**Mutation score:** 98.04 % across seventeen files — the thirteen that decide what gets deleted,
+**Mutation score:** 98.03 % across seventeen files — the thirteen that decide what gets deleted,
 whether a backup can be restored, which key material survives at all, which key a blob was sealed
 with, whether a compliance window passed, whether evidence is tamper-evident, and when a maintenance
 window runs, plus the four cluster assemblers that decide what a majority is, which member leaves,
@@ -12,12 +12,12 @@ which batch runs and which partition is emitted — `backupChain.ts` 100 %, `cro
 `ClusterScalingExecutor.ts` 100 %, `RaftFaultTranslator.ts` 100 %, `KeyRotationManager.ts` 99.16 %,
 `MaintenanceWindowScheduler.ts` 99.03 %, `InMemoryBackupManager.ts` 98.94 %,
 `EnvelopeEncryptionProvider.ts` 98.18 %, `AES256GCMEncryptionProvider.ts` 97.53 %,
-`RotationAuditor.ts` 97.52 %, `FileAuditStore.ts` 96.69 %, `AuditLogManager.ts` 96.44 %,
-`KeyManager.ts` 94.12 %, `ClusterRolloutPlanner.ts` 93.28 %; gate at 86.
+`RotationAuditor.ts` 97.52 %, `FileAuditStore.ts` 96.83 %, `AuditLogManager.ts` 96.44 %,
+`KeyManager.ts` 94.12 %, `ClusterRolloutPlanner.ts` 94.03 %; gate at 86.
 
-Of the 3 563 judged mutants, 70 are not kills and every one has an answer: 67 survived (each with an
+Of the 3 562 judged mutants, 70 are not kills and every one has an answer: 67 survived (each with an
 argument in `docs/maturity.md`, grouped into families where one property explains several) and 3 no
-test reaches. The 50 `Timeout` verdicts are replayed one by one, because there is no score that
+test reaches. The 48 `Timeout` verdicts are replayed one by one, because there is no score that
 answers "did a test object" for a run that stopped. The replay is
 `node operations/scripts/resolve-timeouts.mjs --target operations --record`; the record it writes,
 `mutation/timeouts.json`, is a cache that CI consults with `pnpm check:mutation-timeouts` — a known
