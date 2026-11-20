@@ -400,8 +400,14 @@ test("a page the caller supplies is named by the path the caller supplied", () =
     // One number off, so the finding has to name the page it came from: a page
     // outside the repository named `operations/README.md` would send the reader to
     // a file the finding is not about.
-    writeFileSync(pagePath, PAGE.replace("2 files and 2 tests", "4 files and 2 tests"));
-    writeFileSync(reportPath, JSON.stringify(reportOf([CORE, 2], [HEALTH, null])));
+    writeFileSync(
+      pagePath,
+      PAGE.replace("2 files and 2 tests", "4 files and 2 tests"),
+    );
+    writeFileSync(
+      reportPath,
+      JSON.stringify(reportOf([CORE, 2], [HEALTH, null])),
+    );
 
     const errors = [];
     const code = run(["--report", reportPath], {
@@ -435,7 +441,10 @@ test("the default report path is this tree's report, and its absence names it", 
     });
 
     assert.equal(code, 1);
-    assert.match(errors[0], /no report at operations\/coverage\/test-report\.json/);
+    assert.match(
+      errors[0],
+      /no report at operations\/coverage\/test-report\.json/,
+    );
     assert.match(errors[0], /writes one\.$/m);
   } finally {
     rmSync(dir, { recursive: true, force: true });
