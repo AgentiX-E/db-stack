@@ -55,26 +55,14 @@ export const UNMEASURED = [];
  * The recorded value is a ratchet: the gate fails when the file drops beneath
  * it, and fails when the file reaches the floor without the entry being
  * deleted. `--report` prints the current numbers so the entry can be updated.
+ *
+ * It is empty. The last entry was `package-targets.mjs`, whose three `behaviour`
+ * closures called the built artefact from a job that had no `dist/`; those probes
+ * now run in the E2E job (`e2e/harness/published-artefact.ts`) and the file they
+ * lived in is gone. Empty is the state worth defending: every gate script in this
+ * directory is measured and every one of them clears the floor.
  */
-export const BELOW_FLOOR = [
-  {
-    file: "package-targets.mjs",
-    // Functions, not lines. The uncovered code is three `behaviour` closures and
-    // nothing else: they call the built artefact, the Quality job has no `dist/`,
-    // and a fixture standing in for the artefact would be a test of the fixture.
-    // They run in the E2E job, after `pnpm build`, where there is something to
-    // call. Functions is the dimension that names that debt exactly and cannot
-    // move for a reason unrelated to it — a line count for a data table shifts
-    // with which cases read it, and a ratchet that wobbles teaches people to
-    // re-record it without reading it.
-    dimension: "functions",
-    measured: 0,
-    reason:
-      "three `behaviour` closures call the built artefact, so the only process that can reach them is " +
-      "one that has `dist/`",
-    roadmap: "P3-46",
-  },
-];
+export const BELOW_FLOOR = [];
 
 const DIMENSIONS = ["lines", "branches", "functions"];
 

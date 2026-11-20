@@ -8,13 +8,19 @@
  * entry point from `dist/` in a plain Node process (no bundler, no tsx) and
  * asserts the documented exports exist.
  *
- * Existing is not the same as working, either. A `behaviour` probe goes one step
- * further and *calls* the entry point: three published features once passed both
- * the compiler and the whole test suite while throwing
- * `ReferenceError: require is not defined in ES module scope` (a CommonJS
- * `require` inside an ESM module) or silently losing their trace ids. The test
- * transform supplies a `require`; a consumer does not. So the last thing this
- * script does is run the artefact the way a consumer would.
+ * Existing is not the same as working, either — and that half of the job has moved.
+ * Three published features once passed the compiler and the whole test suite while
+ * throwing `ReferenceError: require is not defined in ES module scope`, losing a
+ * trace id across an async boundary, or delivering a change to no sink at all. The
+ * `behaviour` closures that called them lived in this file's data table, and the
+ * Quality job — where this gate's own tests run — has no `dist/`, so they were the
+ * one part of a gate that no test could reach. They now run in the E2E job, in
+ * `e2e/harness/published-artefact.ts`, where there is something to call and a
+ * ruler that can measure it; the debt entry that recorded them is gone.
+ *
+ * What is left here is the part a *build* can answer: does every declared entry
+ * point exist, does it import in a plain process, and does it export what the docs
+ * promise.
  *
  * It was the one gate no test loaded, and the reason was circular: importing the
  * module ran the check, and the check needed a build, so the Quality job — which
@@ -32,11 +38,88 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { workspacePackages } from "./check-docs-api.mjs";
-import { TARGETS } from "./package-targets.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
-export { TARGETS } from "./package-targets.mjs";
+/**
+ * The targets this gate judges, and the exports each one promises.
+ *
+ * This used to be a module of its own, because three of the entries carried a
+ * `behaviour` closure that could not be measured where this gate runs. Those
+ * closures moved to `e2e/harness/published-artefact.ts`, so the split outlived its
+ * reason and the table came home: a one-caller module boundary is a boundary nobody
+ * crosses.
+ */
+export const TARGETS = [
+  {
+    dir: "cluster",
+    entry: ".",
+    expect: [
+      "RaftAdapter",
+      "RaftTcpTransport",
+      "SqliteStorage",
+      "RaftGroupManager",
+      "HAFailoverDetector",
+      "FencingManager",
+      "RaftJointConsensusEngine",
+      "MessageCompressor",
+      "EventBus",
+      "SessionManager",
+      "MerkleTree",
+      "traceContext",
+    ],
+  },
+  {
+    dir: "cluster",
+    entry: "./testing",
+    expect: ["TestCluster", "generateClusterCerts", "LinearizabilityChecker"],
+  },
+  { dir: "cluster", entry: "./raft", expect: ["RaftAdapter"] },
+  { dir: "cluster", entry: "./transport", expect: ["RaftTcpTransport"] },
+  { dir: "cluster", entry: "./storage", expect: ["SqliteStorage"] },
+  {
+    dir: "federation",
+    entry: ".",
+    expect: [
+      "FederationManager",
+      "MultiLeaderReplication",
+      "OutboxStore",
+      "TcpSecureTransport",
+      "ExactlyOnceCDCPipeline",
+      "AntiEntropy",
+      "ConflictResolver",
+      "DedupRing",
+      "HLC",
+      "CDCSubscriptionPump",
+      "CDCPublicationRegistry",
+      "CDCEngine",
+      "InMemoryCDCSink",
+      "CDCSinkResolver",
+      "projectChangeEvent",
+    ],
+  },
+  { dir: "federation", entry: "./transport", expect: ["TcpSecureTransport"] },
+  {
+    dir: "federation",
+    entry: "./testing",
+    expect: ["CDCFailureInjector"],
+  },
+  {
+    dir: "operations",
+    entry: ".",
+    expect: [
+      "core",
+      "health",
+      "metrics",
+      "backup",
+      "audit",
+      "security",
+      "observability",
+      "chaosengine",
+      "slacollector",
+    ],
+  },
+];
 
 /** `cluster`, `cluster/testing` — how a reader names the entry that failed. */
 export function labelOf(target) {
@@ -87,29 +170,22 @@ export function resolveTarget(target, root) {
 /**
  * The module a consumer's plain Node process is asked to run.
  *
- * The behaviour probe travels as source, because the child cannot see the
- * parent's closures. That is the point: the probe exists to run the artefact in
- * a process the test transform has not touched, and sharing a module graph with
- * the gate would undo exactly what it measures.
+ * The program travels as source, because the child cannot see the parent's
+ * closures. That is the point: it exists to run the artefact in a process the test
+ * transform has not touched, and sharing a module graph with the gate would undo
+ * exactly what it measures.
  */
 export function probeModule(target, entryFile) {
   return `
     const expected = ${JSON.stringify(target.expect)};
     const url = ${JSON.stringify(pathToFileURL(entryFile).href)};
-    const probeSource = ${JSON.stringify(target.behaviour ? target.behaviour.toString() : null)};
     const loaded = await import(url);
     const missing = expected.filter((name) => !(name in loaded));
     if (missing.length > 0) {
       console.error('missing exports: ' + missing.join(', '));
       process.exit(1);
     }
-    if (probeSource) {
-      const assert = (await import('node:assert/strict')).default;
-      const probe = new Function('return (' + probeSource + ')')();
-      await probe({ loaded, assert });
-    }
-    console.log('ok (' + Object.keys(loaded).length + ' exports' +
-      (probeSource ? ', behaviour verified' : '') + ')');
+    console.log('ok (' + Object.keys(loaded).length + ' exports)');
   `;
 }
 
@@ -234,7 +310,7 @@ export function run(root = ROOT, options = {}) {
     return 1;
   }
   log(
-    "\nPackage check passed: every published entry point is importable, its probe passes, " +
+    "\nPackage check passed: every published entry point is importable, every documented export is there, " +
       "and every package ships its documentation.",
   );
   return 0;

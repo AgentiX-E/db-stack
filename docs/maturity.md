@@ -189,10 +189,13 @@ acceptance passes.
 | `operations`    | 99.47% | 99.47%     | 99.87%    | 98.52%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
-The `e2e` row covers `e2e/harness/support.ts` — process supervision, IPC, port allocation,
-log capture. The two `.mjs` programs it spawns (`raft-node.mjs`, `federation-gateway.mjs`)
-run in child processes and are therefore _not_ instrumented by the in-process v8 collector;
-they are exercised for real by every acceptance test, but no percentage is claimed for them.
+The `e2e` row covers the TypeScript harness — `support.ts` (process supervision, IPC, port
+allocation, log capture) and `published-artefact.ts` (the runner for the published-behaviour
+probes). The three `.mjs` programs it spawns (`raft-node.mjs`, `federation-gateway.mjs`,
+`published-probes.mjs`) run in child processes and are therefore _not_ instrumented by the
+in-process v8 collector; they are exercised for real by every acceptance test, and they are
+verified by what those processes report — a probe that stops asserting fails the suite that
+runs it, which is a stronger claim than a counter.
 
 Coverage is a _floor_, not an achievement: a line can be executed by a test that asserts
 nothing. The suites above are written to fail when behaviour changes, and bug-hunting is an
@@ -335,7 +338,7 @@ rule that never fires.
 | **Quorum-loss step-down** | Covered | raft-core 0.2.1 has no check-quorum, so an isolated leader keeps reporting `isLeader() === true` while committing nothing (measured: 16 s, commit index frozen, write refused at 5 028 ms). `checkQuorum` is now real: contact is a completed round trip through the _real_ transport, `isLeader()` answers from the role **and** from a majority inside one election timeout, `getLeader()` returns `null` while that is not true, and a write is refused with `QUORUM_FAILED` instead of waiting out the library's commit timeout. Seven cases in `quorum-loss.test.ts` drive it against a real 3-node TLS cluster. |
 | **Documentation fidelity** | Covered (iteration 54) | Three gates, each comparing a different kind of claim to the code. `pnpm check:docs-api` reads every package's `exports` map and fails when a heading names a symbol the package does not publish, when a published value is named on no page, when a package ships no `docs/` tree at all, when a fenced import names a member the entry point does not have, or when a package index omits a package that exists. `pnpm check:doc-examples` type-checks all 281 fenced TypeScript blocks in 61 pages against the packages' **sources**, which is how 14 examples that could not compile — `new InMemoryLogger({ level: 'info' })`, `health.runAllChecks()`, `backups.delete(id)`, `tracing.extract(req.headers)`, `{ tables: [...] }` in a two-field config — were found and fixed. `pnpm check:public-types` closes the type half: every type a public signature names must be importable from the package root. Not covered: the prose around a signature, and the field-level detail of a config interface — a page can name the right class and describe the wrong default. |
 | **CDC delivery over a network** | Not covered | The pump hands events to an `ICDCSink` the deployment supplies; the sinks exercised in CI are in-process (a recording sink, `InMemoryCDCSink`, the resolver, the failure injector). A webhook or Kafka sink is application code, and no suite here drives one over a real socket. The ordering, retry and loss properties are measured against the sink contract; a sink that lies about accepting a batch is outside it, and the contract says so. |
-| **Coverage of the gates** | Covered, one named gap (iteration 56) | `pnpm test:scripts && pnpm check:script-coverage` runs the gate suite a second time under Node's own coverage and judges the result: every `scripts/*.mjs` must appear in the report, or be listed with a reason and a roadmap id; every measured gate must clear 95 % on lines, branches and functions; and a recorded debt that was paid — or that grew — fails the gate. It found why nobody could quote a number before: a coverage report lists the files that were **loaded**, so six of the fifteen gates were simply absent from it, and losing all coverage of a gate made the report *shorter* rather than red — the same shape as the documentation gate that used to skip packages with no `docs/`. **Sixteen** scripts are measured and the "unmeasured" list is **empty**: `check-package`, the last entry in it, could not be loaded at all because importing it *ran* the check, and it is now a driver whose process, sinks and target table are parameters, judged by 24 cases that build throwaway packages with a real `dist/` — including the rule that a package ships its docs, which now has a case in which it fires. Nine scripts are at 100 % on all three dimensions and the rest clear the floor but for one recorded gap: `package-targets.mjs` functions 0 % (P3-46) — the three `behaviour` closures call the built artefact, so the only process that can reach them has a `dist/`, and that process is the E2E job, not this one. The floor is measured on a pinned engine (`22.13.1`) and the gate prints that engine in its header, because V8's branch accounting moved inside the 22.x line: the same commit read 95.45 % for `audit-policy` on one minor and 93.48 % on another. Writing the cases found three defects in gates that predate them, and one in the code they were written against: `check-public-types` reported a type declared inside an exported namespace as one a consumer cannot name, `check-gates` never read the root manifest, `check-docs-api` discovered packages from three hard-coded directory names, and `check-package`'s new summary printed four frames of `node:internal` as the whole diagnosis of a failed probe — the first fixture said so. |
+| **Coverage of the gates** | Covered | `pnpm test:scripts && pnpm check:script-coverage` runs the gate suite a second time under Node's own coverage and judges the result: every `scripts/*.mjs` must appear in the report, or be listed with a reason and a roadmap id; every measured gate must clear 95 % on lines, branches and functions; and a recorded debt that was paid — or that grew — fails the gate. It found why nobody could quote a number before: a coverage report lists the files that were **loaded**, so six of the fifteen gates were simply absent from it, and losing all coverage of a gate made the report *shorter* rather than red — the same shape as the documentation gate that used to skip packages with no `docs/`. **Fifteen** scripts are measured, and **both** lists are now empty. `check-package` was the last entry in `UNMEASURED` (importing it *ran* the check) and `package-targets.mjs` the last in `BELOW_FLOOR` (three `behaviour` closures that called the built artefact, in a job with no `dist/`). The first is a driver whose process, sinks and target table are parameters, judged by 21 cases that build throwaway packages with a real `dist/` — including the rule that a package ships its docs, which now has a case in which it fires. The second is gone: its closures became `e2e/harness/published-probes.mjs`, a child programme run in the E2E job where there is a build, so the table they lived in had no reason left to be a module of its own. Eight scripts are at 100 % on all three dimensions and every other one clears the floor. The floor is measured on a pinned engine (`22.13.1`) and the gate prints that engine in its header, because V8's branch accounting moved inside the 22.x line: the same commit read 95.45 % for `audit-policy` on one minor and 93.48 % on another. Writing the cases found three defects in gates that predate them, and one in the code they were written against: `check-public-types` reported a type declared inside an exported namespace as one a consumer cannot name, `check-gates` never read the root manifest, `check-docs-api` discovered packages from three hard-coded directory names, and `check-package`'s new summary printed four frames of `node:internal` as the whole diagnosis of a failed probe — the first fixture said so. |
 
 | **Harness `.mjs` child programs** | Executed, not instrumented | `raft-node.mjs` and `federation-gateway.mjs` run out-of-process, so the v8 collector cannot see them. Their contract is covered by the harness suite in-process; their internals are not measured. |
 
@@ -366,7 +369,7 @@ pnpm audit:policy                                    # production tree to zero, 
 pnpm coverage:e2e                                    # e2e harness, same 95 % thresholds
 pnpm coverage:gate                                   # all four packages, every dimension
 pnpm check:test-counts                               # the numbers on the README are this run's numbers
-pnpm e2e                                             # 35 real-process TLS acceptance tests
+pnpm e2e                                             # 50 real-process TLS acceptance tests
 pnpm test:mutation                                   # mutation score, all three packages
 pnpm check:mutation-timeouts                         # every Timeout in those reports has been read
 (cd cluster && pnpm test:perf)                       # 22 benchmarks on a real 3-node TLS cluster
@@ -1003,10 +1006,21 @@ had no denominator is the narrower state the entry should have named — a node 
 and it now takes the member set from `RaftConfig.quorumMembers` or, failing that, from the configuration
 raft committed, which is the only list that is a fact.
 
-Still not covered: a membership change while the cluster is already missing a voter, measured at cluster
-level — the library's single-step configuration cannot commit it, the adapter reports `rejected` after
-its commit timeout, and `AC 34.89` measures that the refusal leaves nothing behind in what this package
-reports, but the five-process provocation does not exist yet (P3-28).
+**A membership change while a voter is missing — the entry, and what it got wrong.** P3-28 was
+registered by reading `submitConfigChange`: the configuration is single-step, so the new voter set
+governs the commit that admits it, and the entry concluded that a promotion with a voter down waits five
+seconds and then reports `rejected`. Measured on five real processes over mTLS, the arithmetic says
+otherwise — promoting a *reachable* learner needs a majority of the **enlarged** set, and the learner is
+one of its members, so one dead voter out of six leaves enough acknowledgements (`AC-C11`: seven voters
+agreed in under a second). What cannot survive is losing the quorum the change would need, and that is
+refused by name in about a millisecond rather than by timeout (`AC-C12`: `{ changed: false, reason:
+'no-quorum' }`, nothing appended, every survivor still reporting the seven-voter configuration it
+committed). The residue is named rather than hidden: an entry that does reach raft-core — in the window
+between losing a majority and the watchdog noticing — stays in its in-memory active set, and that node
+refuses further changes until it restarts; `getMembership()` is unaffected, because it reports what was
+committed. `AC-C13` restarts one node and then commits a removal, so a refusal is measured as a refusal
+and not as a wedge. The public contract in `cluster/docs/api-reference.md` asserted the old reading and
+now states the measured one.
 
 **A `require` that only the test runner had.** Three published features called the CommonJS `require`
 from a package that ships as ESM. None of them failed to compile, and none of them failed a test: the
@@ -1026,9 +1040,13 @@ declaration-only.
 The three are fixed at the root (a static `node:crypto` import, a static `node:async_hooks` import, and
 `consensus/core/pgClient` using `createRequire(import.meta.url)`), the class is closed by a gate —
 `pnpm check:esm-require` fails on a bare `require` in any package declaring `"type": "module"`, with
-twelve tests of its own — and the artefact is now _called_ rather than merely imported: `check-package`
-probes the Merkle root against a constant computed with `node:crypto` and a trace id across an `await`
-boundary, both of which fail on the previous artefacts. `AC 54.1`–`AC 54.8` and `AC 55.1`–`AC 55.7` are
+twelve tests of its own — and the artefact is now _called_ rather than merely imported: the E2E job
+probes the Merkle root against a constant computed with `node:crypto`, a trace id across an `await`
+boundary, and a CDC change arriving at a subscription sink exactly once — the first two of which
+fail on the previous artefacts, and the third of which fails when the pump's wiring does. Those probes used to live inside `check-package`, whose own tests run in a job with
+no `dist/` — the one part of a gate no test could reach; they are now `e2e/harness/published-probes.mjs`,
+run in a child process against the package resolved *by name*, which is one step further than the
+packaging gate goes. `AC 54.1`–`AC 54.8` and `AC 55.1`–`AC 55.7` are
 the cases; the digest is asserted against an independent SHA-256, never against another call of the
 class.
 

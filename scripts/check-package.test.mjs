@@ -167,22 +167,11 @@ test("the probe is a module that imports the declared file and lists what is mis
   assert.match(source, /const url = "file:\/\/\/tmp\/pkg\/dist\/index\.js";/);
   assert.match(source, /await import\(url\)/);
   assert.match(source, /const expected = \["RaftAdapter"\];/);
-  assert.match(source, /const probeSource = null;/);
   assert.match(source, /missing exports: /);
-});
-
-test("a target with a behaviour probe carries it as source", () => {
-  const source = probeModule(
-    {
-      ...ONE_TARGET[0],
-      behaviour: async ({ loaded, assert }) =>
-        assert.equal(loaded.RaftAdapter, 1),
-    },
-    "/tmp/pkg/dist/index.js",
-  );
-  assert.match(source, /behaviour verified/);
-  assert.match(source, /new Function\('return \(' \+ probeSource \+ '\)'\)/);
-  assert.doesNotMatch(source, /const probeSource = null;/);
+  // No behaviour travels with the program any more: the three probes that called
+  // the artefact moved to the E2E job, where a `dist/` exists and a ruler can
+  // measure them. A gate that carries code it cannot run is the debt that left.
+  assert.doesNotMatch(source, /probeSource/);
 });
 
 test("a failing child is summarised from its stderr, not its stdout", () => {
@@ -234,49 +223,6 @@ test("run reports an export the artefact does not publish", () => {
     assert.equal(code, 1);
     assert.match(errors[0], /^✗ cluster: missing exports: SqliteStorage/);
     assert.match(errors[1], /Package check FAILED \(1 finding\(s\)\)/);
-  });
-});
-
-test("run verifies behaviour in the child process", () => {
-  withFixture(packageFiles(), (dir) => {
-    const lines = [];
-    const code = run(dir, {
-      log: (line) => lines.push(line),
-      error: () => {},
-      targets: [
-        {
-          ...ONE_TARGET[0],
-          behaviour: async ({ loaded, assert }) => {
-            assert.equal(loaded.RaftAdapter, 1, "the artefact must export one");
-          },
-        },
-      ],
-    });
-
-    assert.equal(code, 0);
-    assert.equal(lines[0], "✓ cluster ok (1 exports, behaviour verified)");
-  });
-});
-
-test("run keeps the assertion message of a probe that fails", () => {
-  withFixture(packageFiles(), (dir) => {
-    const errors = [];
-    const code = run(dir, {
-      log: () => {},
-      error: (line) => errors.push(line),
-      targets: [
-        {
-          ...ONE_TARGET[0],
-          behaviour: async ({ loaded, assert }) => {
-            assert.equal(loaded.RaftAdapter, 2, "double the leaf set");
-          },
-        },
-      ],
-    });
-
-    assert.equal(code, 1);
-    assert.match(errors[0], /^✗ cluster: AssertionError/);
-    assert.match(errors[0], /double the leaf set/);
   });
 });
 

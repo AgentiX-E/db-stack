@@ -108,8 +108,9 @@ operations/
   src/index.ts        umbrella entry (namespaced re-exports)
 
 e2e/
-  harness/            process harness + node/gateway entry points
-  tests/              real TLS cluster suite, cross-cluster sync suite
+  harness/            process harness + node/gateway entry points,
+                      plus the published-behaviour probes a child process runs
+  tests/              real TLS cluster suite (incl. membership change), cross-cluster sync
   bench/              YCSB against a real cluster
 
 docs/                 external documentation (see the table above)

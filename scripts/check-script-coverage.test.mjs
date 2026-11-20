@@ -319,37 +319,60 @@ test("the repository's own bookkeeping accounts for every gate", () => {
   // read over the gate's real file list. A script added without a test fails here
   // as well as in CI, and a debt that was paid fails the paid-debt rule.
   const files = scripts(ROOT);
-  const rows = new Map(
-    files
-      .filter((file) => file !== "package-targets.mjs")
-      .map((file) => [file, row(100, 100, 100)]),
-  );
-  rows.set("package-targets.mjs", row(43.23, 100, 0));
+  const rows = new Map(files.map((file) => [file, row(100, 100, 100)]));
 
   const { findings, debt } = check(files, rows);
 
+  // Every gate the repository has, measured, with neither a hole nor a recorded
+  // debt. Both lists being empty is the claim: `UNMEASURED` said "no test loads
+  // this" of six scripts two iterations ago, and `BELOW_FLOOR` held the one table
+  // whose probes could only run in a job with a build.
   assert.deepEqual(findings, []);
-  assert.equal(debt.length, 1);
-  assert.match(
-    debt[0],
-    /^package-targets\.mjs: functions 0\.00% \(floor 95%, recorded 0\.00%\) — P3-46/,
+  assert.deepEqual(debt, []);
+  assert.ok(
+    files.length >= 15,
+    `expected every gate to be judged, got ${files.length}`,
   );
 });
 
-test("the only remaining debt is the one no fixture can reach", () => {
-  // The three closures in `package-targets.mjs` call the published artefact, and
-  // this job has no build. If that ever stops being true the list shrinks; if a
-  // fourth file joins it, this case says so by failing here rather than in a
-  // reader's head.
+test("both debt lists are empty, and a file that leaves the tree empties them", () => {
   assert.deepEqual(
     UNMEASURED.map((entry) => entry.file),
     [],
     "a gate with no test is a script that prints passed",
   );
   assert.deepEqual(
-    BELOW_FLOOR.map((entry) => [entry.file, entry.dimension]),
-    [["package-targets.mjs", "functions"]],
+    BELOW_FLOOR.map((entry) => entry.file),
+    [],
   );
+
+  // The rule that keeps an emptied list from being decoration: an entry naming a
+  // file that no longer exists is a finding, so a list cannot survive the code it
+  // described by being ignored. Asserted through the gate's own judgement rather
+  // than by reading the source.
+  const { findings } = check(
+    ["kept.mjs"],
+    new Map([["kept.mjs", row(100, 100, 100)]]),
+    {
+      unmeasured: [
+        { file: "gone.mjs", reason: "it was deleted", roadmap: "P9-99" },
+      ],
+      belowFloor: [
+        {
+          file: "also-gone.mjs",
+          dimension: "functions",
+          measured: 10,
+          reason: "x",
+          roadmap: "P9-98",
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(findings, [
+    "gone.mjs: listed as unmeasured and there is no such script. Remove the entry.",
+    "also-gone.mjs: recorded below the floor and there is no such script. Remove the entry.",
+  ]);
 });
 
 test("run measures when no output is handed to it, and the measurement is isolated", () => {
