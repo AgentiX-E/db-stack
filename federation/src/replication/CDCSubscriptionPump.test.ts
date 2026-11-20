@@ -673,7 +673,16 @@ describe('CDCSubscriptionPump — a projection that throws', () => {
       table: 'orders',
       error: 'no such column',
     });
-    expect(pump.getStatus()).toMatchObject({ delivered: 0, failed: 1 });
+    // A projection failure is not a delivery failure. It happens before a
+    // subscription is chosen, so `failed` — the counter `pumpConservation`
+    // balances against `accepted` — must not move, or the identity is short by
+    // exactly the number of broken projections.
+    expect(pump.getStatus()).toMatchObject({
+      delivered: 0,
+      failed: 0,
+      projectionFailed: 1,
+      accepted: 0,
+    });
   });
 });
 

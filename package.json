@@ -22,7 +22,7 @@
     "coverage:e2e": "pnpm --filter @agentix-e/db-stack-e2e run coverage",
     "coverage:all": "pnpm coverage && pnpm coverage:e2e",
     "coverage:gate": "node scripts/coverage-gate.mjs",
-    "e2e": "pnpm --filter @agentix-e/db-stack-e2e run test:harness && pnpm --filter @agentix-e/db-stack-e2e run test:artefact && pnpm --filter @agentix-e/db-stack-e2e run test:cluster && pnpm --filter @agentix-e/db-stack-e2e run test:membership && pnpm --filter @agentix-e/db-stack-e2e run test:engine && pnpm --filter @agentix-e/db-stack-e2e run test:federation",
+    "e2e": "pnpm --filter @agentix-e/db-stack-e2e run test:harness && pnpm --filter @agentix-e/db-stack-e2e run test:artefact && pnpm --filter @agentix-e/db-stack-e2e run test:cluster && pnpm --filter @agentix-e/db-stack-e2e run test:membership && pnpm --filter @agentix-e/db-stack-e2e run test:engine && pnpm --filter @agentix-e/db-stack-e2e run test:federation && pnpm --filter @agentix-e/db-stack-e2e run test:cdc",
     "bench": "turbo run bench",
     "verify": "pnpm check:gates && pnpm check:english && pnpm check:esm-require && pnpm check:docs-api && pnpm check:doc-examples && pnpm check:public-types && pnpm check:script-bins && pnpm test:scripts && pnpm lint && pnpm format:check && pnpm format:check:repo && pnpm typecheck && pnpm typecheck:tests && pnpm coverage:all && pnpm coverage:gate && pnpm check:test-counts && pnpm check:script-coverage && pnpm e2e",
     "bench:real": "pnpm --filter @agentix-e/db-stack-e2e run bench",

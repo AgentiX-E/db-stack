@@ -177,22 +177,23 @@ would have pasted and watched fail. See §4.1 for what that found.
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
 All four rows are from a green run of this repository; `operations` was re-measured in
-iteration 54 (99.47/99.47/99.87/98.52) and `cluster`/`federation` are unchanged since iteration 53
-because neither had a source change in that iteration. The gate covers four packages, not three:
+iteration 54 (99.47/99.47/99.87/98.52), `federation` in iteration 59 (99.58/99.58/100/97.98) and
+`cluster` is unchanged since iteration 53 because it had no source change in either. The gate covers four packages, not three:
 the end-to-end harness is measured as well, because a harness bug produces confident, meaningless
 acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
 | `cluster`       | 99.42% | 99.42%     | 99.70%    | 98.15%   |
-| `federation`    | 99.44% | 99.44%     | 99.77%    | 98.95%   |
+| `federation`    | 99.58% | 99.58%     | 100%      | 97.98%   |
 | `operations`    | 99.47% | 99.47%     | 99.87%    | 98.52%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
 The `e2e` row covers the TypeScript harness — `support.ts` (process supervision, IPC, port
 allocation, log capture) and `published-artefact.ts` (the runner for the published-behaviour
-probes). The three `.mjs` programs it spawns (`raft-node.mjs`, `federation-gateway.mjs`,
-`published-probes.mjs`) run in child processes and are therefore _not_ instrumented by the
+probes). The six `.mjs` programs it spawns (`raft-node.mjs`, `federation-gateway.mjs`,
+`published-probes.mjs`, `change-writer.mjs`, `cdc-relay.mjs`, `cdc-sink-server.mjs`) run in
+child processes and are therefore _not_ instrumented by the
 in-process v8 collector; they are exercised for real by every acceptance test, and they are
 verified by what those processes report — a probe that stops asserting fails the suite that
 runs it, which is a stronger claim than a counter.
@@ -369,7 +370,7 @@ pnpm audit:policy                                    # production tree to zero, 
 pnpm coverage:e2e                                    # e2e harness, same 95 % thresholds
 pnpm coverage:gate                                   # all four packages, every dimension
 pnpm check:test-counts                               # the numbers on the README are this run's numbers
-pnpm e2e                                             # 50 real-process TLS acceptance tests
+pnpm e2e                                             # 56 real-process acceptance tests (TLS, HTTP)
 pnpm test:mutation                                   # mutation score, all three packages
 pnpm check:mutation-timeouts                         # every Timeout in those reports has been read
 (cd cluster && pnpm test:perf)                       # 22 benchmarks on a real 3-node TLS cluster
@@ -1059,3 +1060,76 @@ inside that window got an empty module — `TypeError: Client is not a construct
 store, so the stub replaced the real `pg` for the whole workspace for the rest of the run. The fake is
 now injected at the `pgClient` seam through the module graph, and nothing under `node_modules` is
 written by a test run.
+
+## The change stream had a simulator at one end and nothing at the other
+
+Every claim this package makes about CDC — ordered delivery, a resumable
+checkpoint, exactly-once *delivery* on top of at-least-once transport — started
+at `CDCEngine.appendChange()`, a method whose own comment said "test-only: in
+production this would be triggered by WAL decoding". Four defects were behind
+that sentence, and the first three were found by wiring the path to a real log
+and watching what came out.
+
+**The outbox was not a queue.** `fetchOldestPending` documented itself as
+"FIFO" and its pending index was keyed `pending:entry:<seq>`. LMDB iterates keys
+lexicographically, so a backlog of ten or more came back as 1, 10, 11, …, 19, 2,
+20 — and the receiving datacenter applied `0/0000000A` before `0/00000002`. The
+key is now zero-padded to sixteen digits, `pending:<seq>`, so key order and
+sequence order are the same order; `AC 99.1`–`99.5` measure it, including the
+specific pair a string sort gets wrong.
+
+**The dedup key was a local counter.** `outbox.add({ id: msgId })` was discarded —
+the store assigns `entry:<sequence>` and overwrites `id` — so the transport
+shipped `entry:7` and the receiver deduplicated on a per-outbox sequence. Two
+datacenters whose outboxes both started at `entry:1` deduplicated *each other*,
+dropping one region's first change; a change replayed after a restart got a new
+sequence and was applied twice. The message id travels as `msgId` now, which the
+store already indexed for exactly this purpose, and `AC 98.7` runs two senders
+into one receiver to prove the collision is gone.
+
+**The checkpoint advanced to the word "entry".** The pump derived the position
+with `entry.id.split(':')[0]`, which is `"entry"` for every entry. `markDelivered`
+kept the outbox honest, so nothing looked wrong — but the resume point a restart
+depends on was a constant string that compared equal to itself for ever. The
+position comes from the event's own `lsn` now, and `AC-C18` kills a relay
+mid-stream, verifies the checkpoint names the writer's last LSN, restarts it and
+checks that all fifty changes are applied exactly once.
+
+**Four hundred lines of the pipeline could not be reached at all.**
+`this.cdc = new CDCEngine(...)` was hardcoded, so `ExactlyOnceCDCPipeline` — the
+one class whose job is to carry a real change stream — could only ever be fed by
+the simulator. It takes an `engine` now; `appendChange()` refuses by name when
+the engine is a read end, and `AC 98.1` drives the whole path from a file another
+process wrote.
+
+The read end itself is `IChangeLogReader` (two methods), with `FileChangeLog` as
+a reference implementation — a JSON-lines log whose appends resolve only after
+`fsync`, whose writer truncates a torn tail and refuses to reuse a position, and
+whose reader refuses a shrunken file, a non-JSON line and an LSN that does not
+advance, each by name with a byte offset. `WalTailCDCEngine` polls it, moves one
+cursor, filters by watch set and stamps an HLC anchored to the writer's commit
+time; `AC 93.1`–`93.21` and `94.1`–`94.11` are the cases. The write end is
+`HttpCDCSink`, which is the first sink in this package whose delivery crosses a
+socket: `AC 95.1`–`95.15` cover batching, status handling, timeouts, keep-alive,
+mid-response disconnects and the two counter defects the tests found — a 50 kB
+error page produced an *empty* excerpt, and a timeout was not counted as a
+refusal at all.
+
+What makes the path measurable end to end is that the counters now have an
+identity and an exposition: `accepted = delivered + failed + dropped + Σ pending`
+for the pump (the queue is the ledger — the head stays in it until its outcome is
+known, so there is no in-flight bucket to double-count), and
+`produced = pending + sent + deadLettered` over the outbox for the pipeline.
+`pumpConservation` and `pipelineConservation` state them, `renderPumpMetrics` and
+`renderPipelineMetrics` publish them, and a projection that throws is now counted
+as `projectionFailed` rather than as a delivery failure — the old counting broke
+the identity by exactly the number of projection errors.
+
+The measurement is a run of three processes: `change-writer.mjs` fsyncs records
+into a log, `cdc-relay.mjs` tails it and ships each change over TLS 1.3 with
+mutual certificate verification *and* delivers the same change to
+`cdc-sink-server.mjs` over HTTP, and the receiving relay deduplicates and appends
+what it accepted to a file. `AC-C15`–`C19` assert on those files, not on
+counters: fifty changes, each once, in order; a `503` retried rather than
+dropped; the ledger balanced in the process that ran; the exposition parsing as
+Prometheus text and agreeing with the same process's counters.

@@ -630,6 +630,197 @@ class ExactlyOnceCDCPipeline {
 `dedupTtlMs?` (default 10 min), `transport?`, `remoteNodeId?`, plus the
 checkpoint path.
 
+### The read end of the change stream
+
+`CDCEngine` is a simulator: its events are produced by `appendChange()`, a
+method documented as test-only. Everything below it is real — a log another
+process wrote, read back through an interface any engine can implement.
+
+```
+ your engine's log ──► IChangeLogReader ──► WalTailCDCEngine ──► ICDCEngine consumers
+ (PostgreSQL slot,      (readAfter/head)     (cursor, filter, HLC)   (pipeline, pump, …)
+  MySQL binlog, Kafka,
+  FileChangeLog)
+```
+
+### `IChangeLogReader`
+
+The seam between *where changes are recorded* and *what this package does with
+them*. Two properties are the contract: records come back in strictly
+increasing `lsn` order with none at or before the position asked for, and a
+record is only ever returned after it is durable — a record acknowledged to a
+writer and then lost in a crash is the failure this seam exists to rule out.
+
+```typescript
+interface IChangeLogReader {
+  readAfter(afterLsn: string | null, limit: number): Promise<ChangeLogRecord[]>;
+  head(): Promise<string | null>;
+}
+```
+
+`ChangeLogRecord` carries `lsn`, `table`, `operation`, `oldValues`,
+`newValues`, `txId` and `committedAt` (the writer's commit time in epoch
+milliseconds — a log written by another process cannot borrow this one's
+clock).
+
+An adapter for a real engine implements these two methods against its own
+position type. `compareLsn` and `parseLsn` understand the `high/low`
+hexadecimal shape PostgreSQL uses; `formatLsn` produces it; and
+`recordToChangeEvent` converts a record into the `CDCChangeEvent` the rest of
+the package consumes, given a timestamp.
+
+```typescript
+import { compareLsn, formatLsn, parseLsn, recordToChangeEvent } from '@agentix-e/db-federation';
+
+compareLsn('0/100000000', '0/A0000000'); // 1 — numerically, not lexically
+```
+
+### `FileChangeLogWriter` / `FileChangeLogReader`
+
+A reference log on disk: one JSON object per line, UTF-8, `\n`-terminated, with
+`fsync` between the append and the acknowledgement. It is what makes "ordered,
+resumable delivery" measurable without a database: the writer is one process,
+the reader another, and the bytes in between are on a filesystem.
+
+```typescript
+import { openFileChangeLog } from '@agentix-e/db-federation';
+
+const { writer, reader } = await openFileChangeLog({ dir: '/var/lib/app/changelog' });
+const lsn = await writer.append({
+  table: 'orders',
+  operation: 'insert',
+  newValues: { id: 7 },
+  txId: 'tx-1',
+}); // resolves after fsync — `0/00000001`
+```
+
+`openFileChangeLog` opens both halves over one file. `FileChangeLogOptions`
+takes `dir`, `fileName?` (default `changelog.jsonl`) and
+`fsync?` (default true; off is a durability trade for benchmarks). `append`
+takes an `AppendChangeInput`. The writer assigns positions — a reopened writer
+continues past the last record rather than reusing it — and truncates a torn
+tail, because a record that was still being written when a process died was
+never acknowledged. The reader refuses three things by name: a file that shrank
+(rotation it cannot follow), a line that is not JSON, and a record whose LSN
+does not advance. All three arrive as `ChangeLogCorruptError`, carrying the byte
+offset the reader gave up at.
+
+### `WalTailCDCEngine`
+
+An `ICDCEngine` over an `IChangeLogReader`: it polls, moves a cursor, filters by
+watch set and stamps an HLC anchored to the writer's commit time.
+
+```typescript
+import { WalTailCDCEngine } from '@agentix-e/db-federation';
+
+const engine = new WalTailCDCEngine({
+  reader,
+  nodeId: 'dc-east',
+  startAfterLsn: '0/0000041F', // the consumer's checkpoint
+  pollIntervalMs: 50,
+});
+await engine.start();
+```
+
+`WalTailCDCEngineConfig` also takes `batchSize?` (default 256) and an
+`onReadError?` hook. A read failure is counted, reported and retried on the next
+tick rather than stopping the stream: one transient `EACCES` must not wedge a
+tail until somebody restarts the process. The cursor advances for records the
+watch set rejects — the position belongs to the log, not to a subscription, and
+a cursor left behind an unwatched table would re-read it forever. An empty watch
+set means "deliver what the log holds", because silence is indistinguishable
+from a broken deployment.
+
+`WalTailCDCEngineStatus` reports `started`, `position`, `polls`, `readErrors`,
+`lastError`, `emitted` and `skipped`. `poll()` is public so a caller can drive
+the tail deterministically instead of sleeping for one interval; concurrent
+calls collapse into one.
+
+Wire the engine into the pipeline with `engine` in
+`ExactlyOnceCDCPipelineConfig`, and read the resume point *before* the engine is
+constructed:
+
+```typescript
+import { ExactlyOnceCDCPipeline } from '@agentix-e/db-federation';
+
+const checkpoint = ExactlyOnceCDCPipeline.readCheckpoint('/var/lib/app/outbox');
+const startAfterLsn = ExactlyOnceCDCPipeline.resumePosition(checkpoint);
+```
+
+`resumePosition` returns the *earliest* position the checkpoint holds, not the
+latest: a tail has one cursor and a checkpoint has one position per table, so
+resuming at the latest would skip every row of a table that is behind. A replay
+is absorbed by the receiver's dedup ring; a gap is not.
+
+`comparePositions` orders two checkpoint positions — numerically when both are
+`high/low` LSNs, lexically when neither is (a consumer may key its checkpoint by
+a Kafka offset), and it throws for a mix, because two positions that are not the
+same kind of thing have no order. `isSimulatedEngine` tells the simulator from a
+read end, which is what `appendChange()` uses to refuse when the pipeline is
+wired to a log.
+
+### `HttpCDCSink`
+
+A sink that ends at a socket, for the half of CDC that delivers to a webhook or
+an ingest endpoint rather than to another datacenter.
+
+```typescript
+import { HttpCDCSink } from '@agentix-e/db-federation';
+
+const sink = new HttpCDCSink({
+  url: 'https://ingest.internal/cdc',
+  headers: { authorization: `Bearer ${process.env.CDC_TOKEN}` },
+  timeoutMs: 2_000,
+  probe: { method: 'GET' },
+});
+```
+
+`emit()` POSTs `{"events":[…]}` and resolves only on a 2xx. Anything else
+throws `HttpSinkRefusedError`, which carries the status, a bounded excerpt of
+the body, and whether the failure was a timeout; `CDCSinkResolver` and
+`CDCSubscriptionPump` retry on a throw and record a failure once the budget is
+spent. A batch that never got a response is a refusal too — a receiver that
+committed a batch the client gave up on and one that never saw it are different
+states, and only the receiver can tell them apart, which is why delivery is
+at-least-once and the receiver deduplicates by event id. A 404 on the probe
+counts as proof of life.
+
+`HttpCDCSinkConfig` takes `url`, `name?`, `headers?`, `timeoutMs?` (default
+5 s), `keepAlive?` (default true), `probe?` (default off) and
+`maxErrorBodyBytes?` (default 512). `HttpCDCSinkStats` reports `requests`,
+`batches`, `events`, `refusals` and `lastStatus`.
+
+### Counters, exposition and the conservation identity
+
+The pump and the pipeline both keep counters. `pumpConservation` and
+`pipelineConservation` state what those counters must add up to, and
+`renderPumpMetrics` / `renderPipelineMetrics` render them as Prometheus text.
+
+```typescript
+import { pumpConservation, renderPumpMetrics } from '@agentix-e/db-federation';
+
+const status = pump.getStatus();
+const ledger = pumpConservation(status);
+// accepted = delivered + failed + dropped + Σ pending, always
+if (!ledger.balanced) throw new Error(`${ledger.unaccounted} changes vanished`);
+
+process.stdout.write(renderPumpMetrics(status, { node: 'dc-east' }));
+```
+
+The identity holds because the queue is the ledger: a change routed to a
+subscription is counted once as `accepted`, and from that moment it is pending
+(including the head being emitted right now), delivered, failed after the retry
+budget, or dropped. There is no in-flight bucket, which is what makes the
+identity exact rather than approximate. A projection that throws is counted as
+`projectionFailed`, not as a delivery failure — it runs before any subscription
+is chosen.
+
+`escapeLabelValue` escapes the three characters the exposition format treats
+specially (backslash, double quote, newline), and `MetricLabels` is the label
+map. For the pipeline the identity is over the outbox:
+`produced = pending + sent + deadLettered`, with `preExisting` passed in when
+the outbox was not empty at start.
+
 ## Conflict resolution
 
 ### `ConflictResolver`

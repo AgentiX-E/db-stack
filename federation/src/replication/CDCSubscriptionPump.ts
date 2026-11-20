@@ -143,10 +143,28 @@ export interface CDCSubscriptionPumpStatus {
   unopened: string[];
   /** Queued changes per subscription id */
   pending: Record<string, number>;
+  /**
+   * Changes routed to a subscription, delivered or not.
+   *
+   * The left-hand side of `accepted = delivered + failed + dropped + pending`
+   * — see `pumpConservation()`. Without it the counters could be read but not
+   * checked, and a change that vanished between routing and delivery left no
+   * trace of the discrepancy.
+   */
+  accepted: number;
   /** Changes the sink accepted */
   delivered: number;
   /** Changes that exhausted the retry budget */
   failed: number;
+  /**
+   * Changes a caller-supplied projection threw on.
+   *
+   * Counted separately from `failed`: a projection runs *before* any
+   * subscription is chosen, so the change was never routed to one. Adding it to
+   * `failed` — which is what this counter used to do — broke the identity
+   * above by exactly the number of projection errors.
+   */
+  projectionFailed: number;
   /** Changes that never reached the queue, or were queued when it closed */
   dropped: number;
   /** Failure-log entries evicted to stay inside `maxFailureLog` */
@@ -206,8 +224,10 @@ export class CDCSubscriptionPump {
 
   private detachEngine: (() => void) | null = null;
   private started = false;
+  private accepted = 0;
   private delivered = 0;
   private failed = 0;
+  private projectionFailed = 0;
   private dropped = 0;
   private evictedFailures = 0;
 
@@ -299,8 +319,10 @@ export class CDCSubscriptionPump {
       subscriptions: this.opened.size,
       unopened: Array.from(this.unopened.keys()),
       pending,
+      accepted: this.accepted,
       delivered: this.delivered,
       failed: this.failed,
+      projectionFailed: this.projectionFailed,
       dropped: this.dropped,
       evictedFailures: this.evictedFailures,
     };
@@ -381,9 +403,10 @@ export class CDCSubscriptionPump {
     } catch (error) {
       // `onChange` runs inside the engine's own listener loop: a throw here
       // would abandon every listener after this one, so a caller's broken
-      // projection would break the engine for everybody else. The event is
-      // reported as failed and the stream continues.
-      this.failed += 1;
+      // projection would break the engine for everybody else. The failure is
+      // reported and the stream continues — counted as a projection failure,
+      // not as a delivery failure, because no subscription was ever chosen.
+      this.projectionFailed += 1;
       this.emit({
         type: 'projection_failed',
         lsn: event?.lsn,
@@ -395,6 +418,12 @@ export class CDCSubscriptionPump {
 
     for (const opened of this.opened.values()) {
       if (!admits(opened.subscription, event)) continue;
+
+      // Counted before the queue's limit is consulted: a change this
+      // subscription was entitled to and did not get is still a change the
+      // subscription saw, and the identity in `pumpConservation` is only exact
+      // if the drop is counted on both sides of it.
+      this.accepted += 1;
 
       if (opened.queue.length >= this.config.maxPendingPerSubscription) {
         // Drop the *newest*: the consumer keeps a contiguous prefix of the

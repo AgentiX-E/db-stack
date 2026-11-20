@@ -50,6 +50,67 @@ the reference SQLite engine; for PostgreSQL, MySQL, MongoDB or a proprietary eng
 implement one class: read your change stream, stamp each change with the HLC, call the
 callback. See [engine adapters](engine-adapters.md#3-change-capture-for-federation).
 
+### Reading a real change log
+
+`CDCEngine` is a simulator: it emits whatever `appendChange()` is given, which is what
+the unit tests need and not what a deployment has. To run CDC against a log your
+database actually wrote, implement `IChangeLogReader` — two methods — and put
+`WalTailCDCEngine` on top of it:
+
+```ts
+export interface IChangeLogReader {
+  // Records strictly after `afterLsn`, in order, at most `limit`.
+  // A record must be durable before it is returned.
+  readAfter(afterLsn: string | null, limit: number): Promise<ChangeLogRecord[]>;
+  // The newest position the log holds, or null when it is empty.
+  head(): Promise<string | null>;
+}
+```
+
+For a PostgreSQL logical-replication slot, `readAfter` decodes WAL records from the
+slot's confirmed position; for a MySQL binlog, it reads from the last position the
+consumer confirmed. Everything above the interface — the pipeline, the outbox, the
+transport, the dedup ring — is unchanged, which is the point: the read end is the
+only part that knows what your engine's log looks like.
+
+If you would rather see the whole path working before writing an adapter, the package
+ships a reference log on disk:
+
+```ts
+import { openFileChangeLog, WalTailCDCEngine, ExactlyOnceCDCPipeline } from "@agentix-e/db-federation";
+
+const { writer, reader } = await openFileChangeLog({ dir: "/var/lib/app/changelog" });
+
+// The producer side: appends and fsyncs, then hands back the position.
+await writer.append({ table: "orders", operation: "insert", newValues: { id: 7 }, txId: "tx-1" });
+
+// The consumer side: resume where the last run stopped, then tail.
+const checkpoint = ExactlyOnceCDCPipeline.readCheckpoint("/var/lib/app/outbox");
+const engine = new WalTailCDCEngine({
+  reader,
+  nodeId: "dc-east-1",
+  startAfterLsn: ExactlyOnceCDCPipeline.resumePosition(checkpoint),
+});
+```
+
+Three behaviours of the tail are worth knowing before you deploy it:
+
+- **The cursor advances past tables nobody watches.** The position belongs to the log,
+  not to a subscription. A cursor that waited for an unwatched table would re-read those
+  records on every poll, and a batch limit would then starve the tables you do watch.
+- **A read error does not stop the tail.** It is counted (`getStatus().readErrors`),
+  kept (`lastError`), passed to `onReadError` if you set one, and retried on the next
+  tick. A transient `EACCES` should not wedge a stream until the process restarts.
+- **An empty watch set delivers everything.** Silence would be indistinguishable from a
+  misconfigured deployment, so a tail that has not been told what it wants delivers what
+  the log holds.
+
+`ExactlyOnceCDCPipeline.resumePosition` returns the *earliest* position in the
+checkpoint, not the latest. One tail has one cursor and a checkpoint has one position
+per table, so resuming at the latest would skip every row of a table that is behind;
+resuming at the earliest re-reads some rows, and the receiver's dedup ring removes the
+duplicates. A duplicate is recoverable, a gap is not.
+
 Publications and subscriptions group tables:
 
 ```ts
@@ -81,33 +142,32 @@ subscription, filters the engine's stream by table and by operation, and deliver
 each change once, in order.
 
 ```ts
-class WebhookSink implements ICDCSink {
-  readonly name = "webhook";
-  constructor(private readonly url: string) {}
-  async connect() {}
-  async disconnect() {}
-  async emit(events: CDCSinkEvent[]) {
-    const response = await fetch(this.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(events, (_k, v) =>
-        typeof v === "bigint" ? v.toString() : v,
-      ),
-    });
-    if (!response.ok) throw new Error(`${this.url}: ${response.status}`); // refused, not delivered
-  }
-}
+import { CDCSubscriptionPump, HttpCDCSink } from "@agentix-e/db-federation";
 
 const pump = new CDCSubscriptionPump({
   engine,
   registry,
-  resolveSink: (dsn) => new CDCSinkResolver(new WebhookSink(dsn)),
+  // The pump asks this factory for a sink per subscription's target DSN.
+  resolveSink: (dsn) =>
+    new HttpCDCSink({
+      url: dsn,
+      headers: { authorization: `Bearer ${process.env.CDC_TOKEN}` },
+      timeoutMs: 2_000,
+      probe: { method: "GET" },
+    }),
 });
 await pump.start();
 
 // From here on, whatever your engine appends is delivered to the subscription's
 // sink — in LSN order, once per change.
 ```
+
+`HttpCDCSink` is the bundled destination for anything that speaks HTTP: it batches
+the events into `{"events": […]}`, posts them over a keep-alive socket, and resolves
+only on a 2xx. A non-2xx status, a connection error and a timeout are all refusals,
+each carrying enough detail to tell which one happened. For a queue, a filesystem or
+a proprietary protocol, implement `ICDCSink` yourself — three methods, and the pump
+treats it identically.
 
 Throwing from `emit()` is how a sink says _no_. The pump retries the same change
 `maxEmitAttempts` times, then records it in a bounded failure log

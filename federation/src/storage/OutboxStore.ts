@@ -14,7 +14,7 @@
  * sub-databases:
  *
  *   main        entry:<seq>          → OutboxEntry
- *   pending     pending:entry:<seq>  → seq            (FIFO delivery queue)
+ *   pending     pending:<seq, 16 digits>  → seq     (FIFO delivery queue)
  *   delivery    delivered:<id>       → deliveredAt    (O(1) dedup / ACK)
  *   seq         seq                  → last sequence number
  *   dead-letter dlq:<id>             → OutboxEntry + deadAt
@@ -42,6 +42,31 @@ import { open, type Database, type RootDatabase } from 'lmdb';
 import * as path from 'path';
 import * as fs from 'fs';
 
+/**
+ * Key of the pending index.
+ *
+ * The sequence is zero-padded to sixteen digits because LMDB iterates keys
+ * *lexicographically*: with `pending:entry:<seq>` the queue came back as
+ * 1, 10, 11, …, 19, 2, 20 — so `fetchOldestPending` was not FIFO for any
+ * backlog of ten entries or more, and the peer applied changes out of the
+ * order the log had assigned them. The padding makes the key order and the
+ * sequence order the same order. Entries written by an older build keep their
+ * `pending:entry:<seq>` keys; they still fall inside the range and still carry
+ * the right sequence, so they drain correctly, just after the padded ones.
+ */
+function pendingKey(seq: number): string {
+  return `pending:${String(seq).padStart(16, '0')}`;
+}
+
+/** The sequence inside a `entry:<seq>` key. */
+function seqOfEntryId(entryKey: string): number {
+  const seq = Number(entryKey.slice('entry:'.length));
+  if (!Number.isInteger(seq) || seq <= 0) {
+    throw new Error(`"${entryKey}" is not an outbox entry key`);
+  }
+  return seq;
+}
+
 export interface OutboxStoreConfig {
   /** Path to the LMDB data directory */
   dataDir: string;
@@ -68,7 +93,7 @@ export class OutboxStore implements IOutboxStore {
   private readonly seqDb: Database<number, string>;
   /** Dead letter queue: dlq:<id> → OutboxEntry */
   private readonly deadLetterDb: Database<DeadLetterEntry, string>;
-  /** Pending index for O(1) sorted fetch: pending:entry:<seq> → seq */
+  /** Pending index for O(1) ordered fetch: pending:<seq, 16 digits> → seq */
   private readonly pendingDb: Database<number, string>;
   /** entryId → seq and msgId → seq reverse index for O(1) ACK lookup */
   private readonly msgIdToSeqDb: Database<number, string>;
@@ -133,7 +158,7 @@ export class OutboxStore implements IOutboxStore {
         };
 
         this.mainDb.putSync(id, full);
-        this.pendingDb.putSync(`pending:${id}`, seq);
+        this.pendingDb.putSync(pendingKey(seq), seq);
         this._indexById(full, seq);
         created.push(full);
       }
@@ -187,7 +212,7 @@ export class OutboxStore implements IOutboxStore {
         entry.status = 'delivered';
         entry.lastAttemptAt = Date.now();
         this.mainDb.putSync(entry.id, entry);
-        this.pendingDb.removeSync(`pending:${entry.id}`);
+        this.pendingDb.removeSync(pendingKey(seqOfEntryId(entry.id)));
         flushed.push(entry);
       }
     });
@@ -221,9 +246,17 @@ export class OutboxStore implements IOutboxStore {
 
   /**
    * Fetch the oldest pending entries.
-   * Sorts by entry ID (lexicographic seq order) to maintain FIFO ordering.
-   * Accepts an optional `limit` to cap the number of entries scanned from
-   * the pending index, preventing unbounded memory usage for large queues.
+   *
+   * The pending index is keyed by a zero-padded sequence, so iteration order is
+   * sequence order — this used to say "sorts by entry ID … to maintain FIFO"
+   * while doing neither: the keys were `pending:entry:<seq>`, keys iterate
+   * lexicographically, and the result was 1, 10, 11, 19, 2, 20 for any backlog
+   * of ten or more. A pipeline shipping a burst therefore handed the peer its
+   * changes out of order, which the acceptance run measured as `0/0000000A`
+   * arriving before `0/00000002`.
+   *
+   * Accepts an optional `limit` to cap the number of entries scanned from the
+   * pending index, preventing unbounded memory usage for large queues.
    */
   async fetchOldestPending(count: number, limit?: number): Promise<OutboxEntry[]> {
     const entries: OutboxEntry[] = [];
@@ -264,7 +297,7 @@ export class OutboxStore implements IOutboxStore {
           existing.status = 'delivered';
           existing.lastAttemptAt = Date.now();
           this.mainDb.putSync(entryKey, existing);
-          this.pendingDb.removeSync(`pending:${entryKey}`);
+          this.pendingDb.removeSync(pendingKey(seq));
           return;
         }
       }
@@ -279,7 +312,7 @@ export class OutboxStore implements IOutboxStore {
           entry.status = 'delivered';
           entry.lastAttemptAt = Date.now();
           this.mainDb.putSync(item.key as string, entry);
-          this.pendingDb.removeSync(`pending:${item.key as string}`);
+          this.pendingDb.removeSync(pendingKey(seqOfEntryId(item.key as string)));
           return;
         }
       }
@@ -389,7 +422,7 @@ export class OutboxStore implements IOutboxStore {
       });
       // Remove from main + pending + reverse index
       this.mainDb.removeSync(entryKey);
-      this.pendingDb.removeSync(`pending:${entryKey}`);
+      this.pendingDb.removeSync(pendingKey(seqOfEntryId(entryKey)));
       this.msgIdToSeqDb.removeSync(entry.id);
       const msgId = entry.msgId;
       if (typeof msgId === 'string' && msgId.length > 0) {
@@ -426,7 +459,7 @@ export class OutboxStore implements IOutboxStore {
       };
 
       this.mainDb.putSync(newKey, revived);
-      this.pendingDb.putSync(`pending:${newKey}`, seq);
+      this.pendingDb.putSync(pendingKey(seq), seq);
       this._indexById(revived, seq);
       this.seqDb.putSync('seq', seq);
 

@@ -52,20 +52,14 @@ import { HLC } from '../hlc/HLC';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ITransport } from '../interfaces/transport/ITransport';
-import type { CDCChangeEvent } from '../interfaces/replication/ICDCManager';
+import type { ICDCEngine, CDCChangeEvent } from '../interfaces/replication/ICDCManager';
+import { compareLsn, parseLsn } from '../interfaces/replication/IChangeLogReader';
 import type { TransportMessage } from '../interfaces/transport/TransportMessage';
 
 // ── Constants ──────────────────────────────────────────────
 
-/** Prefix used to embed the CDC table name in the TransportMessage type field */
+/** Prefix of the `TransportMessage.type` this pipeline stamps on a CDC frame */
 const CDC_TYPE_PREFIX = 'cdc_event:';
-
-/** Extract table name from transport message type field */
-function extractTableName(msg: TransportMessage): string | null {
-  if (!msg.type || !msg.type.startsWith(CDC_TYPE_PREFIX)) return null;
-  const lsnPart = msg.type.slice(CDC_TYPE_PREFIX.length);
-  return lsnPart || null;
-}
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -74,6 +68,17 @@ export interface ExactlyOnceCDCPipelineConfig {
   nodeId: string;
   /** CDC engine config (HLsC, nodeId) */
   cdcConfig: CDCEngineConfig;
+  /**
+   * The engine whose changes this pipeline persists and ships.
+   *
+   * Optional only for compatibility: when absent the pipeline builds a
+   * `CDCEngine`, the simulator. That default was the *only* option — the field
+   * was hardcoded, so a pipeline could not be driven by a real WAL reader even
+   * though every class around it took its dependencies as parameters. A
+   * deployment passes a `WalTailCDCEngine` here and the rest of the path is
+   * unchanged.
+   */
+  engine?: ICDCEngine;
   /** OutboxStore config */
   outboxConfig: OutboxStoreConfig;
   /** DedupRing TTL (ms) for receiver-side dedup — default 600_000 (10 min) */
@@ -96,6 +101,7 @@ export interface ExactlyOnceCDCPipelineConfig {
 type ResolvedCDCPipelineConfig = {
   nodeId: string;
   cdcConfig: CDCEngineConfig;
+  engine?: ICDCEngine;
   outboxConfig: OutboxStoreConfig;
   dedupTtlMs: number;
   transport?: ITransport;
@@ -124,6 +130,15 @@ export interface CDCPipelineMetrics {
   totalDeduped: number;
   /** Current pending outbox count */
   pendingCount: number;
+  /**
+   * Outbox entries this store has marked delivered, across restarts.
+   *
+   * The sender-side twin of `totalProduced`, and the only counter that can
+   * balance it: `totalProduced` is process-scoped, while the outbox is durable,
+   * so the identity `produced = pending + sent + deadLettered` needs a `sent`
+   * that outlives the process too.
+   */
+  outboxDelivered: number;
   /** Last checkpoint LSN per table */
   checkpoints: Record<string, string>;
   /** Dead letter count */
@@ -157,7 +172,7 @@ export type CDCPipelineEventHandler = (event: CDCPipelineEvent) => void;
 // ── Implementation ─────────────────────────────────────────
 
 export class ExactlyOnceCDCPipeline {
-  private readonly cdc: CDCEngine;
+  private readonly cdc: ICDCEngine;
   private readonly outbox: OutboxStore;
   private readonly dedup: DedupRing;
   private readonly config: ResolvedCDCPipelineConfig;
@@ -165,6 +180,18 @@ export class ExactlyOnceCDCPipeline {
 
   /** Event listeners */
   private readonly eventListeners = new Set<CDCPipelineEventHandler>();
+
+  /**
+   * The checkpoint, in memory.
+   *
+   * `getCheckpoint()` used to `readFileSync` and `JSON.parse` on every call —
+   * and `advanceCheckpoint` calls it once per delivered entry, so a pipeline
+   * delivering 5 000 changes a second parsed the same small JSON 5 000 times,
+   * and threw `ENOENT` if the file was removed underneath it. The file is the
+   * durable copy; this object is the working one, refreshed by `start()` and
+   * written by `flushCheckpoint()`.
+   */
+  private checkpoint: CDCCheckpoint = { lastConfirmedLSN: {}, updatedAt: 0, version: 1 };
 
   /** Pump state */
   private pumpTimer: ReturnType<typeof setInterval> | null = null;
@@ -174,6 +201,24 @@ export class ExactlyOnceCDCPipeline {
   private totalProduced = 0;
   private totalDelivered = 0;
   private totalDeduped = 0;
+
+  /**
+   * The tail of the outbox-append chain.
+   *
+   * `outbox.add()` is asynchronous, and a CDC engine delivers a batch of events
+   * in one synchronous pass. Firing one `add()` per event without awaiting them
+   * let their LMDB write transactions settle in whatever order the microtask
+   * queue produced — and the outbox's *insertion order is the send order*, so
+   * the peer applied changes out of the log's order. The acceptance run that
+   * found this had `0/0000000A` arrive before `0/00000002`.
+   *
+   * The chain keeps `onChange` synchronous (the engine's listener contract) and
+   * the appends ordered (the log's contract).
+   */
+  private appendChain: Promise<void> = Promise.resolve();
+
+  /** Why the last append failed, or null. Visible so a refusal is not silent. */
+  private lastAppendError: string | null = null;
 
   // ── Constructor ──────────────────────────────────────────
 
@@ -185,6 +230,7 @@ export class ExactlyOnceCDCPipeline {
     this.config = {
       nodeId: config.nodeId,
       cdcConfig: config.cdcConfig,
+      engine: config.engine,
       outboxConfig: config.outboxConfig,
       dedupTtlMs: config.dedupTtlMs ?? 600_000,
       transport: config.transport,
@@ -195,7 +241,7 @@ export class ExactlyOnceCDCPipeline {
       maxPending: config.maxPending ?? 10_000,
     };
 
-    this.cdc = new CDCEngine(this.config.cdcConfig);
+    this.cdc = this.config.engine ?? new CDCEngine(this.config.cdcConfig);
     this.outbox = new OutboxStore(this.config.outboxConfig);
     this.dedup = new DedupRing({ ttlMs: this.config.dedupTtlMs });
 
@@ -222,13 +268,16 @@ export class ExactlyOnceCDCPipeline {
     this.emit('checkpoint_advanced', {
       type: 'checkpoint_advanced',
       timestamp: Date.now(),
-      lsn: Object.values(this.getCheckpoint()).join(','),
+      lsn: Object.values(this.checkpoint.lastConfirmedLSN).join(',') || undefined,
     });
   }
 
   async stop(): Promise<void> {
     this.stopPump();
     await this.cdc.stop();
+    // A graceful stop waits for the appends already accepted from the engine:
+    // dropping them would lose changes the log still reports as produced.
+    await this.appendChain;
     this.flushCheckpoint();
   }
 
@@ -246,9 +295,24 @@ export class ExactlyOnceCDCPipeline {
     return this.cdc.getWatchedTables();
   }
 
-  /** For testing: simulate a CDC change event */
+  /**
+   * Simulate a change on the configured engine.
+   *
+   * Only the simulator has this method. A pipeline wired to a real log refuses
+   * here rather than silently appending to a stream nothing reads: the whole
+   * point of the injection point above is that the changes come from the log,
+   * and a test hook that still worked would let a deployment believe it had
+   * one.
+   */
   appendChange(change: Omit<CDCChangeEvent, 'lsn' | 'timestamp' | 'txId'>): CDCChangeEvent {
-    return this.cdc.appendChange(change);
+    const engine = this.cdc;
+    if (!isSimulatedEngine(engine)) {
+      throw new Error(
+        'appendChange is a test hook of CDCEngine; this pipeline is wired to a ' +
+          `read end (${engine.constructor.name}) and its changes come from the log`,
+      );
+    }
+    return engine.appendChange(change);
   }
 
   // ── Dedup (receiver side) ────────────────────────────────
@@ -311,21 +375,25 @@ export class ExactlyOnceCDCPipeline {
   /**
    * Advance the checkpoint for a table to the given LSN.
    * G4: advance checkpoint after consumer confirms.
+   *
+   * Positions are ordered by `comparePositions`, not by `<` on the strings.
+   * The string comparison was right only while every low word stayed eight
+   * hexadecimal digits wide: past `0/FFFFFFFF` the ninth digit makes
+   * `"0/100000000" < "0/A0000000"` lexically and greater numerically, and a
+   * stale position would then be accepted over a newer one — a checkpoint
+   * that moves backwards is a replay, which is merely wasteful, or a skip,
+   * which is not.
    */
   advanceCheckpoint(tableName: string, lsn: string): void {
-    const checkpoint = this.getCheckpoint();
-
-    // G3: monotonic LSN check
-    const current = checkpoint.lastConfirmedLSN[tableName];
-    if (current && lsn <= current) {
+    const current = this.checkpoint.lastConfirmedLSN[tableName];
+    if (current !== undefined && comparePositions(lsn, current) <= 0) {
       return; // Non-monotonic: ignore stale checkpoint
     }
 
-    checkpoint.lastConfirmedLSN[tableName] = lsn;
-    checkpoint.updatedAt = Date.now();
+    this.checkpoint.lastConfirmedLSN[tableName] = lsn;
+    this.checkpoint.updatedAt = Date.now();
 
-    // Pass the modified checkpoint to flush, ref: this.getCheckpoint() reads from file
-    this.flushCheckpoint(checkpoint);
+    this.flushCheckpoint();
 
     this.emit('checkpoint_advanced', {
       type: 'checkpoint_advanced',
@@ -336,18 +404,22 @@ export class ExactlyOnceCDCPipeline {
   }
 
   /**
-   * Get current checkpoint state.
+   * The checkpoint as it stands, copied so a caller cannot mutate the working
+   * state by accident.
    */
   getCheckpoint(): CDCCheckpoint {
-    return JSON.parse(fs.readFileSync(this.checkpointPath, 'utf-8')) as CDCCheckpoint;
+    return {
+      lastConfirmedLSN: { ...this.checkpoint.lastConfirmedLSN },
+      updatedAt: this.checkpoint.updatedAt,
+      version: this.checkpoint.version,
+    };
   }
 
   /**
    * Get last confirmed LSN for a table (G3: resume from here on restart).
    */
   getLastConfirmedLSN(tableName: string): string | null {
-    const checkpoint = this.getCheckpoint();
-    return checkpoint.lastConfirmedLSN[tableName] ?? null;
+    return this.checkpoint.lastConfirmedLSN[tableName] ?? null;
   }
 
   // ── Event handling ───────────────────────────────────────
@@ -364,20 +436,32 @@ export class ExactlyOnceCDCPipeline {
     event: Omit<CDCPipelineEvent, 'type'> & { type: CDCPipelineEventType },
   ): void {
     for (const listener of this.eventListeners) {
-      listener(event as CDCPipelineEvent);
+      try {
+        listener(event as CDCPipelineEvent);
+      } catch {
+        // An observer that throws must not stop the pipeline: `emit` is called
+        // from inside the outbox pump cycle and from `advanceCheckpoint`, so a
+        // broken listener used to abort a batch mid-flight and then throw
+        // again from the `pump_error` it raised, leaving an unhandled
+        // rejection and a half-processed batch. The counters are the record.
+      }
     }
   }
 
   // ── Metrics ──────────────────────────────────────────────
 
   async getMetrics(): Promise<CDCPipelineMetrics> {
+    // Measured after every accepted append has landed, so a reader never sees
+    // `produced` ahead of the outbox it is supposed to balance against.
+    await this.appendChain;
     const stats = await this.outbox.getStats();
     return {
       totalProduced: this.totalProduced,
       totalDelivered: this.totalDelivered,
       totalDeduped: this.totalDeduped,
       pendingCount: stats.pendingCount,
-      checkpoints: this.getCheckpoint().lastConfirmedLSN,
+      outboxDelivered: stats.deliveredCount,
+      checkpoints: { ...this.checkpoint.lastConfirmedLSN },
       deadLetterCount: this.outbox.getDeadLetterStats().count,
       pumpActive: this.pumpActive,
     };
@@ -390,6 +474,11 @@ export class ExactlyOnceCDCPipeline {
     return this.outbox.retryDeadLetter(entryId);
   }
 
+  /** Why the outbox last refused an append, or null. */
+  get appendError(): string | null {
+    return this.lastAppendError;
+  }
+
   /** Get dead letter entries for inspection */
   getDeadLetterEntries() {
     return this.outbox.getDeadLetterEntries();
@@ -397,46 +486,82 @@ export class ExactlyOnceCDCPipeline {
 
   /** Force a checkpoint flush */
   flushCheckpoint(cp?: CDCCheckpoint): void {
-    // Atomic write: write to .tmp, fsync, rename (crash-safe)
-    const data = cp ?? this.getCheckpoint();
-    const tmpPath = this.checkpointPath + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 0));
-    fs.fsyncSync(fs.openSync(tmpPath, 'r'));
+    const data = cp ?? this.checkpoint;
+    // Atomic write: write to .tmp, fsync, rename (crash-safe).
+    //
+    // The descriptor is the one that was written, and it is closed. The
+    // previous version wrote with `writeFileSync(path)` and then called
+    // `fsyncSync(openSync(path, 'r'))` — a second descriptor, opened read-only,
+    // never closed: one leaked file descriptor per checkpoint, and a fsync on a
+    // handle whose write buffer was somebody else's.
+    const tmpPath = `${this.checkpointPath}.tmp`;
+    fs.mkdirSync(path.dirname(this.checkpointPath), { recursive: true });
+    const fd = fs.openSync(tmpPath, 'w');
+    try {
+      fs.writeFileSync(fd, JSON.stringify(data));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmpPath, this.checkpointPath);
+    this.checkpoint = data;
   }
 
   // ── Internal: CDC event → outbox ─────────────────────────
 
   private onCDCEvent(event: CDCChangeEvent): void {
-    // Generate deterministic message ID: lsn:txId
-    // G1: Unique msgId ensures at-least-once delivery
+    // The dedup key: the log's position and the writer's transaction, which are
+    // the same numbers on every replay of the same change.
+    //
+    // It has to travel as `msgId`, not as `id`. `OutboxStore.add()` assigns
+    // `entry:<sequence>` as the id and *overwrites* whatever the caller passed,
+    // so the old `id: msgId` was discarded: the transport shipped `entry:7`,
+    // and the receiver's DedupRing deduplicated on a store-local counter. Two
+    // consequences, both silent — a change replayed after a restart got a new
+    // sequence and was applied twice, and two datacenters whose outboxes both
+    // started at `entry:1` deduplicated against each other, dropping one of the
+    // two regions' first change.
     const msgId = `${event.lsn}:${event.txId}`;
-    const hlc = new HLC(this.config.nodeId);
-    const encoder = new TextEncoder();
 
-    this.outbox.add({
-      id: msgId,
-      targetPeerIds: this.config.remoteNodeId ? [this.config.remoteNodeId] : [],
-      payload: encoder.encode(
-        JSON.stringify(event, (_key, value) => (typeof value === 'bigint' ? value.toString() : value)),
-      ),
-      timestamp: hlc.now() as any,
-      type: 'cdc_event',
-      status: 'pending',
-      createdAt: Date.now(),
-      lastAttemptAt: null,
-      attemptCount: 0,
-      lastError: null,
-    } as any);
+    this.appendChain = this.appendChain.then(async () => {
+      try {
+        const hlc = new HLC(this.config.nodeId);
+        const encoder = new TextEncoder();
+        await this.outbox.add({
+          msgId,
+          targetPeerIds: this.config.remoteNodeId ? [this.config.remoteNodeId] : [],
+          payload: encoder.encode(
+            JSON.stringify(event, (_key, value) => (typeof value === 'bigint' ? value.toString() : value)),
+          ),
+          timestamp: hlc.now(),
+          type: 'cdc_event',
+        });
 
-    this.totalProduced++;
-
-    this.emit('event_produced', {
-      type: 'event_produced',
-      lsn: event.lsn,
-      tableName: event.tableName,
-      msgId,
-      timestamp: Date.now(),
+        // Counted after the entry exists. A counter incremented on the way in
+        // would report a change that no outbox holds — a gap in the very
+        // identity `pipelineConservation` checks.
+        this.totalProduced += 1;
+        this.emit('event_produced', {
+          type: 'event_produced',
+          lsn: event.lsn,
+          tableName: event.tableName,
+          msgId,
+          timestamp: Date.now(),
+        });
+      } catch (error) {
+        // The outbox refused the entry: the change is not shipped and nothing
+        // will retry it, which is the one state this pipeline must never enter
+        // quietly. It is not counted as produced (no outbox holds it), and the
+        // reason is kept.
+        this.lastAppendError = error instanceof Error ? error.message : String(error);
+        this.emit('event_failed', {
+          type: 'event_failed',
+          lsn: event.lsn,
+          msgId,
+          error: `outbox append failed: ${this.lastAppendError}`,
+          timestamp: Date.now(),
+        });
+      }
     });
   }
 
@@ -484,15 +609,19 @@ export class ExactlyOnceCDCPipeline {
 
       for (const entry of entries) {
         try {
-          // Build transport message matching TransportMessage interface
+          // Build transport message matching TransportMessage interface.
+          //
+          // The id is the *message* id when the caller supplied one — the
+          // receiver deduplicates on it — and the store's local sequence only
+          // as a fallback for entries written without one.
           const msg: TransportMessage = {
-            messageId: entry.id,
+            messageId: entry.msgId ?? entry.id,
             sourcePeerId: this.config.nodeId,
             targetPeerId: this.config.remoteNodeId ?? '',
             payload: entry.payload,
             timestamp: entry.timestamp,
             createdAt: entry.createdAt,
-            type: 'cdc_event:' + entry.id.split(':')[0], // lsn as type suffix
+            type: `${CDC_TYPE_PREFIX}${lsnOf(entry)}`,
           };
 
           // G1: Send — if transport fails, entry stays pending (retry)
@@ -512,12 +641,16 @@ export class ExactlyOnceCDCPipeline {
           // G4: Mark delivered after successful transport
           await this.outbox.markDelivered(entry.id);
 
-          // G3: Advance checkpoint — decode payload to get tableName
+          // G3: Advance checkpoint — from the event's own LSN, decoded from the
+          // payload. This read `entry.id.split(':')[0]`, and `entry.id` is
+          // `entry:12`, so every checkpoint the pump wrote said `"entry"`: a
+          // position that is not one, equal to itself for ever, and therefore
+          // never advanced. `markDelivered` kept the outbox honest, but the
+          // resume point a restart relies on was a constant string.
           try {
             const decoder = new TextDecoder();
             const event = JSON.parse(decoder.decode(entry.payload)) as CDCChangeEvent;
-            const lsn = entry.id.split(':')[0];
-            this.advanceCheckpoint(event.tableName, lsn!);
+            this.advanceCheckpoint(event.tableName, event.lsn);
           } catch {
             // Skip checkpoint advance if payload can't be decoded
           }
@@ -530,8 +663,8 @@ export class ExactlyOnceCDCPipeline {
           this.emit('pump_error', {
             type: 'pump_error',
             error: errorMsg,
-            msgId: entry.id,
-            lsn: entry.id.split(':')[0],
+            msgId: entry.msgId ?? entry.id,
+            lsn: lsnOf(entry),
             timestamp: Date.now(),
           });
 
@@ -539,7 +672,7 @@ export class ExactlyOnceCDCPipeline {
             this.emit('event_failed', {
               type: 'event_failed',
               error: `Moved to dead letter after max retries`,
-              msgId: entry.id,
+              msgId: entry.msgId ?? entry.id,
               timestamp: Date.now(),
             });
           }
@@ -557,18 +690,119 @@ export class ExactlyOnceCDCPipeline {
   }
 
   private loadCheckpoint(): void {
+    let raw: string;
     try {
-      fs.readFileSync(this.checkpointPath, 'utf-8');
-    } catch {
-      // First run: create default checkpoint
+      raw = fs.readFileSync(this.checkpointPath, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      // First run: create the default checkpoint, so a later flush has a
+      // directory to rename into even if no change ever arrives.
       const defaultCheckpoint: CDCCheckpoint = {
         lastConfirmedLSN: {},
         updatedAt: Date.now(),
         version: 1,
       };
       fs.mkdirSync(path.dirname(this.checkpointPath), { recursive: true });
-      fs.writeFileSync(this.checkpointPath, JSON.stringify(defaultCheckpoint));
+      this.checkpoint = defaultCheckpoint;
+      this.writeCheckpointFile(defaultCheckpoint);
+      return;
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      // A checkpoint that exists and cannot be parsed is not "a first run".
+      // Treating it as one would replay the whole log and report a healthy
+      // pipeline, and the operator would learn about it from duplicated rows.
+      throw new Error(
+        `${this.checkpointPath}: checkpoint is not JSON (${String(error)}); ` +
+          `refusing to start — replaying from the beginning is a decision, not a default`,
+      );
+    }
+
+    const candidate = parsed as Partial<CDCCheckpoint>;
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      typeof candidate.lastConfirmedLSN !== 'object' ||
+      candidate.lastConfirmedLSN === null
+    ) {
+      throw new Error(`${this.checkpointPath}: checkpoint has no lastConfirmedLSN map`);
+    }
+
+    this.checkpoint = {
+      lastConfirmedLSN: { ...(candidate.lastConfirmedLSN as Record<string, string>) },
+      updatedAt: typeof candidate.updatedAt === 'number' ? candidate.updatedAt : 0,
+      version: typeof candidate.version === 'number' ? candidate.version : 1,
+    };
+  }
+
+  /** Write a checkpoint file without touching the working copy. */
+  private writeCheckpointFile(data: CDCCheckpoint): void {
+    const tmpPath = `${this.checkpointPath}.tmp`;
+    fs.mkdirSync(path.dirname(this.checkpointPath), { recursive: true });
+    const fd = fs.openSync(tmpPath, 'w');
+    try {
+      fs.writeFileSync(fd, JSON.stringify(data));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmpPath, this.checkpointPath);
+  }
+
+  /**
+   * Read a checkpoint file without a pipeline.
+   *
+   * The resume point has to be known *before* the engine is constructed —
+   * `WalTailCDCEngine.startAfterLsn` decides what the tail reads — and the
+   * pipeline loads its own checkpoint only when it starts. This is the seam
+   * that lets a deployment compose the two in the right order instead of
+   * replaying the log on every boot and relying on deduplication to hide it.
+   *
+   * Returns null when there is no checkpoint yet. A file that exists and cannot
+   * be parsed throws: the same decision `start()` makes, for the same reason.
+   */
+  static readCheckpoint(dir: string): CDCCheckpoint | null {
+    const file = path.join(dir, 'cdc-checkpoint.json');
+    let raw: string;
+    try {
+      raw = fs.readFileSync(file, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+    const parsed = JSON.parse(raw) as Partial<CDCCheckpoint>;
+    if (!parsed || typeof parsed.lastConfirmedLSN !== 'object' || parsed.lastConfirmedLSN === null) {
+      throw new Error(`${file}: checkpoint has no lastConfirmedLSN map`);
+    }
+    return {
+      lastConfirmedLSN: { ...(parsed.lastConfirmedLSN as Record<string, string>) },
+      updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
+      version: typeof parsed.version === 'number' ? parsed.version : 1,
+    };
+  }
+
+  /**
+   * The earliest position a checkpoint records, or null.
+   *
+   * A tail has one cursor and a checkpoint has one position per table, so the
+   * two have to be reconciled. The *earliest* is the only safe answer: resuming
+   * at the latest would skip every row of a table that is behind (its entries
+   * are earlier in the log and would never be read again), while resuming at
+   * the earliest re-reads rows that some tables have already shipped — and a
+   * replay is exactly what the receiver's dedup ring exists to absorb. This is
+   * the same trade the delivery contract makes: a duplicate is recoverable, a
+   * gap is not.
+   */
+  static resumePosition(checkpoint: CDCCheckpoint | null): string | null {
+    if (!checkpoint) return null;
+    let earliest: string | null = null;
+    for (const lsn of Object.values(checkpoint.lastConfirmedLSN)) {
+      if (earliest === null || comparePositions(lsn, earliest) < 0) earliest = lsn;
+    }
+    return earliest;
   }
 
   /** Cleanup for tests */
@@ -577,4 +811,53 @@ export class ExactlyOnceCDCPipeline {
     this.outbox.close();
     this.eventListeners.clear();
   }
+}
+
+// ── Helpers ────────────────────────────────────────────────
+
+/**
+ * Order two checkpoint positions.
+ *
+ * Numeric when both are `high/low` LSNs — the shape this package's own engines
+ * and PostgreSQL produce — and lexical when neither is, because the checkpoint
+ * API is public and a consumer may key it by whatever its own log assigns (a
+ * Kafka offset, an integer sequence). A mix is refused: two positions that are
+ * not the same kind of thing have no order, and guessing one would silently
+ * move a checkpoint in a direction nobody chose.
+ */
+export function comparePositions(a: string, b: string): number {
+  const aIsLsn = isHighLowLsn(a);
+  const bIsLsn = isHighLowLsn(b);
+  if (aIsLsn !== bIsLsn) {
+    throw new Error(`cannot order "${a}" against "${b}": one is a high/low LSN and the other is not`);
+  }
+  if (aIsLsn) return compareLsn(a, b);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function isHighLowLsn(value: string): boolean {
+  try {
+    parseLsn(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The log position an outbox entry carries.
+ *
+ * The message id is `<lsn>:<txId>` when the producer set one; the store's own
+ * `entry:<sequence>` is not a position and never was — `entry:12`.split(':')[0]
+ * is `"entry"`, which is what the checkpoint used to record.
+ */
+function lsnOf(entry: { id: string; msgId?: string }): string {
+  const source = entry.msgId ?? entry.id;
+  const separator = source.indexOf(':');
+  return separator > 0 ? source.slice(0, separator) : source;
+}
+
+/** True when the engine is the simulator, which is the only one with `appendChange`. */
+export function isSimulatedEngine(engine: ICDCEngine): engine is CDCEngine {
+  return engine instanceof CDCEngine;
 }

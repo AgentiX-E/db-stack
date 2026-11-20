@@ -288,16 +288,31 @@ describe('TLS fault injection', () => {
     // code did exactly that for as long as the snapshot stayed stale, and every
     // one of those answers was a message the outbox marked delivered and never
     // sent.
-    const deadline = Date.now() + 3000;
+    //
+    // The loop is bounded in event-loop turns, not in seconds. A wall-clock
+    // deadline measures the machine's scheduler as much as the transport: the
+    // first full-suite run of this file under coverage instrumentation spent
+    // three seconds of wall clock without draining the FIN, and a correct
+    // transport failed the case. Each attempt awaits a completed send and then
+    // yields, so `maxAttempts` round trips is a bound no loaded machine can
+    // miss — only a transport that really does keep reporting success.
+    const maxAttempts = 200;
     let refused = false;
     let attempts = 0;
-    while (Date.now() < deadline && !refused) {
+    const observed: string[] = [];
+    while (attempts < maxAttempts && !refused) {
       refused = !(await a.send(message(`probe-${attempts}`, 'dc-a', 'dc-b')));
       attempts += 1;
-      if (!refused) await new Promise((r) => setTimeout(r, 25));
+      if (!refused) {
+        if (attempts % 50 === 0) observed.push(`${attempts}: ${a.getConnectedPeers().length} peer(s) listed`);
+        await new Promise((r) => setTimeout(r, 25));
+      }
     }
 
-    expect(refused, `send() still reported success after ${attempts} attempts and 3 s`).toBe(true);
+    expect(
+      refused,
+      `send() kept reporting success for ${attempts} attempts ${observed.length > 0 ? `(${observed.join(', ')})` : ''}`,
+    ).toBe(true);
     expect(a.getLastSendError()).toMatch(/dc-b/);
   });
 

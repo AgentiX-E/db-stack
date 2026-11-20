@@ -125,6 +125,37 @@ export type {
   CDCPumpFailure,
 } from './replication/CDCSubscriptionPump';
 
+// The read end of the change stream. `CDCEngine` simulates changes; these read
+// a log another process wrote, which is the only way "ordered, resumable
+// delivery" can be said about a deployment rather than about a test.
+export type { ChangeLogRecord, IChangeLogReader } from './interfaces/replication/IChangeLogReader';
+export { compareLsn, formatLsn, parseLsn, recordToChangeEvent } from './interfaces/replication/IChangeLogReader';
+export {
+  FileChangeLogReader,
+  FileChangeLogWriter,
+  ChangeLogCorruptError,
+  openFileChangeLog,
+} from './replication/FileChangeLog';
+export type { FileChangeLogOptions, AppendChangeInput } from './replication/FileChangeLog';
+export { WalTailCDCEngine } from './replication/WalTailCDCEngine';
+export type { WalTailCDCEngineConfig, WalTailCDCEngineStatus } from './replication/WalTailCDCEngine';
+
+// A sink that ends at a socket. The package's only sink used to be in-memory,
+// so batching, status handling and timeouts had never crossed a wire.
+export { HttpCDCSink, HttpSinkRefusedError } from './replication/HttpCDCSink';
+export type { HttpCDCSinkConfig, HttpCDCSinkStats } from './replication/HttpCDCSink';
+
+// The counters as an operator sees them, and the identity they must satisfy.
+export {
+  pumpConservation,
+  pipelineConservation,
+  renderPumpMetrics,
+  renderPipelineMetrics,
+  escapeLabelValue,
+} from './monitoring/cdc-metrics';
+export type { MetricLabels, PumpConservation, PipelineConservation } from './monitoring/cdc-metrics';
+export { comparePositions, isSimulatedEngine } from './replication/ExactlyOnceCDCPipeline';
+
 // AntiEntropy
 export { AntiEntropy } from './replication/AntiEntropy';
 export type { MerkleNode, DataEntry, DataProvider } from './replication/AntiEntropy';

@@ -43,7 +43,9 @@ export interface NodeMessage {
     | 'replicated'
     | 'conflict'
     | 'read'
-    | 'membership';
+    | 'membership'
+    | 'written'
+    | 'done';
   nodeId: number | string;
   data?: unknown;
   fatal?: boolean;
@@ -396,6 +398,33 @@ export function spawnRaftNode(spec: ClusterNodeSpec): ChildNode {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   return new ChildNode(`node-${spec.id}@${spec.port}`, child);
+}
+
+/** Spawn the process that writes the change log. */
+export function spawnChangeWriter(config: Record<string, unknown>, label: string): ChildNode {
+  const child = spawn(process.execPath, [join(HARNESS_DIR, 'change-writer.mjs')], {
+    env: { ...process.env, CHANGE_WRITER_CONFIG: JSON.stringify(config) },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  return new ChildNode(label, child);
+}
+
+/** Spawn one CDC relay process (sender or receiver role). */
+export function spawnCdcRelay(config: Record<string, unknown>, label: string): ChildNode {
+  const child = spawn(process.execPath, [join(HARNESS_DIR, 'cdc-relay.mjs')], {
+    env: { ...process.env, CDC_RELAY_CONFIG: JSON.stringify(config) },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  return new ChildNode(label, child);
+}
+
+/** Spawn the HTTP sink server process. */
+export function spawnCdcSinkServer(config: Record<string, unknown>, label: string): ChildNode {
+  const child = spawn(process.execPath, [join(HARNESS_DIR, 'cdc-sink-server.mjs')], {
+    env: { ...process.env, CDC_SINK_CONFIG: JSON.stringify(config) },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  return new ChildNode(label, child);
 }
 
 /** Spawn one federation gateway process (Raft member + federation stack). */
