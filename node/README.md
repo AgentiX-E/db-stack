@@ -56,15 +56,15 @@ compiler.
 | Measure | Result |
 | --- | --- |
 | Coverage — lines / statements / functions / branches | 99.45 % / 99.45 % / 99.87 % / 98.49 %, every file gated at 95 % |
-| Mutation — thirteen files, gate at 86 | each mutant read against the tests the report attributes to it; the score and the survivor arguments are in [`docs/maturity.md`](../docs/maturity.md) |
+| Mutation — sixteen files in four modules, gate at 86 | each mutant read against the tests the report attributes to it; the score and the survivor arguments are in [`docs/maturity.md`](../docs/maturity.md) |
 | Published surface | 22 entry points, 375 exports, 69 documents, and `pnpm check:docs-api` fails if a documented symbol is not exported |
 
-The thirteen mutated files are the ones that decide what gets deleted, whether a backup
-can be restored, which key material survives at all, which key a blob was sealed with,
-whether a compliance window passed, whether evidence is tamper-evident, and when a
-maintenance window runs. The other four modules have unit, integration and coverage
-gates but no mutant measures their assertions — a selection rule, not an oversight,
-published in [`docs/maturity.md`](../docs/maturity.md) §5.
+The sixteen mutated files — in `backup`, `audit`, `security` and `maintenance` — are the ones
+that decide what gets deleted, whether a backup can be restored, which key material survives at
+all, which key a blob was sealed with, whether a compliance window passed, whether evidence is
+tamper-evident, and when a maintenance window runs. The other sixteen modules have unit,
+integration and coverage gates but no mutant measures their assertions — a selection rule, not an
+oversight, published in [`docs/maturity.md`](../docs/maturity.md) §5.
 
 ## What is not here
 
