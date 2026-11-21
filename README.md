@@ -79,7 +79,7 @@ packages can build real clusters in their own tests instead of copying internals
 | [docs/architecture.md](docs/architecture.md)                                   | High-level architecture and component inventory                           |
 | [docs/user-guide/cluster.md](docs/user-guide/cluster.md)                       | Consensus, sharding, snapshots, HA/fencing, sessions, watch, PITR         |
 | [docs/user-guide/federation.md](docs/user-guide/federation.md)                 | CDC, outbox, conflict resolution, anti-entropy, topology                  |
-| [docs/user-guide/operations.md](docs/user-guide/operations.md)                 | The three operations packages: node modules, cluster assembly, federation |
+| [docs/user-guide/operations.md](docs/user-guide/operations.md)                 | Everything one node needs, and how cluster and federation build on it     |
 | [docs/user-guide/engine-adapters.md](docs/user-guide/engine-adapters.md)       | Plugging **your** database engine into the middleware                     |
 | [docs/user-guide/production-runbook.md](docs/user-guide/production-runbook.md) | Certificates, capacity, monitoring, failure handling, DR                  |
 | [docs/maturity.md](docs/maturity.md)                                           | Feature-by-feature verification matrix, measured coverage, and the gaps   |
@@ -92,12 +92,26 @@ and progress reports — live in the companion repository
 ## Repository layout
 
 ```
+node/
+  src/core/           provider registry, tokens, every shared type
+  src/audit/          FileAuditStore: durable segments, archives, repair
+  src/backup/         chains, retention, verification, S3 backend
+  src/security/       keys, rotation, envelope encryption, RBAC
+  src/auth/           authentication interfaces and SCIM
+  src/maintenance/    windows, cron, scheduling
+  src/health/ src/metrics/ src/monitor/ src/logger/ src/observability/ src/otel/
+  src/autoscaler/ src/autotuner/ src/circuitbreaker/ src/configwatcher/
+  src/memoryguard/ src/rollingupgrade/ src/slacollector/ src/chaosengine/
+  docs/<module>/      one reference tree per module, 69 documents
+  bench/              YCSB-style operations benchmark
+
 cluster/
   src/consensus/      RaftAdapter, groups, joint consensus, snapshots, sessions, watch
   src/consensus/transport/  RaftTcpTransport (TLS 1.3 + mTLS), batching, compression
   src/consensus/storage/    SQLite WAL, log compaction, snapshot storage
   src/ha/             failover detection/coordination, fencing, consistency verification
   src/shard/          strategies, reshard planning, online migration
+  src/assemblers/     membership, scaling, rollout, chaos translation
   src/testing/        published test harness
   src/__tests__/      unit · integration · chaos · boundary · linearizability · soak
   tla/                TLA+ specs (JointConsensus, LogReplication)
@@ -107,13 +121,9 @@ federation/
   src/replication/    CDC, outbox, dedup, anti-entropy, conflict resolution
   src/transport/      TcpSecureTransport (mTLS) + in-process transport
   src/core/           FederationManager, split-brain detection, schema evolution
+  src/query/          FederatedQueryRouter
+  src/schema/         SchemaFederator
   src/__tests__/      unit · integration · chaos · performance
-
-operations/
-  packages/node/      20 modules, one manifest, 22 entry points
-  packages/cluster/   membership, scaling, rollout, chaos translation
-  packages/federation/ federated identity, query routing, repair
-  src/index.ts        umbrella entry (namespaced re-exports)
 
 e2e/
   harness/            process harness + node/gateway entry points,

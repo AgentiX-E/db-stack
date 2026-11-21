@@ -144,11 +144,11 @@ is the leader, how many may be down before a write stops, which order they may r
 | `federation` | Federated node identity, cross-cluster query routing, repair execution                                                                     | U · I        |
 
 Twenty of the twenty-one former packages are directories now, under
-`packages/node/src/<module>/`, and they are still twenty entry points —
+`node/src/<module>/`, and they are still twenty entry points —
 `@agentix-e/db-node/audit`, `…/core`, `…/slacollector` — because a module is a
 directory, not a package. Twenty npm names for code that cannot be misused without a topology
 would have been twenty version numbers and twenty release notes describing one decision.
-`packages/node/src/index.ts` is the whole list: twenty namespace re-exports under a header that
+`node/src/index.ts` is the whole list: twenty namespace re-exports under a header that
 states the property deciding placement, so a module that starts asking about the other nodes is a
 module that has to move, rather than one that quietly grows a dependency on a group.
 
@@ -156,7 +156,7 @@ module that has to move, rather than one that quietly grows a dependency on a gr
 change to a base type was a change to a published dependency graph. The imports are relative now;
 the nine edges between former packages that disappeared took their version constraints with them.
 `node` publishes 331 exports across its twenty-two entry points, and every one is named somewhere
-under `packages/node/docs/`.
+under `node/docs/`.
 
 | Module           | Capability                                                           | Verification  |
 | ---------------- | -------------------------------------------------------------------- | ------------- |
@@ -198,10 +198,9 @@ ids before oldest. A partition emits both directions, because `isolate` on `n1` 
 transport cannot express is a refusal rather than an empty instruction list, since an empty list
 reads as "injected, no effect".
 
-Every one of the twenty modules ships a `docs/` tree — at `packages/node/docs/<module>/` since the
-split — and since iteration 54 that is enforced rather than observed: ten of them shipped none and
+Every one of the twenty modules ships a `docs/` tree — at `node/docs/<module>/` — and since iteration 54 that is enforced rather than observed: ten of them shipped none and
 were skipped by the documentation gate, because the loop read a package's documents to decide
-whether it had any. `pnpm check:docs-api` now reads 34 entry points across 7 packages, requires
+whether it had any. `pnpm check:docs-api` now reads 34 entry points across 3 packages, requires
 every published value to be named somewhere under its package's `docs/`, resolves every import in
 every fenced example against the export surface of the package it names, and holds each package
 index to the directory it indexes.
