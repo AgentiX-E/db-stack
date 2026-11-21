@@ -39,7 +39,12 @@ import { HLC } from '../../hlc/HLC';
 
 // ── Repo C: db-node ─────────────────────────────────────────
 import { FileAuditStore } from '@agentix-e/db-node/audit';
-import { BackupManager, DirectoryBackupSource, InMemoryStorageBackend, RetentionPolicyEvaluator } from '@agentix-e/db-node/backup';
+import {
+  BackupManager,
+  DirectoryBackupSource,
+  InMemoryStorageBackend,
+  RetentionPolicyEvaluator,
+} from '@agentix-e/db-node/backup';
 import { InMemoryAuditStore } from '@agentix-e/db-node/audit';
 
 // ── Constants ───────────────────────────────────────────────
