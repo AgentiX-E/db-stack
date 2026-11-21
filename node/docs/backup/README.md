@@ -11,19 +11,23 @@ engine.
 
 ## What a backup is here
 
-Four steps, and each of them exists because skipping it is a failure mode that a green test cannot
+Five steps, and each of them exists because skipping it is a failure mode that a green test cannot
 see:
 
 ```
-  source.capture(staging)      a consistent cut, as one file on disk
+  source.capture(staging)             a consistent cut, as one file on disk
           │
-          ├─ stat + digest     what the bucket is about to hold
+          ├─ stat + digest            what the bucket is about to hold
           ▼
-  storage.upload(staging,key)  the bytes leave this machine
+  storage.upload(staging, key)        the bytes leave this machine
           │
-          ├─ storage.list(key) the bucket says it has them, at that size
+          ├─ storage.list(key)        the bucket says it has them, at that size
           ▼
-  state = completed            only now is a snapshot a snapshot
+  storage.upload(record, recordKey)   the snapshot gets a name in the bucket
+          │
+          ├─ storage.list(recordKey)  and the bucket answers for that too
+          ▼
+  state = completed                   only now is a snapshot a snapshot
 ```
 
 `createBackup` resolves `success: true` **only after the bucket lists the object it just uploaded at
@@ -38,6 +42,79 @@ restored, because a listing is what a recovery is planned from.
 uploaded. `fileCount` is what the source captured. `checksum` is the artefact's SHA-256. `facts`
 carries what the engine said about the cut (`lsn`, `dir.files`, `dir.bytes`).
 
+A confirmation the bucket does not give is **undone**: the artefact, and the record if it was written,
+are deleted before the failure is returned. A caller told `success: false` must not be able to find a
+snapshot afterwards — an answer and a bucket that disagree is worse than a retry.
+
+---
+
+## Where the snapshot list comes from
+
+The bucket. Not this instance's memory.
+
+```
+  backups/inventory/snap-mwqdj2y-4-9c9fd229.json    one immutable record per snapshot
+  backups/full/snap-mwqdj2y-4-9c9fd229.artifact     the bytes the record names
+```
+
+Every public method starts by listing that directory, so `listBackups()`, `getBackup()`, `prune()` and
+`restoreFromSnapshot()` are answers about the bucket rather than about what this process remembers
+doing. The read is single-flight — a burst of concurrent calls costs one listing — and it reconciles
+in both directions: a record that is gone is a snapshot that is gone (wherever it was deleted from),
+and a record this instance has never seen is a snapshot another worker took. A record rewritten in
+place is noticed too, because the listing's own `size` and `lastModified` are compared against what was
+read.
+
+This is what makes a backup outlive the process that took it. The class this package shipped before
+iteration 63 kept its snapshots in a `Map`, so a restarted manager answered `not found` for a snapshot
+the same binary had written an hour earlier — the artefact verified, the digest verified, and nothing
+could name either.
+
+One record per snapshot, rather than one manifest for the bucket, because a manifest is a
+read-modify-write: two workers taking backups at the same time would each read it, each add their
+entry, and the second write would erase the first. A key derived from the snapshot id cannot collide,
+and a record is never rewritten.
+
+### The record format
+
+One JSON object, `INVENTORY_FORMAT` (`db-node/backup/inventory/v1`), read and written by
+`parseRecord` and `serializeRecord`:
+
+```json
+{
+  "format": "db-node/backup/inventory/v1",
+  "snapshot": {
+    "snapshotId": "snap-mwqdj2y-4-9c9fd229",
+    "type": "full",
+    "state": "completed",
+    "createdAt": "2026-11-21T12:20:43.987Z",
+    "completedAt": "2026-11-21T12:20:43.988Z",
+    "sizeBytes": 4096,
+    "fileCount": 2,
+    "location": "backups/full/snap-mwqdj2y-4-9c9fd229.artifact",
+    "checksum": "017338cd…",
+    "facts": { "dir.files": "2", "dir.bytes": "17" }
+  }
+}
+```
+
+`inventoryKey(prefix, id)` and `inventoryPrefix(prefix)` are how the name is built, so a script that
+has to read a bucket without this package does not have to guess. `parseRecord` validates field by
+field — every field is used by some decision (`facts` by `targetLsn`, `createdAt` by `targetTime`,
+`location` by a restore) — and refuses a record whose `snapshotId` disagrees with the key it came
+from.
+
+A record that cannot be read is **reported, not thrown**: one damaged kilobyte must not stop every
+backup in the deployment. `manager.inventoryProblems()` answers `InventoryProblem[]` — `{ key, reason }`
+— the reason being the reader's own words, and the snapshot it described is simply not in the listing:
+it cannot be restored, and pretending otherwise is how an operator plans a recovery around a snapshot
+that is not there. The reader raises `InventoryRecordError`, which carries the key it was reading and
+the field that failed, so the message an operator sees is the message they can act on.
+
+Records are not signed. They carry the artefact's SHA-256, so a corrupted record makes a restore fail
+the digest check rather than succeed against the wrong bytes; an actor who can rewrite the record can
+also rewrite the digest. Same limit as the audit trail's chain, stated rather than implied.
+
 ---
 
 ## Quick start
@@ -48,21 +125,21 @@ import {
   DirectoryBackupSource,
   InMemoryStorageBackend,
   RetentionPolicyEvaluator,
-} from "@agentix-e/db-node/backup";
+} from '@agentix-e/db-node/backup';
 
 const backups = new BackupManager(
-  new DirectoryBackupSource("/var/lib/db/data"), // the engine side: how a cut is taken
-  new InMemoryStorageBackend(),                  // the bucket
+  new DirectoryBackupSource('/var/lib/db/data'), // the engine side: how a cut is taken
+  new InMemoryStorageBackend(), // the bucket
   new RetentionPolicyEvaluator({ maxFullSnapshots: 3, maxTotalBytes: 1_073_741_824 }),
 );
 
-const result = await backups.createBackup({ type: "full", tags: { env: "prod" } });
+const result = await backups.createBackup({ type: 'full', tags: { env: 'prod' } });
 if (!result.success) throw new Error(result.error);
 
 const metadata = await backups.getBackup(result.snapshot!.snapshotId);
 console.log(`${metadata!.snapshotId}: ${metadata!.sizeBytes} bytes, ${metadata!.fileCount} files`);
 
-const listed = await backups.listBackups({ type: "full" });
+const listed = await backups.listBackups({ type: 'full' });
 console.log(`${listed.length} full backup(s) available`);
 
 const restored = await backups.restoreFromSnapshot(result.snapshot!.snapshotId);
@@ -86,21 +163,21 @@ Implements `IBackupManager` — orchestration over an `IBackupSource`, an `IStor
 
 **Constructor:** `new BackupManager(source, storage, retention, options?)`
 
-| Option | Default | Meaning |
-|---|---|---|
-| `prefix` | `"backups"` | Key prefix inside the bucket; the key is `${prefix}/${type}/${id}.artifact` |
-| `workDir` | `os.tmpdir()` | Where the artefact is staged before upload and after download |
-| `clock` | `() => new Date()` | Injectable so a test can name a timestamp instead of racing one |
+| Option    | Default            | Meaning                                                                     |
+| --------- | ------------------ | --------------------------------------------------------------------------- |
+| `prefix`  | `"backups"`        | Key prefix inside the bucket; the key is `${prefix}/${type}/${id}.artifact` |
+| `workDir` | `os.tmpdir()`      | Where the artefact is staged before upload and after download               |
+| `clock`   | `() => new Date()` | Injectable so a test can name a timestamp instead of racing one             |
 
-| Method | Return | Description |
-|---|---|---|
-| `createBackup(options)` | `Promise<BackupResult>` | Capture → digest → upload → confirm |
-| `listBackups(options?)` | `Promise<BackupMetadata[]>` | Newest first; filter by `type`, `newerThan`, `limit` |
-| `getBackup(snapshotId)` | `Promise<BackupMetadata \| null>` | Metadata, or `null` |
-| `deleteBackup(snapshotId)` | `Promise<boolean>` | Delete a snapshot **and every snapshot that cannot be replayed without it** |
-| `restoreFromSnapshot(id, options?)` | `Promise<RestoreResult>` | Chain check → download → size → digest → engine |
-| `pitr(target, options?)` | `Promise<RestoreResult>` | Resolve `snapshotId` / `targetTime` / `targetLsn`, then restore |
-| `prune()` | `Promise<number>` | Apply the retention policy; returns what was actually deleted |
+| Method                              | Return                            | Description                                                                 |
+| ----------------------------------- | --------------------------------- | --------------------------------------------------------------------------- |
+| `createBackup(options)`             | `Promise<BackupResult>`           | Capture → digest → upload → confirm                                         |
+| `listBackups(options?)`             | `Promise<BackupMetadata[]>`       | Newest first; filter by `type`, `newerThan`, `limit`                        |
+| `getBackup(snapshotId)`             | `Promise<BackupMetadata \| null>` | Metadata, or `null`                                                         |
+| `deleteBackup(snapshotId)`          | `Promise<boolean>`                | Delete a snapshot **and every snapshot that cannot be replayed without it** |
+| `restoreFromSnapshot(id, options?)` | `Promise<RestoreResult>`          | Chain check → download → size → digest → engine                             |
+| `pitr(target, options?)`            | `Promise<RestoreResult>`          | Resolve `snapshotId` / `targetTime` / `targetLsn`, then restore             |
+| `prune()`                           | `Promise<number>`                 | Apply the retention policy; returns what was actually deleted               |
 
 `workDir` is a real requirement, not a detail: the capture is written in full before a byte leaves
 the machine, so a 200 GB database needs 200 GB of scratch space on the node taking the backup.
@@ -110,11 +187,11 @@ the machine, so a 200 GB database needs 200 GB of scratch space on the node taki
 Everything that is the same for every engine is in `BackupManager`. What differs is how a consistent
 cut is taken and how it is put back:
 
-| Member | Meaning |
-|---|---|
-| `name` | Stable identifier for logs, metrics and error messages |
+| Member                 | Meaning                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| `name`                 | Stable identifier for logs, metrics and error messages                                 |
 | `capture(destination)` | Write a **consistent** cut to `destination`; report `bytes`, `files`, optional `facts` |
-| `restore(source)` | **Replace** the engine's state with the verified artefact |
+| `restore(source)`      | **Replace** the engine's state with the verified artefact                              |
 
 `capture` must not resolve with a partial artefact: the manager uploads exactly the file it named, so
 a capture that resolves with half a database is a backup that cannot be restored. `restore` must
@@ -131,23 +208,32 @@ it is invisible in every other field.
 
 It is deliberately not clever: no incremental capture, no hard links, no compression. Each of those
 is a decision that belongs to the engine, which knows which pages changed and which files are
-derivable. What this class must be is *correct*.
+derivable. What this class must be is _correct_.
 
 ### `IStorageBackend`
 
-| Method | Return | Description |
-|---|---|---|
-| `name` | `string` (property) | Backend identifier |
-| `upload(sourcePath, destKey)` | `Promise<void>` | Upload a file |
-| `download(sourceKey, destPath)` | `Promise<void>` | Download a file |
-| `list(prefix)` | `Promise<Array<{ key, size, lastModified }>>` | List objects with a prefix |
-| `delete(key)` | `Promise<void>` | Delete an object |
-| `health()` | `Promise<{ ok, message? }>` | Accessibility probe |
-| `getUsageBytes()` | `Promise<number>` | Total usage |
+| Method                          | Return                                        | Description                |
+| ------------------------------- | --------------------------------------------- | -------------------------- |
+| `name`                          | `string` (property)                           | Backend identifier         |
+| `upload(sourcePath, destKey)`   | `Promise<void>`                               | Upload a file              |
+| `download(sourceKey, destPath)` | `Promise<void>`                               | Download a file            |
+| `list(prefix)`                  | `Promise<Array<{ key, size, lastModified }>>` | List objects with a prefix |
+| `delete(key)`                   | `Promise<void>`                               | Delete an object           |
+| `health()`                      | `Promise<{ ok, message? }>`                   | Accessibility probe        |
+| `getUsageBytes()`               | `Promise<number>`                             | Total usage                |
 
-`InMemoryStorageBackend` keeps blobs in a `Map<string, Buffer>`; `S3StorageBackend` speaks S3 through
-the optional peers `@aws-sdk/client-s3` and `@aws-sdk/lib-storage` (see
+Three backends ship: `InMemoryStorageBackend` keeps blobs in a `Map<string, Buffer>` (tests and
+simulation — its objects are gone when the process is), `FileSystemStorageBackend` is a directory
+(an NFS mount, a SAN volume, a backup host's disk), and `S3StorageBackend` speaks S3 through the
+optional peers `@aws-sdk/client-s3` and `@aws-sdk/lib-storage` (see
 [`api/production.md`](./api/production.md)).
+
+`FileSystemStorageBackend` writes every object to `<key>${PARTIAL_SUFFIX}` and renames it into place,
+so an object either exists whole or does not exist — a process killed mid-copy leaves a file `list`
+does not return, rather than an object at the right key with the wrong length. Every key goes through
+`safeJoin`, which refuses `..` and absolute paths: a bucket is an interface, and the next
+implementation of it may be handed anything. Its root is resolved at construction, so a relative one
+cannot be re-interpreted against a `process.cwd()` that another part of the process changed.
 
 `list` is load-bearing for `createBackup`, which uses it to confirm the object it just uploaded. A
 backend whose `list` returns a stale or paginated view will produce backups that fail their
@@ -156,12 +242,12 @@ cannot answer for.
 
 ### `IBackupRetentionPolicy` and `RetentionPolicyEvaluator`
 
-| Member | Return | Description |
-|---|---|---|
-| `evaluate(snapshots)` | `BackupMetadata[]` | The snapshots to delete |
+| Member                           | Return                           | Description                                       |
+| -------------------------------- | -------------------------------- | ------------------------------------------------- |
+| `evaluate(snapshots)`            | `BackupMetadata[]`               | The snapshots to delete                           |
 | `evaluateWithOutcome(snapshots)` | `{ toDelete, unreclaimedBytes }` | The same, plus what the floors forbade reclaiming |
-| `getConfig()` | `RetentionPolicy` | Current configuration |
-| `updateConfig(config)` | `void` | Change it at runtime |
+| `getConfig()`                    | `RetentionPolicy`                | Current configuration                             |
+| `updateConfig(config)`           | `void`                           | Change it at runtime                              |
 
 Four rules apply in order: keep the newest `maxFullSnapshots` **sets**, remove no set containing
 anything younger than `keepRecent`, remove only sets whose every member is at least `minAge` old,
@@ -176,17 +262,17 @@ did not just create. `createBackup` hashes what it uploads, but "the bytes are w
 
 ### Types
 
-| Type | Fields |
-|---|---|
-| `CreateBackupOptions` | `type: SnapshotType`, `tags?`, `timeoutMs?` |
-| `ListBackupsOptions` | `type?`, `limit?`, `newerThan?` |
-| `RestoreOptions` | `shardIds?`, `skipVerification?`, `timeoutMs?` |
-| `SnapshotCapture` | `bytes`, `files`, `facts?` |
-| `BackupManagerOptions` | `prefix?`, `workDir?`, `clock?` |
-| `ArtifactManifest` | `version`, `dirs`, `files`, `totalBytes` |
-| `ArtifactEntry` | `path`, `size`, `sha256` |
-| `CaptureOutcome` | `bytes`, `files`, `sourceBytes`, `manifest` |
-| `RestoreOutcome` | `files`, `bytes`, `dirs` |
+| Type                   | Fields                                         |
+| ---------------------- | ---------------------------------------------- |
+| `CreateBackupOptions`  | `type: SnapshotType`, `tags?`, `timeoutMs?`    |
+| `ListBackupsOptions`   | `type?`, `limit?`, `newerThan?`                |
+| `RestoreOptions`       | `shardIds?`, `skipVerification?`, `timeoutMs?` |
+| `SnapshotCapture`      | `bytes`, `files`, `facts?`                     |
+| `BackupManagerOptions` | `prefix?`, `workDir?`, `clock?`                |
+| `ArtifactManifest`     | `version`, `dirs`, `files`, `totalBytes`       |
+| `ArtifactEntry`        | `path`, `size`, `sha256`                       |
+| `CaptureOutcome`       | `bytes`, `files`, `sourceBytes`, `manifest`    |
+| `RestoreOutcome`       | `files`, `bytes`, `dirs`                       |
 
 ---
 
@@ -219,16 +305,16 @@ Three properties, each of which is why a line of this format looks the way it do
 
 The published pieces are the format's whole contract:
 
-| Export | Meaning |
-|---|---|
-| `ARTIFACT_MAGIC` | `"DBDIR1"`, the first line of every artefact |
-| `ARTIFACT_VERSION` | `1`, stored in the manifest as well as the magic |
-| `MAX_MANIFEST_BYTES` | 64 MiB ceiling on the manifest a reader will assemble; a parameter of the read |
-| `writeDirectoryArtifact` | Capture a tree to a path — returns a `CaptureOutcome` |
-| `readDirectoryArtifact` | Restore a path into a tree — returns a `RestoreOutcome` |
-| `hashFile` | `{ sha256, size }` for one file |
-| `safeJoin` | Where a manifest path is allowed to land |
-| `assertUnchanged` | The second half of the two-pass capture |
+| Export                   | Meaning                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `ARTIFACT_MAGIC`         | `"DBDIR1"`, the first line of every artefact                                   |
+| `ARTIFACT_VERSION`       | `1`, stored in the manifest as well as the magic                               |
+| `MAX_MANIFEST_BYTES`     | 64 MiB ceiling on the manifest a reader will assemble; a parameter of the read |
+| `writeDirectoryArtifact` | Capture a tree to a path — returns a `CaptureOutcome`                          |
+| `readDirectoryArtifact`  | Restore a path into a tree — returns a `RestoreOutcome`                        |
+| `hashFile`               | `{ sha256, size }` for one file                                                |
+| `safeJoin`               | Where a manifest path is allowed to land                                       |
+| `assertUnchanged`        | The second half of the two-pass capture                                        |
 
 `safeJoin` is not defensive decoration. A manifest is data from a bucket, and a bucket is not a
 trusted channel: an attacker who can upload a backup can put `../../etc/cron.d/x` in it, and a restore
@@ -264,11 +350,11 @@ new incremental.
 
 Three ways to name a target, each answered by a comparison rather than an invention:
 
-| Target | Resolves to |
-|---|---|
-| `snapshotId` | That snapshot |
-| `targetTime` | The newest completed snapshot taken at or before it |
-| `targetLsn` | The newest completed snapshot whose recorded `lsn` fact is at or before it |
+| Target       | Resolves to                                                                |
+| ------------ | -------------------------------------------------------------------------- |
+| `snapshotId` | That snapshot                                                              |
+| `targetTime` | The newest completed snapshot taken at or before it                        |
+| `targetLsn`  | The newest completed snapshot whose recorded `lsn` fact is at or before it |
 
 `recoveryPoint` in the result is the position **reached**, not the target that was asked for. A caller
 who wanted 12:30 and got 12:27 has to be able to see that in the answer.
@@ -331,8 +417,15 @@ filesystem it controls.
 - **No encryption at rest.** Backups are bytes; put them in an encrypted bucket or have the source
   encrypt the artefact. A half-encrypted format nobody can verify is worse than either.
 - **No unkeyed digest presented as a signature.** The artefact's SHA-256 detects an edit that was not
-  followed by a recompute. An administrator who can rewrite the artefact *and* the metadata defeats
+  followed by a recompute. An administrator who can rewrite the artefact _and_ the metadata defeats
   it, and that limit is stated here rather than implied away.
+- **No sweep for orphaned objects.** Deleting a snapshot removes its record first and its artefact
+  second, so a delete that fails half way leaves bytes no record names. That is deliberate — the
+  alternative is a listing entry that cannot be restored — and reclaiming those bytes is a bucket
+  lifecycle rule's job, not a manager's. A record whose object is gone is the opposite case and is
+  caught at restore time by the size and digest checks.
+- **No streaming capture.** An artefact is written whole before a byte leaves the machine, because the
+  digest has to exist before the upload does. `workDir` therefore needs room for one artefact.
 
 ---
 

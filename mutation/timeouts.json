@@ -354,6 +354,18 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
+          "file": "node/src/backup/impl/BackupManager.ts",
+          "line": 191,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "reason": "Hit limit reached (5901/5900)",
+          "id": "1092",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30049ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/node"
+        },
+        {
           "file": "node/src/backup/impl/RetentionPolicyEvaluator.ts",
           "line": 130,
           "mutator": "BlockStatement",

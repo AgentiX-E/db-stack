@@ -129,7 +129,7 @@
     "docs"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../scripts/fix-esm-extensions.mjs dist",
+    "build": "rm -rf dist && tsc -p tsconfig.json && node ../scripts/fix-esm-extensions.mjs dist",
     "typecheck": "tsc -p tsconfig.prod.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",

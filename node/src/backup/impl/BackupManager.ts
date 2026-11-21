@@ -27,11 +27,25 @@
  * backwards: download, check the digest against the metadata, and only then hand the
  * file to the engine.
  *
+ * Where the metadata lives
+ * ------------------------
+ * In the bucket, beside the artefacts: one immutable record per snapshot under
+ * `<prefix>/inventory/`. It used to live in a `Map` on this instance, which meant the
+ * artefacts outlived the process and their names did not — a restarted manager
+ * answered `not found` for a backup the same binary had written an hour earlier.
+ *
+ * Every public method starts by reading that listing, so a manager is never wrong
+ * about what the bucket holds; the read is single-flight, so a burst of calls costs
+ * one listing rather than one each. The listing is also the reconciliation: a record
+ * that is gone is a snapshot that is gone, wherever it was deleted from, and a record
+ * in the bucket that this instance has never seen is a snapshot another process took.
+ * The bucket is the inventory — there is no second source of truth to disagree with.
+ *
  * @module @agentix-e/db-node/backup/impl
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -47,6 +61,7 @@ import type {
 import type { BackupMetadata, BackupResult, PITRTarget, RestoreResult } from '../../core/types.js';
 import { dependentsOf, newestCompletedSnapshot, unrestorableReason } from './backupChain.js';
 import { hashFile } from './backupArtifact.js';
+import { inventoryIdOf, inventoryKey, inventoryPrefix, parseRecord, serializeRecord } from './inventory.js';
 
 /** Optional collaborators of a `BackupManager`. */
 export interface BackupManagerOptions {
@@ -142,6 +157,47 @@ export function expandDeletions(inventory: readonly BackupMetadata[], ids: reado
 }
 
 /**
+ * How many record downloads may be in flight at once while hydrating.
+ *
+ * One per record would be a bucket listing's worth of latency spent in series; all of
+ * them at once is a hundred GETs against a bucket that will start answering `503`.
+ * Eight is the compromise, and it is a constant rather than a knob because the correct
+ * value is a property of the operator's bucket, not of this class.
+ */
+const INVENTORY_CONCURRENCY = 8;
+
+/** A record in the bucket that this manager could not read. */
+export interface InventoryProblem {
+  /** Key of the record. */
+  key: string;
+  /** Why it could not be read, as the reader reported it. */
+  reason: string;
+}
+
+/** The listing's own fingerprint of an object, as the bucket reported it. */
+function stampOf(entry: { size: number; lastModified: string }): string {
+  return `${entry.size}:${entry.lastModified}`;
+}
+
+/**
+ * Run `run` over every item, at most `limit` at a time.
+ *
+ * Written as workers pulling from a cursor rather than as chunked batches, so one slow
+ * download does not hold up the next batch: the pool stays full until the work runs out.
+ */
+async function eachLimited<T>(items: readonly T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const item = items[cursor];
+      cursor += 1;
+      await run(item as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+/**
  * Backup orchestration over an engine port, a bucket and a retention policy.
  *
  * The three collaborators are positional and required: each is an interface with
@@ -158,6 +214,19 @@ export class BackupManager implements IBackupManager {
   private readonly workDir: string;
   private readonly clock: () => Date;
   private readonly snapshots: Map<string, BackupMetadata> = new Map();
+  private readonly damaged: Map<string, string> = new Map();
+  /**
+   * What the bucket said about each record when it was last read — `${size}:${lastModified}`.
+   *
+   * Without this, a record rewritten in place under the same key would never be read
+   * again: the id is already known, so the reconcile would skip it and a manager that
+   * has been up for a week would keep serving the first version it saw. The stamp is
+   * the listing's own two numbers, so noticing a change costs nothing beyond the
+   * listing that was already being made.
+   */
+  private readonly stamps: Map<string, string> = new Map();
+  /** The listing in flight, so concurrent callers share one read of the bucket. */
+  private listing: Promise<void> | null = null;
 
   constructor(
     source: IBackupSource,
@@ -174,13 +243,163 @@ export class BackupManager implements IBackupManager {
   }
 
   /**
+   * Read the bucket's inventory into this instance.
+   *
+   * Single-flight: a burst of concurrent calls shares one listing, and the slot is
+   * cleared when it settles so the *next* call reads again. That is what makes a
+   * second worker's backup visible without an API to poll — the alternative, hydrating
+   * once at construction, is a manager that is correct only about the bucket as it was
+   * when the process started.
+   *
+   * The reconciliation runs both ways, because a listing is the truth in both
+   * directions: a snapshot this instance holds whose record is gone was deleted
+   * elsewhere and must stop being listed, and a record it has never seen was written
+   * elsewhere and must start being listed. Nothing drops entries on the strength of a
+   * *failed* read — that is damage, and damage is reported rather than acted on.
+   */
+  private async sync(): Promise<void> {
+    if (this.listing === null) {
+      const inFlight = this.readInventory();
+      // The slot is cleared when the read settles, whichever way it settles: a failed
+      // listing must not be cached as if the bucket were empty.
+      this.listing = inFlight.finally(() => {
+        this.listing = null;
+      });
+      // Awaited through the field, not through `inFlight`: the wrapped promise is the
+      // one that is stored, and a rejection nobody awaits is a rejection Node reports
+      // as unhandled.
+      await this.listing;
+      return;
+    }
+    await this.listing;
+  }
+
+  /** One read of the bucket: list the records, load the ones this instance lacks or holds an old copy of. */
+  private async readInventory(): Promise<void> {
+    const prefix = this.prefix;
+    const listed = await this.storage.list(inventoryPrefix(prefix));
+    const records = listed.filter((entry) => inventoryIdOf(prefix, entry.key) !== null);
+
+    const present = new Set(records.map((entry) => entry.key));
+    for (const id of [...this.snapshots.keys()]) {
+      if (!present.has(inventoryKey(prefix, id))) {
+        this.snapshots.delete(id);
+        this.stamps.delete(id);
+      }
+    }
+    // A problem about a record that is no longer in the bucket is a problem that has
+    // been dealt with by whoever deleted it.
+    for (const key of [...this.damaged.keys()]) {
+      if (!present.has(key)) this.damaged.delete(key);
+    }
+
+    const stale = records.filter((entry) => {
+      const id = inventoryIdOf(prefix, entry.key) as string;
+      return !this.snapshots.has(id) || this.stamps.get(id) !== stampOf(entry);
+    });
+    if (stale.length === 0) return;
+    await mkdir(this.workDir, { recursive: true });
+    await eachLimited(stale, INVENTORY_CONCURRENCY, async (entry) => {
+      const id = inventoryIdOf(prefix, entry.key) as string;
+      const local = join(this.workDir, `${id}.record.reading`);
+      this.stamps.set(id, stampOf(entry));
+      try {
+        await this.storage.download(entry.key, local);
+        this.snapshots.set(id, parseRecord(id, await readFile(local, 'utf8')));
+        this.damaged.delete(entry.key);
+      } catch (error) {
+        // A record that cannot be read is a snapshot that cannot be restored, and a
+        // manager that threw here would let one damaged kilobyte stop every backup in
+        // the deployment. It is reported through `inventoryProblems()` instead, and
+        // the stamp keeps it from being re-read on every listing.
+        this.snapshots.delete(id);
+        this.damaged.set(entry.key, reason(error));
+      } finally {
+        await removeQuietly(local);
+      }
+    });
+  }
+
+  /**
+   * Undo an upload the bucket would not confirm.
+   *
+   * A backup either exists completely or not at all: a caller told `success: false`
+   * that leaves a listable snapshot behind has been told something the bucket
+   * contradicts, and an operator is entitled to believe the answer. So a failed
+   * confirmation removes what was uploaded before it returns.
+   *
+   * The failure to remove is swallowed, and only here: the caller needs the reason the
+   * backup failed, not the reason the tidying failed. What survives is an object no
+   * record names — invisible, not a snapshot — and a bucket lifecycle rule is what
+   * eventually reclaims it.
+   */
+  private async abandon(keys: readonly string[]): Promise<void> {
+    for (const key of keys) {
+      try {
+        await this.storage.delete(key);
+      } catch {
+        // Deliberate: see above.
+      }
+    }
+  }
+
+  /**
+   * Write and confirm a snapshot's record.
+   *
+   * The confirmation is here for the same reason the artefact's is: `upload` resolving
+   * says the bytes were sent, and the listing is what the next process will consult.
+   * A record that the bucket did not keep is a snapshot nobody can name, so it is not
+   * a snapshot — the caller is told the backup failed, and the artefact it left behind
+   * is invisible rather than half-announced.
+   */
+  private async writeRecord(snapshot: BackupMetadata): Promise<void> {
+    const key = inventoryKey(this.prefix, snapshot.snapshotId);
+    const local = join(this.workDir, `${snapshot.snapshotId}.record.writing`);
+    try {
+      await writeFile(local, serializeRecord(snapshot));
+      const { size } = await stat(local);
+      try {
+        await this.storage.upload(local, key);
+        const listed = await this.storage.list(key);
+        const object = listed.find((entry) => entry.key === key);
+        if (object === undefined) throw new Error('the bucket does not list it after the upload');
+        if (object.size !== size) throw new Error(`the bucket lists ${object.size} bytes, ${size} were written`);
+        // Recorded now so the next listing does not download what this call just wrote.
+        this.stamps.set(snapshot.snapshotId, stampOf(object));
+      } catch (error) {
+        // The artefact is already in the bucket by the time this runs, so the error
+        // has to say which half failed — otherwise the caller reads the artefact's key
+        // in the message and goes looking at the bytes — and both halves go, because
+        // an artefact no record names is not a backup.
+        await this.abandon([key, snapshot.location]);
+        throw new Error(`inventory record ${key}: ${reason(error)}`);
+      }
+    } finally {
+      await removeQuietly(local);
+    }
+  }
+
+  /**
+   * Records in the bucket that this manager could not read, with the reason.
+   *
+   * A damaged record is not thrown and not silently skipped: the snapshot it describes
+   * cannot be restored, an operator has to be able to see that, and the remedy is to
+   * look at the object — so it is reported here, keyed, with the reader's own words.
+   * The list reflects the most recent inventory read, which every public method does.
+   */
+  inventoryProblems(): InventoryProblem[] {
+    return [...this.damaged.entries()].map(([key, failure]) => ({ key, reason: failure }));
+  }
+
+  /**
    * Take a backup, and answer `success: true` only if the bucket holds it.
    *
    * Every step that can fail is named in the error, because the operator reading it
    * has to decide between retrying, freeing space and calling the storage team — and
    * "backup failed" answers none of those. A failure leaves no `completed` metadata
    * behind: a listing that shows a snapshot the bucket does not have is worse than an
-   * empty listing.
+   * empty listing. An upload the bucket will not confirm is taken back for the same
+   * reason — `success: false` and a listable snapshot cannot both be true.
    */
   async createBackup(options: CreateBackupOptions): Promise<BackupResult> {
     const id = `snap-${this.clock().getTime().toString(36)}-${(sequence += 1).toString(36)}-${randomUUID().slice(0, 8)}`;
@@ -188,7 +407,6 @@ export class BackupManager implements IBackupManager {
     const key = `${this.prefix}/${options.type}/${id}.artifact`;
     const deadline = options.timeoutMs === undefined ? null : Date.now() + options.timeoutMs;
 
-    const base = options.type === 'incremental' ? newestCompletedSnapshot(Array.from(this.snapshots.values())) : null;
     const snapshot: BackupMetadata = {
       snapshotId: id,
       type: options.type,
@@ -197,10 +415,19 @@ export class BackupManager implements IBackupManager {
       sizeBytes: 0,
       fileCount: 0,
       location: key,
-      ...(base === null ? {} : { parentSnapshotId: base.snapshotId }),
     };
 
     try {
+      // The base is chosen from the bucket, not from what this process remembers
+      // creating: otherwise the first incremental after a restart would record no
+      // parent, and a delta with no parent is a snapshot a restore treats as a base —
+      // which is a database restored from one eighth of itself.
+      await this.sync();
+      if (options.type === 'incremental') {
+        const base = newestCompletedSnapshot(Array.from(this.snapshots.values()));
+        if (base !== null) snapshot.parentSnapshotId = base.snapshotId;
+      }
+
       await mkdir(this.workDir, { recursive: true });
       const capture = await this.source.capture(staging);
       if (deadline !== null && Date.now() > deadline) {
@@ -228,9 +455,13 @@ export class BackupManager implements IBackupManager {
       const listed = await this.storage.list(key);
       const object = listed.find((entry) => entry.key === key);
       if (object === undefined) {
+        // The upload was accepted and the bucket will not answer for it, so it is not
+        // there — and what was sent is taken back, so the answer matches the bucket.
+        await this.abandon([key]);
         throw new Error(`the bucket does not list ${key} after the upload (listed ${listed.length} object(s))`);
       }
       if (object.size !== size) {
+        await this.abandon([key]);
         throw new Error(`the bucket lists ${key} at ${object.size} bytes, ${size} were uploaded`);
       }
 
@@ -240,6 +471,11 @@ export class BackupManager implements IBackupManager {
       snapshot.state = 'completed';
       snapshot.completedAt = this.clock().toISOString();
       if (capture.facts !== undefined && Object.keys(capture.facts).length > 0) snapshot.facts = capture.facts;
+
+      // The record is what makes the snapshot exist for anybody else — including
+      // this manager after a restart — so it is written and confirmed before the
+      // caller is told the backup succeeded.
+      await this.writeRecord(snapshot);
       this.snapshots.set(id, snapshot);
 
       return { success: true, snapshot };
@@ -255,6 +491,7 @@ export class BackupManager implements IBackupManager {
 
   /** @inheritdoc */
   async listBackups(options?: ListBackupsOptions): Promise<BackupMetadata[]> {
+    await this.sync();
     let result = Array.from(this.snapshots.values());
     if (options?.type !== undefined) result = result.filter((s) => s.type === options.type);
     if (options?.newerThan !== undefined) {
@@ -268,6 +505,7 @@ export class BackupManager implements IBackupManager {
 
   /** @inheritdoc */
   async getBackup(snapshotId: string): Promise<BackupMetadata | null> {
+    await this.sync();
     return this.snapshots.get(snapshotId) ?? null;
   }
 
@@ -277,14 +515,20 @@ export class BackupManager implements IBackupManager {
    * One place, because the count a caller reads depends on it: deleting a base takes
    * its dependents with it, and a `prune()` that reported "1 deleted" while two
    * records disappeared would be a number nobody can reconcile with the listing.
-   * The object goes before the record, so a failed delete leaves something to retry
-   * from rather than a metadata row pointing at nothing.
+   *
+   * The **record goes first**. A record whose artefact is gone is a listing entry
+   * that cannot be restored, and the listing is what an operator plans a recovery
+   * from; an artefact whose record is gone is invisible bytes, which costs money and
+   * cannot be mistaken for a backup. The second failure is the one to prefer, and a
+   * bucket lifecycle rule is what eventually reclaims it.
    */
   private async discard(snapshots: readonly BackupMetadata[]): Promise<number> {
     let removed = 0;
     for (const snapshot of snapshots) {
+      await this.storage.delete(inventoryKey(this.prefix, snapshot.snapshotId));
       await this.storage.delete(snapshot.location);
       this.snapshots.delete(snapshot.snapshotId);
+      this.stamps.delete(snapshot.snapshotId);
       removed += 1;
     }
     return removed;
@@ -292,6 +536,7 @@ export class BackupManager implements IBackupManager {
 
   /** @inheritdoc */
   async deleteBackup(snapshotId: string): Promise<boolean> {
+    await this.sync();
     if (!this.snapshots.has(snapshotId)) return false;
     // Dependents first: an incremental without its base is unrestorable, and a
     // failure part way through then leaves a chain that still works rather than a
@@ -310,6 +555,10 @@ export class BackupManager implements IBackupManager {
    */
   async restoreFromSnapshot(snapshotId: string, options?: RestoreOptions): Promise<RestoreResult> {
     const started = Date.now();
+    // The inventory first: this may be a snapshot another process took, or one this
+    // process took before it restarted, and `not found` is only a true answer about
+    // the bucket.
+    await this.sync();
     const snapshot = this.snapshots.get(snapshotId);
     if (snapshot === undefined) return { success: false, error: 'not found', durationMs: 0 };
 
@@ -367,6 +616,7 @@ export class BackupManager implements IBackupManager {
    * see that in the answer.
    */
   async pitr(target: PITRTarget, options?: RestoreOptions): Promise<RestoreResult> {
+    await this.sync();
     if (target.snapshotId !== undefined) return this.restoreFromSnapshot(target.snapshotId, options);
 
     const completed = Array.from(this.snapshots.values()).filter((s) => s.state === 'completed');
@@ -412,6 +662,7 @@ export class BackupManager implements IBackupManager {
    * that keeps the two in step.
    */
   async prune(): Promise<number> {
+    await this.sync();
     const inventory = Array.from(this.snapshots.values());
     const named = this.retention.evaluate(inventory).map((snapshot) => snapshot.snapshotId);
     return this.discard(expandDeletions(inventory, named));

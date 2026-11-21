@@ -167,6 +167,7 @@ to thread a handle through its own constructor to record a metric.
 import {
   BackupManager,
   DirectoryBackupSource,
+  FileSystemStorageBackend,
   RetentionPolicyEvaluator,
   S3StorageBackend,
   BackupVerifier,
@@ -202,6 +203,33 @@ leaves **no metadata behind**, so `listBackups()` never shows a snapshot that ca
 `sizeBytes` in a listing is a measurement, not a placeholder: it is the length of the artefact that was
 hashed and uploaded, and `facts` carries what the engine reported about the cut (`lsn`, `dir.files`,
 `dir.bytes`).
+
+The listing itself comes from the bucket, not from the process. Each snapshot gets an immutable record
+at `backups/inventory/<id>.json`, written after the artefact and confirmed the same way, and every
+public method starts by reading that directory. That is what makes the manager in the *next* process —
+the one that gets started because the previous one died — able to name and restore what the previous
+one took:
+
+```ts
+// A different process, later. Nothing is shared but the bucket.
+const recovered = new BackupManager(
+  new DirectoryBackupSource("/var/lib/db/data"),
+  new FileSystemStorageBackend({ root: "/mnt/backups/db-prod" }),
+  new RetentionPolicyEvaluator({ maxFullSnapshots: 7, maxTotalBytes: 5e11 }),
+);
+
+for (const snapshot of await recovered.listBackups({ type: "full" })) {
+  console.log(snapshot.snapshotId, snapshot.sizeBytes, snapshot.facts?.["lsn"]);
+}
+// A record that cannot be read is reported rather than thrown: one damaged
+// kilobyte must not stop the next backup, and somebody has to see it.
+console.log(recovered.inventoryProblems());
+```
+
+`FileSystemStorageBackend` is the backend for a directory (an NFS mount, a SAN volume, a backup host's
+disk); `S3StorageBackend` is the bucket in the cloud; `InMemoryStorageBackend` is for tests, and its
+objects are gone when the process is — which is the property that made the old manager impossible to
+recover from.
 
 Verify on creation **and** on a schedule — a backup that was never restored is a hypothesis,
 not a backup.

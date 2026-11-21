@@ -12,7 +12,7 @@
     "node": ">=20.11"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node ../scripts/fix-esm-extensions.mjs dist",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node ../scripts/fix-esm-extensions.mjs dist",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",

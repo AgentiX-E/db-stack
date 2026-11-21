@@ -206,6 +206,9 @@ describe('AC 95 — refusals', () => {
     const result = await manager(undefined, undefined, truncated).createBackup({ type: 'full' });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/lists backups\/full\/.* at \d+ bytes, \d+ were uploaded/);
+    // And the object went back: `success: false` and an artefact the bucket lists are
+    // two claims that cannot both be true.
+    expect(await storage.list('backups/')).toEqual([]);
   });
 
   it('BM.9: a capture that throws leaves no snapshot behind, and names the cause', async () => {
@@ -366,8 +369,9 @@ describe('AC 95 — listing and deletion', () => {
     const snapshot = (await mgr.createBackup({ type: 'full' })).snapshot!;
 
     await expect(mgr.deleteBackup(snapshot.snapshotId)).rejects.toThrow(/AccessDenied/);
-    // The record survives, because the object does: a listing whose object is gone
-    // is a snapshot a restore reports as missing.
+    // The delete threw on the record, which is the first thing it removes, so nothing
+    // was removed at all — and a snapshot that survives a failed delete is a snapshot
+    // a retry can still find.
     expect(await mgr.getBackup(snapshot.snapshotId)).not.toBeNull();
   });
 
@@ -383,7 +387,12 @@ describe('AC 95 — listing and deletion', () => {
 
     expect(await mgr.prune()).toBe(2);
     expect((await mgr.listBackups()).map((s) => s.snapshotId)).toEqual([ids[2]]);
-    expect(await storage.list('backups/')).toHaveLength(1);
+    // What is left is exactly what a restore needs: one artefact, and the record that
+    // names it. Removing the record and keeping the bytes would leave a snapshot
+    // nobody can name; removing the bytes and keeping the record would leave a
+    // listing entry that cannot be restored.
+    const left = (await storage.list('backups/')).map((object) => object.key);
+    expect(left.sort()).toEqual([`backups/full/${ids[2]}.artifact`, `backups/inventory/${ids[2]}.json`]);
   });
 
   it('BM.20: the filters compose, and limit 0 means no limit', async () => {
@@ -452,18 +461,22 @@ describe('AC 95 — point in time', () => {
     // `16/9` is 9 and `16/10` is 16: as positions `16/9 < 16/10`, and as strings
     // `'16/9' > '16/10'` because `'9' > '1'`. Both directions are asserted, because a
     // comparison that only gets one of them right passes a one-sided test.
-    const atNine = manager(undefined, lsnSource(['16/9']));
-    const nine = (await atNine.createBackup({ type: 'full' })).snapshot!.snapshotId;
-    // 16/9 is before the target: a string comparison would refuse this snapshot.
-    expect((await atNine.pitr({ targetLsn: '16/10' })).recoveryPoint).toBe(nine);
-    expect((await atNine.pitr({ targetLsn: '16/9' })).recoveryPoint).toBe(nine);
+    const mgr = manager(undefined, lsnSource(['16/9', '16/10']));
+    const nine = (await mgr.createBackup({ type: 'full' })).snapshot!.snapshotId;
+    const ten = (await mgr.createBackup({ type: 'full' })).snapshot!.snapshotId;
 
-    const atTen = manager(undefined, lsnSource(['16/10']));
-    await atTen.createBackup({ type: 'full' });
-    // 16/10 is after the target: a string comparison would restore it anyway.
-    expect(await atTen.pitr({ targetLsn: '16/9' })).toMatchObject({
+    // Both are at or before 16/FF, so the newest wins — and newest is the position.
+    expect((await mgr.pitr({ targetLsn: '16/FF' })).recoveryPoint).toBe(ten);
+    // A target exactly at a snapshot includes it.
+    expect((await mgr.pitr({ targetLsn: '16/10' })).recoveryPoint).toBe(ten);
+    // 16/9 is the only candidate; as strings, `'16/9' > '16/10'`, so a string
+    // comparison would have answered 16/10 — a restore to the wrong minute.
+    expect((await mgr.pitr({ targetLsn: '16/9' })).recoveryPoint).toBe(nine);
+    // And 16/8 is before both: as strings `'16/8' < '16/9'`, so a string comparison
+    // would have answered 16/9 rather than refusing.
+    expect(await mgr.pitr({ targetLsn: '16/8' })).toMatchObject({
       success: false,
-      error: 'no snapshot at or before LSN 16/9 (1 completed snapshot(s) considered)',
+      error: 'no snapshot at or before LSN 16/8 (2 completed snapshot(s) considered)',
     });
 
     expect(compareLsn('16/9', '16/10')).toBe(-1);

@@ -7,8 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The bucket is the inventory.** `BackupManager` no longer keeps its snapshots in a `Map` on the
+  instance: every snapshot gets an immutable record at `<prefix>/inventory/<snapshotId>.json`, written
+  after the artefact and confirmed with `list` the same way, and **every public method starts by listing
+  that directory**. A restarted manager — or a second worker, or a process that has never seen the first
+  one — can therefore name everything the bucket holds. The listing is single-flight, so a burst of
+  concurrent calls costs one read; it reconciles in both directions, so a snapshot deleted in another
+  process stops being listed here and one taken there starts; and it notices a record rewritten in
+  place, by comparing the listing's own `size` and `lastModified` against what was last read.
+  One record per snapshot rather than one manifest for the bucket, because a manifest is a
+  read-modify-write: two workers would each add an entry and the second write would erase the first.
+- **`inventoryProblems()`.** A record that cannot be read is reported as `{ key, reason }` rather than
+  thrown — one damaged kilobyte must not stop every backup in a deployment — and the snapshot it
+  described is not listed, because it cannot be restored. `InventoryRecordError` carries the key and the
+  field that failed.
+- **`FileSystemStorageBackend`** — a bucket that is a directory: an NFS mount, a SAN volume, the disk of a
+  backup host. Objects are written as `<key>.partial` and renamed, so an object either exists whole or
+  does not exist, and a process killed mid-copy leaves a file `list` does not return. Keys go through
+  `safeJoin`, so `..` and absolute paths are refused. `PARTIAL_SUFFIX` is exported because a lifecycle
+  rule that reclaims stale partials has to be able to name them. This is also the backend that makes a
+  backup outlive its process: `InMemoryStorageBackend` is a `Map`, and its objects are gone at exit.
+- **The record format is published** — `INVENTORY_FORMAT`, `inventoryKey`, `inventoryPrefix`,
+  `serializeRecord`, `parseRecord` — for the same reason the audit chain's rule is: an operator with a
+  bucket and no running manager has to be able to read a record, judge one, and decide what to do with a
+  damaged one. Every field is validated on the way in, and the two refusals a length can produce are
+  different sentences — `sizeBytes is not a number ("4096")` and `sizeBytes is not a length (-1)` —
+  because a record written by something that did not serialise a number and a record whose arithmetic
+  went wrong are two different problems for the operator holding the bucket. A length must be a whole
+  non-negative number, so `4096.5` is refused as well.
+
 ### Changed
 
+- **A confirmation the bucket does not give is undone.** `createBackup` deletes what it uploaded — the
+  artefact, and the record if it got that far — before returning `success: false`. An answer and a
+  bucket that disagree is worse than a retry.
 - **`backup` now moves bytes.** `new BackupManager(source, storage, retention)` replaces
   `InMemoryBackupManager`, and it is a different class in the way that matters: `createBackup` captures
   a consistent cut through the new `IBackupSource` port, measures the artefact it got, hashes it,

@@ -57,6 +57,11 @@ export const TARGETS = {
       // decides whether the audit trail proves itself. Both replaced a simulator this
       // iteration; the mutants are the reason the replacements are believed.
       "node/src/backup/impl/BackupManager.ts",
+      // The record that makes a snapshot outlive its process, and the bucket that can
+      // hold one across processes. Both decide whether a backup exists tomorrow; the
+      // mutants are what keeps that from being a claim about a class name.
+      "node/src/backup/impl/inventory.ts",
+      "node/src/backup/impl/FileSystemStorageBackend.ts",
       "node/src/audit/impl/auditChain.ts",
       "node/src/backup/impl/backupChain.ts",
       "node/src/maintenance/impl/cron.ts",

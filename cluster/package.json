@@ -16,7 +16,7 @@
     "bench:concurrency": "tsx bench/proposal-concurrency-curve.ts",
     "bench:snapshot": "tsx bench/snapshot-threshold-sweep.ts",
     "bench:ycsb": "tsx bench/raft-ycsb.ts",
-    "build": "tsc -p tsconfig.build.json && node ../scripts/fix-esm-extensions.mjs dist",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node ../scripts/fix-esm-extensions.mjs dist",
     "clean": "rm -rf dist coverage",
     "coverage": "vitest run --coverage",
     "format:check": "prettier --check \"src/**/*.ts\"",

@@ -23,6 +23,7 @@ import {
   checkPublishedDocs,
   isEntryPoint,
   labelOf,
+  orphanOutputs,
   probeModule,
   resolveTarget,
   run,
@@ -407,4 +408,67 @@ test("isEntryPoint answers the runtime's question", () => {
   );
   assert.equal(isEntryPoint("/tmp/somewhere-else.mjs"), false);
   assert.equal(isEntryPoint(undefined), false);
+});
+
+test("orphanOutputs is quiet when every output has a source", () => {
+  withFixture(packageFiles(), (dir) => {
+    assert.deepEqual(orphanOutputs(join(dir, "cluster")), []);
+  });
+});
+
+test("orphanOutputs names every emitted file of a module deleted from src", () => {
+  // `tsc` emits and does not delete: the class is gone from `src/` and all four of
+  // its outputs are still published, which is a package offering a name it removed.
+  withFixture(
+    {
+      ...packageFiles(),
+      "cluster/dist/gone.js": "export const gone = 1;\n",
+      "cluster/dist/gone.js.map": "{}\n",
+      "cluster/dist/gone.d.ts": "export declare const gone = 1;\n",
+      "cluster/dist/gone.d.ts.map": "{}\n",
+    },
+    (dir) => {
+      assert.deepEqual(orphanOutputs(join(dir, "cluster")), [
+        "gone.d.ts",
+        "gone.d.ts.map",
+        "gone.js",
+        "gone.js.map",
+      ]);
+    },
+  );
+});
+
+test("orphanOutputs does not judge a package that was never built", () => {
+  // The Quality job deliberately does not build; a gate that failed there would be a
+  // gate somebody switches off.
+  withFixture(
+    {
+      "pnpm-workspace.yaml": "packages:\n  - cluster\n",
+      "cluster/src/index.ts": "\n",
+    },
+    (dir) => {
+      assert.deepEqual(orphanOutputs(join(dir, "cluster")), []);
+    },
+  );
+});
+
+test("run reports a ghost output as a finding", () => {
+  withFixture(
+    { ...packageFiles(), "cluster/dist/gone.js": "export const gone = 1;\n" },
+    (dir) => {
+      const errors = [];
+      const code = run(dir, {
+        log: () => {},
+        error: (line) => errors.push(line),
+        targets: ONE_TARGET,
+      });
+
+      assert.equal(code, 1);
+      assert.match(
+        errors[0],
+        /^✗ cluster\/dist\/gone\.js: no source file produces it/,
+      );
+      assert.match(errors[1], /Package check FAILED \(1 finding\(s\)\)/);
+    },
+  );
 });

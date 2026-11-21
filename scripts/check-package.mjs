@@ -34,7 +34,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { workspacePackages } from "./check-docs-api.mjs";
@@ -142,11 +142,16 @@ export const TARGETS = [
     // `InMemoryPITRManager` — are gone: neither moved a byte. What replaced them
     // is asserted here, so the day `BackupManager` stops being exported is the
     // day this gate fails rather than the day a deployment discovers it.
+    //
+    // `FileSystemStorageBackend` and the record format are here for the same
+    // reason the audit chain's helpers are: a backup an operator cannot read out of
+    // the bucket by hand is a backup whose recovery depends on this package working.
     dir: "node",
     entry: "./backup",
     expect: [
       "BackupManager",
       "DirectoryBackupSource",
+      "FileSystemStorageBackend",
       "InMemoryStorageBackend",
       "RetentionPolicyEvaluator",
       "BackupVerifier",
@@ -154,6 +159,12 @@ export const TARGETS = [
       "readDirectoryArtifact",
       "writeDirectoryArtifact",
       "hashFile",
+      "inventoryKey",
+      "inventoryPrefix",
+      "serializeRecord",
+      "parseRecord",
+      "InventoryRecordError",
+      "INVENTORY_FORMAT",
     ],
   },
   {
@@ -263,6 +274,50 @@ export function summarise(result) {
 }
 
 /**
+ * Output files in `dist/` that no source file could have produced.
+ *
+ * `tsc` emits; it does not delete. A module removed from `src/` keeps its `.js`, its
+ * `.d.ts` and both maps in `dist/` across every later build, so a package that deleted
+ * a class still publishes it — and this gate loads the artefact rather than the source,
+ * so it would happily import the ghost and report the export as present.
+ *
+ * Measured on this repository before the build scripts were fixed:
+ * `node/dist/backup/impl/InMemoryBackupManager.d.ts` survived two builds after its
+ * source was deleted in iteration 63, and `InMemoryBackupManager` is the simulator that
+ * same iteration removed *because it never moved a byte*. A published package that
+ * still offers it is the defect the deletion was supposed to end.
+ *
+ * A package with no `dist/` is not a finding: the Quality job deliberately does not
+ * build, and a gate that fails there would be a gate that has to be switched off.
+ */
+export function orphanOutputs(pkgDir, srcDir = "src") {
+  const dist = join(pkgDir, "dist");
+  if (!existsSync(dist)) return [];
+
+  const orphans = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+        continue;
+      }
+      // Every emitted extension names the same source file: `a.js`, `a.d.ts`,
+      // `a.js.map` and `a.d.ts.map` all come from `a.ts`.
+      const emitted = path.slice(dist.length + 1);
+      const source = emitted
+        .replace(/\.d\.ts\.map$/, ".ts")
+        .replace(/\.d\.ts$/, ".ts")
+        .replace(/\.js\.map$/, ".ts")
+        .replace(/\.js$/, ".ts");
+      if (!existsSync(join(pkgDir, srcDir, source))) orphans.push(emitted);
+    }
+  };
+  walk(dist);
+  return orphans.sort();
+}
+
+/**
  * The documentation has to be in the tarball as well as in the repository.
  *
  * Every package here ships `dist`, `README.md` and `CHANGELOG.md`, and every one
@@ -352,6 +407,17 @@ export function run(root = ROOT, options = {}) {
       failures += 1;
     } else {
       log(`\u2713 ${resolved.label} ${result.stdout.trim()}`);
+    }
+  }
+
+  // One per package rather than one per target: three entry points of the same
+  // package would otherwise report the same ghost three times.
+  for (const dir of [...new Set(targets.map((target) => target.dir))]) {
+    for (const orphan of orphanOutputs(resolve(root, dir))) {
+      error(
+        `\u2717 ${dir}/dist/${orphan}: no source file produces it (\`tsc\` does not delete)`,
+      );
+      failures += 1;
     }
   }
 

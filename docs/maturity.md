@@ -155,7 +155,7 @@ module that has to move, rather than one that quietly grows a dependency on a gr
 `core` is why the old shape could not hold. Forty-six of the former packages imported it, so a
 change to a base type was a change to a published dependency graph. The imports are relative now;
 the nine edges between former packages that disappeared took their version constraints with them.
-`node` publishes 331 exports across its twenty-two entry points, and every one is named somewhere
+`node` publishes 375 exports across its twenty-two entry points, and every one is named somewhere
 under `node/docs/`.
 
 | Module           | Capability                                                           | Verification  |
@@ -165,7 +165,7 @@ under `node/docs/`.
 | `logger`         | Structured logging, levels, child loggers, backends                  | U · I         |
 | `metrics`        | Counters, gauges, histograms, sink fan-out                           | U · I         |
 | `monitor`        | Alert rules, thresholds, de-duplication                              | U · I         |
-| `backup`         | Capture, artefact digests, bucket confirmation, chains, PITR         | U · I · M     |
+| `backup`         | Capture, digests, bucket confirmation, durable inventory, PITR       | U · I · M · P |
 | `maintenance`    | Maintenance windows, occurrence projection                           | U · I · M     |
 | `auth`           | Authentication providers and credentials (interfaces only)           | U · I         |
 | `security`       | Key rotation, envelope encryption, tamper-evident audit chain        | U · I · M     |
@@ -223,16 +223,16 @@ Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are fr
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
 All four rows are from a green run of this repository, after `operations/` was dissolved and
 the four assembler modules moved from the operations target into `cluster`: `node`
-(99.44/99.44/99.86/98.57), `cluster` with the assemblers in it (99.45/99.45/99.71/98.25) and
+(99.45/99.45/99.87/98.49), `cluster` with the assemblers in it (99.45/99.45/99.71/98.23) and
 `federation` with the query and schema modules it absorbed (99.63/99.63/100/98.67). The gate
 covers four packages, not three: the end-to-end harness is measured as well, because a harness bug
 produces confident, meaningless acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
-| `cluster`       | 99.45% | 99.45%     | 99.71%    | 98.25%   |
+| `cluster`       | 99.45% | 99.45%     | 99.71%    | 98.23%   |
 | `federation`    | 99.63% | 99.63%     | 100%      | 98.67%   |
-| `node`          | 99.44% | 99.44%     | 99.86%    | 98.57%   |
+| `node`          | 99.45% | 99.45%     | 99.87%    | 98.49%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
 The `e2e` row covers the TypeScript harness — `support.ts` (process supervision, IPC, port

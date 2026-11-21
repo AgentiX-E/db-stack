@@ -37,12 +37,12 @@ import type {
 //  dist dependencies).  These are kept here so the test file is self-
 //  contained within the core package.
 //
-//  Known debt (roadmap P3-59): `InMemoryBackupManager` below is a copy of the
-//  class the `backup` package deleted in iteration 63, and the nine `A2`/`B6`
-//  cases that drive it therefore assert on this file rather than on the
-//  product. They are not deleted here because the fix is to point them at the
-//  real `BackupManager`, which is a change to those cases and not to this
-//  comment.
+//  What is *not* vendored any more: the backup manager. It used to be a copy of the
+//  class the `backup` package deleted in iteration 63 (roadmap P3-59), so the nine
+//  `A2`/`B6` cases below asserted on this file rather than on the product — and they
+//  passed unchanged through the deletion of the class they duplicated. They now drive
+//  the shipped `BackupManager` over a real directory, which is the only version of
+//  those cases that can fail when the product does.
 // ══════════════════════════════════════════════════════════════════════
 
 /**
@@ -59,6 +59,11 @@ function invokeWithInvalidArgs<R>(fn: (...args: never[]) => unknown, self: unkno
 }
 
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { BackupManager } from '../../backup/impl/BackupManager.js';
+import { DirectoryBackupSource } from '../../backup/impl/DirectoryBackupSource.js';
 
 // ── Health ──────────────────────────────────────────────────────────
 
@@ -290,59 +295,33 @@ class RetentionPolicyEvaluator implements IBackupRetentionPolicyLike {
   }
 }
 
-class InMemoryBackupManager {
-  private _snapshots = new Map<string, BackupMetadata>();
-  constructor(
-    private _storage: IStorageBackendLike,
-    private _retention: IBackupRetentionPolicyLike,
-  ) {}
-  async createBackup(
-    options: CreateBackupOptionsLike,
-  ): Promise<{ success: boolean; snapshot?: BackupMetadata; error?: string }> {
-    const id = _genId();
-    const now = new Date().toISOString();
-    const snap: BackupMetadata = {
-      snapshotId: id,
-      type: options.type,
-      state: 'completed',
-      createdAt: now,
-      completedAt: new Date(Date.now() + 50).toISOString(),
-      sizeBytes: 1024,
-      fileCount: 1,
-      location: `/backups/${id}`,
-    };
-    this._snapshots.set(id, snap);
-    await _simMs();
-    return { success: true, snapshot: snap };
-  }
-  async listBackups(options?: ListBackupsOptionsLike): Promise<BackupMetadata[]> {
-    let r = Array.from(this._snapshots.values());
-    if (options?.type) r = r.filter((s) => s.type === options.type);
-    r.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    if (options?.limit && options.limit > 0) r = r.slice(0, options.limit);
-    return r;
-  }
-  async getBackup(id: string): Promise<BackupMetadata | null> {
-    return this._snapshots.get(id) ?? null;
-  }
-  async deleteBackup(id: string): Promise<boolean> {
-    return this._snapshots.delete(id);
-  }
-  async restoreFromSnapshot(id: string): Promise<{
-    success: boolean;
-    error?: string;
-    durationMs: number;
-    recoveryPoint?: string;
-  }> {
-    if (!this._snapshots.has(id)) return { success: false, error: 'not found', durationMs: 0 };
-    return { success: true, durationMs: 10, recoveryPoint: id };
-  }
-  async prune(): Promise<number> {
-    const all = Array.from(this._snapshots.values());
-    const del = this._retention.evaluate(all);
-    for (const d of del) this._snapshots.delete(d.snapshotId);
-    return del.length;
-  }
+/**
+ * A manager over the shipped class, so these cases measure the product.
+ *
+ * This file used to carry its own `InMemoryBackupManager`: `sizeBytes: 1024`,
+ * `state: 'completed'` after a five-millisecond timer, and a `restoreFromSnapshot`
+ * that answered success without touching anything — a copy of the class the `backup`
+ * package deleted in iteration 63 (roadmap P3-59). Nine cases drove that copy, so they
+ * asserted on the file they lived in, and they passed unchanged through the deletion of
+ * the class they duplicated.
+ *
+ * What is real now: a directory the manager captures, a bucket it uploads to, and the
+ * same class a deployment gets. The bucket and the retention policy stay the file's own
+ * small implementations, because they are interfaces with one method each and what these
+ * cases are about is the manager, not them.
+ */
+const edgeTempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of edgeTempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function makeBackupManager(storage: IStorageBackendLike, retention: IBackupRetentionPolicyLike): BackupManager {
+  const data = mkdtempSync(join(tmpdir(), 'edge-data-'));
+  const work = mkdtempSync(join(tmpdir(), 'edge-work-'));
+  edgeTempDirs.push(data, work);
+  writeFileSync(join(data, 'table.bin'), 'rows');
+  return new BackupManager(new DirectoryBackupSource(data), storage, retention, { workDir: work });
 }
 
 // ── Monitor ─────────────────────────────────────────────────────────
@@ -1538,7 +1517,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
         minAge: '',
         maxTotalBytes: 0,
       });
-      const mgr = new InMemoryBackupManager(storage, retention);
+      const mgr = makeBackupManager(storage, retention);
 
       const result = await mgr.createBackup({ type: 'full' });
       expect(result.success).toBe(true);
@@ -1571,13 +1550,16 @@ describe('SECTION A: Cross-package Integration Tests', () => {
         minAge: '',
         maxTotalBytes: 0,
       });
-      const mgr = new InMemoryBackupManager(storage, retention);
+      const mgr = makeBackupManager(storage, retention);
 
       const full = await mgr.createBackup({ type: 'full' });
       expect(full.success).toBe(true);
 
       const inc = await mgr.createBackup({ type: 'incremental' });
       expect(inc.success).toBe(true);
+      // The case is named after the link, and the link is the thing retention keeps a
+      // chain whole by and a restore checks before it replays anything.
+      expect(inc.snapshot!.parentSnapshotId).toBe(full.snapshot!.snapshotId);
     });
 
     it('prune after maxFullSnapshots=1 keeps only latest', async () => {
@@ -1588,7 +1570,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
         minAge: '',
         maxTotalBytes: 0,
       });
-      const mgr = new InMemoryBackupManager(storage, retention);
+      const mgr = makeBackupManager(storage, retention);
 
       await mgr.createBackup({ type: 'full' });
       // Small delay so timestamps differ
@@ -1610,7 +1592,7 @@ describe('SECTION A: Cross-package Integration Tests', () => {
         minAge: '',
         maxTotalBytes: 0,
       });
-      const mgr = new InMemoryBackupManager(storage, retention);
+      const mgr = makeBackupManager(storage, retention);
 
       const result = await mgr.createBackup({ type: 'full' });
       const id = result.snapshot!.snapshotId;
@@ -2186,7 +2168,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
         minAge: '',
         maxTotalBytes: 0,
       });
-      const mgr = new InMemoryBackupManager(storage, retention);
+      const mgr = makeBackupManager(storage, retention);
       const list = await mgr.listBackups();
       expect(list).toEqual([]);
     });
@@ -2199,7 +2181,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
         minAge: '',
         maxTotalBytes: 0,
       });
-      const mgr = new InMemoryBackupManager(storage, retention);
+      const mgr = makeBackupManager(storage, retention);
       const result = await mgr.deleteBackup('nonexistent');
       expect(result).toBe(false);
     });
@@ -2212,7 +2194,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
         minAge: '',
         maxTotalBytes: 0,
       });
-      const mgr = new InMemoryBackupManager(storage, retention);
+      const mgr = makeBackupManager(storage, retention);
       const pruned = await mgr.prune();
       expect(pruned).toBe(0);
     });
@@ -2225,7 +2207,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
         minAge: '',
         maxTotalBytes: 0,
       });
-      const mgr = new InMemoryBackupManager(storage, retention);
+      const mgr = makeBackupManager(storage, retention);
       const result1 = await invokeWithInvalidArgs(mgr.getBackup, mgr, [null]);
       const result2 = await invokeWithInvalidArgs(mgr.getBackup, mgr, [undefined]);
       expect(result1).toBeNull();
@@ -2240,7 +2222,7 @@ describe('SECTION B: Edge / Boundary Conditions', () => {
         minAge: '',
         maxTotalBytes: 0,
       });
-      const mgr = new InMemoryBackupManager(storage, retention);
+      const mgr = makeBackupManager(storage, retention);
       const result = await mgr.createBackup({ type: 'full' });
       expect(result.success).toBe(true);
       expect(result.snapshot).toBeDefined();

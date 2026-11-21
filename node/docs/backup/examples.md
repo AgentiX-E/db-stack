@@ -3,71 +3,84 @@
 Every block below is self-contained: it declares what it uses, so it can be pasted into a file on its
 own.
 
-## A storage backend that is not S3
+## A bucket that is a directory
 
-`IStorageBackend` is seven methods. Anything that can hold a byte can be a bucket — a filesystem, an
-object store, a tape robot behind an HTTP API. The only method with a non-obvious duty is `list`, which
-`createBackup` uses to confirm the upload:
+`FileSystemStorageBackend` is the one to reach for when the destination is an NFS mount, a SAN volume
+or the disk of a backup host. It is also the backend that makes a backup survive the process that
+took it — `InMemoryStorageBackend` is a `Map`, and its objects are gone at exit.
 
 ```typescript
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import type { IStorageBackend } from '@agentix-e/db-node/backup';
+import {
+  BackupManager,
+  DirectoryBackupSource,
+  FileSystemStorageBackend,
+  RetentionPolicyEvaluator,
+} from '@agentix-e/db-node/backup';
 
-/** A bucket that is a directory. Keys become paths, so `list` is a directory walk. */
-class DirectoryBucket implements IStorageBackend {
-  readonly name = 'directory-bucket';
+const bucket = new FileSystemStorageBackend({ root: '/mnt/backups/db-prod' });
+// `bucket.directory` is absolute even if `root` was not: the root is resolved once,
+// because a relative path is a name whose meaning belongs to `process.cwd()`.
 
-  constructor(private readonly root: string) {}
-
-  private pathOf(key: string): string {
-    return join(this.root, key);
-  }
-
-  async upload(sourcePath: string, destKey: string): Promise<void> {
-    const destination = this.pathOf(destKey);
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, await readFile(sourcePath));
-  }
-
-  async download(sourceKey: string, destPath: string): Promise<void> {
-    await writeFile(destPath, await readFile(this.pathOf(sourceKey)));
-  }
-
-  async list(prefix: string): Promise<Array<{ key: string; size: number; lastModified: string }>> {
-    const directory = this.pathOf(prefix.includes('/') ? prefix.slice(0, prefix.lastIndexOf('/')) : '.');
-    const names = await readdir(directory, { withFileTypes: true }).catch(() => []);
-    const listed: Array<{ key: string; size: number; lastModified: string }> = [];
-    for (const entry of names) {
-      if (!entry.isFile()) continue;
-      const full = join(directory, entry.name);
-      const info = await stat(full);
-      const key = `${prefix.slice(0, prefix.lastIndexOf('/') + 1)}${entry.name}`;
-      if (!key.startsWith(prefix)) continue;
-      listed.push({ key, size: info.size, lastModified: info.mtime.toISOString() });
-    }
-    return listed;
-  }
-
-  async delete(key: string): Promise<void> {
-    await rm(this.pathOf(key), { force: true });
-  }
-
-  async health(): Promise<{ ok: boolean; message?: string }> {
-    return stat(this.root).then(
-      () => ({ ok: true }),
-      (error: unknown) => ({ ok: false, message: String(error) }),
-    );
-  }
-
-  async getUsageBytes(): Promise<number> {
-    return 0;
-  }
-}
+const manager = new BackupManager(
+  new DirectoryBackupSource('/var/lib/db/data'),
+  bucket,
+  new RetentionPolicyEvaluator({ maxFullSnapshots: 24, maxTotalBytes: 5e11 }),
+);
 ```
 
-A `list` that returns a stale view is not a small problem: the manager will refuse to record the
-snapshot, because the one thing it will not do is claim a backup the bucket cannot answer for.
+Every object is written as `<key>.partial` and renamed into place, so a process killed mid-copy
+leaves a file `list` does not return — not an object at the right key with the wrong length. The
+suffix is exported as `PARTIAL_SUFFIX` because a lifecycle rule that deletes stale `*.partial` files
+has to be able to name them.
+
+Anything else that can hold a byte is a bucket too: `IStorageBackend` is six methods. The only one
+with a non-obvious duty is `list`, which `createBackup` uses to confirm the upload — a `list` that
+returns a stale view makes the manager refuse to record the snapshot, which is the correct outcome,
+because the one thing it will not do is claim a backup the bucket cannot answer for.
+
+```typescript
+import { FileSystemStorageBackend } from '@agentix-e/db-node/backup';
+
+// What a bucket has to answer, in the smallest form that is still honest.
+const bucket = new FileSystemStorageBackend({ root: '/mnt/backups/db-prod' });
+console.log(await bucket.health()); // { ok: true }
+console.log(await bucket.getUsageBytes()); // everything under the root
+console.log(await bucket.list('backups/inventory/'));
+```
+
+## A second process restores it
+
+This is the case a backup exists for, and it needs no shared state beyond the bucket: the process
+that restores has never seen the one that captured.
+
+```typescript
+import {
+  BackupManager,
+  DirectoryBackupSource,
+  FileSystemStorageBackend,
+  RetentionPolicyEvaluator,
+} from '@agentix-e/db-node/backup';
+
+// Process B, started an hour after process A exited (or after A was killed).
+const manager = new BackupManager(
+  new DirectoryBackupSource('/var/lib/db/data'),
+  new FileSystemStorageBackend({ root: '/mnt/backups/db-prod' }),
+  new RetentionPolicyEvaluator({ maxFullSnapshots: 24, maxTotalBytes: 5e11 }),
+);
+
+// The listing is the bucket's, not a memory of it: A's snapshots are here.
+const [newest] = await manager.listBackups({ limit: 1 });
+if (newest === undefined) throw new Error('the bucket holds no snapshot');
+
+const restored = await manager.restoreFromSnapshot(newest.snapshotId);
+if (!restored.success) throw new Error(restored.error);
+
+// A record that cannot be read is reported, not thrown: one damaged kilobyte does
+// not stop the next backup, and an operator needs to see which snapshot it cost.
+for (const problem of manager.inventoryProblems()) {
+  console.error(`unreadable record ${problem.key}: ${problem.reason}`);
+}
+```
 
 ## An engine source
 
@@ -206,7 +219,13 @@ A restore drill, a forensic inspection, or a migration tool may need the contain
 published for exactly that reason:
 
 ```typescript
-import { ARTIFACT_MAGIC, MAX_MANIFEST_BYTES, hashFile, readDirectoryArtifact, safeJoin } from '@agentix-e/db-node/backup';
+import {
+  ARTIFACT_MAGIC,
+  MAX_MANIFEST_BYTES,
+  hashFile,
+  readDirectoryArtifact,
+  safeJoin,
+} from '@agentix-e/db-node/backup';
 
 const digest = await hashFile('/var/backups/snap-lz1.artifact');
 console.log(ARTIFACT_MAGIC, digest.sha256, digest.size);
