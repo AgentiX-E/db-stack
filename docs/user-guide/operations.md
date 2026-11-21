@@ -1,13 +1,12 @@
 # Operations guide
 
-`@agentix-e/db-operations` is an **engine-agnostic operations framework**: three packages
-that give every database the same operational surface — health, backup, metrics, security,
-maintenance, upgrades — without tying your application to one vendor's admin API.
+`@agentix-e/db-node` is an **engine-agnostic operations framework**: twenty modules that
+give every database the same operational surface — health, backup, metrics, security,
+maintenance, upgrades — without tying your application to one vendor's admin API. The
+cluster and federation packages build on it when a deployment has more than one node.
 
 ```bash
-npm install @agentix-e/db-operations
-# or install only what you need
-npm install @agentix-e/db-operations-node
+npm install @agentix-e/db-node
 ```
 
 ---
@@ -17,9 +16,9 @@ npm install @agentix-e/db-operations-node
 Every package resolves its dependencies through typed tokens rather than constructors:
 
 ```ts
-import { ProviderRegistry, token } from "@agentix-e/db-operations-node/core";
-import { HealthOrchestrator } from "@agentix-e/db-operations-node/health";
-import { InMemoryLogger, type ILogger } from "@agentix-e/db-operations-node/logger";
+import { ProviderRegistry, token } from "@agentix-e/db-node/core";
+import { HealthOrchestrator } from "@agentix-e/db-node/health";
+import { InMemoryLogger, type ILogger } from "@agentix-e/db-node/logger";
 
 const registry = new ProviderRegistry();
 registry.register(token<ILogger>("ILogger"), new InMemoryLogger("operations"));
@@ -43,13 +42,13 @@ not editing call sites.
 Three packages, and the split is by a question rather than by domain: **does the code need
 to know how many nodes exist?**
 
-- `@agentix-e/db-operations-node` — no. Twenty modules, one process each.
-- `@agentix-e/db-operations-cluster` — yes. A member set, a leader, a majority.
-- `@agentix-e/db-operations-federation` — a set of *datacenters*.
+- `@agentix-e/db-node` — no. Twenty modules, one process each.
+- `@agentix-e/db-cluster` — yes. A member set, a leader, a majority.
+- `@agentix-e/db-federation` — a set of *datacenters*.
 
-### 2.1 `@agentix-e/db-operations-node` — twenty modules
+### 2.1 `@agentix-e/db-node` — twenty modules
 
-Import the module, not the package root: `@agentix-e/db-operations-node/audit`.
+Import the module, not the package root: `@agentix-e/db-node/audit`.
 
 | Module           | What it gives you                                                        | Key entry points                                                                                              |
 | ---------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
@@ -74,7 +73,7 @@ Import the module, not the package root: `@agentix-e/db-operations-node/audit`.
 | `rollingupgrade` | Upgrade plans, batching and health gating                                | `RollingUpgradeOrchestrator`                                                                                  |
 | `slacollector`   | SLI recording and SLO/error-budget computation                           | `SLACollector`                                                                                                |
 
-### 2.2 `@agentix-e/db-operations-cluster` — the multi-node half
+### 2.2 `@agentix-e/db-cluster` — the multi-node half
 
 | Export                   | The question it answers                                                                  |
 | ------------------------ | ---------------------------------------------------------------------------------------- |
@@ -95,7 +94,7 @@ leader exclusion, no learner-first order, no "already absent" accounting. If you
 cluster, apply the action through `ClusterScalingExecutor`; if you have one node, there is
 nothing to remove.
 
-### 2.3 `@agentix-e/db-operations-federation` — cross-datacenter
+### 2.3 `@agentix-e/db-federation` — cross-datacenter
 
 | Export                 | What it gives you                                    |
 | ---------------------- | ---------------------------------------------------- |
@@ -113,7 +112,7 @@ nothing to remove.
 import {
   HealthOrchestrator,
   componentProbe,
-} from "@agentix-e/db-operations-node/health";
+} from "@agentix-e/db-node/health";
 
 const health = new HealthOrchestrator();
 
@@ -145,7 +144,7 @@ a field an in-process sample updates, and the probe reads the field.
 ### 3.2 Metrics
 
 ```ts
-import { MetricsRegistry } from "@agentix-e/db-operations-node/metrics";
+import { MetricsRegistry } from "@agentix-e/db-node/metrics";
 
 const metrics = new MetricsRegistry();
 const writes = metrics.counter("db_writes_total", { db: "orders" });
@@ -170,7 +169,7 @@ import {
   RetentionPolicyEvaluator,
   S3StorageBackend,
   BackupVerifier,
-} from "@agentix-e/db-operations-node/backup";
+} from "@agentix-e/db-node/backup";
 
 const backups = new InMemoryBackupManager(
   new S3StorageBackend({ bucket: "db-backups", region: "eu-west-1" }),
@@ -212,7 +211,7 @@ fails for the reason a reader can act on.
 #### Retention: floors are floors
 
 ```ts
-import { RetentionPolicyEvaluator } from "@agentix-e/db-operations-node/backup";
+import { RetentionPolicyEvaluator } from "@agentix-e/db-node/backup";
 
 const retention = new RetentionPolicyEvaluator({
   maxFullSnapshots: 7,
@@ -300,7 +299,7 @@ The chain primitives are exported, so an adapter for a store that is not this ma
 same questions:
 
 ```ts
-import { dependentsOf, unrestorableReason } from "@agentix-e/db-operations-node/backup";
+import { dependentsOf, unrestorableReason } from "@agentix-e/db-node/backup";
 
 // What would I lose if I deleted this snapshot?
 const dependents = dependentsOf(inventory, snapshotId);
@@ -314,7 +313,7 @@ The chain primitives are exported, so an adapter for a store that is not this ma
 same questions:
 
 ```ts
-import { dependentsOf, unrestorableReason } from "@agentix-e/db-operations-node/backup";
+import { dependentsOf, unrestorableReason } from "@agentix-e/db-node/backup";
 
 // What would I lose if I deleted this snapshot?
 const dependents = dependentsOf(inventory, snapshotId);
@@ -334,7 +333,7 @@ import {
   KeyManager,
   EnvelopeEncryptionProvider,
   KeyRotationManager,
-} from "@agentix-e/db-operations-node/security";
+} from "@agentix-e/db-node/security";
 
 const keys = new KeyManager({ masterSecret: process.env.DB_MASTER_SECRET! });
 const encryption = new EnvelopeEncryptionProvider({
@@ -672,7 +671,7 @@ by a key that was born after the wipe.
 ### 3.5 Audit trail: what retention is allowed to delete
 
 ```ts
-import { AuditLogManager } from "@agentix-e/db-operations-node/security";
+import { AuditLogManager } from "@agentix-e/db-node/security";
 
 const audit = new AuditLogManager({
   logFilePath: "/var/lib/db/audit.jsonl",
@@ -744,7 +743,7 @@ than silently reinterpreted.
 #### Compliance reports that can only pass on checks that ran
 
 ```ts
-import { RotationAuditor } from "@agentix-e/db-operations-node/security";
+import { RotationAuditor } from "@agentix-e/db-node/security";
 
 const auditor = new RotationAuditor();
 rotation.on("rotation", (event) => auditor.record(event));
@@ -774,7 +773,7 @@ const report = auditor.generateReport("PCI-DSS");
 ### 3.6 Rolling upgrade
 
 ```ts
-import { RollingUpgradeOrchestrator } from "@agentix-e/db-operations-node/rollingupgrade";
+import { RollingUpgradeOrchestrator } from "@agentix-e/db-node/rollingupgrade";
 
 const upgrade = new RollingUpgradeOrchestrator({ minBakeMs: 30_000 });
 const stats = await upgrade.execute({
@@ -800,7 +799,7 @@ long-lived orchestrator runs more than one upgrade.
 ### 3.7 Maintenance windows
 
 ```ts
-import { MaintenanceWindowScheduler } from "@agentix-e/db-operations-node/maintenance";
+import { MaintenanceWindowScheduler } from "@agentix-e/db-node/maintenance";
 
 const scheduler = new MaintenanceWindowScheduler();
 scheduler.registerWindow({
@@ -862,7 +861,7 @@ in UTC. The grammar is its own module (`parseCron` / `parseCronField` are export
 check an expression before you register a window:
 
 ```ts
-import { parseCron } from "@agentix-e/db-operations-node/maintenance";
+import { parseCron } from "@agentix-e/db-node/maintenance";
 
 parseCron("*/15 0-6 * * 1-5").minutes; // Set { 0, 15, 30, 45 }
 parseCron("0 3 * *"); // throws: expected 5 fields

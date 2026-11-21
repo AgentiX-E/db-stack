@@ -14,7 +14,7 @@
  */
 
 import { readdirSync } from 'node:fs';
-import { FileAuditStore } from '@agentix-e/db-operations-node/audit';
+import { FileAuditStore } from '@agentix-e/db-node/audit';
 
 const RAW = process.env.AUDIT_READER_CONFIG;
 if (!RAW) {

@@ -1,8 +1,7 @@
 packages:
+  - node
   - cluster
   - federation
-  - operations
-  - operations/packages/*
   - e2e
 
 # @mongodb-js/zstd ships a native prebuilt binary fetched at install time.

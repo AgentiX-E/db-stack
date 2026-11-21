@@ -265,7 +265,7 @@ test("the command line refuses to start without a target, and starts nothing", (
   assert.equal(child.status, 2);
   assert.match(
     child.stderr,
-    /expected one of cluster, federation, operations, all, received nothing/,
+    /expected one of node, cluster, federation, all, received nothing/,
   );
 });
 

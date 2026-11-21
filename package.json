@@ -2,7 +2,7 @@
   "name": "db-stack",
   "version": "1.1.0",
   "private": true,
-  "description": "AgentiX-E database stack \u2014 cluster (Raft consensus), federation (cross-cluster sync) and operations (ops framework) as a single monorepo",
+  "description": "AgentiX-E database stack — node (single-node operations), cluster (Raft consensus) and federation (cross-cluster sync) as a single monorepo",
   "license": "MIT",
   "packageManager": "pnpm@10.28.2",
   "engines": {
@@ -41,11 +41,11 @@
     "test:perf": "pnpm --filter @agentix-e/db-cluster run test:perf && pnpm --filter @agentix-e/db-stack-e2e run bench",
     "test:mutation:cluster": "node scripts/mutation.mjs cluster",
     "test:mutation:federation": "node scripts/mutation.mjs federation",
-    "test:mutation:operations": "node scripts/mutation.mjs operations",
     "audit:policy": "node scripts/audit-policy.mjs",
-    "check:mutation-timeouts": "node operations/scripts/resolve-timeouts.mjs --check --all",
+    "check:mutation-timeouts": "node scripts/resolve-timeouts.mjs --check --all",
     "check:public-types": "node scripts/check-public-types.mjs",
-    "check:script-bins": "node scripts/check-script-bins.mjs"
+    "check:script-bins": "node scripts/check-script-bins.mjs",
+    "test:mutation:node": "node scripts/mutation.mjs node"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

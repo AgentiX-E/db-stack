@@ -1,6 +1,6 @@
 /**
  * FederationChaosAdapter — Bridges db-federation's PartitioningTransport
- * to the db-operations ChaosEngineV2 via IChaosTransport contract.
+ * to the db-node ChaosEngineV2 via the IChaosTransport contract.
  *
  * Each federation node uses a PartitioningTransport that supports DC-level
  * and peer-level partitioning, message loss, and latency injection.
@@ -16,7 +16,7 @@
  *   FCHAOS3 — Zero new dependencies beyond PartitioningTransport ref
  */
 
-import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from '@agentix-e/db-operations-node/chaosengine';
+import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from '@agentix-e/db-node/chaosengine';
 
 // ── Internal interface for PartitioningTransport ─────────────
 

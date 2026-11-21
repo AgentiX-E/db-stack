@@ -137,7 +137,7 @@ npm test    # 363 tests, 29 test files
 
 - **29 test files, 363 tests** — unit, integration, batch, performance, chaos
 - **CDC exactly-once chaos tests** — crash & restart resilience
-- **Cross-repo end-to-end** — db-cluster + db-federation + db-operations integration
+- **Cross-repo end-to-end** — db-node + db-cluster + db-federation integration
 - **Stage isolation chaos** — fault injection & latency validation
 
 ---
@@ -154,7 +154,7 @@ See:
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## License
 

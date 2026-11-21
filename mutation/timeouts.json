@@ -19,108 +19,10 @@
         }
       ]
     },
-    "operations": {
-      "capMs": 30000,
-      "resolvedOn": "2026-11-20",
+    "node": {
       "entries": [
         {
-          "file": "operations/packages/cluster/src/rollout/ClusterRolloutPlanner.ts",
-          "line": 143,
-          "mutator": "BlockStatement",
-          "replacement": "{}",
-          "reason": "Hit limit reached (5201/5200)",
-          "id": "323",
-          "verdict": "stuck",
-          "detail": "no test reported anything before the cap",
-          "evidence": "30091ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
-        },
-        {
-          "file": "operations/packages/cluster/src/rollout/ClusterRolloutPlanner.ts",
-          "line": 143,
-          "mutator": "EqualityOperator",
-          "replacement": "cursor <= ordered.length",
-          "reason": "Hit limit reached (7101/7100)",
-          "id": "321",
-          "verdict": "stuck",
-          "detail": "no test reported anything before the cap",
-          "evidence": "30039ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
-        },
-        {
-          "file": "operations/packages/cluster/src/rollout/ClusterRolloutPlanner.ts",
-          "line": 144,
-          "mutator": "ArithmeticOperator",
-          "replacement": "cursor - effectiveBatchSize",
-          "reason": "Hit limit reached (5201/5200)",
-          "id": "325",
-          "verdict": "stuck",
-          "detail": "no test reported anything before the cap",
-          "evidence": "30094ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
-        },
-        {
-          "file": "operations/packages/cluster/src/rollout/ClusterRolloutPlanner.ts",
-          "line": 145,
-          "mutator": "AssignmentOperator",
-          "replacement": "cursor -= slice.length",
-          "reason": "Hit limit reached (5201/5200)",
-          "id": "326",
-          "verdict": "stuck",
-          "detail": "no test reported anything before the cap",
-          "evidence": "28538ms",
-          "tail": "❯ MessagePort.<anonymous> node:internal/per_context/messageport:23:28 ⏎ ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ ⏎ Serialized Error: { code: 'ERR_IPC_CHANNEL_CLOSED' }"
-        },
-        {
-          "file": "operations/packages/cluster/src/rollout/ClusterRolloutPlanner.ts",
-          "line": 239,
-          "mutator": "BlockStatement",
-          "replacement": "{}",
-          "reason": "Hit limit reached (9201/9200)",
-          "id": "407",
-          "verdict": "stuck",
-          "detail": "no test reported anything before the cap",
-          "evidence": "30038ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
-        },
-        {
-          "file": "operations/packages/cluster/src/rollout/ClusterRolloutPlanner.ts",
-          "line": 240,
-          "mutator": "BooleanLiteral",
-          "replacement": "true",
-          "reason": "Hit limit reached (9201/9200)",
-          "id": "408",
-          "verdict": "stuck",
-          "detail": "no test reported anything before the cap",
-          "evidence": "30097ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
-        },
-        {
-          "file": "operations/packages/cluster/src/rollout/ClusterRolloutPlanner.ts",
-          "line": 243,
-          "mutator": "ConditionalExpression",
-          "replacement": "true",
-          "reason": "Hit limit reached (9101/9100)",
-          "id": "410",
-          "verdict": "stuck",
-          "detail": "no test reported anything before the cap",
-          "evidence": "30089ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
-        },
-        {
-          "file": "operations/packages/cluster/src/scaling/ClusterScalingExecutor.ts",
-          "line": 126,
-          "mutator": "AssignmentOperator",
-          "replacement": "index -= 1",
-          "reason": "Hit limit reached (1301/1300)",
-          "id": "482",
-          "verdict": "stuck",
-          "detail": "no test reported anything before the cap",
-          "evidence": "30062ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
-        },
-        {
-          "file": "operations/packages/node/src/audit/impl/FileAuditStore.ts",
+          "file": "node/src/audit/impl/FileAuditStore.ts",
           "line": 1057,
           "mutator": "ArrowFunction",
           "replacement": "() => undefined",
@@ -132,7 +34,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/audit/impl/FileAuditStore.ts",
+          "file": "node/src/audit/impl/FileAuditStore.ts",
           "line": 1242,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -144,7 +46,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/audit/impl/FileAuditStore.ts",
+          "file": "node/src/audit/impl/FileAuditStore.ts",
           "line": 1242,
           "mutator": "EqualityOperator",
           "replacement": "this.pendingCompressions.size <= 0",
@@ -156,7 +58,7 @@
           "tail": "✓ packages/node/src/audit/__tests__/AC76-audit-reads-through-a-port.test.ts (11 tests | 2 skipped) 159ms ⏎ ✓ packages/node/src/audit/__tests__/FileAuditStore.chaos.test.ts (2 tests) 363ms ⏎ ✓ FileAuditStore Chaos (D2) > B.1: rotations in flight, then a second store recovers every entry  358ms"
         },
         {
-          "file": "operations/packages/node/src/audit/impl/FileAuditStore.ts",
+          "file": "node/src/audit/impl/FileAuditStore.ts",
           "line": 1242,
           "mutator": "EqualityOperator",
           "replacement": "this.pendingCompressions.size >= 0",
@@ -168,7 +70,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/audit/impl/FileAuditStore.ts",
+          "file": "node/src/audit/impl/FileAuditStore.ts",
           "line": 1243,
           "mutator": "ArrayDeclaration",
           "replacement": "[]",
@@ -180,7 +82,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/audit/impl/FileAuditStore.ts",
+          "file": "node/src/audit/impl/FileAuditStore.ts",
           "line": 1340,
           "mutator": "CallExpression",
           "replacement": ";",
@@ -192,7 +94,7 @@
           "tail": "× AC 87 — what counts as expired > EX.3: the sweep deletes what is past retention and keeps what is inside it 15010ms ⏎ → Test timed out in 15000ms. ⏎ If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
         },
         {
-          "file": "operations/packages/node/src/audit/impl/FileAuditStore.ts",
+          "file": "node/src/audit/impl/FileAuditStore.ts",
           "line": 1373,
           "mutator": "EqualityOperator",
           "replacement": "this.pendingCommits.length !== 0",
@@ -204,7 +106,7 @@
           "tail": "× AC 87 — what counts as expired > EX.3: the sweep deletes what is past retention and keeps what is inside it 15025ms ⏎ → Test timed out in 15000ms. ⏎ If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
         },
         {
-          "file": "operations/packages/node/src/audit/impl/FileAuditStore.ts",
+          "file": "node/src/audit/impl/FileAuditStore.ts",
           "line": 852,
           "mutator": "ArrayDeclaration",
           "replacement": "[\"Stryker was here\"]",
@@ -216,7 +118,7 @@
           "tail": "× AC 87 — what counts as expired > EX.3: the sweep deletes what is past retention and keeps what is inside it 15011ms ⏎ → Test timed out in 15000ms. ⏎ If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
         },
         {
-          "file": "operations/packages/node/src/audit/impl/FileAuditStore.ts",
+          "file": "node/src/audit/impl/FileAuditStore.ts",
           "line": 993,
           "mutator": "UpdateOperator",
           "replacement": "attempt--",
@@ -228,7 +130,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/backup/impl/RetentionPolicyEvaluator.ts",
+          "file": "node/src/backup/impl/RetentionPolicyEvaluator.ts",
           "line": 130,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -240,7 +142,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/backup/impl/RetentionPolicyEvaluator.ts",
+          "file": "node/src/backup/impl/RetentionPolicyEvaluator.ts",
           "line": 132,
           "mutator": "ConditionalExpression",
           "replacement": "false",
@@ -252,7 +154,7 @@
           "tail": "Tests  1 failed | 45 passed | 60 skipped (106) ⏎ Start at  22:35:48 ⏎ Duration  4.85s (transform 546ms, setup 258ms, collect 598ms, tests 3.92s, environment 1ms, prepare 1.81s)"
         },
         {
-          "file": "operations/packages/node/src/backup/impl/backupChain.ts",
+          "file": "node/src/backup/impl/backupChain.ts",
           "line": 103,
           "mutator": "CallExpression",
           "replacement": ";",
@@ -264,7 +166,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/backup/impl/backupChain.ts",
+          "file": "node/src/backup/impl/backupChain.ts",
           "line": 57,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -276,7 +178,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/backup/impl/backupChain.ts",
+          "file": "node/src/backup/impl/backupChain.ts",
           "line": 57,
           "mutator": "EqualityOperator",
           "replacement": "pending.length >= 0",
@@ -288,7 +190,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/backup/impl/backupChain.ts",
+          "file": "node/src/backup/impl/backupChain.ts",
           "line": 64,
           "mutator": "ConditionalExpression",
           "replacement": "false",
@@ -300,7 +202,7 @@
           "tail": "Tests  1 failed | 1 passed | 21 skipped (23) ⏎ Start at  22:33:12 ⏎ Duration  5.44s (transform 178ms, setup 22ms, collect 80ms, tests 4.59s, environment 0ms, prepare 223ms)"
         },
         {
-          "file": "operations/packages/node/src/backup/impl/backupChain.ts",
+          "file": "node/src/backup/impl/backupChain.ts",
           "line": 89,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -312,7 +214,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/backup/impl/backupChain.ts",
+          "file": "node/src/backup/impl/backupChain.ts",
           "line": 96,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -324,7 +226,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/backup/impl/backupChain.ts",
+          "file": "node/src/backup/impl/backupChain.ts",
           "line": 96,
           "mutator": "ConditionalExpression",
           "replacement": "false",
@@ -336,7 +238,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 467,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -348,7 +250,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 469,
           "mutator": "AssignmentOperator",
           "replacement": "currentMs -= DAY_MS",
@@ -360,7 +262,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 494,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -372,7 +274,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 501,
           "mutator": "ArithmeticOperator",
           "replacement": "cursorMs - DAY_MS",
@@ -384,7 +286,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 519,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -396,7 +298,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 546,
           "mutator": "ArithmeticOperator",
           "replacement": "month - 1",
@@ -408,7 +310,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 547,
           "mutator": "ArithmeticOperator",
           "replacement": "year - 1",
@@ -420,7 +322,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 547,
           "mutator": "ConditionalExpression",
           "replacement": "false",
@@ -432,7 +334,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations ⏎ ✓ packages/node/src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 3ms"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 548,
           "mutator": "ConditionalExpression",
           "replacement": "true",
@@ -444,7 +346,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 548,
           "mutator": "EqualityOperator",
           "replacement": "newMonth <= 11",
@@ -456,7 +358,7 @@
           "tail": "× AC 54 — weekly projection lower bound > AC 54.12: monthly projection honours the lower bound 7ms ⏎ → expected [] to deeply equal [ 1797314400000 ] ⏎ ↓ AC 54 — weekly projection lower bound > AC 54.13: cron projection honours the lower bound"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 548,
           "mutator": "EqualityOperator",
           "replacement": "newMonth >= 11",
@@ -468,7 +370,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations ⏎ ✓ packages/node/src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 3ms"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 564,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -480,7 +382,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+          "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
           "line": 564,
           "mutator": "LogicalOperator",
           "replacement": "cursor.getTime() < toMs || iterations < maxIterations",
@@ -492,7 +394,7 @@
           "tail": "Tests  10 failed | 25 passed | 249 skipped (284) ⏎ Start at  22:45:06 ⏎ Duration  17.28s (transform 1.09s, setup 217ms, collect 1.49s, tests 18.47s, environment 1ms, prepare 3.62s)"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/cron.ts",
+          "file": "node/src/maintenance/impl/cron.ts",
           "line": 109,
           "mutator": "ConditionalExpression",
           "replacement": "false",
@@ -504,7 +406,7 @@
           "tail": "→ */x * * * *: expected [ { id: 'inst-1', …(4) }, …(1) ] to have a length of +0 but got 2 ⏎ ↓ AC 61 — cron fields at their edges, and a terminal state that stays terminal > AC 61.19: finishing a failed instance twice is refused, and says so ⏎ ↓ AC 61 — cron fields at their edges, and a terminal state that stays terminal > AC 61.20: completing an instance twice is refused, and says so"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/cron.ts",
+          "file": "node/src/maintenance/impl/cron.ts",
           "line": 109,
           "mutator": "ConditionalExpression",
           "replacement": "false",
@@ -516,7 +418,7 @@
           "tail": "✓ packages/node/src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 3ms ⏎ ✓ packages/node/src/maintenance/__tests__/AC58-schedule-boundaries.test.ts (11 tests | 9 skipped) 44ms ⏎ ✓ packages/node/src/maintenance/__tests__/AC61-schedule-boundaries.test.ts (20 tests | 17 skipped) 45ms"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/cron.ts",
+          "file": "node/src/maintenance/impl/cron.ts",
           "line": 109,
           "mutator": "EqualityOperator",
           "replacement": "step < 0",
@@ -528,7 +430,7 @@
           "tail": "✓ packages/node/src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 3ms ⏎ ✓ packages/node/src/maintenance/__tests__/i33-maintenance-windows.test.ts (54 tests | 53 skipped) 4ms ⏎ ✓ packages/node/src/maintenance/__tests__/AC61-schedule-boundaries.test.ts (20 tests | 17 skipped) 7ms"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/cron.ts",
+          "file": "node/src/maintenance/impl/cron.ts",
           "line": 109,
           "mutator": "LogicalOperator",
           "replacement": "!Number.isFinite(step) && step <= 0",
@@ -540,7 +442,7 @@
           "tail": "→ */x * * * *: expected [ { id: 'inst-1', …(4) }, …(1) ] to have a length of +0 but got 2 ⏎ ↓ AC 61 — cron fields at their edges, and a terminal state that stays terminal > AC 61.19: finishing a failed instance twice is refused, and says so ⏎ ↓ AC 61 — cron fields at their edges, and a terminal state that stays terminal > AC 61.20: completing an instance twice is refused, and says so"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/cron.ts",
+          "file": "node/src/maintenance/impl/cron.ts",
           "line": 121,
           "mutator": "AssignmentOperator",
           "replacement": "value -= step",
@@ -552,7 +454,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/cron.ts",
+          "file": "node/src/maintenance/impl/cron.ts",
           "line": 55,
           "mutator": "UpdateOperator",
           "replacement": "value--",
@@ -564,7 +466,7 @@
           "tail": "❯ MessagePort.<anonymous> node:internal/per_context/messageport:23:28 ⏎ ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ ⏎ Serialized Error: { code: 'ERR_IPC_CHANNEL_CLOSED' }"
         },
         {
-          "file": "operations/packages/node/src/maintenance/impl/cron.ts",
+          "file": "node/src/maintenance/impl/cron.ts",
           "line": 97,
           "mutator": "UpdateOperator",
           "replacement": "value--",
@@ -576,7 +478,7 @@
           "tail": "Tests  9 failed | 99 skipped (108) ⏎ Start at  22:36:06 ⏎ Duration  28.16s (transform 330ms, setup 247ms, collect 333ms, tests 37.64s, environment 0ms, prepare 1.38s)"
         },
         {
-          "file": "operations/packages/node/src/security/impl/AuditLogManager.ts",
+          "file": "node/src/security/impl/AuditLogManager.ts",
           "line": 261,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -588,7 +490,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/security/impl/AuditLogManager.ts",
+          "file": "node/src/security/impl/AuditLogManager.ts",
           "line": 275,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -600,7 +502,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/security/impl/KeyManager.ts",
+          "file": "node/src/security/impl/KeyManager.ts",
           "line": 465,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -612,7 +514,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/security/impl/KeyManager.ts",
+          "file": "node/src/security/impl/KeyManager.ts",
           "line": 465,
           "mutator": "EqualityOperator",
           "replacement": "this.kekCache.size <= MAX_CACHED_KEKS",
@@ -624,7 +526,7 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         },
         {
-          "file": "operations/packages/node/src/security/impl/KeyManager.ts",
+          "file": "node/src/security/impl/KeyManager.ts",
           "line": 468,
           "mutator": "CallExpression",
           "replacement": ";",
@@ -635,7 +537,111 @@
           "evidence": "30051ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
         }
-      ]
+      ],
+      "resolvedOn": "2026-11-20",
+      "capMs": 30000
+    },
+    "cluster": {
+      "entries": [
+        {
+          "file": "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
+          "line": 143,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "reason": "Hit limit reached (5201/5200)",
+          "id": "323",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30091ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
+          "line": 143,
+          "mutator": "EqualityOperator",
+          "replacement": "cursor <= ordered.length",
+          "reason": "Hit limit reached (7101/7100)",
+          "id": "321",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30039ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
+          "line": 144,
+          "mutator": "ArithmeticOperator",
+          "replacement": "cursor - effectiveBatchSize",
+          "reason": "Hit limit reached (5201/5200)",
+          "id": "325",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30094ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
+          "line": 145,
+          "mutator": "AssignmentOperator",
+          "replacement": "cursor -= slice.length",
+          "reason": "Hit limit reached (5201/5200)",
+          "id": "326",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "28538ms",
+          "tail": "❯ MessagePort.<anonymous> node:internal/per_context/messageport:23:28 ⏎ ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ ⏎ Serialized Error: { code: 'ERR_IPC_CHANNEL_CLOSED' }"
+        },
+        {
+          "file": "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
+          "line": 239,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "reason": "Hit limit reached (9201/9200)",
+          "id": "407",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30038ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
+          "line": 240,
+          "mutator": "BooleanLiteral",
+          "replacement": "true",
+          "reason": "Hit limit reached (9201/9200)",
+          "id": "408",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30097ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
+          "line": 243,
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "reason": "Hit limit reached (9101/9100)",
+          "id": "410",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30089ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        },
+        {
+          "file": "cluster/src/assemblers/scaling/ClusterScalingExecutor.ts",
+          "line": 126,
+          "mutator": "AssignmentOperator",
+          "replacement": "index -= 1",
+          "reason": "Hit limit reached (1301/1300)",
+          "id": "482",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30062ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/operations"
+        }
+      ],
+      "resolvedOn": "2026-11-20",
+      "capMs": 30000
     }
   }
 }

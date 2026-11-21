@@ -31,7 +31,7 @@ const MAX_LISTED = 60;
 export const PACKAGES = [
   { name: "@agentix-e/db-cluster", dir: "cluster" },
   { name: "@agentix-e/db-federation", dir: "federation" },
-  { name: "@agentix-e/db-operations", dir: "operations" },
+  { name: "@agentix-e/db-node", dir: "node" },
   // The end-to-end harness is production code by any useful definition: it
   // starts real processes, mints certificates and drives the TLS handshakes the
   // acceptance results depend on. Leaving it out of the gate meant its coverage

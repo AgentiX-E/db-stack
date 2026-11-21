@@ -37,9 +37,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - package: cluster
-          - package: operations
-          - package: federation # needs the cluster build for its types
+          - package: node
+          - package: cluster # needs the node build: the assemblers import its autoscaler types
+          - package: federation # needs both builds
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -50,7 +50,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Turbo builds the workspace dependencies of the target package first.
       # A plain `pnpm --filter ... run build` runs the dependencies in parallel
-      # and the operations packages then typecheck against half-written dist
+      # and a dependent package then typechecks against half-written dist
       # output (TS2307 on the `core/types` subpath).
       - name: Typecheck (builds workspace dependencies first)
         run: pnpm turbo run typecheck --filter=./${{ matrix.package }}
@@ -115,7 +115,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [cluster, federation, operations]
+        package: [node, cluster, federation]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -164,7 +164,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [cluster, federation, operations]
+        package: [node, cluster, federation]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -183,7 +183,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [cluster, federation, operations]
+        package: [node, cluster, federation]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -458,7 +458,7 @@ jobs:
   #
   # It runs in a sandbox, and the sandbox is a copy of the repository: Stryker copies
   # the working directory, so the run starts at the root — where `tsconfig.base.json`
-  # (which every `operations` tsconfig extends) and `scripts/test-tmpdir.mjs` (which
+  # (which every package's tsconfig extends) and `scripts/test-tmpdir.mjs` (which
   # every `vitest.setup.ts` imports) both are. Running in place was how this job used to
   # get past their absence, and it made the score a floor rather than a measurement:
   # a worker's vitest could read a source another worker had already restored. The
@@ -467,7 +467,7 @@ jobs:
   # One step per target, by name: an aggregate step would leave a failing package
   # indistinguishable from a failing gate.
   mutation:
-    name: Mutation (cluster + federation + operations)
+    name: Mutation (node + cluster + federation)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -482,16 +482,16 @@ jobs:
         run: pnpm run test:mutation:cluster
       - name: Mutation score — federation
         run: pnpm run test:mutation:federation
-      - name: Mutation score — operations
-        run: pnpm run test:mutation:operations
+      - name: Mutation score — node
+        run: pnpm run test:mutation:node
       # A `Timeout` is not a verdict: it says the runner stopped, not that a test
-      # objected. The operations target has 59 of them, and 33 are the vitest
-      # runner's hit-limit heuristic — a guess at non-termination made from an
-      # execution count — rather than a clock. This step reads them: the report and
+      # objected. The node target has 43 of them and the cluster target 8, and
+      # many are the vitest runner's hit-limit heuristic — a guess at
+      # non-termination made from an execution count — rather than a clock. This step reads them: the report and
       # `mutation/timeouts.json` must name each other. A new one fails here with the
       # command that resolves it, and a proof whose mutant no longer exists fails
       # too. Milliseconds, because the replay that produced the file is
-      # `operations/scripts/resolve-timeouts.mjs --record`.
+      # `scripts/resolve-timeouts.mjs --record`.
       - name: Every timeout has been read
         run: pnpm run check:mutation-timeouts
       # The sandbox is the claim, so the working tree is the evidence. A run that

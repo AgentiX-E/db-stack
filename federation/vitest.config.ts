@@ -29,6 +29,7 @@ export default defineConfig({
         'src/**/*.d.ts',
         // Barrel / interface-only modules.
         'src/index.ts',
+        'src/**/index.ts',
         'src/interfaces/**',
         'src/types.ts',
       ],
@@ -47,16 +48,16 @@ export default defineConfig({
       '@agentix-e/db-federation': path.resolve(root, 'src/index.ts'),
       '@agentix-e/db-cluster/testing': path.resolve(root, '../cluster/src/testing/index.ts'),
       '@agentix-e/db-cluster': path.resolve(root, '../cluster/src/index.ts'),
-      '@agentix-e/db-operations-node/core': path.resolve(root, '../operations/packages/node/src/core/index.ts'),
-      '@agentix-e/db-operations-node/audit': path.resolve(root, '../operations/packages/node/src/audit/index.ts'),
-      '@agentix-e/db-operations-node/backup': path.resolve(root, '../operations/packages/node/src/backup/index.ts'),
-      '@agentix-e/db-operations-node/observability': path.resolve(
+      '@agentix-e/db-node/core': path.resolve(root, '../node/src/core/index.ts'),
+      '@agentix-e/db-node/audit': path.resolve(root, '../node/src/audit/index.ts'),
+      '@agentix-e/db-node/backup': path.resolve(root, '../node/src/backup/index.ts'),
+      '@agentix-e/db-node/observability': path.resolve(
         root,
-        '../operations/packages/node/src/observability/index.ts',
+        '../node/src/observability/index.ts',
       ),
-      '@agentix-e/db-operations-node/chaosengine': path.resolve(
+      '@agentix-e/db-node/chaosengine': path.resolve(
         root,
-        '../operations/packages/node/src/chaosengine/index.ts',
+        '../node/src/chaosengine/index.ts',
       ),
     },
   },

@@ -38,8 +38,8 @@ import { DedupRing } from '../../replication/DedupRing';
 import { HLC } from '../../hlc/HLC';
 import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry';
 
-// ── Repo C: db-operations ───────────────────────────────────
-import { FileAuditStore } from '@agentix-e/db-operations-node/audit';
+// ── Repo C: db-node ─────────────────────────────────────────
+import { FileAuditStore } from '@agentix-e/db-node/audit';
 
 // ── Constants ───────────────────────────────────────────────
 

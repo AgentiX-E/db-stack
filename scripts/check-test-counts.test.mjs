@@ -339,7 +339,7 @@ test("a page the run disagrees with exits non-zero and names the page", () => {
 });
 
 test("the repository's page still contains every sentence the gate reads", () => {
-  const text = readFileSync(resolve(ROOT, "operations/README.md"), "utf8");
+  const text = readFileSync(resolve(ROOT, "node/README.md"), "utf8");
   const measured = measuredOf();
 
   // Vacuity guard: a statement whose pattern matches nothing produces a finding
@@ -349,16 +349,16 @@ test("the repository's page still contains every sentence the gate reads", () =>
     assert.match(
       text,
       statement.pattern,
-      `operations/README.md no longer states ${statement.id}`,
+      `node/README.md no longer states ${statement.id}`,
     );
   }
 });
 
 test("the repository's table adds up to the totals the page states, by its own arithmetic", () => {
-  const text = readFileSync(resolve(ROOT, "operations/README.md"), "utf8");
+  const text = readFileSync(resolve(ROOT, "node/README.md"), "utf8");
   const rows = [
     ...text.matchAll(
-      /^\|\s*\[`([a-z0-9-]+)`\]\(\.\/packages\/\1\/\)\s*\|[^|]*\|\s*([\d\s,]+?)\s*\|/gm,
+      /^\|\s*\[`([a-z0-9-]+)`\]\(\.\/(?:packages|src)\/\1\/\)\s*\|[^|]*\|\s*([\d\s,]+?)\s*\|/gm,
     ),
   ];
 
@@ -367,12 +367,12 @@ test("the repository's table adds up to the totals the page states, by its own a
     /reports\s+(\d+)\s+files\s+and\s+([\d\s,]+?)\s+tests?,\s+0\s+failures/.exec(
       text,
     );
-  assert.ok(stated, "the total sentence is gone from operations/README.md");
+  assert.ok(stated, "the total sentence is gone from node/README.md");
 
   assert.equal(
     rows.length,
-    3,
-    "the table has three rows: one per package in operations/packages",
+    20,
+    "the table has one row per module: twenty directories under node/src",
   );
   assert.equal(
     sum,
@@ -465,10 +465,7 @@ test("the default report path is this tree's report, and its absence names it", 
     });
 
     assert.equal(code, 1);
-    assert.match(
-      errors[0],
-      /no report at operations\/coverage\/test-report\.json/,
-    );
+    assert.match(errors[0], /no report at node\/coverage\/test-report\.json/);
     assert.match(errors[0], /writes one\.$/m);
   } finally {
     rmSync(dir, { recursive: true, force: true });

@@ -388,7 +388,7 @@ See the [architecture decision records](https://github.com/AgentiX-E/db-stack-do
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## License
 

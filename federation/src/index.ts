@@ -181,3 +181,11 @@ export type {
   GraphVecFederationConsumerConfig,
   IGraphVecConsensusProvider,
 } from './integration/GraphVecFederationConsumer';
+
+// Query routing and schema federation. The router assigns a query to nodes by load,
+// health and geography; the federator watches the schemas those nodes agree on and
+// coordinates the migrations that make them agree again. Neither needs to know how
+// the replication below them works, and both import their shared vocabulary from
+// `@agentix-e/db-node/core`.
+export * from './query/index.js';
+export * from './schema/index.js';

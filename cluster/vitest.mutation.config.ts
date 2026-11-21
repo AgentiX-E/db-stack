@@ -39,6 +39,15 @@ export default defineConfig({
       'src/__tests__/unit/SqliteStorage.handle-lifecycle.test.ts',
       'src/__tests__/unit/SqliteStorage.durability.test.ts',
       'src/__tests__/unit/SqliteNodeStorage.test.ts',
+      // The assemblers: which member leaves, which batch runs, which transport is
+      // told to drop traffic. A mutant there is not a wrong number on a graph — it
+      // is a group that loses quorum or a partition that only exists on one side.
+      // They arrived from the operations tree, which is why this file says
+      // `src/assemblers` where it used to say `packages/cluster`.
+      'src/assemblers/membership/__tests__/quorum.test.ts',
+      'src/assemblers/scaling/__tests__/ClusterScalingExecutor.test.ts',
+      'src/assemblers/rollout/__tests__/ClusterRolloutPlanner.test.ts',
+      'src/assemblers/chaos/__tests__/RaftFaultTranslator.test.ts',
     ],
     exclude: [],
     pool: 'forks',

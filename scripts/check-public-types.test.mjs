@@ -245,12 +245,7 @@ test("resolves the export surface of a real package", () => {
 test("finds the workspace packages, and finds more than one", () => {
   // A walk over zero packages reports perfect compliance for the same reason a
   // walk over zero documents does.
-  const packages = [
-    "cluster",
-    "federation",
-    "operations/packages/node",
-    "operations/packages/cluster",
-  ];
+  const packages = ["node", "cluster", "federation"];
   for (const dir of packages) {
     const result = auditPackage(
       resolve(ROOT, dir, "src", "index.ts"),

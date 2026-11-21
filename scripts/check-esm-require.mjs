@@ -49,15 +49,7 @@ import { pathToFileURL } from "node:url";
 const ROOT = resolve(import.meta.dirname, "..");
 
 /** Package roots that may declare `"type": "module"`. */
-const PACKAGE_ROOTS = [
-  "cluster",
-  "federation",
-  "operations",
-  "e2e",
-  "operations/packages/node",
-  "operations/packages/cluster",
-  "operations/packages/federation",
-];
+const PACKAGE_ROOTS = ["node", "cluster", "federation", "e2e"];
 
 const SOURCE_EXTENSIONS = [".ts", ".mts", ".js", ".mjs"];
 

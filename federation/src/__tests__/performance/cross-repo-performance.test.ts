@@ -3,7 +3,7 @@
  *
  * D2 iteration — measures the full pipeline latency:
  *   Raft propose (db-cluster) → CDC capture + Outbox persist (db-federation)
- *   → Transport send + Dedup receive → FileAuditStore write (db-operations)
+ *   → Transport send + Dedup receive → FileAuditStore write (db-node)
  *
  * Metrics:
  *   P50 / P95 / P99 latency for each stage and total pipeline
@@ -37,14 +37,10 @@ import { DedupRing } from '../../replication/DedupRing';
 import type { OutboxEntryInput } from '../../interfaces/outbox/OutboxEntry';
 import { HLC } from '../../hlc/HLC';
 
-// ── Repo C: db-operations ───────────────────────────────────
-import { FileAuditStore } from '@agentix-e/db-operations-node/audit';
-import {
-  InMemoryBackupManager,
-  InMemoryStorageBackend,
-  RetentionPolicyEvaluator,
-} from '@agentix-e/db-operations-node/backup';
-import { InMemoryAuditStore } from '@agentix-e/db-operations-node/audit';
+// ── Repo C: db-node ─────────────────────────────────────────
+import { FileAuditStore } from '@agentix-e/db-node/audit';
+import { InMemoryBackupManager, InMemoryStorageBackend, RetentionPolicyEvaluator } from '@agentix-e/db-node/backup';
+import { InMemoryAuditStore } from '@agentix-e/db-node/audit';
 
 // ── Constants ───────────────────────────────────────────────
 

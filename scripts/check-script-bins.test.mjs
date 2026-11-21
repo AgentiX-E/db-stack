@@ -100,7 +100,7 @@ test("scans more than one manifest", () => {
   const dirs = workspaceDirs(ROOT);
   assert.ok(dirs.includes("cluster"));
   assert.ok(dirs.includes("federation"));
-  assert.ok(dirs.some((dir) => dir.startsWith("operations/packages/")));
+  assert.ok(dirs.includes("node"), `expected node in ${dirs.join(", ")}`);
 });
 
 test("installedBinaries unions the .bin directories of the root and every package", () => {
@@ -189,29 +189,26 @@ test("the command line exits 0 on this workspace", () => {
   assert.match(child.stdout, /every script command is installed/);
 });
 
-test("workspaceDirs keeps the four trees, and the packages that have a manifest", () => {
+test("workspaceDirs keeps the four trees, and only those that carry a manifest", () => {
   const root = mkdtempSync(join(tmpdir(), "script-bins-"));
   try {
-    // No operations/packages at all: the four fixed trees still apply, and only
-    // those that carry a manifest are returned.
+    // Four trees, one level. `operations/packages/*` used to need a second pass;
+    // the packages moved to the top level, so a scan for a nested tree is gone
+    // rather than kept as a branch that can never run.
     mkdirSync(join(root, "cluster"), { recursive: true });
     writeFileSync(join(root, "cluster", "package.json"), "{}");
     mkdirSync(join(root, "federation"), { recursive: true });
+    mkdirSync(join(root, "node"), { recursive: true });
 
+    // `node` and `federation` exist as directories but carry no manifest yet, so
+    // neither is a package the gate can read scripts from.
     assert.deepEqual(workspaceDirs(root), ["cluster"]);
 
-    mkdirSync(join(root, "operations", "packages", "one"), { recursive: true });
-    writeFileSync(
-      join(root, "operations", "packages", "one", "package.json"),
-      "{}",
-    );
-    // A stray file in packages/ is not a package.
-    writeFileSync(join(root, "operations", "packages", "README.md"), "");
+    writeFileSync(join(root, "node", "package.json"), "{}");
+    mkdirSync(join(root, "e2e"), { recursive: true });
+    writeFileSync(join(root, "e2e", "package.json"), "{}");
 
-    assert.deepEqual(workspaceDirs(root), [
-      "cluster",
-      "operations/packages/one",
-    ]);
+    assert.deepEqual(workspaceDirs(root), ["node", "cluster", "e2e"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -7,7 +7,7 @@ stryker-setup-*.js
 *.log
 .DS_Store
 
-# A replay in progress (`operations/scripts/replay-mutant.mjs apply`) leaves the
+# A replay in progress (`scripts/replay-mutant.mjs apply`) leaves the
 # original beside the mutated file. An interrupted replay must not be committed:
 # the `.bak` holds the *correct* source, so committing it would silently revert a
 # mutant into the repository.

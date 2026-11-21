@@ -1,6 +1,6 @@
 /**
  * RaftChaosAdapter — Bridges db-cluster's ChaosInjectingTransport to
- * the db-operations ChaosEngineV2 via the IChaosTransport contract.
+ * the db-node ChaosEngineV2 via the IChaosTransport contract.
  *
  * Each Raft node's network layer is wrapped by a ChaosInjectingTransport
  * (defined in chaos-harness.ts). This adapter exposes that transport
@@ -16,7 +16,7 @@
  *   RCHAOS3 — Zero new dependencies on Raft internals beyond transport ref
  */
 
-import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from '@agentix-e/db-operations-node/chaosengine';
+import type { IChaosTransport, ChaosTransportStats, ChaosFaultV2 } from '@agentix-e/db-node/chaosengine';
 
 // ── Internal interface (what we receive from the harness) ────
 

@@ -38,9 +38,9 @@ const ROOT = resolve(import.meta.dirname, "..");
 
 /** Where the rule applies: product and test sources, plus the workflow files. */
 const TREES = [
+  "node/src",
   "cluster/src",
   "federation/src",
-  "operations/packages",
   "e2e/src",
   ".github/workflows",
   "docs",
@@ -51,7 +51,7 @@ const LOOSE_DOCUMENTS = [
   "README.md",
   "cluster/README.md",
   "federation/README.md",
-  "operations/README.md",
+  "node/README.md",
   "e2e/README.md",
 ];
 

@@ -228,7 +228,7 @@ export function sourceAliases(root = ROOT) {
 /** Where generated fragments are written: inside the repo so resolution works. */
 function workspaceFor(root) {
   const candidates = [
-    join(root, "operations", "node_modules", ".cache", "doc-examples"),
+    join(root, "node", "node_modules", ".cache", "doc-examples"),
     join(root, "node_modules", ".cache", "doc-examples"),
   ];
   return (
@@ -244,7 +244,8 @@ export function compilerOptions(root = ROOT) {
   // diagnostic of its own. Only pass one when the directory is really there, so
   // a fixture tree compiles with the default libs and no ambient noise.
   const nodeTypes = [
-    join(root, "operations", "node_modules", "@types"),
+    join(root, "node", "node_modules", "@types"),
+    join(root, "cluster", "node_modules", "@types"),
     join(root, "node_modules", "@types"),
   ].find((dir) => existsSync(join(dir, "node")));
 

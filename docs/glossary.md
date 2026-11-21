@@ -119,7 +119,7 @@ the definition here is the narrower, operative one.
 ## Operations
 
 **Provider registry**
-: The dependency-injection seam of `db-operations`: components register implementations
+: The dependency-injection seam of `db-node`: components register implementations
   under typed tokens, so the same code runs against different engines and different
   environments (test, staging, production) without branching.
 

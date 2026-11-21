@@ -243,11 +243,13 @@ test("every published package maps its entry points to sources", () => {
   // when the gate ran, so the alias table has to point at `src/`.
   const aliases = sourceAliases(ROOT);
   assert.equal(aliases["@agentix-e/db-cluster"][0], "cluster/src/index.ts");
+  assert.equal(aliases["@agentix-e/db-node/core"][0], "node/src/core/index.ts");
   assert.equal(
-    aliases["@agentix-e/db-operations-node/core"][0],
-    "operations/packages/node/src/core/index.ts",
+    aliases["@agentix-e/db-node/security"][0],
+    "node/src/security/index.ts",
   );
-  // Twenty-two: the twenty node modules, the cluster package and the umbrella.
+  // Twenty-two: the twenty node modules plus the two subpath entries that are not
+  // modules (`core/types` and the bare package name).
   assert.ok(
     Object.keys(aliases).length >= 20,
     `expected the whole workspace, got ${Object.keys(aliases).length} entries`,
@@ -263,22 +265,12 @@ test("the repository's own examples are all read", () => {
   assert.ok(
     pages.includes(resolve(ROOT, "docs", "user-guide", "operations.md")),
   );
-  // A module page lives one level deeper than it used to: `monitor` is a
-  // directory inside `db-operations-node`, not a package of its own.
+  // `monitor` is a directory inside `db-node`, not a package of its own, and the
+  // package now sits at the top level rather than under `operations/packages/`.
   assert.ok(
-    pages.includes(
-      resolve(
-        ROOT,
-        "operations",
-        "packages",
-        "node",
-        "docs",
-        "monitor",
-        "README.md",
-      ),
-    ),
+    pages.includes(resolve(ROOT, "node", "docs", "monitor", "README.md")),
   );
-  assert.ok(pages.includes(resolve(ROOT, "operations", "README.md")));
+  assert.ok(pages.includes(resolve(ROOT, "node", "README.md")));
 });
 
 test("the real repository's examples all type-check", () => {

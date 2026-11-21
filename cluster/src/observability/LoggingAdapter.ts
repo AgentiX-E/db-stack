@@ -1,7 +1,7 @@
 /**
  * LoggingAdapter — Unified structured logger for db-cluster.
  *
- * Wraps pino with ILogger-compatible interface from db-operations.
+ * Wraps pino with an ILogger-compatible interface from db-node.
  * Provides:
  *   - Structured logging (pino backend)
  *   - Trace context propagation (traceId in every log entry)

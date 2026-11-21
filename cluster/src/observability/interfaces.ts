@@ -1,7 +1,7 @@
 /**
- * ILogger — Structured logger interface (db-operations compatible).
+ * ILogger — Structured logger interface (db-node compatible).
  *
- * Mirrors @agentix-e/db-operations-node/logger/ILogger to enable
+ * Mirrors @agentix-e/db-node/logger/ILogger to enable
  * library-agnostic logging across all three repos.
  *
  * @module db-cluster/observability/interfaces

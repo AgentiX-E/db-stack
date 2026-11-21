@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "One program over every test and benchmark, under exactly the production compiler options. A previous revision of the equivalent file switched `noUncheckedIndexedAccess` off; a gate that relaxes the rule it exists to enforce is not a gate, so the relaxation is gone and the code satisfies the rule instead.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "bench/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

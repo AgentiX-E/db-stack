@@ -2,23 +2,28 @@
 
 One monorepo for the three layers of the AgentiX-E database platform:
 
-| Package                    | Directory     | Role                                                                                                |
-| -------------------------- | ------------- | --------------------------------------------------------------------------------------------------- |
-| `@agentix-e/db-cluster`    | `cluster/`    | Raft consensus, sharding, HA/fencing, WAL + PITR, transport (mTLS)                                  |
-| `@agentix-e/db-federation` | `federation/` | Cross-datacenter replication: CDC, outbox, conflict resolution, anti-entropy                        |
-| `@agentix-e/db-operations` | `operations/` | Engine-agnostic operations framework — three packages: `node` (20 modules), `cluster`, `federation` |
-| `@agentix-e/db-stack-e2e`  | `e2e/`        | End-to-end acceptance suites + benchmarks (private, not published)                                  |
+| Package                    | Directory     | Role                                                                                                          |
+| -------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
+| `@agentix-e/db-node`       | `node/`       | Everything one node needs — audit, backup, security, health, metrics, logging, observability: 20 modules      |
+| `@agentix-e/db-cluster`    | `cluster/`    | One datacenter: Raft consensus, membership, scaling, rollout, chaos translation, HA/fencing, WAL + PITR, mTLS |
+| `@agentix-e/db-federation` | `federation/` | Several datacenters: CDC, outbox, conflict resolution, anti-entropy, identity, query and schema federation    |
+| `@agentix-e/db-stack-e2e`  | `e2e/`        | End-to-end acceptance suites + benchmarks (private, not published)                                            |
 
-The layers depend in one direction only:
+The three publishable packages are divided by the deployment a consumer has, not by a
+control-plane/data-plane split: a single node needs `db-node` and nothing else, one
+datacenter adds `db-cluster`, several datacenters add `db-federation`. Each package
+carries both the interfaces and the implementations for its scope.
+
+They depend in one direction only:
 
 ```
-operations  ←──  federation  ←──  cluster
-   (ops)          (multi-DC)        (consensus)
+node  ←──  cluster  ←──  federation  ←──  e2e
+(single)   (one DC)      (multi-DC)      (acceptance)
 ```
 
-`cluster` knows nothing about federation or operations. `federation` embeds `cluster`'s
-transport to move bytes between datacenters. `operations` is engine-agnostic and is
-consumed by applications, not by the other two at runtime.
+`node` imports nothing else here. `cluster` embeds a node's storage, transport and
+observability to run a consensus group. `federation` embeds a cluster's transport to
+move bytes between datacenters. Nothing below knows that the layer above exists.
 
 ## Quick start
 
@@ -56,8 +61,9 @@ import {
   TcpSecureTransport,
 } from "@agentix-e/db-federation";
 
-// Operations framework
-import { health, backup, metrics } from "@agentix-e/db-operations";
+// Everything one node needs — namespaced, because twenty modules
+// legitimately reuse names like `Config` and `Probe`
+import { health, backup, metrics } from "@agentix-e/db-node";
 ```
 
 The `@agentix-e/db-cluster/testing` entry ships the integration harness

@@ -68,11 +68,11 @@ export default defineConfig({
     alias: {
       '@agentix-e/db-cluster/testing': path.resolve(root, 'src/testing/index.ts'),
       '@agentix-e/db-cluster': path.resolve(root, 'src/index.ts'),
-      '@agentix-e/db-operations-node/chaosengine': path.resolve(
+      '@agentix-e/db-node/chaosengine': path.resolve(
         root,
-        '../operations/packages/node/src/chaosengine/index.ts',
+        '../node/src/chaosengine/index.ts',
       ),
-      '@agentix-e/db-operations-node/core': path.resolve(root, '../operations/packages/node/src/core/index.ts'),
+      '@agentix-e/db-node/core': path.resolve(root, '../node/src/core/index.ts'),
     },
   },
 });

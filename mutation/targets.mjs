@@ -44,13 +44,54 @@ export const SHARED = {
  * behind it, or a suite that no mutated file needs, fails the gate.
  */
 export const TARGETS = {
+  node: {
+    // Thirteen files that decide what gets deleted, whether a backup can be
+    // restored, which key material survives at all, which key a blob was sealed
+    // with, whether a compliance window passed, whether evidence is tamper-evident
+    // and when a maintenance window runs. These are the answers a green suite is
+    // most expensive to be wrong about.
+    mutate: [
+      "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
+      "node/src/backup/impl/RetentionPolicyEvaluator.ts",
+      "node/src/backup/impl/InMemoryBackupManager.ts",
+      "node/src/backup/impl/backupChain.ts",
+      "node/src/maintenance/impl/cron.ts",
+      "node/src/security/impl/KeyRotationManager.ts",
+      "node/src/audit/impl/FileAuditStore.ts",
+      "node/src/audit/impl/DurableFileSystem.ts",
+      "node/src/security/impl/RotationAuditor.ts",
+      "node/src/security/impl/AuditLogManager.ts",
+      "node/src/security/impl/KeyManager.ts",
+      "node/src/security/impl/EnvelopeEncryptionProvider.ts",
+      "node/src/security/impl/AES256GCMEncryptionProvider.ts",
+    ],
+    testConfig: "node/vitest.mutation.config.ts",
+    concurrency: 4,
+    thresholds: { high: 92, low: 88, break: 86 },
+  },
   cluster: {
     // The only component whose failure mode is silent corruption of the log, and
-    // the one place a "green" suite can be green for the wrong reason.
-    mutate: ["cluster/src/consensus/storage/SqliteStorage.ts"],
+    // the one place a "green" suite can be green for the wrong reason — plus the
+    // four assemblers, which decide which member leaves, which batch runs and
+    // which partition is emitted. A mutant there is not a wrong number on a
+    // graph: it is a group that loses quorum or a partition that only exists on
+    // one side.
+    mutate: [
+      "cluster/src/consensus/storage/SqliteStorage.ts",
+      "cluster/src/assemblers/membership/quorum.ts",
+      "cluster/src/assemblers/scaling/ClusterScalingExecutor.ts",
+      "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
+      "cluster/src/assemblers/chaos/RaftFaultTranslator.ts",
+    ],
     testConfig: "cluster/vitest.mutation.config.ts",
+    // Raised with the assemblers rather than lowered around them. Every file in
+    // this target measured above 94 % on its last run — `SqliteStorage.ts` 94.26 %,
+    // `ClusterRolloutPlanner.ts` 94.03 %, the other three at 100 % — so 86 is the
+    // floor those numbers support, and it is the floor the assemblers were held to
+    // when they lived in the operations target. Merging them into a target that
+    // broke at 70 would have been a quiet 16-point relaxation of their gate.
     concurrency: 4,
-    thresholds: { high: 85, low: 75, break: 70 },
+    thresholds: { high: 92, low: 88, break: 86 },
   },
   federation: {
     // The transport is where a refusal and a failure look alike from the outside.
@@ -58,34 +99,6 @@ export const TARGETS = {
     testConfig: "federation/vitest.mutation.config.ts",
     concurrency: 2,
     thresholds: { high: 85, low: 75, break: 70 },
-  },
-  operations: {
-    mutate: [
-      "operations/packages/node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
-      "operations/packages/node/src/backup/impl/RetentionPolicyEvaluator.ts",
-      "operations/packages/node/src/backup/impl/InMemoryBackupManager.ts",
-      "operations/packages/node/src/backup/impl/backupChain.ts",
-      "operations/packages/node/src/maintenance/impl/cron.ts",
-      "operations/packages/node/src/security/impl/KeyRotationManager.ts",
-      "operations/packages/node/src/audit/impl/FileAuditStore.ts",
-      "operations/packages/node/src/audit/impl/DurableFileSystem.ts",
-      "operations/packages/node/src/security/impl/RotationAuditor.ts",
-      "operations/packages/node/src/security/impl/AuditLogManager.ts",
-      "operations/packages/node/src/security/impl/KeyManager.ts",
-      "operations/packages/node/src/security/impl/EnvelopeEncryptionProvider.ts",
-      "operations/packages/node/src/security/impl/AES256GCMEncryptionProvider.ts",
-      // The cluster assemblers decide which member is removed, which batch runs,
-      // and which transport is told to drop traffic. A mutant there is not a wrong
-      // number on a graph — it is a group that loses quorum or a partition that
-      // only exists on one side.
-      "operations/packages/cluster/src/membership/quorum.ts",
-      "operations/packages/cluster/src/scaling/ClusterScalingExecutor.ts",
-      "operations/packages/cluster/src/rollout/ClusterRolloutPlanner.ts",
-      "operations/packages/cluster/src/chaos/RaftFaultTranslator.ts",
-    ],
-    testConfig: "operations/vitest.mutation.config.ts",
-    concurrency: 4,
-    thresholds: { high: 92, low: 88, break: 86 },
   },
 };
 

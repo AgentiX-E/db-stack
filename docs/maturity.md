@@ -128,7 +128,7 @@ now reads every entry point in each package's `exports` map rather than only `sr
 
 ---
 
-## 3. Operations (`@agentix-e/db-operations-*`)
+## 3. Node, cluster and federation (`@agentix-e/db-*`)
 
 Three packages, and one question decides which of them a line of code belongs to:
 **does this code need to know how many nodes exist?** A module that does not is a module in
@@ -145,7 +145,7 @@ is the leader, how many may be down before a write stops, which order they may r
 
 Twenty of the twenty-one former packages are directories now, under
 `packages/node/src/<module>/`, and they are still twenty entry points —
-`@agentix-e/db-operations-node/audit`, `…/core`, `…/slacollector` — because a module is a
+`@agentix-e/db-node/audit`, `…/core`, `…/slacollector` — because a module is a
 directory, not a package. Twenty npm names for code that cannot be misused without a topology
 would have been twenty version numbers and twenty release notes describing one decision.
 `packages/node/src/index.ts` is the whole list: twenty namespace re-exports under a header that
@@ -222,18 +222,18 @@ would have pasted and watched fail. See §4.1 for what that found.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-All four rows are from a green run of this repository; `operations` was re-measured after the
-split into three packages (99.51/99.51/99.88/98.59), `cluster` with the same run that added the
-four assembler modules to its mutation target list (99.42/99.42/99.70/98.18) and `federation` with
-its own (99.61/99.61/100/98.78). The gate covers four packages, not three:
-the end-to-end harness is measured as well, because a harness bug produces confident, meaningless
-acceptance passes.
+All four rows are from a green run of this repository, after `operations/` was dissolved and
+the four assembler modules moved from the operations target into `cluster`: `node`
+(99.44/99.44/99.86/98.57), `cluster` with the assemblers in it (99.45/99.45/99.71/98.25) and
+`federation` with the query and schema modules it absorbed (99.63/99.63/100/98.67). The gate
+covers four packages, not three: the end-to-end harness is measured as well, because a harness bug
+produces confident, meaningless acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
-| `cluster`       | 99.42% | 99.42%     | 99.70%    | 98.18%   |
-| `federation`    | 99.61% | 99.61%     | 100%      | 98.78%   |
-| `operations`    | 99.51% | 99.51%     | 99.88%    | 98.59%   |
+| `cluster`       | 99.45% | 99.45%     | 99.71%    | 98.25%   |
+| `federation`    | 99.63% | 99.63%     | 100%      | 98.67%   |
+| `node`          | 99.44% | 99.44%     | 99.86%    | 98.57%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 
 The `e2e` row covers the TypeScript harness — `support.ts` (process supervision, IPC, port
@@ -254,11 +254,11 @@ explicit goal of each iteration (see the audit reports in the companion reposito
 
 Vitest strips types with esbuild; it does not check them. Iteration 32 re-learned why the separate
 `typecheck:tests` job exists: a case written after the last local run of it compiled under vitest and
-failed under `tsc` (`noUncheckedIndexedAccess` on a `Buffer` index). CI's `Typecheck (operations)` job
+failed under `tsc` (`noUncheckedIndexedAccess` on a `Buffer` index). CI's `Typecheck (node)` job
 was the only gate that saw it, and it saw it on the first push. For a long time that meant the
 test trees were the only unverified code in the repository — and they drifted. When
 `pnpm typecheck:tests` was finally wired up it reported **1 192 errors in three test trees**
-(cluster 297, federation 317, operations 578), and a large share of them were not cosmetic:
+(cluster 297, federation 317, node 578), and a large share of them were not cosmetic:
 
 - tests configuring options the product never reads (`latency` where the field is
   `latencyP95`, `snapshotInterval` on a chaos config that has no such key,
@@ -287,7 +287,7 @@ something else, and only the compiler can see it.
 
 Both directions are now gated: `pnpm typecheck` proves the published surface compiles,
 `pnpm typecheck:tests` proves that what tests it compiles under the _same_ compiler options
-(including `noUncheckedIndexedAccess`, which the operations test config used to switch off).
+(including `noUncheckedIndexedAccess`, which the node test config used to switch off).
 A structural check, `pnpm check:gates`, fails the build if any `tsconfig` in the workspace is
 referenced by no script — the exact shape of the defect that hid those 1 192 errors: a
 configuration file that looked like a gate and ran nowhere.
@@ -349,7 +349,7 @@ documentation whatsoever.** Three rules replaced the one:
    not a skip.
 3. **Every named import in a fenced example resolves** against the package and entry point it
    names — in a package's own `docs/` **and** in the repository's `docs/`, which belongs to no
-   package and was read by nothing. `operations/docs/getting-started.md` told readers to
+   package and was read by nothing. `node/docs/getting-started.md` told readers to
    `import { HealthOrchestrator, ComponentProbe }` from a package that exports `componentProbe`;
    another snippet imported `IBackupManager` from `core` and a `BackupType` that exists nowhere,
    and returned `{ snapshotId, type, state }` where `BackupResult` is `{ success, snapshot }`.
@@ -373,14 +373,14 @@ rule that never fires.
 
 ## 5. What is **not** covered
 
-| Area                                                     | Status                           | Why it matters to you                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| -------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Per-file coverage floor**                              | Gated (from iteration 25)        | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)           | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| **Operations process-level acceptance**                  | Partially covered (iteration 35) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. Batching did not widen that gap: a burst of concurrent writes is acknowledged by **one** sync, and `GC.8` pins the case with one caller at a time to the same one-sync-per-write it always paid, so the throughput gain is concurrency and not a weaker promise. No other operations package has an out-of-process case yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| **Mutation testing over the rest of operations**         | Partially covered                | All three packages are gated by Stryker in CI (**94.26 %**, **94.10 %** and **98.03 %** as reported, gates at 70, 70 and 86). In operations thirteen of the twenty _modules_ in `node` are mutated, chosen by the selection rule _mutate what decides deletion, durability, or when work runs_; the other 7 have unit, integration and coverage gates but no mutant measures their assertions. The `cluster` package contributes four more — `quorum.ts`, `ClusterScalingExecutor`, `ClusterRolloutPlanner`, `RaftFaultTranslator` — because a scale-down that removes one node too many and a partition that emits one direction are failures a green suite can be green about. In the `cluster` and `federation` _engines_ one module each is mutated — the SQLite log and the TLS wire — because those are the two places a green suite can be green for the wrong reason. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. Iteration 52 hand-checked `CDCSubscriptionPump` against five mutations — the queue cap, the retry budget, the operation filter, the table filter, and the post-close accounting — and every one of them failed at least one named case, so it is the next entry in that queue. Iteration 53 did the same to `CDCFailureInjector`: a global instead of a per-entry budget (two cases), no duplicate-entry check, no injection-point filter, a swallowed disconnect, and a budget spent by a fault that could not fire — five edits, five named failures. |
-| **TLA+ model checking**                                  | Manual                           | The specs exist and run locally; they are not part of CI.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| **Dependency advisories**                                | Covered                          | `pnpm audit:policy` holds the _production_ tree to zero high and critical advisories with no allowlist that can reach it, and requires a named, dated entry for anything in the dev tree — the test toolchain, which cannot always be fixed on the day an advisory lands because a transitive dependency may have no patched release. An entry that matches no advisory fails the gate, so the list cannot rot into an exemption nobody re-read; the two failure modes were checked by removing the entry and by adding a bogus one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Area                                                     | Status                           | Why it matters to you                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Per-file coverage floor**                              | Gated (from iteration 25)        | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)           | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Node process-level acceptance**                        | Partially covered (iteration 35) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. Batching did not widen that gap: a burst of concurrent writes is acknowledged by **one** sync, and `GC.8` pins the case with one caller at a time to the same one-sync-per-write it always paid, so the throughput gain is concurrency and not a weaker promise. No other node module has an out-of-process case yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Mutation testing over the rest of node**               | Partially covered                | All three packages are gated by Stryker in CI (**94.26 %**, **94.10 %** and **98.03 %** as reported, gates at 86, 70 and 86). In `node` thirteen of the twenty _modules_ are mutated, chosen by the selection rule _mutate what decides deletion, durability, or when work runs_; the other 7 have unit, integration and coverage gates but no mutant measures their assertions. The `cluster` package contributes four more — `quorum.ts`, `ClusterScalingExecutor`, `ClusterRolloutPlanner`, `RaftFaultTranslator` — because a scale-down that removes one node too many and a partition that emits one direction are failures a green suite can be green about. In the `cluster` and `federation` _engines_ one module each is mutated — the SQLite log and the TLS wire — because those are the two places a green suite can be green for the wrong reason. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. Iteration 52 hand-checked `CDCSubscriptionPump` against five mutations — the queue cap, the retry budget, the operation filter, the table filter, and the post-close accounting — and every one of them failed at least one named case, so it is the next entry in that queue. Iteration 53 did the same to `CDCFailureInjector`: a global instead of a per-entry budget (two cases), no duplicate-entry check, no injection-point filter, a swallowed disconnect, and a budget spent by a fault that could not fire — five edits, five named failures. |
+| **TLA+ model checking**                                  | Manual                           | The specs exist and run locally; they are not part of CI.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Dependency advisories**                                | Covered                          | `pnpm audit:policy` holds the _production_ tree to zero high and critical advisories with no allowlist that can reach it, and requires a named, dated entry for anything in the dev tree — the test toolchain, which cannot always be fixed on the day an advisory lands because a transitive dependency may have no patched release. An entry that matches no advisory fails the gate, so the list cannot rot into an exemption nobody re-read; the two failure modes were checked by removing the entry and by adding a bogus one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 | **Cross-version upgrade path** | Partially covered | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
 | **Sustained soak beyond CI limits** | Scheduled only | Multi-hour runs exist (`test:soak`) but do not gate a pull request. |
@@ -414,7 +414,7 @@ pnpm check:package                                   # every published entry loa
 pnpm audit:policy                                    # production tree to zero, dev exceptions dated
 (cd cluster && pnpm coverage)                        # unit + integration + conformance
 (cd federation && pnpm coverage)
-(cd operations && pnpm coverage)
+(cd node && pnpm coverage)
 pnpm coverage:e2e                                    # e2e harness, same 95 % thresholds
 pnpm coverage:gate                                   # all four packages, every dimension
 pnpm check:test-counts                               # the numbers on the README are this run's numbers
@@ -427,7 +427,7 @@ pnpm verify                                          # all of the above, in orde
 
 A `Timeout` verdict has to be read, and reading one means replaying it: there is no score that answers
 "did a test object" for a run that stopped. The replay is
-`node operations/scripts/resolve-timeouts.mjs --target <name> --record`, which applies each edit to the
+`node scripts/resolve-timeouts.mjs --target <name> --record`, which applies each edit to the
 real tree, runs the tests the report attributed to it, and writes `mutation/timeouts.json`. It takes
 about half a minute per abort, so CI runs the millisecond check (`pnpm check:mutation-timeouts`) instead
 and fails when a report and that file disagree in either direction.
@@ -440,18 +440,18 @@ nobody calls is a benchmark that stays broken.
 **How the mutation score is produced.** Nineteen files are under mutation testing, chosen by one
 rule — _mutate what decides deletion, durability, or when work runs_: durable state
 (`cluster/.../SqliteStorage.ts`), the wire (`federation/.../TcpSecureTransport.ts`), what gets
-deleted (`operations/.../RetentionPolicyEvaluator.ts`, `operations/.../FileAuditStore.ts`), what a
-durable write costs (`operations/.../DurableFileSystem.ts`), whether
-a backup can be replayed at all (`operations/.../backupChain.ts`,
-`operations/.../InMemoryBackupManager.ts`), which key material survives at all
-(`operations/.../KeyManager.ts`), which key material survives a rotation
-(`operations/.../KeyRotationManager.ts`), which key a blob was sealed with
-(`operations/.../EnvelopeEncryptionProvider.ts`), what a cipher does when it is initialised twice
-(`operations/.../AES256GCMEncryptionProvider.ts`), when a window runs
-(`operations/.../MaintenanceWindowScheduler.ts`), what time it runs at
-(`operations/.../cron.ts`), whether a compliance window passed
-(`operations/.../RotationAuditor.ts`) and whether evidence is tamper-evident
-(`operations/.../AuditLogManager.ts`). The four assemblers the split introduced are mutated for a
+deleted (`node/.../RetentionPolicyEvaluator.ts`, `node/.../FileAuditStore.ts`), what a
+durable write costs (`node/.../DurableFileSystem.ts`), whether
+a backup can be replayed at all (`node/.../backupChain.ts`,
+`node/.../InMemoryBackupManager.ts`), which key material survives at all
+(`node/.../KeyManager.ts`), which key material survives a rotation
+(`node/.../KeyRotationManager.ts`), which key a blob was sealed with
+(`node/.../EnvelopeEncryptionProvider.ts`), what a cipher does when it is initialised twice
+(`node/.../AES256GCMEncryptionProvider.ts`), when a window runs
+(`node/.../MaintenanceWindowScheduler.ts`), what time it runs at
+(`node/.../cron.ts`), whether a compliance window passed
+(`node/.../RotationAuditor.ts`) and whether evidence is tamper-evident
+(`node/.../AuditLogManager.ts`). The four assemblers the split introduced are mutated for a
 different reason: `.../cluster/membership/quorum.ts` decides what a majority is, and
 `.../scaling/ClusterScalingExecutor.ts`, `.../rollout/ClusterRolloutPlanner.ts` and
 `.../chaos/RaftFaultTranslator.ts` decide which member leaves, which batch runs, and which
@@ -459,8 +459,8 @@ transport is told to drop traffic. A mutant there does not produce a wrong numbe
 produces a group that has lost quorum, or a partition that exists on one side only. Stryker alters
 the source one change at a
 time and runs the tests that cover the change; a change no test notices is a behaviour nothing
-constrains. Which edit Stryker made is recorded in `reports/mutation/operations.json`, and
-`operations/scripts/replay-mutant.mjs` applies it by that record — a line number is not enough, and
+constrains. Which edit Stryker made is recorded in `reports/mutation/node.json`, and
+`scripts/replay-mutant.mjs` applies it by that record — a line number is not enough, and
 iteration 30 proved it the hard way.
 
 **There is exactly one instrument, and it lives at the root.** Stryker copies `process.cwd()` into a
@@ -488,23 +488,23 @@ in-place edit that leaked out of a sandbox would otherwise be committed by the n
 | ---------- | -------------------------------- | ------: | ----------------: | ------------------------------: | ----------: | --------: |
 | cluster    | `SqliteStorage.ts`               |     507 |               476 | 29 (+1 ignored, 1 runner error) | **94.26 %** |  break 70 |
 | federation | `TcpSecureTransport.ts`          |     271 |  254 (+1 timeout) |                              16 | **94.10 %** |  break 70 |
-| operations | `ClusterRolloutPlanner.ts`       |     134 |  119 (+7 timeout) |                               8 | **94.03 %** |  break 86 |
-| operations | `KeyManager.ts`                  |     139 |  125 (+3 timeout) |              7 (+1 no coverage) | **94.12 %** |  break 86 |
-| operations | `AuditLogManager.ts`             |     343 |  323 (+2 timeout) |             10 (+2 no coverage) | **96.44 %** |  break 86 |
-| operations | `FileAuditStore.ts`              |     704 |  663 (+8 timeout) |            22 (+1 runner error) | **96.83 %** |  break 86 |
-| operations | `RotationAuditor.ts`             |     286 |               275 |                               7 | **97.52 %** |  break 86 |
-| operations | `AES256GCMEncryptionProvider.ts` |      81 |                79 |                               2 | **97.53 %** |  break 86 |
-| operations | `EnvelopeEncryptionProvider.ts`  |     111 |               108 |                               2 | **98.18 %** |  break 86 |
-| operations | `InMemoryBackupManager.ts`       |      95 |                93 |                               1 | **98.94 %** |  break 86 |
-| operations | `MaintenanceWindowScheduler.ts`  |     622 | 602 (+13 timeout) |                               6 | **99.03 %** |  break 86 |
-| operations | `KeyRotationManager.ts`          |     239 |               236 |                               2 | **99.16 %** |  break 86 |
-| operations | `DurableFileSystem.ts`           |      74 |                73 |                               0 |   **100 %** |  break 86 |
-| operations | `RetentionPolicyEvaluator.ts`    |     196 |  172 (+2 timeout) |                               0 |   **100 %** |  break 86 |
-| operations | `RaftFaultTranslator.ts`         |     245 |               245 |                               0 |   **100 %** |  break 86 |
-| operations | `quorum.ts`                      |      29 |                29 |                               0 |   **100 %** |  break 86 |
-| operations | `ClusterScalingExecutor.ts`      |     162 |  161 (+1 timeout) |                               0 |   **100 %** |  break 86 |
-| operations | `backupChain.ts`                 |      66 |   59 (+7 timeout) |                               0 |   **100 %** |  break 86 |
-| operations | `cron.ts`                        |      87 |   82 (+5 timeout) |                               0 |   **100 %** |  break 86 |
+| cluster    | `ClusterRolloutPlanner.ts`       |     134 |  119 (+7 timeout) |                               8 | **94.03 %** |  break 86 |
+| node       | `KeyManager.ts`                  |     139 |  125 (+3 timeout) |              7 (+1 no coverage) | **94.12 %** |  break 86 |
+| node       | `AuditLogManager.ts`             |     343 |  323 (+2 timeout) |             10 (+2 no coverage) | **96.44 %** |  break 86 |
+| node       | `FileAuditStore.ts`              |     704 |  663 (+8 timeout) |            22 (+1 runner error) | **96.83 %** |  break 86 |
+| node       | `RotationAuditor.ts`             |     286 |               275 |                               7 | **97.52 %** |  break 86 |
+| node       | `AES256GCMEncryptionProvider.ts` |      81 |                79 |                               2 | **97.53 %** |  break 86 |
+| node       | `EnvelopeEncryptionProvider.ts`  |     111 |               108 |                               2 | **98.18 %** |  break 86 |
+| node       | `InMemoryBackupManager.ts`       |      95 |                93 |                               1 | **98.94 %** |  break 86 |
+| node       | `MaintenanceWindowScheduler.ts`  |     622 | 602 (+13 timeout) |                               6 | **99.03 %** |  break 86 |
+| node       | `KeyRotationManager.ts`          |     239 |               236 |                               2 | **99.16 %** |  break 86 |
+| node       | `DurableFileSystem.ts`           |      74 |                73 |                               0 |   **100 %** |  break 86 |
+| node       | `RetentionPolicyEvaluator.ts`    |     196 |  172 (+2 timeout) |                               0 |   **100 %** |  break 86 |
+| cluster    | `RaftFaultTranslator.ts`         |     245 |               245 |                               0 |   **100 %** |  break 86 |
+| cluster    | `quorum.ts`                      |      29 |                29 |                               0 |   **100 %** |  break 86 |
+| cluster    | `ClusterScalingExecutor.ts`      |     162 |  161 (+1 timeout) |                               0 |   **100 %** |  break 86 |
+| node       | `backupChain.ts`                 |      66 |   59 (+7 timeout) |                               0 |   **100 %** |  break 86 |
+| node       | `cron.ts`                        |      87 |   82 (+5 timeout) |                               0 |   **100 %** |  break 86 |
 
 Operations overall: **98.03 %** — 3 444 killed, 48 timed out, 67 survived, 3 with no coverage and one
 that crashes the runner rather than failing a test, out of the 3 562 mutants the instrument judges (it
@@ -575,8 +575,8 @@ The other fourteen are **equivalent**, and each has an argument rather than a te
 | `?? ''` in `readSegment`, and `return ''` in its `catch` → any text                      | the text reaches a parser that accepts nothing but NDJSON, so every alternative contributes zero entries — which is the property that let the `null` sentinel be deleted in iteration 34                                                                                                                           |
 
 **The previous version of this paragraph said all 27 were killed. That was wrong, and the way it was
-wrong is the point.** The tool used to verify them, `operations/scripts/replay-mutant.mjs`, resolved
-its default report path against the working directory — so, started from `operations/` where it lives,
+wrong is the point.** The tool used to verify them, `scripts/replay-mutant.mjs`, resolved
+its default report path against the working directory — so, started from the package where it lived,
 it opened a 2.6 MB in-place report left over from that morning, found fourteen survivors in it, and
 reported them killed; four of those "kills" were runs that never finished. The tool now resolves the
 report and every path inside it against the repository root, refuses a report older than the file it
@@ -585,28 +585,29 @@ describes, and restores the mtime so its own second replay is not blocked by the
 ### The timeout column
 
 A `Timeout` is not a verdict: it says the runner stopped, not that a test objected. Stryker records two
-different things under that status, and the operations target has 41 of them — every one read on
-2026-11-18, by replaying the edit against the tests the report attributed to it:
+different things under that status, and there are 52 of them across the three targets — every one read
+by replaying the edit against the tests the report attributed to it, and re-read after the split moved
+every path:
 
-| What the runner did                                           | Count | What it means                                                                                                                                                                 |
-| ------------------------------------------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hit-limit abort (`statusReason: Hit limit reached (n/100×m)`) |    33 | the vitest runner counts how often a mutant executes and abandons the run at a hundred times the original's count — a _guess_ at non-termination made from an execution count |
-| Wall-clock timeout                                            |     8 | `timeoutFactor × netTime + 30 s` elapsed                                                                                                                                      |
+| What the runner did                                           | node | cluster | federation | What it means                                                                                                                                                                 |
+| ------------------------------------------------------------- | ---: | ------: | ---------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hit-limit abort (`statusReason: Hit limit reached (n/100×m)`) |   33 |       8 |          1 | the vitest runner counts how often a mutant executes and abandons the run at a hundred times the original's count — a _guess_ at non-termination made from an execution count |
+| Wall-clock timeout                                            |   10 |       0 |          0 | `timeoutFactor × netTime + 30 s` elapsed                                                                                                                                      |
 
-| What the suite said when it was asked again        | operations | federation | cluster |
-| -------------------------------------------------- | ---------: | ---------: | ------: |
-| `failed` — vitest reported a failing test          |          5 |          0 |       0 |
-| `stuck` — nothing reported, the run never finished |         36 |          1 |       0 |
-| `survived` — the suite passed it                   |      **0** |      **0** |   **0** |
+| What the suite said when it was asked again        |  node | cluster | federation |
+| -------------------------------------------------- | ----: | ------: | ---------: |
+| `failed` — vitest reported a failing test          |     7 |       0 |          0 |
+| `stuck` — nothing reported, the run never finished |    36 |       8 |          1 |
+| `survived` — the suite passed it                   | **0** |   **0** |      **0** |
 
 The third row is the one that mattered. Had any of them passed, the score would have counted a mutant
-no test noticed, and 97.96 % would have been wrong by that much. None did: every abort is either a
+no test noticed, and the score would have been wrong by that much. None did: every abort is either a
 test the suite fails or an edit that cannot terminate — JavaScript cannot interrupt a synchronous
 `while (true)`, so "the run did not finish" is the strongest honest record, and
 `mutation/timeouts.json` holds the run that produced it, with the child's last three lines as evidence.
 
 **The budgets were the other half of the question.** All three mutation configs inherited their
-`testTimeout` from the unit suite — 60 s for operations, 180 s for the other two — and Stryker abandons
+`testTimeout` from the unit suite — 60 s for the node package, 180 s for the other two — and Stryker abandons
 a mutant at about 31 s, so no test timeout could ever fire. The values are now derived from each
 target's own measurement, four times its slowest case, rounded up to the next second and kept below the
 runner's cap:
@@ -615,7 +616,7 @@ runner's cap:
 | ---------- | -----------: | -----------------------------------------------------------: | -----: |
 | cluster    |     2 120 ms |                             `SqliteStorage.handle-lifecycle` |    9 s |
 | federation |     2 479 ms |   `chaos/tls-fault-injection` (a delay, injected on purpose) |   10 s |
-| operations |     3 665 ms | `AC75-work-factor` (scrypt at four work factors, on purpose) |   15 s |
+| node       |     3 665 ms | `AC75-work-factor` (scrypt at four work factors, on purpose) |   15 s |
 
 Eighteen of the 59 aborts this target used to report are now kills: the budget expires before the
 runner's cap, so the test is the party that fails. The cluster config's justification said "its slowest
@@ -748,7 +749,7 @@ gaps: the `err` branch of the PBKDF2 callback (Node throws synchronously for an 
 the branch is unreachable — proved by AC 75.21, which sees the throw from `generateKey`) and the
 optional call on a `Map` entry read one statement earlier.
 
-The operations score is higher than the other two because the mutated surface is pure decision
+The node score is higher than the other two because the mutated surface is pure decision
 logic with no sockets and no clock of its own: a surviving mutant there is almost always a missing
 assertion rather than a verdict that depends on the machine.
 
@@ -815,7 +816,7 @@ was applied by hand was `if (false) stats.failedEvents++`, the statement two lin
 the runner had killed all along. The same mistake accounts for the other four: a line number was
 used as the identity of a mutant, and line numbers move.
 
-The instrument that prevents a repeat is `operations/scripts/replay-mutant.mjs`. It reads the
+The instrument that prevents a repeat is `scripts/replay-mutant.mjs`. It reads the
 report, finds the mutant by status, and splices the recorded replacement into the recorded character
 range — the only description of the edit that is unambiguous. `apply <n>` prints what it removed and
 what it inserted, so the operator sees the change before running the tests. The five "discrepancies"
@@ -1251,7 +1252,7 @@ asserts the directory is still a directory afterwards.
 
 `cluster` and `federation` have been measured by processes since Phase 3: a node
 that is killed is really gone, and every byte between peers crosses a mutual-TLS
-socket. The operations packages were measured in-process only. `FileAuditStore`'s
+socket. The node modules were measured in-process only. `FileAuditStore`'s
 `dataDir` pinning had one child-process case (`AC 92`), but nothing wrote a trail
 in one process, died without warning, and asked a _second_ process what it could
 still read — which is the only question a durability recipe answers, because

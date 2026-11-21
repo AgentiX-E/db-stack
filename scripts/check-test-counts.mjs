@@ -32,8 +32,8 @@ import { relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
-const PAGE = "operations/README.md";
-const REPORT = "operations/coverage/test-report.json";
+const PAGE = "node/README.md";
+const REPORT = "node/coverage/test-report.json";
 // The integration suite, wherever a package keeps it. It was `src/__tests__/e2e/`
 // while every module was its own package; the modules now sit one level deeper
 // (`packages/node/src/core/__tests__/e2e/`), and a constant that still required the
@@ -109,10 +109,24 @@ export function measure(report, owner = packageOf) {
   return { packages, suites, total, unowned };
 }
 
-/** `operations/packages/core/src/…` → `core`, in either separator. */
+/**
+ * The module a file counts towards.
+ *
+ * Two layouts, one function. While the modules were twenty-one packages a file
+ * looked like `operations/packages/<package>/src/<module>/…` and the interesting
+ * segment was the one after `packages/`. Now they are twenty directories inside
+ * one package — `node/src/<module>/…` — and it is the one after `src/`.
+ *
+ * `packages/` is tried first so a path that still names the old layout (the
+ * fixtures in this file's own tests do) resolves the way it always did; a path
+ * with no `packages/` segment falls through to `src/`, which is what every real
+ * file in this repository now looks like.
+ */
 function packageOf(file) {
-  const match = /[/\\]packages[/\\]([^/\\]+)[/\\]/.exec(file);
-  return match ? match[1] : null;
+  const nested = /[/\\]packages[/\\]([^/\\]+)[/\\]/.exec(file);
+  if (nested) return nested[1];
+  const flat = /[/\\]src[/\\]([^/\\]+)[/\\]/.exec(file);
+  return flat ? flat[1] : null;
 }
 
 /**
@@ -129,10 +143,11 @@ export function statements(measured) {
     {
       id: "headline",
       describe: (values) =>
-        `${values[0]} packages, ${values[1]} test cases in ${values[2]} files`,
-      // "21 packages, 3 155 test cases in 147 files"
+        `${values[0]} modules, ${values[1]} test cases in ${values[2]} files`,
+      // "20 modules, 2 951 test cases in 143 files". `packages` is still accepted:
+      // this gate outlived the layout that made it read that way.
       pattern:
-        /(\d+)\s+packages,\s+([\d\s,.]+?)\s+test\s+cases\s+in\s+(\d+)\s+files/d,
+        /(\d+)\s+(?:packages|modules),\s+([\d\s,.]+?)\s+test\s+cases\s+in\s+(\d+)\s+files/d,
       expected: [
         String(measured.packages.size),
         formatCount(total.cases),
@@ -169,7 +184,7 @@ export function statements(measured) {
 }
 
 const ROW =
-  /^\|\s*\[`([a-z0-9][a-z0-9-]*)`\]\(\.\/packages\/\1\/\)\s*\|[^|]*\|\s*([\d\s,.]+?)\s*\|/dgm;
+  /^\|\s*\[`([a-z0-9][a-z0-9-]*)`\]\(\.\/(?:packages|src)\/\1\/\)\s*\|[^|]*\|\s*([\d\s,.]+?)\s*\|/dgm;
 
 /**
  * Findings for one page.
@@ -320,7 +335,7 @@ export function run(argv = process.argv.slice(2), options = {}) {
     error(
       `✗ test-counts: no report at ${relative(base, reportPath)}.\n` +
         `The gate counts what a run measured, so it needs a run: ` +
-        `\`pnpm --filter @agentix-e/db-operations run coverage\` writes one.`,
+        `\`pnpm --filter @agentix-e/db-node run coverage\` writes one.`,
     );
     return 1;
   }
@@ -351,7 +366,7 @@ export function run(argv = process.argv.slice(2), options = {}) {
 
   log(
     `✓ test-counts: ${formatCount(measured.total.cases)} cases in ${measured.total.files} files ` +
-      `over ${measured.packages.size} packages, and the page says so five times`,
+      `over ${measured.packages.size} modules, and the page says so five times`,
   );
   return 0;
 }

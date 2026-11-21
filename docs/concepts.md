@@ -16,7 +16,7 @@ mechanism:
 | The process dies | Replication + leader election over a *consensus group* | `db-cluster` |
 | The data outgrows one machine | *Sharding* + online *resharding* | `db-cluster` |
 | The region dies | Asynchronous *cross-DC replication* with conflict resolution | `db-federation` |
-| Nobody can tell whether any of that is healthy | Engine-agnostic operations interfaces | `db-operations` |
+| Nobody can tell whether any of that is healthy | Engine-agnostic operations interfaces | `db-node` |
 
 The stack does **not** implement a storage engine. It is the middleware between your
 engine — anything from SQLite to a bespoke LSM tree — and the cluster/federation/ops

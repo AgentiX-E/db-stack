@@ -49,6 +49,23 @@ const FLOOR = 95;
  */
 export const UNMEASURED = [];
 
+/*
+ * Two entries were paid to empty this list a second time, and both were paid the
+ * same way: the script was made importable, which it had not been.
+ *
+ * `resolve-timeouts.mjs` and `replay-mutant.mjs` were written as programs — they
+ * parsed `process.argv` and dispatched at module scope, so importing one in a test
+ * started a mutation run. The fix was not a mock: the pure decisions were already
+ * functions (how a killed child is read, which attributed tests a mutant is re-run
+ * against, how a report position becomes a splice) and only had to be exported, and
+ * the two that touch the tree took a `root` so a test could point them at a temp
+ * directory. What stays unmeasured is deliberate and is what CI measures instead:
+ * the child process, the wall-clock cap, and the signal handlers, none of which a
+ * unit test can schedule without becoming the thing it tests. The signal handlers
+ * moved inside the entry guard for the same reason — a module that installs `SIGINT`
+ * on import would replace the test runner's own.
+ */
+
 /**
  * Files that are measured and below the floor, with the number recorded.
  *

@@ -1,5 +1,5 @@
 /**
- * Cross-Repo End-to-End Tests — db-cluster ↔ db-federation ↔ db-operations.
+ * Cross-Repo End-to-End Tests — db-node ↔ db-cluster ↔ db-federation.
  *
  * D2 iteration: validates joint operation of all three subsystems.
  *
@@ -37,15 +37,15 @@ import { HLC } from '../../hlc/HLC';
 // ── New: I7 modules ─────────────────────────────────────────
 import { ChannelHealthCalculator } from '../../monitoring/ChannelHealth';
 import { EdgeReplica } from '../../replication/EdgeReplica';
-import { W3CTraceContextProvider } from '@agentix-e/db-operations-node/observability';
-import { BackupVerifier } from '@agentix-e/db-operations-node/backup';
+import { W3CTraceContextProvider } from '@agentix-e/db-node/observability';
+import { BackupVerifier } from '@agentix-e/db-node/backup';
 
-// ── Repo C: db-operations ───────────────────────────────────
-import { FileAuditStore } from '@agentix-e/db-operations-node/audit';
+// ── Repo C: db-node ─────────────────────────────────────────
+import { FileAuditStore } from '@agentix-e/db-node/audit';
 import { SessionManager } from '@agentix-e/db-cluster';
 import { EventBus } from '@agentix-e/db-cluster';
-import { InMemoryBackupManager } from '@agentix-e/db-operations-node/backup';
-import { InMemoryAuditStore } from '@agentix-e/db-operations-node/audit';
+import { InMemoryBackupManager } from '@agentix-e/db-node/backup';
+import { InMemoryAuditStore } from '@agentix-e/db-node/audit';
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -354,7 +354,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
         }
         const backupData = Buffer.from(entries.join('\n'), 'utf-8');
 
-        // Verify via BackupVerifier (db-operations)
+        // Verify via BackupVerifier (db-node)
         const verifier = new BackupVerifier();
         const checksum = verifier.calculateChecksum(backupData);
 
@@ -428,7 +428,7 @@ describe('Cross-Repo End-to-End (D2)', () => {
         cdcSpan.addEvent('entry-routed');
         cdcSpan.end('ok');
 
-        // Stage 3: db-operations — extract and verify traceId preservation
+        // Stage 3: db-node — extract and verify traceId preservation
         const opsCtx = new W3CTraceContextProvider();
         opsCtx.extract(cdcSpan.getTraceParent());
         expect(opsCtx.getTraceId()).toBe(rootTraceId);

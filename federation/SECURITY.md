@@ -31,11 +31,14 @@
 
 ## Scope
 
-This policy covers all three AgentiX-E database repositories:
+This policy covers all three packages in this repository:
 
-- [db-cluster](https://github.com/AgentiX-E/db-cluster) — Raft-based distributed consensus
-- [db-federation](https://github.com/AgentiX-E/db-federation) — Cross-cluster federation and replication
-- [db-operations](https://github.com/AgentiX-E/db-operations) — Backup, audit, and operational tooling
+- [db-node](https://github.com/AgentiX-E/db-stack/tree/master/node) — backup, audit, security, health,
+  metrics, logging and observability for a single node
+- [db-cluster](https://github.com/AgentiX-E/db-stack/tree/master/cluster) — Raft consensus, membership,
+  scaling, rollout, chaos translation, WAL and PITR over mutual TLS
+- [db-federation](https://github.com/AgentiX-E/db-stack/tree/master/federation) — CDC and outbox
+  replication, conflict resolution, anti-entropy, federated identity, query and schema federation
 
 ## Security Controls
 

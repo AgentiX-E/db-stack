@@ -97,14 +97,11 @@ export function isResolvable(word, bins) {
 
 /** Every package directory that carries a package.json. */
 export function workspaceDirs(root = ROOT) {
-  const dirs = ["cluster", "federation", "operations", "e2e"];
-  const ops = join(root, "operations", "packages");
-  if (existsSync(ops)) {
-    for (const entry of readdirSync(ops, { withFileTypes: true })) {
-      if (entry.isDirectory())
-        dirs.push(join("operations", "packages", entry.name));
-    }
-  }
+  // Four packages, one level: `node`, `cluster`, `federation`, `e2e`. A nested
+  // `operations/packages/*` tree used to need a second pass; there is no such
+  // tree any more, and a scan for one that cannot exist is a scan that silently
+  // reports nothing rather than failing.
+  const dirs = ["node", "cluster", "federation", "e2e"];
   return dirs.filter((dir) => existsSync(join(root, dir, "package.json")));
 }
 

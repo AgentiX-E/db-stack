@@ -105,7 +105,7 @@ export const TARGETS = [
     expect: ["CDCFailureInjector"],
   },
   {
-    dir: "operations",
+    dir: "node",
     entry: ".",
     expect: [
       "core",
@@ -118,6 +118,27 @@ export const TARGETS = [
       "chaosengine",
       "slacollector",
     ],
+  },
+  { dir: "node", entry: "./security", expect: ["KeyManager", "RBACEngine"] },
+  {
+    dir: "node",
+    entry: "./audit",
+    expect: ["FileAuditStore", "JsonAuditExporter"],
+  },
+  {
+    dir: "cluster",
+    entry: "./assemblers",
+    expect: ["ClusterScalingExecutor", "ClusterRolloutPlanner"],
+  },
+  {
+    dir: "federation",
+    entry: "./query",
+    expect: ["FederatedQueryRouter"],
+  },
+  {
+    dir: "federation",
+    entry: "./schema",
+    expect: ["SchemaFederator"],
   },
 ];
 

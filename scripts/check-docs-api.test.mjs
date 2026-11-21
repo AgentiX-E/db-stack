@@ -195,7 +195,7 @@ test("finds the packages that ship docs", () => {
   const dirs = workspacePackages(ROOT).map((pkg) => pkg.dir);
   assert.ok(dirs.includes("cluster"), `expected cluster in ${dirs.join(", ")}`);
   assert.ok(dirs.includes("federation"));
-  assert.ok(dirs.some((dir) => dir.startsWith("operations/packages/")));
+  assert.ok(dirs.includes("node"), `expected node in ${dirs.join(", ")}`);
 });
 
 test("finds the documents, and finds more than one", () => {
@@ -226,11 +226,12 @@ test("resolves the export surface through the compiler", () => {
 });
 
 test("resolves re-exported namespaces, not just local declarations", () => {
-  const operations = exportSurface(
-    resolve(ROOT, "operations", "src", "index.ts"),
+  const node = exportSurface(resolve(ROOT, "node", "src", "index.ts"));
+  assert.ok(node.exported.size > 0);
+  assert.ok(
+    node.exported.has("core"),
+    "the barrel names its modules, not their symbols",
   );
-  assert.ok(operations.exported.size > 0);
-  assert.ok(operations.exported.has("core"));
 });
 
 test("resolves every published entry point, not just the package root", () => {
@@ -422,7 +423,7 @@ const REAL_TREE_INDEX = packageIndex(ROOT);
 
 test("a documented name the package does not export is reported", () => {
   const findings = unresolvedImports(
-    '```ts\nimport { HealthOrchestrator, ComponentProbe } from "@agentix-e/db-operations-node/health";\n```\n',
+    '```ts\nimport { HealthOrchestrator, ComponentProbe } from "@agentix-e/db-node/health";\n```\n',
     REAL_TREE_INDEX,
   );
   assert.deepEqual(
@@ -433,12 +434,12 @@ test("a documented name the package does not export is reported", () => {
 
 test("a subpath that is not published is reported", () => {
   const findings = unresolvedImports(
-    'import { X } from "@agentix-e/db-operations-node/core/internal";\n',
+    'import { X } from "@agentix-e/db-node/core/internal";\n',
     REAL_TREE_INDEX,
   );
   assert.deepEqual(
     findings.map((finding) => [finding.kind, finding.name]),
-    [["unknown-subpath", "@agentix-e/db-operations-node/core/internal"]],
+    [["unknown-subpath", "@agentix-e/db-node/core/internal"]],
   );
 });
 
@@ -468,16 +469,16 @@ test("a specifier splits into a package name and an entry key", () => {
   // entry key. It used to be the whole string, because every package had exactly
   // one entry — and a gate that cannot see a subpath cannot check that the
   // subpath exists.
-  assert.deepEqual(splitSpecifier("@agentix-e/db-operations-node"), {
-    name: "@agentix-e/db-operations-node",
+  assert.deepEqual(splitSpecifier("@agentix-e/db-node"), {
+    name: "@agentix-e/db-node",
     key: ".",
   });
-  assert.deepEqual(splitSpecifier("@agentix-e/db-operations-node/core"), {
-    name: "@agentix-e/db-operations-node",
+  assert.deepEqual(splitSpecifier("@agentix-e/db-node/core"), {
+    name: "@agentix-e/db-node",
     key: "./core",
   });
-  assert.deepEqual(splitSpecifier("@agentix-e/db-operations-node/core/types"), {
-    name: "@agentix-e/db-operations-node",
+  assert.deepEqual(splitSpecifier("@agentix-e/db-node/core/types"), {
+    name: "@agentix-e/db-node",
     key: "./core/types",
   });
   assert.deepEqual(splitSpecifier("@agentix-e/db-cluster/testing"), {
@@ -488,7 +489,7 @@ test("a specifier splits into a package name and an entry key", () => {
 
 test("the line number of a bad import is the line the reader sees", () => {
   const findings = unresolvedImports(
-    '# Title\n\nIntro.\n\n```ts\nimport { Nope } from "@agentix-e/db-operations-node/core";\n```\n',
+    '# Title\n\nIntro.\n\n```ts\nimport { Nope } from "@agentix-e/db-node/core";\n```\n',
     REAL_TREE_INDEX,
   );
   assert.equal(findings[0].line, 6);
