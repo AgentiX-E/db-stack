@@ -15,14 +15,14 @@ interface ClusterMember {
 
 `role: 'learner'` is a full member that does not vote. It counts towards "which
 nodes run this version" and not towards "how many must be up"; every safety
-calculation in this package distinguishes the two. `zone` absent means *unknown*,
-never *none* — a planner that treats missing zones as one shared zone puts a whole
+calculation in this package distinguishes the two. `zone` absent means _unknown_,
+never _none_ — a planner that treats missing zones as one shared zone puts a whole
 batch in it.
 
-## `IClusterTopology`
+## `IMemberSet`
 
 ```ts
-interface IClusterTopology {
+interface IMemberSet {
   members(): Promise<readonly ClusterMember[]>;
   addNode(id: string, options?: { zone?: string }): Promise<void>;
   removeNode(id: string): Promise<void>;
@@ -82,7 +82,7 @@ holdsQuorumOf(before: readonly ClusterMember[], after: readonly ClusterMember[])
 ```
 
 Whether `after` still holds a majority of the voters `before` had. The comparison
-is against the *previous* configuration: a removal that keeps a majority of what is
+is against the _previous_ configuration: a removal that keeps a majority of what is
 left is not the question, because the previous configuration is what the other
 replicas still believe in until the change commits. An empty `before` holds quorum
 vacuously — there is nothing to lose a majority of.
@@ -102,7 +102,7 @@ Matching on the message is how a `catch` block turns the first into a retry stor
 ## `InMemoryClusterTopology`
 
 ```ts
-class InMemoryClusterTopology implements IClusterTopology {
+class InMemoryClusterTopology implements IMemberSet {
   constructor(options: { members: readonly ClusterMember[] });
   readonly readCount: number;
   setRole(id: string, role: ClusterRole): void;
@@ -124,7 +124,7 @@ is how a case asserts that an executor re-read instead of caching.
 
 ```ts
 class ClusterScalingExecutor {
-  constructor(options: { topology: IClusterTopology; minNodes: number; maxNodes: number; idPrefix?: string });
+  constructor(options: { topology: IMemberSet; minNodes: number; maxNodes: number; idPrefix?: string });
   apply(action: ScaleAction | null): Promise<ScaleOutcome>;
 }
 ```
@@ -134,7 +134,7 @@ Applies a scaler's decision to the members that exist. The delta is computed fro
 the two drift the moment anything else changes the membership.
 
 - **Scale-up** mints ids that the member set does not use, clamps at `maxNodes` and
-  grows to `minNodes` when the scaler asks for less. A target *below* the current
+  grows to `minNodes` when the scaler asks for less. A target _below_ the current
   size is treated as a stale decision and produces no change — a scale-up that
   removed nodes would be a scale-down that skipped the quorum checks.
 - **Scale-down** never removes the leader, removes learners before followers and
@@ -202,7 +202,7 @@ pairs where the operation is `isolate`, `heal`, `setMessageLoss`, `setLatency`,
   peers; it does not stop them sending to `n1`. Every pair is emitted in both
   directions, or the "partition" is a half-open connection that still carries
   traffic. `config.groups` names the two sides explicitly; `config.direction:
-  'one-way'` asks for the asymmetric version on purpose.
+'one-way'` asks for the asymmetric version on purpose.
 - **`leadership-flap` names no node.** The leader is read from the member set at
   translation time; with no leader the fault is refused rather than silently
   injected as a no-op.

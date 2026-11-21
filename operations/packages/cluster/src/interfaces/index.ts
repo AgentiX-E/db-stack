@@ -4,7 +4,7 @@
  * These types describe what the cluster *is* — who is a member, who is a voter,
  * who is leading, which zone a node sits in — because every decision in this
  * package is a decision about a set of nodes rather than about one. They are not
- * a client: a member list is read through `IClusterTopology`, which a deployment
+ * a client: a member list is read through `IMemberSet`, which a deployment
  * implements over whatever consensus layer it actually runs.
  *
  * @module @agentix-e/db-operations-cluster/interfaces
@@ -38,8 +38,17 @@ export interface ClusterMember {
  * upgrade progress — belongs to the port the caller already has for that
  * question; a topology that grew a `waitForHealthy()` would make every assembler
  * here depend on a health system it does not use.
+ *
+ * Not named `IClusterTopology`. That name is already published by
+ * `@agentix-e/db-cluster` for the *opposite* view of the same word: one node
+ * looking out at its peers (`getNodeId`, `getPeerIds`, `isPeerAlive`,
+ * `onTopologyChange`). This interface is the set looking in — "who is in the
+ * group, and change it". Two interfaces under one name would be tolerable while
+ * they live in two packages that never import each other; they become a compile
+ * error the moment the multi-node assemblers move next to the consensus engine,
+ * which is where they are headed.
  */
-export interface IClusterTopology {
+export interface IMemberSet {
   /** Current members. A snapshot: callers must not assume it stays true. */
   members(): Promise<readonly ClusterMember[]>;
   /** Add a member. Rejects if the consensus layer refuses the change. */

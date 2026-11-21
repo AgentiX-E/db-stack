@@ -22,7 +22,7 @@
  * @module @agentix-e/db-operations-cluster
  */
 
-export type { ClusterRole, ClusterMember, IClusterTopology, SkippedItem } from './interfaces/index.js';
+export type { ClusterRole, ClusterMember, IMemberSet, SkippedItem } from './interfaces/index.js';
 
 export { isVoter, votersOf, quorumOf, tolerableFailures, leaderOf, holdsQuorumOf } from './membership/quorum.js';
 

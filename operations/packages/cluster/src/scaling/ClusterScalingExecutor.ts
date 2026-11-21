@@ -19,7 +19,7 @@
  */
 
 import type { ScaleAction, ScaleDirection } from '@agentix-e/db-operations-node/autoscaler';
-import type { ClusterMember, IClusterTopology, SkippedItem } from '../interfaces/index.js';
+import type { ClusterMember, IMemberSet, SkippedItem } from '../interfaces/index.js';
 import { ClusterMembershipError } from '../membership/errors.js';
 import { quorumOf, votersOf } from '../membership/quorum.js';
 
@@ -27,7 +27,7 @@ import { quorumOf, votersOf } from '../membership/quorum.js';
 export type ClampReason = 'policy-min' | 'policy-max' | 'quorum-floor' | 'unlisted-nodes';
 
 export interface ClusterScalingOptions {
-  topology: IClusterTopology;
+  topology: IMemberSet;
   /** Policy floor: the cluster never runs fewer than this. */
   minNodes: number;
   /** Policy ceiling: the cluster never runs more than this. */
@@ -55,7 +55,7 @@ export interface ScaleOutcome {
 }
 
 export class ClusterScalingExecutor {
-  private readonly topology: IClusterTopology;
+  private readonly topology: IMemberSet;
   private readonly minNodes: number;
   private readonly maxNodes: number;
   private readonly idPrefix: string;

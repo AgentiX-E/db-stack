@@ -1,5 +1,5 @@
 /**
- * A member set held in memory — the reference `IClusterTopology`.
+ * A member set held in memory — the reference `IMemberSet`.
  *
  * It exists for two reasons. The first is that every assembler in this package
  * needs a member set to be tested against, and a suite that stubs `members()` to
@@ -15,7 +15,7 @@
  * @module @agentix-e/db-operations-cluster/membership
  */
 
-import type { ClusterMember, ClusterRole, IClusterTopology } from '../interfaces/index.js';
+import type { ClusterMember, ClusterRole, IMemberSet } from '../interfaces/index.js';
 import { ClusterMembershipError } from './errors.js';
 
 export interface InMemoryClusterTopologyOptions {
@@ -23,7 +23,7 @@ export interface InMemoryClusterTopologyOptions {
   members: readonly ClusterMember[];
 }
 
-export class InMemoryClusterTopology implements IClusterTopology {
+export class InMemoryClusterTopology implements IMemberSet {
   private readonly state: ClusterMember[];
   /** Set when `members()` has been called more than once, for the drift tests. */
   private reads = 0;
@@ -83,7 +83,7 @@ export class InMemoryClusterTopology implements IClusterTopology {
   /**
    * Change a member's role.
    *
-   * Not part of `IClusterTopology`: a deployment's consensus layer changes roles
+   * Not part of `IMemberSet`: a deployment's consensus layer changes roles
    * through elections, not through a method call. The reference topology needs it
    * so that a test can express "the leader moved" without rebuilding the object,
    * which is what a leader-aware planner has to survive.

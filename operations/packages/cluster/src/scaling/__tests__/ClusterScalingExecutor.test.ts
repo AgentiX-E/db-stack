@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ScaleAction } from '@agentix-e/db-operations-node/autoscaler';
-import type { ClusterMember, IClusterTopology } from '../../interfaces/index.js';
+import type { ClusterMember, IMemberSet } from '../../interfaces/index.js';
 import { ClusterMembershipError } from '../../membership/errors.js';
 import { InMemoryClusterTopology } from '../../membership/InMemoryClusterTopology.js';
 import { ClusterScalingExecutor } from '../ClusterScalingExecutor.js';
@@ -103,7 +103,7 @@ describe('ClusterScalingExecutor — scale up', () => {
   it('AC-CL3.5 records a refused join and keeps going', async () => {
     const membersNamed = members(['n1', 'leader']);
     const added: string[] = [];
-    const topology: IClusterTopology = {
+    const topology: IMemberSet = {
       async members() {
         return [...membersNamed, ...added.map((id): ClusterMember => ({ id, role: 'follower' }))];
       },
@@ -128,7 +128,7 @@ describe('ClusterScalingExecutor — scale up', () => {
   it('AC-CL3.5b records a refusal that is not an Error at all', async () => {
     // A port is a boundary, and a boundary can reject with anything. The reason has
     // to survive as a string rather than as `[object Object]`.
-    const topology: IClusterTopology = {
+    const topology: IMemberSet = {
       async members() {
         return members(['n1', 'leader']);
       },
@@ -230,7 +230,7 @@ describe('ClusterScalingExecutor — scale down', () => {
       ['n5', 'follower'],
     );
     const removed: string[] = [];
-    const topology: IClusterTopology = {
+    const topology: IMemberSet = {
       async members() {
         return present.filter((member) => !removed.includes(member.id));
       },
@@ -262,7 +262,7 @@ describe('ClusterScalingExecutor — scale down', () => {
 
   it('AC-CL3.11 stops after a refusal that is not "already absent"', async () => {
     let removals = 0;
-    const topology: IClusterTopology = {
+    const topology: IMemberSet = {
       async members() {
         return members(
           ['n1', 'leader'],

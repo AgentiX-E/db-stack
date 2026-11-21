@@ -2,20 +2,20 @@
 
 The multi-node half of the operations layer. Every module in
 `@agentix-e/db-operations-node` answers a question about one process; this package
-answers questions about a *set* of them, which is why it needs a member list, a
+answers questions about a _set_ of them, which is why it needs a member list, a
 leader and a majority rule and the node package does not.
 
 ```bash
 npm install @agentix-e/db-operations-cluster
 ```
 
-| Export | The question it answers |
-| --- | --- |
-| `ClusterScalingExecutor` | A scaler said "five nodes". How many does the cluster actually have, and which members leave? |
-| `ClusterRolloutPlanner` | Which batch goes first, and does the group still commit while it runs? |
-| `RaftFaultTranslator` | A fault says "partition `n1` from the rest". What has to be called, on which transports, in which direction? |
-| `InMemoryClusterTopology` | The reference `IClusterTopology` for a fixed member set. |
-| `quorumOf`, `tolerableFailures`, `holdsQuorumOf`, … | Majority arithmetic, in one place, so it stops being re-derived per caller. |
+| Export                                              | The question it answers                                                                                      |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `ClusterScalingExecutor`                            | A scaler said "five nodes". How many does the cluster actually have, and which members leave?                |
+| `ClusterRolloutPlanner`                             | Which batch goes first, and does the group still commit while it runs?                                       |
+| `RaftFaultTranslator`                               | A fault says "partition `n1` from the rest". What has to be called, on which transports, in which direction? |
+| `InMemoryClusterTopology`                           | The reference `IMemberSet` for a fixed member set.                                                           |
+| `quorumOf`, `tolerableFailures`, `holdsQuorumOf`, … | Majority arithmetic, in one place, so it stops being re-derived per caller.                                  |
 
 ## Why a separate package
 
@@ -64,7 +64,7 @@ const rollout = new ClusterRolloutPlanner().plan({
 > A plan is an opinion. The member set is the fact.
 
 Everything here reads the topology first and computes from what exists. A
-`ScaleAction` carries the count the *scaler* believes in, and that number drifts
+`ScaleAction` carries the count the _scaler_ believes in, and that number drifts
 the moment anything else changes the membership; a `RollingUpgradePlan` carries the
 order an operator typed, and that order is a list rather than a sequence. Both are
 inputs. Neither is applied verbatim.
