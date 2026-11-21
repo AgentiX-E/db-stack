@@ -33,7 +33,7 @@
  * makes two different programs produce one behaviour:
  *
  *   SA.1  the canary in a `?? []` fallback is filtered by the prefix test — `sweepAbandonedArchives`
- *   SA.2  a listing that cannot be read holds no name to continue — `getNextSequence`
+ *   SA.2  a directory that does not exist yet starts at 0001 — the `?? []` in `getNextSequence`
  *   SA.3  rotating before the first claim is a no-op, because there is no file — two mutants
  *   SA.4  `plain-missing` never reaches the sweep: a pair needs a plain name to exist
  *   SA.5  in the live path the two verdicts that reach `promote` as `none` are `no-twin`,
@@ -99,17 +99,19 @@ describe('AC 95 — the survivors, and why no case exists', () => {
     expect(readdirSync(dir)).toEqual(['other-20260101-0001.ndjson.gz.part']);
   });
 
-  it('SA.2: a listing that cannot be read holds no name to continue, so the first number is free', () => {
-    // The same `?? []`, in `getNextSequence`. What it protects is the parse loop: a
-    // directory this process cannot list yields `-0001`, and a fallback entry would have
-    // to match the segment pattern to change that — the canary does not.
+  it('SA.2: a directory that does not exist yet starts at 0001', async () => {
+    // The `?? []` in `getNextSequence` answers "no names to avoid", and the fallback's
+    // content cannot be observed for the reason `SA.1` gives: an entry has to match the
+    // segment pattern to change the number, and the canary does not. What the fallback
+    // *protects* is the first number in a directory that has just been created — the
+    // store makes it, lists it, and names `-0001`.
     const store = new FileAuditStore({ dataDir: join(dir, 'not-there-yet') });
-    return store
-      .write({ operation: 'FIRST', actor: 'a', resource: 'r', result: 'success' })
-      .then(() => store.close())
-      .then(() => {
-        expect(readdirSync(join(dir, 'not-there-yet')).filter((f) => f.endsWith('.ndjson'))).toHaveLength(1);
-      });
+    await store.write({ operation: 'FIRST', actor: 'a', resource: 'r', result: 'success' });
+    await store.close();
+
+    const segments = readdirSync(join(dir, 'not-there-yet')).filter((f) => f.endsWith('.ndjson'));
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatch(/-0001\.ndjson$/);
   });
 
   it('SA.3: rotating before the first claim is a no-op, because there is no file to rotate', async () => {
