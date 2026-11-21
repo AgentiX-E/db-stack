@@ -61,6 +61,29 @@ function walk(dir, predicate) {
 }
 
 /**
+ * The path arguments of a `vitest run` command, as candidate repository paths.
+ *
+ * Only `vitest run` is read, and only because of one blind spot: the rule beside this
+ * one checks arguments that carry a file extension, so a *directory* filter was the one
+ * path a script could name that nothing verified. Flags are dropped, a trailing slash is
+ * dropped, and a glob is left to vitest — this function can answer "the directory is not
+ * there", which is the failure that exits 1 with nothing to report; it cannot answer
+ * "this pattern matches a file".
+ */
+export function vitestFilterPaths(command) {
+  const run = command.match(/\bvitest\s+run\b([^|;&]*)/);
+  if (!run) return [];
+  const tokens = run[1].match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  return tokens
+    .map((token) => token.replace(/^["']|["']$/g, ""))
+    .filter((token) => token.length > 0 && !token.startsWith("-"))
+    .filter((token) => token.includes("/"))
+    .filter((token) => !/[*?{}[\]]/.test(token))
+    .map((token) => token.replace(/\/+$/, ""))
+    .filter((token) => token.length > 0);
+}
+
+/**
  * Every rule, as a function of the tree it reads.
  *
  * The rules used to run at module scope, which made the file its own only caller:
@@ -208,6 +231,25 @@ export async function audit(root, options = {}) {
         if (!turboTasks.has(match[1])) {
           failures.push(
             `${pkg.name}: script "${name}" runs turbo task "${match[1]}", not declared in turbo.json`,
+          );
+        }
+      }
+    }
+  }
+
+  // ── 4. a vitest filter that matches no file is a gate over no work ──
+  //
+  // `vitest run <dir>` exits 1 with "No test files found" when the directory is gone,
+  // and rule 2 cannot see it: that rule reads arguments with a file extension, and a
+  // directory filter has none. This is how `operations`' `test:integration` came out of
+  // the three-package split still naming `packages/core/src/__tests__/e2e`: every local
+  // gate was green, and the first thing to run that script was CI.
+  for (const pkg of scriptOwners) {
+    for (const [name, command] of Object.entries(pkg.scripts)) {
+      for (const candidate of vitestFilterPaths(command)) {
+        if (!existsSync(resolve(pkg.dir, candidate))) {
+          failures.push(
+            `${pkg.name}: script "${name}" runs vitest over ${candidate}, which does not exist — the filter matches no file, and vitest exits 1 on that`,
           );
         }
       }

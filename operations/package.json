@@ -12,7 +12,7 @@
     "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run --exclude \"packages/*/src/__tests__/e2e/**\"",
-    "test:integration": "vitest run packages/core/src/__tests__/e2e",
+    "test:integration": "vitest run packages/node/src/core/__tests__/e2e",
     "coverage": "vitest run --coverage --reporter=default --reporter=json --outputFile=coverage/test-report.json",
     "lint": "eslint .",
     "format:check": "prettier --check \"packages/*/src/**/*.ts\"",

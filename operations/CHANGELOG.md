@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`test:integration` ran no test.** The script still named `packages/core/src/__tests__/e2e`
+  after the modules moved under `packages/node/`, and `vitest run <dir>` exits 1 with "No test files
+  found" when nothing answers the filter — so 331 cases in 19 files were named by a script that ran
+  none of them, and every local gate was green because none of them runs that script. `check:gates`
+  grew rule 4 (a `vitest run` filter must name a directory that exists, with three self-tests), which
+  is the rule that would have caught it in the same commit as the move.
+- **`run-e2e-real.ts` orchestrated a directory that exists on no machine.** Its `cwd` was
+  `/home/admin/openclaw/workspace/db-operations` — not this repository, not any path in it — and its
+  filter was the pre-split `packages/core/...`. Both now derive from `import.meta.dirname`, so the
+  runner that prints a per-engine summary can only run where the suite is.
 - **Fourteen documented examples that could not compile.** `operations/README.md`'s quick start
   called three methods that do not exist and passed an options object to a constructor that takes
   two positional arguments; `docs/user-guide/operations.md` and `operations/docs/getting-started.md`

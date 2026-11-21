@@ -18,7 +18,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { audit, isEntryPoint, report, run } from "./check-gates.mjs";
+import {
+  audit,
+  isEntryPoint,
+  report,
+  run,
+  vitestFilterPaths,
+} from "./check-gates.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -199,6 +205,55 @@ test("a tsc target without an extension is checked as a path too", async () => {
   assert.deepEqual(failures, [
     '@scope/one: script "typecheck" runs tsc -p tsconfig.gone, which does not exist',
   ]);
+});
+
+test("a vitest filter that names a directory nobody has is a gate over no work", async () => {
+  const { failures } = await auditWith((dir) => {
+    const manifest = readOf("one/package.json");
+    // The shape the three-package split left behind: `test:integration` still named
+    // `packages/core/...` after the modules moved under `packages/node/`. The filter has
+    // no extension, so the path rule beside this one could not see it, and the first
+    // thing to run the script was CI — where vitest exits 1 with "No test files found".
+    manifest.scripts["test:integration"] =
+      "vitest run packages/core/src/__tests__/e2e";
+    write(dir, "one/package.json", JSON.stringify(manifest));
+  });
+
+  assert.deepEqual(failures, [
+    '@scope/one: script "test:integration" runs vitest over packages/core/src/__tests__/e2e, which does not exist — the filter matches no file, and vitest exits 1 on that',
+  ]);
+});
+
+test("a vitest filter that names a directory which is there, or a glob, passes", async () => {
+  const { failures } = await auditWith((dir) => {
+    const manifest = readOf("one/package.json");
+    manifest.scripts["test:unit"] =
+      'vitest run src --exclude "src/**/*.test.ts"';
+    manifest.scripts["test:all"] = "vitest run";
+    write(dir, "one/package.json", JSON.stringify(manifest));
+  });
+
+  assert.deepEqual(failures, []);
+});
+
+test("the vitest filter paths are the arguments, without flags, quotes or a trailing slash", () => {
+  assert.deepEqual(vitestFilterPaths("vitest run"), []);
+  assert.deepEqual(vitestFilterPaths("tsc -p tsconfig.json"), []);
+  assert.deepEqual(
+    vitestFilterPaths('vitest run "packages/node/src/__tests__/e2e/"'),
+    ["packages/node/src/__tests__/e2e"],
+  );
+  assert.deepEqual(
+    vitestFilterPaths(
+      "vitest run --coverage --reporter=json --outputFile=coverage/x.json tests/",
+    ),
+    ["tests"],
+  );
+  assert.deepEqual(
+    vitestFilterPaths('vitest run --exclude "src/**/*.test.ts" src'),
+    [],
+    "a glob is vitest's to resolve, and a bare word is not a path",
+  );
 });
 
 test("a version-looking argument is not treated as a path", async () => {

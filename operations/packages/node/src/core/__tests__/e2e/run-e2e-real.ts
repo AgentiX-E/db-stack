@@ -15,7 +15,20 @@
  */
 
 import { execSync } from 'node:child_process';
+import { join, resolve } from 'node:path';
 import { E2E_CONFIG, SLOW_ENGINE_WARN_MS } from './e2e-real.config.js';
+
+/**
+ * Where the suite this runner orchestrates actually is.
+ *
+ * Both paths used to be written down, and both were wrong: the filter still said
+ * `packages/core/src/__tests__/e2e`, which stopped matching a file when the modules moved under
+ * `packages/node/` — a vitest filter that matches nothing exits 1 — and the cwd was
+ * `/home/admin/openclaw/workspace/db-operations`, a directory that exists on the machine it was
+ * typed on and nowhere else. Derived from this file, neither can go stale.
+ */
+const E2E_DIR = import.meta.dirname;
+const OPERATIONS_ROOT = resolve(E2E_DIR, '../../../../../..');
 
 interface TestResult {
   file: string;
@@ -91,8 +104,8 @@ function runVitest(file: string): {
   const startTime = Date.now();
 
   try {
-    const output = execSync(`npx vitest run packages/core/src/__tests__/e2e/${file} --reporter=verbose`, {
-      cwd: '/home/admin/openclaw/workspace/db-operations',
+    const output = execSync(`npx vitest run "${join(E2E_DIR, file)}" --reporter=verbose`, {
+      cwd: OPERATIONS_ROOT,
       env: { ...process.env, FORCE_COLOR: '0' },
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
