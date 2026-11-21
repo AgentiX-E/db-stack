@@ -7,8 +7,11 @@
  *   insert  → CDC emit + replicate
  *   scan    → cross-shard query
  *
- * Uses in-memory federation components (MultiLeaderReplication,
- * CDCManager, FederationQueryRouter) for local benchmarking.
+ * Uses the shared YCSB executor for local benchmarking. The component list that
+ * used to be spelled out here named `FederationQueryRouter`, which no longer
+ * exists: it was never exported, nothing but its own test called it, and its two
+ * type names collided with the node-level router that the operations layer
+ * publishes.
  *
  * This is a standalone benchmark script (not a test).
  * Run: npx tsx bench/federation-ycsb.ts

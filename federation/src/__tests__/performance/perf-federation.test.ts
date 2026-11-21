@@ -5,16 +5,14 @@
  * Uses process.hrtime.bigint() for nanosecond-precision timing.
  *
  * Benchmarks:
- *   1. Cross-shard query routing latency (broadcast to 3 shards, P50 < 1ms)
- *   2. CDC event emit throughput (> 1000 events/s)
- *   3. Schema evolution propose latency (P50 < 5ms)
- *   4. Catastrophic failover detection latency (P50 < 2x dcTimeout)
- *   5. Conflict resolution throughput (> 500 conflicts/s)
- *   6. Outbox store write throughput (> 500 entries/s)
+ *   1. CDC event emit throughput (> 1000 events/s)
+ *   2. Schema evolution propose latency (P50 < 5ms)
+ *   3. Catastrophic failover detection latency (P50 < 2x dcTimeout)
+ *   4. Conflict resolution throughput (> 500 conflicts/s)
+ *   5. Outbox store write throughput (> 500 entries/s)
  */
 
 import { describe, it, expect } from 'vitest';
-import { FederationQueryRouter } from '../../routing/FederationQueryRouter.js';
 import { CDCEngine } from '../../replication/CDCEngine.js';
 import { SchemaEvolutionCoordinator } from '../../core/SchemaEvolutionCoordinator.js';
 import { CatastrophicFailoverManager } from '../../core/CatastrophicFailoverManager.js';
@@ -67,59 +65,6 @@ class MockReplication implements IMultiLeaderReplication {
   onHighLag(_callback: (targetNodeId: string, lagMs: number) => void): () => void {
     return () => {};
   }
-}
-
-/** Minimal mock topology for router and failover tests */
-class MockTopology {
-  private peers: Array<{ id: string; host: string; port: number; dc: string }> = [];
-  private localDc = 'dc-1';
-  private partitionMapping = new Map<string, string>();
-
-  constructor(peerCount: number) {
-    for (let i = 0; i < peerCount; i++) {
-      this.peers.push({
-        id: `node-${i}`,
-        host: '127.0.0.1',
-        port: 7000 + i,
-        dc: `dc-${(i % 3) + 1}`,
-      });
-    }
-    this.partitionMapping.set('key-1', 'dc-1');
-    this.partitionMapping.set('key-2', 'dc-2');
-  }
-
-  getAllPeers() {
-    return this.peers;
-  }
-
-  getLocalDc() {
-    return this.localDc;
-  }
-
-  getPartitionRegion(shardKey: string): string | undefined {
-    return this.partitionMapping.get(shardKey);
-  }
-}
-
-/** Real TopologyManager from the federation package for benchmark routing */
-function createRouterWithPeers(count: number): FederationQueryRouter {
-  const peers: ReplicationTarget[] = [];
-  for (let i = 0; i < count; i++) {
-    const dc = `dc-${(i % 3) + 1}`;
-    peers.push({
-      nodeId: `node-${i}`,
-      dc,
-      address: `127.0.0.1:${7000 + i}`,
-      topology: dc === 'dc-1' ? 'intra-dc' : 'cross-dc',
-      maxBackoffSeconds: dc === 'dc-1' ? 3 : 60,
-    });
-  }
-  const tm = new TopologyManager({
-    nodeId: 'node-0',
-    dc: 'dc-1',
-    peers,
-  });
-  return new FederationQueryRouter(tm);
 }
 
 // ── Bench helpers ──
@@ -181,21 +126,7 @@ function benchThroughput(label: string, fn: () => void, iterations: number, minO
 // ──────────────────────────────────────────────────────
 
 describe('Federation — Latency', () => {
-  // Benchmark 1: Cross-shard query routing latency (broadcast to 3 shards, P50 < 1ms = 1_000_000ns)
-  bench(
-    'cross-shard query routing latency (P50 < 1ms)',
-    () => {
-      const router = createRouterWithPeers(3);
-      const routes = router.resolveRoute({
-        filters: { status: 'active' },
-        limit: 100,
-      });
-      expect(routes.length).toBeGreaterThan(0);
-    },
-    1_000_000,
-  );
-
-  // Benchmark 2 (latency): Schema evolution propose latency (P50 < 5ms = 5_000_000ns)
+  // Benchmark 1 (latency): Schema evolution propose latency (P50 < 5ms = 5_000_000ns)
   bench(
     'schema evolution propose latency (P50 < 5ms)',
     () => {
@@ -212,7 +143,7 @@ describe('Federation — Latency', () => {
     5_000_000,
   );
 
-  // Benchmark 3: Catastrophic failover detection latency (P50 < 2x dcTimeout)
+  // Benchmark 2: Catastrophic failover detection latency (P50 < 2x dcTimeout)
   // dcTimeout default is 30000ms, so 2x = 60000ms = 60_000_000_000ns
   // But we test creation + status check, not actual timeout wait
   bench(
@@ -235,7 +166,7 @@ describe('Federation — Latency', () => {
 });
 
 describe('Federation — Throughput', () => {
-  // Benchmark 4: CDC event emit throughput (> 1000 events/s)
+  // Benchmark 3: CDC event emit throughput (> 1000 events/s)
   benchThroughput(
     'CDC event emit throughput (> 1000 events/s)',
     () => {
@@ -255,7 +186,7 @@ describe('Federation — Throughput', () => {
     1_000,
   );
 
-  // Benchmark 5: Conflict resolution throughput (> 500 conflicts/s)
+  // Benchmark 4: Conflict resolution throughput (> 500 conflicts/s)
   benchThroughput(
     'conflict resolution throughput (> 500 conflicts/s)',
     () => {
@@ -282,7 +213,7 @@ describe('Federation — Throughput', () => {
     500,
   );
 
-  // Benchmark 6: Outbox store write throughput (> 500 entries/s)
+  // Benchmark 5: Outbox store write throughput (> 500 entries/s)
   // Use in-memory simulation since LMDB requires disk
   benchThroughput(
     'outbox store write throughput (> 500 entries/s)',

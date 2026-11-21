@@ -225,14 +225,14 @@ green run of this repository; the gate fails the build if any dimension drops be
 All four rows are from a green run of this repository; `operations` was re-measured after the
 split into three packages (99.51/99.51/99.88/98.59), `cluster` with the same run that added the
 four assembler modules to its mutation target list (99.42/99.42/99.70/98.18) and `federation` with
-its own (99.61/99.61/100/98.79). The gate covers four packages, not three:
+its own (99.61/99.61/100/98.78). The gate covers four packages, not three:
 the end-to-end harness is measured as well, because a harness bug produces confident, meaningless
 acceptance passes.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
 | `cluster`       | 99.42% | 99.42%     | 99.70%    | 98.18%   |
-| `federation`    | 99.61% | 99.61%     | 100%      | 98.79%   |
+| `federation`    | 99.61% | 99.61%     | 100%      | 98.78%   |
 | `operations`    | 99.51% | 99.51%     | 99.88%    | 98.59%   |
 | `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
 

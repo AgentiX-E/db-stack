@@ -29,7 +29,6 @@ export default defineConfig({
         'src/**/*.d.ts',
         // Barrel / interface-only modules.
         'src/index.ts',
-        'src/routing/index.ts',
         'src/interfaces/**',
         'src/types.ts',
       ],
