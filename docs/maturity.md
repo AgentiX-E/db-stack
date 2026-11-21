@@ -477,8 +477,10 @@ turn refuses to run without it. The three `vitest` configs pin `root: __dirname`
 `setupFiles` resolve against `root` and `root` defaults to the working directory — without the pin, a
 run started from the root collects zero files and reports a perfect score over nothing.
 `check:gates` grew a rule that fails when a `test:mutation` script is not invoked by a workflow, when a
-target's `break` threshold is missing, when a `mutate` glob matches no file, or when any package runs
-Stryker directly instead of delegating to the root. CI runs the three targets as
+target's `break` threshold is missing, when a `mutate` glob matches no file, when any package runs
+Stryker directly instead of delegating to the root, or when a `vitest run` filter names a directory
+that is not there — the last one because that filter is the single path a script can name with no file
+extension, which is the one shape the path rule beside it could not see. CI runs the three targets as
 `pnpm run test:mutation:<target>` and then asserts that `git status --porcelain` is empty — an
 in-place edit that leaked out of a sandbox would otherwise be committed by the next person.
 

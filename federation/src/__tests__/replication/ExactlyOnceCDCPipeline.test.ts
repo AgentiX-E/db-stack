@@ -250,6 +250,56 @@ describe('ExactlyOnceCDCPipeline — AC 47.x: Exactly-Once CDC Pipeline', () => 
     expect(metrics.pendingCount + metrics.deadLetterCount).toBeGreaterThanOrEqual(1);
   });
 
+  // AC 47.11: a refused entry must not be overtaken by the entries behind it
+  it('AC 47.11: an entry whose send was refused is not overtaken by the next entry', async () => {
+    // `e2e` AC-C15 caught this once, on a loaded runner: the applied log at the
+    // far end read 1, 2, 3, 5, 6, 4, 7 … — one record out of place. The pump
+    // walked the rest of the batch after a refusal: entry 4's send failed, 5 and
+    // 6 were sent, and 4's retry landed after them. FIFO in the outbox is not
+    // FIFO on the wire unless the loop stops at the first refusal.
+    const attempts: Array<{ lsn: string; accepted: boolean }> = [];
+    let refuseFirst = true;
+    const refusingOnce: ITransport = {
+      ...transport,
+      send: vi.fn(async (msg: TransportMessage): Promise<boolean> => {
+        const accepted = !refuseFirst;
+        refuseFirst = false;
+        attempts.push({ lsn: (msg.type ?? '').replace(/^cdc_event:/, ''), accepted });
+        return accepted;
+      }),
+    };
+
+    pipeline = new ExactlyOnceCDCPipeline({
+      ...makePipelineConfig({ pumpIntervalMs: 20 }),
+      transport: refusingOnce,
+      remoteNodeId: 'remote-1',
+    });
+
+    await pipeline.start();
+    pipeline.watchTable('users');
+    const first = pipeline.appendChange({
+      tableName: 'users',
+      operation: 'insert',
+      oldValues: null,
+      newValues: { id: 1 },
+    });
+    pipeline.appendChange({
+      tableName: 'users',
+      operation: 'insert',
+      oldValues: null,
+      newValues: { id: 2 },
+    });
+
+    await new Promise((r) => setTimeout(r, 400));
+    await pipeline.stop();
+
+    const accepted = attempts.filter((a) => a.accepted).map((a) => a.lsn);
+    expect(accepted).toHaveLength(2);
+    // The first accepted send is the entry that was refused, not the one behind it.
+    expect(accepted[0]).toBe(first.lsn);
+    expect([...accepted].sort()).toEqual(accepted);
+  });
+
   // AC 47.4: G2 — At-most-once delivery via DedupRing
   it('AC 47.4: dedup prevents duplicate processing', async () => {
     pipeline = new ExactlyOnceCDCPipeline(makePipelineConfig());

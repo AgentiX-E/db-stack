@@ -176,6 +176,15 @@ baseMs, maxMs, maxRetries)` is exported so the boundary can be asserted directly
 
 ### Fixed
 
+- **The outbox was FIFO and the wire was not.** `pumpCycle()` walked the rest of the batch after a
+  refusal: entry 4's `send()` returned false, entries 5 and 6 were sent, and 4's retry landed after
+  them — and the receiver appends in arrival order, so the log at the far end read `…, 5, 6, 4, …`.
+  `fetchOldestPending` returns the outbox in order and the transport preserves order on a connection,
+  but neither survives a loop that keeps going past a failure. A cycle now ends at the first refusal
+  whose entry stays pending; an entry that moved to the dead letter is no longer at the head, so that
+  branch still continues. `e2e` AC-C15 saw the inversion once on a loaded runner — one record out of
+  place in a forty-record stream — and AC 47.11 reproduces it with a transport that refuses exactly
+  once, which is the case that fails without this change.
 - **`reconnect()` returned `void` over asynchronous work, so every failure inside it disappeared.**
   A typo in a peer id, or a transport whose `register()` is missing, made `reconnect('dc-nowhere')`
   look like a call that did nothing: the throw happened inside an unobserved promise. It now returns

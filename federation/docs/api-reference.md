@@ -604,6 +604,13 @@ appended to the outbox before it is sent and the checkpoint advances only after
 the peer confirms; inbound, the dedup ring rejects replays and the checkpoint
 file makes a restart resume instead of re-send.
 
+One ordering rule is part of the contract: **a pump cycle ends at the first send
+the transport refuses.** The outbox returns entries oldest-first, but a loop that
+keeps walking after a refusal sends the entries behind it, and the refused one's
+retry then lands after them — so a receiver that appends in arrival order records
+`5, 6, 4`. An entry that has exhausted its retries and moved to the dead letter is
+no longer at the head, so that case continues the cycle.
+
 ```typescript
 class ExactlyOnceCDCPipeline {
   constructor(config: ExactlyOnceCDCPipelineConfig);

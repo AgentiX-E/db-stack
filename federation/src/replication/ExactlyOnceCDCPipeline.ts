@@ -686,6 +686,18 @@ export class ExactlyOnceCDCPipeline {
               msgId: messageIdOf(entry),
               timestamp: Date.now(),
             });
+          } else {
+            // The head of the outbox is still pending, so the cycle ends here.
+            //
+            // This loop used to `markFailed` and keep walking: entry 4's send
+            // was refused, entries 5 and 6 were sent, and 4's retry landed after
+            // them. The outbox was FIFO and the wire was not, so the receiver —
+            // which appends in arrival order — recorded 1, 2, 3, 5, 6, 4. `e2e`
+            // AC-C15 saw it once on a loaded runner; AC 47.11 reproduces it with
+            // a transport that refuses exactly once. An entry that has moved to
+            // the dead letter is no longer at the head, which is why that branch
+            // above still continues.
+            break;
           }
         }
       }
