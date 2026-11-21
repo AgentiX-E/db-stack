@@ -72,6 +72,8 @@ export default defineConfig({
       'src/audit/__tests__/AC81-out-of-process-writes.test.ts',
       'src/audit/__tests__/AC82-group-commit.test.ts',
       'src/audit/__tests__/AC93-tamper-evident-trail.test.ts',
+      'src/audit/__tests__/AC95-what-a-verification-can-say.test.ts',
+      'src/audit/__tests__/FileAuditStore.survivors.test.ts',
       'src/audit/__tests__/AC83-archive-publish.test.ts',
       'src/audit/__tests__/AC84-failure-arms.test.ts',
       'src/audit/__tests__/AC85-segment-claim.test.ts',

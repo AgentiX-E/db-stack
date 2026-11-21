@@ -381,10 +381,23 @@ export interface SegmentView {
   readonly text: string | null;
 }
 
-/** The view of `path`, read from the local filesystem. */
-export function readView(path: string, compressed: boolean): SegmentView {
+/** The view of `path`, read through `read` — the store's own port, so the two decisions that act on a view cannot read behind it. */
+export function readView(
+  path: string,
+  compressed: boolean,
+  read: (path: string, compressed: boolean) => string | null = readSegmentFromDisk,
+): SegmentView {
   if (!isRegularFile(path)) return { exists: false, text: null };
-  return { exists: true, text: readSegmentFromDisk(path, compressed) };
+  try {
+    return { exists: true, text: read(path, compressed) };
+  } catch {
+    // A reader that throws has produced nothing, which is what `text: null` means
+    // here. The three comparisons in `relateTwin` are about what the two views hold,
+    // and a view whose bytes could not be recovered holds nothing that can be
+    // compared — it is `plain-unreadable` or `archive-unreadable`, not a crash in the
+    // middle of a construction sweep.
+    return { exists: true, text: null };
+  }
 }
 
 /**
@@ -1125,7 +1138,10 @@ export class FileAuditStore implements IAuditStore {
     for (const name of shadowedPairs(names, this.filePrefix)) {
       const plainPath = join(this.dataDir, name);
       const archivePath = `${plainPath}.gz`;
-      const repair = repairFor(relateTwin(readView(plainPath, false), readView(archivePath, true)), 'at-rest');
+      const repair = repairFor(
+        relateTwin(readView(plainPath, false, this.segmentReader), readView(archivePath, true, this.segmentReader)),
+        'at-rest',
+      );
 
       if (repair === 'remove-archive') removeFile(archivePath);
       else if (repair === 'remove-plain') removeFile(plainPath);
@@ -1172,7 +1188,13 @@ export class FileAuditStore implements IAuditStore {
     // the whole active segment to compare it with an archive that does not exist.
     if (!isRegularFile(archivePath)) return;
 
-    const repair = repairFor(relateTwin(readView(this.activeFilePath, false), readView(archivePath, true)), 'live');
+    const repair = repairFor(
+      relateTwin(
+        readView(this.activeFilePath, false, this.segmentReader),
+        readView(archivePath, true, this.segmentReader),
+      ),
+      'live',
+    );
     if (repair === 'remove-archive') {
       removeFile(archivePath);
       return;
@@ -1486,6 +1508,10 @@ export class FileAuditStore implements IAuditStore {
     const entries: AuditEntry[] = [];
     const unparsable: Array<{ where: string }> = [];
     let tornTail = false;
+    // A segment that could not be read is not an intact trail with fewer entries:
+    // the bytes that would have carried a link are missing, and a verifier that
+    // stayed silent about them would attest to a file it never saw.
+    let unreadable = false;
 
     // Oldest first: a chain is a statement about append order, and the reader lists
     // newest first for `query()`'s budget. The reverse of the listing is the order
@@ -1493,6 +1519,10 @@ export class FileAuditStore implements IAuditStore {
     for (const f of [...files].reverse()) {
       const path = join(this.dataDir, f);
       const content = this.readSegment(path, f.endsWith('.gz'));
+      if (content === null) {
+        unreadable = true;
+        continue;
+      }
 
       // The legacy single-array export is not a segment: it holds one JSON array,
       // not one entry per line. Reading it line-wise would push the array itself
@@ -1531,7 +1561,7 @@ export class FileAuditStore implements IAuditStore {
       }
     }
 
-    return verifyTrail(entries, { tornTail, unparsable });
+    return verifyTrail(entries, { tornTail, unparsable, unreadable });
   }
 
   async query(filter: AuditQueryFilter): Promise<AuditEntry[]> {
@@ -1599,22 +1629,26 @@ export class FileAuditStore implements IAuditStore {
   /**
    * Read a segment, decompressing it when rotation has archived it.
    *
-   * There is no `null` return any more, and no `continue` at the call sites. A
-   * sentinel meaning "this segment has no entries" was a second way of saying what
-   * the parser already says — `JSON.parse(null)` and `JSON.parse('')` both yield
-   * nothing to push — so it created two branches whose removal no run could
-   * observe, and two mutants that survived for exactly that reason. A segment that
-   * cannot be read is an empty segment: one damaged archive must not hide the
-   * entries in the segments after it, and saying so once is enough.
+   * `null` means *could not be read*, and it is deliberately not folded into `''`
+   * here. The two are the same text and not the same fact: a segment with no
+   * entries is a segment that was read, and a segment whose bytes could not be
+   * recovered is a gap in the evidence. Collapsing them made `verify()` answer
+   * `ok: true, entries: 0` for a trail whose every segment was unreadable — a false
+   * attestation produced by the function whose only job is to attest.
+   *
+   * The containment lives here rather than in the port so that every port —
+   * including a future remote one — is read the same way: a reader that throws has
+   * produced nothing, which is a failure to read and not a crash of the audit.
+   * `query()` and `count()` treat it as an absent segment and serve the rest;
+   * `verify()` counts it and refuses to call the trail intact. Serving what is
+   * readable and reporting what is not are two answers to two questions, and the
+   * store needs both.
    */
-  private readSegment(path: string, compressed: boolean): string {
+  private readSegment(path: string, compressed: boolean): string | null {
     try {
-      return this.segmentReader(path, compressed) ?? '';
+      return this.segmentReader(path, compressed);
     } catch {
-      // A reader that throws is a reader that produced nothing. The policy lives
-      // here rather than in the port so that every port — including a future
-      // remote one — inherits the same containment.
-      return '';
+      return null;
     }
   }
 
@@ -1679,7 +1713,7 @@ export class FileAuditStore implements IAuditStore {
 
       if (f.endsWith('.json')) {
         // Single JSON array format.
-        const array = this.readSegment(join(this.dataDir, f), false);
+        const array = this.readSegment(join(this.dataDir, f), false) ?? '';
         try {
           for (const e of JSON.parse(array) as AuditEntry[]) {
             if (exhausted()) break;
@@ -1696,7 +1730,11 @@ export class FileAuditStore implements IAuditStore {
       // once rotation archived them. Skipping the compressed ones made the trail
       // unreadable after the first rotation: the entries were on disk and `query()`,
       // `get()` and `count()` all reported that they were not.
-      const content = this.readSegment(join(this.dataDir, f), f.endsWith('.gz'));
+      //
+      // `?? ''`: a read contributes what it could get. One damaged archive must not
+      // hide the entries in the segments after it — that is what makes an incident
+      // report possible at all — and `verify()` is where the damage is named.
+      const content = this.readSegment(join(this.dataDir, f), f.endsWith('.gz')) ?? '';
 
       for (const line of content.split('\n')) {
         if (exhausted()) break;

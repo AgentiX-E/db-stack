@@ -335,8 +335,17 @@ Four properties worth knowing before you rely on it:
   An administrator who can rewrite the whole file *and* the chain defeats it. Closing that requires a key
   the administrator does not hold, which is a decision about the deployment's threat model rather than a
   missing feature of this module.
-- **A torn final line is reported, not hidden.** A crash mid-append leaves an unterminated last line; the
-  store treats it as `unparsable` rather than silently dropping it.
+- **A torn final line is reported, not hidden, and it is not a break.** A crash mid-append leaves an
+  unterminated last line. If what landed parses, the entry is counted *and* `tornTail` is `true`: the
+  bytes are demonstrably there, and the segment was cut. If it does not parse, the fragment is
+  `tornTail` again rather than an `unparsable` line — nobody promised that line, so accusing the file of
+  damage would be wrong about the one thing an operator acts on. `unparsable` is for a line *between*
+  others, which is a rewrite or a truncation by somebody else.
+- **A segment that cannot be read makes the trail not intact.** `tornTail`, `unparsable` and
+  `firstFailure` describe damage that was read; `unreadable: true` describes damage that could not be —
+  a truncated archive, a volume that went away, a reader that failed. `query()` still serves every
+  segment it can (an incident report must not be refused); `verify()` answers `ok: false`, because a
+  verification that skipped a file it could not decode would attest to evidence it never saw.
 
 ### `JsonAuditExporter`
 

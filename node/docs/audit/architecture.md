@@ -78,7 +78,18 @@ Why each part is there:
 | `link` | `prev` names something that is not the previous entry | look for an insertion or a reordering |
 | `sequence-gap` | the sequence skips inside what is present | look for a deletion |
 | `unchained` | no link at all — written before this version, or appended by hand | decide the cut-off date for legacy entries |
-| `unparsable` | the line is not an entry (includes a torn tail after a crash) | a torn tail is a lost write, not tampering |
+| `unparsable` | a line *between* others is not an entry | look for a rewrite or a truncation by somebody else |
+
+Two more answers are in the report and neither is a reason:
+
+| Field | What it means | What an operator does |
+|---|---|---|
+| `tornTail` | the newest segment does not end on a line boundary | a crash mid-append: the last write was never acknowledged, and its bytes are either a whole entry (which is counted) or a fragment (which is not) |
+| `unreadable` | at least one segment could not be read — a truncated archive, a volume that went away, a reader that failed | an intact answer is impossible until those bytes are recovered, so `ok` is `false` even when every byte that *was* read chains cleanly |
+
+`tornTail` is not `unparsable`, and the difference is what an operator does next: a torn tail is a lost
+write, and a line in the middle that is not an entry is a rewrite. Collapsing them told the person
+holding the incident that a crashed process had tampered with the trail.
 
 A pruned prefix is **not** a failure: retention removes whole segments from the front, so the first
 surviving entry of a writer may legitimately name a `prev` that is gone.

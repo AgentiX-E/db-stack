@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`verify()` no longer attests to a segment it could not read.** A segment whose bytes could not be
+  recovered used to be folded into the empty string, so a trail consisting of one truncated archive
+  verified as `ok: true, entries: 0` — a report of "intact" about evidence the store never saw. A read
+  failure now stays distinguishable from an empty segment: `verify()` sets `unreadable: true` and
+  refuses `ok`, while `query()`, `get()` and `count()` still serve every segment they can, because an
+  incident report must not be refused. The verification report now also tells a torn tail from an
+  unparsable line: a fragment at the very end of a segment is `tornTail` (a crash nobody acknowledged),
+  and `unparsable` is reserved for a line between others, where the position is part of the answer.
+- **The construction sweep and the live append read through the configured reader.** `readView` — the
+  comparison between a segment and its archive — called `readSegmentFromDisk` directly, so a deployment
+  that wrapped `segmentReader` (accounting, a different medium) was silently given a second, unwrapped
+  reader in the two places where the store decides what to delete. `readView` now takes the reader and
+  the store passes its own, and a reader that fails during a comparison yields an unreadable view rather
+  than an exception in the middle of an append: an append is not refused because a *comparison* could
+  not be made.
+
 ### Added
 
 - **The bucket is the inventory.** `BackupManager` no longer keeps its snapshots in a `Map` on the
