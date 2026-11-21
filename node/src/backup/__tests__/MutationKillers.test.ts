@@ -3,16 +3,16 @@
  *
  * Survivors span:
  *   - BackupVerifier: constructor default (L18 true→false)
- *   - InMemoryBackupManager: listBackups sort/lookup arithmetic (L63, L77-L83)
  *   - RetentionPolicyEvaluator: parseDurationToMs arithmetic (L112-L126) +
  *     evaluate() overflow/count logic
  *
- * Target: 66.7% → ≥95% mutation score.
+ * The third block these cases once covered — the manager's `listBackups`
+ * sort/lookup arithmetic — is gone with the manager it belonged to. Those lines live
+ * in `BackupManager.ts` now, and `AC 62` and `AC 95` hold them; a second, weaker copy
+ * here would have measured the same branches twice and the same behaviour once.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { BackupVerifier } from '../impl/BackupVerifier.js';
-import { InMemoryBackupManager } from '../impl/InMemoryBackupManager.js';
-import { InMemoryStorageBackend } from '../impl/InMemoryStorageBackend.js';
 import { RetentionPolicyEvaluator } from '../impl/RetentionPolicyEvaluator.js';
 import type { BackupMetadata } from '../../core/types.js';
 
@@ -73,108 +73,6 @@ describe('B-M: BackupVerifier', () => {
 // Strategy: Source restructure converted filter/sort to explicit for-loops
 // and if-else branches. Tests exercise each phase independently to kill
 // comparison/boolean mutations.
-
-describe('B-M: InMemoryBackupManager listBackups sort/filter', () => {
-  let manager: InMemoryBackupManager;
-  let storage: InMemoryStorageBackend;
-  let retention: RetentionPolicyEvaluator;
-
-  beforeEach(async () => {
-    storage = new InMemoryStorageBackend();
-    retention = new RetentionPolicyEvaluator({
-      maxFullSnapshots: 10,
-      maxTotalBytes: 1_000_000_000,
-    });
-    manager = new InMemoryBackupManager(storage, retention);
-    // Create multiple snapshots with natural timing
-    await manager.createBackup({ type: 'full' });
-    await new Promise((r) => setTimeout(r, 5));
-    await manager.createBackup({ type: 'full' });
-    await new Promise((r) => setTimeout(r, 5));
-    await manager.createBackup({ type: 'full' });
-  });
-
-  it('B4: listBackups newest first — kills L63 sort branch if/else', async () => {
-    const items = await manager.listBackups({});
-    expect(items.length).toBeGreaterThanOrEqual(3);
-    const times = items.map((s) => new Date(s.createdAt).getTime());
-    // Explicit if-else sort: newer (higher ms) comes first
-    for (let i = 1; i < times.length; i++) {
-      expect(times[i - 1]).toBeGreaterThanOrEqual(times[i]!);
-    }
-  });
-
-  it('B4b: listBackups with equal timestamps returns 0 branch', async () => {
-    // Add two snapshots at effectively the same time to hit the return 0 path
-    const mgr = new InMemoryBackupManager(storage, retention);
-    // Use the same createdAt by constructing snapshots manually
-    // (createBackup always uses new Date() so timestamps differ)
-    // We verify the equal-timestamp edge case doesn't crash
-    const ts = new Date().toISOString();
-    const s1 = makeSnapshot({ snapshotId: 'eq1', createdAt: ts });
-    const s2 = makeSnapshot({ snapshotId: 'eq2', createdAt: ts });
-    // listBackups sort should handle equal timestamps stably
-    const items = await manager.listBackups({});
-    expect(items.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it('B5: limit truncates — kills L77 guard', async () => {
-    const items = await manager.listBackups({ limit: 2 });
-    expect(items).toHaveLength(2);
-  });
-
-  it('B6: type filter — kills L79 for-loop === guard', async () => {
-    const fulls = await manager.listBackups({ type: 'full' });
-    expect(fulls.every((s) => s.type === 'full')).toBe(true);
-  });
-
-  it('B7: type filter wrong type returns empty', async () => {
-    const logicals = await manager.listBackups({ type: 'logical' });
-    expect(logicals).toHaveLength(0);
-  });
-
-  it('B8: newerThan future cutoff returns empty', async () => {
-    const future = new Date(Date.now() + 86_400_000 * 7).toISOString();
-    const items = await manager.listBackups({ newerThan: future });
-    expect(items).toHaveLength(0);
-  });
-
-  it('B9: newerThan past cutoff returns all', async () => {
-    const past = new Date(Date.now() - 3600_000).toISOString();
-    const items = await manager.listBackups({ newerThan: past });
-    expect(items.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it('B10: newerThan partial match', async () => {
-    // Get middle snapshot time and filter to only include newer ones
-    const all = await manager.listBackups({});
-    expect(all.length).toBeGreaterThanOrEqual(3);
-    const oldest = all[all.length - 1]!;
-    const cutoff = new Date(new Date(oldest.createdAt).getTime() + 1).toISOString();
-    const filtered = await manager.listBackups({ newerThan: cutoff });
-    expect(filtered.length).toBeLessThan(all.length);
-  });
-
-  it('B11: deleteBackup works', async () => {
-    const items = await manager.listBackups({});
-    const id = items[0]!.snapshotId;
-    expect(await manager.deleteBackup(id)).toBe(true);
-  });
-
-  it('B12: deleteBackup nonexistent false', async () => {
-    expect(await manager.deleteBackup('no')).toBe(false);
-  });
-
-  it('B13: getBackup returns by ID', async () => {
-    const items = await manager.listBackups({});
-    const snap = await manager.getBackup(items[0]!.snapshotId);
-    expect(snap).toBeDefined();
-  });
-
-  it('B14: getBackup null for missing', async () => {
-    expect(await manager.getBackup('no')).toBeNull();
-  });
-});
 
 // ── RetentionPolicyEvaluator (L112-L126) ─────────────
 

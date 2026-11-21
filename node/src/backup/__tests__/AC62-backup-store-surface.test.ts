@@ -1,56 +1,74 @@
 /**
  * AC 62 — the assertions a mutant asked for.
  *
- * P2-14 said mutation covered two of 21 operations packages and that the next
- * step needed a selection rule rather than a blanket run. The rule chosen:
- * **mutate what decides deletion, durability or when work runs.** Two more
- * modules qualify immediately — `InMemoryBackupManager` (it deletes snapshots)
- * and `backupChain` (it decides whether a snapshot can be restored at all) — and
- * measuring them the first time produced this list of behaviours nothing
- * asserted: the shape of a generated id, that `createdAt` is a readable instant,
- * the order `listBackups` returns, what `limit: 0` means, and whether
- * `newerThan` includes its own boundary.
+ * P2-14 said mutation covered two of 21 operations packages and that the next step
+ * needed a selection rule rather than a blanket run. The rule chosen: **mutate what
+ * decides deletion, durability or when work runs.** `backupChain` qualified
+ * immediately — it decides whether a snapshot can be restored at all — and measuring
+ * it the first time produced this list of behaviours nothing asserted: the shape of a
+ * generated id, that `createdAt` is a readable instant, the order `listBackups`
+ * returns, what `limit: 0` means, and whether `newerThan` includes its own boundary.
  *
- * None of those is exotic. Each is a line an operator reads off the product and
- * acts on, and each was a mutant that survived a suite of 2 668 tests.
+ * The manager that carried the sort, the filters and the prune is now `BackupManager`,
+ * which also moves the bytes; the questions are the same ones, asked of the shipped
+ * class instead of a simulator.
+ *
+ * None of those is exotic. Each is a line an operator reads off the product and acts
+ * on, and each was a mutant that survived a suite of 2 668 tests.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { InMemoryBackupManager } from '../impl/InMemoryBackupManager.js';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+import { BackupManager } from '../impl/BackupManager.js';
+import { DirectoryBackupSource } from '../impl/DirectoryBackupSource.js';
 import { InMemoryStorageBackend } from '../impl/InMemoryStorageBackend.js';
 import { RetentionPolicyEvaluator } from '../impl/RetentionPolicyEvaluator.js';
 import type { BackupMetadata } from '../../core/types.js';
 
 const NOW = Date.UTC(2026, 10, 16, 12, 0, 0, 0);
 
-function manager(keep = 100): InMemoryBackupManager {
-  return new InMemoryBackupManager(
+let root: string;
+let dataDir: string;
+
+function manager(keep = 100): BackupManager {
+  return new BackupManager(
+    new DirectoryBackupSource(dataDir),
     new InMemoryStorageBackend(),
     new RetentionPolicyEvaluator({ maxFullSnapshots: keep, maxTotalBytes: 0 }),
+    { workDir: join(root, 'work') },
   );
 }
 
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'ac62-'));
+  dataDir = join(root, 'data');
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(join(dataDir, 'table.bin'), 'rows');
+  // Only `Date` is faked: `createBackup` performs real file I/O and a real digest,
+  // and a fully faked clock would leave those promises pending forever.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  rmSync(root, { recursive: true, force: true });
+});
+
 describe('AC 62 — what the backup store says about what it stores', () => {
-  beforeEach(() => {
-    // Only `Date` is faked: `createBackup` waits on a real `setTimeout`, and a
-    // fully faked clock would leave that promise pending forever.
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(NOW);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it('AC 62.1: a generated snapshot id is a well-formed, unique identifier', async () => {
     const mgr = manager();
     const first = await mgr.createBackup({ type: 'full' });
     const second = await mgr.createBackup({ type: 'full' });
 
-    // `snap-<base36 time>-<base36 sequence>`. A mutated counter produces ids such
-    // as `snap-xxxx--1`, which this shape rejects.
+    // `snap-<base36 time>-<base36 sequence>-<8 hex>`. A mutated counter produces ids
+    // such as `snap-xxxx--1`, which this shape rejects; the random suffix keeps two
+    // processes that start in the same millisecond from colliding.
     for (const result of [first, second]) {
-      expect(result.snapshot!.snapshotId).toMatch(/^snap-[0-9a-z]+-[0-9a-z]+$/);
+      expect(result.snapshot!.snapshotId).toMatch(/^snap-[0-9a-z]+-[0-9a-z]+-[0-9a-f]{8}$/);
     }
     expect(first.snapshot!.snapshotId).not.toBe(second.snapshot!.snapshotId);
   });
@@ -59,8 +77,8 @@ describe('AC 62 — what the backup store says about what it stores', () => {
     const mgr = manager();
     const created = (await mgr.createBackup({ type: 'full' })).snapshot!;
 
-    // Retention sorts and ages by `createdAt`; an empty string there would sort
-    // as the epoch and hide the snapshot from every floor.
+    // Retention sorts and ages by `createdAt`; an empty string there would sort as
+    // the epoch and hide the snapshot from every floor.
     expect(new Date(created.createdAt).toISOString()).toBe(new Date(NOW).toISOString());
     expect(created.location).toContain(created.snapshotId);
     expect(created.state).toBe('completed');
@@ -121,8 +139,8 @@ describe('AC 62 — what the backup store says about what it stores', () => {
 
     const listed = await mgr.listBackups({ newerThan: boundary.createdAt });
 
-    // "Newer than" excludes the instant named, so the snapshot taken exactly
-    // then is not in the answer.
+    // "Newer than" excludes the instant named, so the snapshot taken exactly then is
+    // not in the answer.
     expect(listed.map((s) => s.snapshotId)).toEqual([newer.snapshotId]);
     expect(listed.map((s) => s.snapshotId)).not.toContain(boundary.snapshotId);
     expect(listed.map((s) => s.snapshotId)).not.toContain(older.snapshotId);

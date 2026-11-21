@@ -119,6 +119,15 @@ export interface BackupMetadata {
   location: string;
   /** SHA-256 checksum of the manifest. */
   checksum?: string;
+  /**
+   * Facts the engine reported about the cut this snapshot represents.
+   *
+   * A log position (`lsn`), a schema version, an epoch — whatever a restore
+   * decision needs and the middleware cannot know. They are recorded with the
+   * snapshot because resolving a point-in-time recovery to a snapshot is a
+   * comparison against them, and re-deriving them after the fact is impossible.
+   */
+  facts?: Record<string, string>;
 }
 
 /** Backup operation result. */
@@ -199,6 +208,33 @@ export interface AuditEntry {
   details?: Record<string, unknown>;
   /** Trace ID for distributed tracing correlation. */
   traceId?: string;
+  /**
+   * Tamper-evidence link, written by the store that appended the entry.
+   *
+   * Absent on entries written before the chain existed, and on entries another
+   * tool appended by hand — both of which `IAuditStore.verify()` reports as
+   * unchained rather than as broken links.
+   */
+  chain?: AuditChainLink;
+}
+
+/**
+ * One entry's position in its writer's hash chain.
+ *
+ * The digest covers the entry's own fields **and** `prev`, so editing an entry
+ * breaks that entry (its digest no longer matches its bytes) and, when the edit is
+ * accompanied by a recomputed digest, breaks the next entry (its `prev` no longer
+ * names what the previous entry sealed).
+ */
+export interface AuditChainLink {
+  /** The store instance that appended the entry; one chain per writer. */
+  writer: string;
+  /** 1-based position in that writer's chain. */
+  seq: number;
+  /** Digest of the previous entry of the same writer, or `GENESIS_DIGEST`. */
+  prev: string;
+  /** SHA-256 over the canonical pre-image of this entry and its position. */
+  hash: string;
 }
 
 /** TLS certificate metadata. */

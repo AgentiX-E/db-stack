@@ -7,7 +7,7 @@ import { ProviderRegistry } from '@agentix-e/db-node/core';
 import { IHealthProbe, HealthOrchestrator } from '@agentix-e/db-node/health';
 import { IMetricsRegistry, MetricsRegistry } from '@agentix-e/db-node/metrics';
 import { ILogger, InMemoryLogger } from '@agentix-e/db-node/logger';
-import { IBackupManager, InMemoryBackupManager } from '@agentix-e/db-node/backup';
+import type { IBackupManager } from '@agentix-e/db-node/backup';
 
 async function startup() {
   const registry = new ProviderRegistry();

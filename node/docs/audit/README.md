@@ -78,6 +78,7 @@ console.log(json);
 | `get(id)` | `Promise<AuditEntry \| null>` | Get entry by ID |
 | `count(filter?)` | `Promise<number>` | Count entries matching filter |
 | `pruneOlderThan(timestamp)` | `Promise<number>` | Delete entries older than timestamp, returns count |
+| `verify()` | `Promise<AuditTrailVerification>` | Walk the whole trail and report the first break |
 
 #### `IAuditExporter`
 
@@ -260,6 +261,82 @@ Two consequences worth knowing before you deploy it:
   which repairs the segment of a writer that died before it could. What is left is a
   window of microseconds between that check and the sync; the entry is never lost, and
   the next append or the next start repairs it.
+
+### Tamper evidence
+
+An append-only file records what happened. It does not, by itself, show that nothing was removed — and
+"nobody edited the audit log" is a claim an auditor will test with a text editor, not with a lock.
+
+Every entry written now carries a `chain` link:
+
+```typescript
+{
+  "id": "3f2a…",
+  "timestamp": "2026-11-21T09:14:03.115Z",
+  "operation": "DROP_TABLE",
+  "actor": "alice",
+  "chain": { "writer": "b1e0…", "seq": 7, "prev": "9c4d…", "hash": "5a71…" }
+}
+```
+
+`hash` is the SHA-256 of a pre-image that includes the entry's own content, its writer, its sequence
+number and the previous entry **of the same writer**. Editing a line, deleting one, or inserting one by
+hand breaks the chain at that point, and `verify()` names where.
+
+The pieces are published because the rule has to be checkable by someone who does not trust the store:
+
+| Export | Meaning |
+|---|---|
+| `CHAIN_DOMAIN` | `"db-node/audit/chain/v1"` — the domain separator, so this digest can never be confused with another protocol's |
+| `GENESIS_DIGEST` | 64 zeros — `prev` for the first entry of a writer |
+| `canonicalJson(value)` | JSON with keys sorted at every depth, the exact pre-image |
+| `chainPreimage(entry, writer, seq, prev)` | The 13-element positional array that gets hashed |
+| `chainDigest(preimage)` | SHA-256 hex |
+| `sealEntry(entry, writer, seq, prev)` | The `AuditChainLink` a writer attaches |
+| `recomputeDigest(entry)` | The digest an entry *claims*, recomputed from its content |
+| `verifyTrail(entries, options?)` | Verify a sequence; returns `AuditTrailVerification` |
+| `describeVerification(result)` | One sentence for an operator |
+
+```typescript
+import { FileAuditStore, describeVerification } from '@agentix-e/db-node/audit';
+
+const store = new FileAuditStore({ dataDir: '/var/lib/db/audit' });
+const result = await store.verify();
+
+if (!result.ok) {
+  // "audit trail: first break: 3f2a… (content at seq 7), 1 failure(s), 0 of them unchained"
+  console.error(describeVerification(result));
+}
+```
+
+Five failure reasons, each a different sentence to an operator:
+
+| Reason | What it means |
+|---|---|
+| `content` | The entry's content changed after it was sealed |
+| `link` | `prev` does not name the previous entry of this writer |
+| `sequence-gap` | The sequence numbers skip — an entry was deleted |
+| `unchained` | The entry carries no link at all (written before this version, or appended by hand) |
+| `unparsable` | The line is not an audit entry |
+
+**Verification is unbounded, and that is deliberate.** `query()` honours `maxScanLines` because a search
+answers a question about a page; a verification capped the same way would answer "intact" about the part
+it happened to look at. `verify()` reads every segment and every archive.
+
+Four properties worth knowing before you rely on it:
+
+- **Chains are per writer.** Two processes may append to one trail, and each keeps its own sequence. The
+  `writer` id defaults to a fresh UUID per store construction: reusing a name across processes would
+  restart the sequence and look exactly like a deleted entry.
+- **A pruned prefix is not a broken link.** Retention removes whole segments from the front; the first
+  surviving entry of a writer may legitimately name a `prev` that is gone. That is why the reason is
+  `sequence-gap` only for a gap *inside* what is present.
+- **It is an unkeyed digest, not a signature.** It detects an edit that was not followed by a recompute.
+  An administrator who can rewrite the whole file *and* the chain defeats it. Closing that requires a key
+  the administrator does not hold, which is a decision about the deployment's threat model rather than a
+  missing feature of this module.
+- **A torn final line is reported, not hidden.** A crash mid-append leaves an unterminated last line; the
+  store treats it as `unparsable` rather than silently dropping it.
 
 ### `JsonAuditExporter`
 

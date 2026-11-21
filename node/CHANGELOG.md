@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`backup` now moves bytes.** `new BackupManager(source, storage, retention)` replaces
+  `InMemoryBackupManager`, and it is a different class in the way that matters: `createBackup` captures
+  a consistent cut through the new `IBackupSource` port, measures the artefact it got, hashes it,
+  uploads it, and then **asks the bucket to list the key at that size** before it records a snapshot.
+  `sizeBytes` is the artefact's length rather than the `1024` the old class wrote after a timer,
+  `checksum` is its SHA-256, and a failed attempt stores no metadata at all — a listing that shows a
+  snapshot the bucket cannot answer for is a snapshot somebody plans a recovery around.
+  `restoreFromSnapshot` is the same path backwards: chain check, download, size, digest, and only then
+  the engine. `pitr` resolves a target against the snapshots the manager actually holds (by id, by
+  time, or by `lsn` fact with `compareLsn`'s hex ordering) and refuses an empty target instead of
+  answering `recoveryPoint: 'unknown'`. `deleteBackup` and `prune` remove **sets** through
+  `expandDeletions`, and `prune()` returns what was deleted rather than what the policy named.
+  `DirectoryBackupSource` is the reference engine: a directory, captured into a `DBDIR1` container
+  whose manifest lists every file with its own digest, hashed twice so a moving target is an error
+  instead of an artefact that restores a state no moment ever held.
+- **`audit` is tamper-evident.** Every entry written carries a `chain` link — `writer`, `seq`, `prev`,
+  `hash` — where the digest covers the entry's canonical JSON, its writer, its sequence and the
+  previous entry of the same writer, under the domain separator `db-node/audit/chain/v1`. `IAuditStore`
+  gained `verify()`, which walks **every** segment and archive (a verification bounded like `query()`
+  would answer "intact" about the part it looked at) and reports the first break with a reason:
+  `content`, `link`, `sequence-gap`, `unchained` or `unparsable`. Chains are per writer because two
+  processes may append to one trail; `writerId` defaults to a fresh UUID, because a reused name would
+  restart the sequence and look exactly like a deleted entry. A pruned prefix is not a broken link.
+  It is an unkeyed digest and the documentation says so: it catches an edit nobody recomputed after,
+  and an administrator who can rewrite the file and the chain defeats it.
+
 - **Twenty-one packages are three.** `@agentix-e/db-operations-<module>` is now
   `@agentix-e/db-node/<module>` for the twenty modules that do not need to know how
   many nodes exist, and the two categories that do are packages of their own:
@@ -47,6 +73,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`@agentix-e/db-node/backup`: `IBackupSource`, `SnapshotCapture`, and the artefact format.** The
+  engine port is three members — `name`, `capture(destination)`, `restore(source)` — and it is the only
+  part of a backup the middleware cannot supply. Around it, everything an engine would otherwise get
+  subtly wrong is here: the container (`ARTIFACT_MAGIC`/`ARTIFACT_VERSION`, `writeDirectoryArtifact`,
+  `readDirectoryArtifact`), the digest (`hashFile`), the refusal to write outside the engine's
+  directory (`safeJoin`), the second half of the two-pass capture (`assertUnchanged`), the manifest
+  ceiling (`MAX_MANIFEST_BYTES`), and the error helpers `reason` and `removeQuietly` — published as
+  functions so that each branch is reachable by a test with a filesystem it controls.
+- **`@agentix-e/db-node/audit`: the chain rule, published.** `canonicalJson`, `chainPreimage`,
+  `chainDigest`, `sealEntry`, `recomputeDigest`, `verifyTrail` and `describeVerification`, plus
+  `CHAIN_DOMAIN` and `GENESIS_DIGEST`. A claim of tamper-evidence that only the store can check is a
+  claim on the store's authority; the rule is a function so an auditor can apply it to a file the store
+  never touched.
 - **`@agentix-e/db-cluster` is new.** `ClusterScalingExecutor` applies a `ScaleAction` to
   the members it observes rather than to the members a plan named — a plan is an opinion and the
   member set is the fact — clamps at `max(minNodes, quorumOf(voters))`, never removes the leader,
@@ -101,6 +140,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passed as a two-field `CDCEngineConfig`.
 
 ### Removed
+
+- **`InMemoryBackupManager` and `InMemoryPITRManager`.** Both are gone rather than deprecated. The
+  first recorded `sizeBytes: 1024` after a five-millisecond timer, answered `restoreFromSnapshot` with
+  `{ success: true }` without touching a database, and its `pitr()` returned `recoveryPoint:
+  'unknown'`; the second tracked a WAL LSN string that no archive ever wrote. They implemented
+  `IBackupManager` by name only, which made every document that said this package backs a database up
+  a description of the interface rather than of the product. `BackupManager` and
+  `DirectoryBackupSource` are the replacements, and `mutation/targets.mjs` mutates them instead —
+  along with `auditChain.ts`, which is what makes the audit trail's tamper-evidence a claim the suite
+  can break on purpose.
 
 - **`FederationQueryRouter` and its ten cases from `@agentix-e/db-federation`.** It was never
   exported from the barrel and never named in `package.json#exports`, so nothing outside its own

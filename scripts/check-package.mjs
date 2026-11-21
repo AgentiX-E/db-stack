@@ -121,9 +121,40 @@ export const TARGETS = [
   },
   { dir: "node", entry: "./security", expect: ["KeyManager", "RBACEngine"] },
   {
+    // `verifyTrail`/`sealEntry` are here because tamper-evidence is only a claim
+    // a deployment can check for itself if the link rule is published; a store
+    // that could verify but never explain the rule would be asking to be trusted.
     dir: "node",
     entry: "./audit",
-    expect: ["FileAuditStore", "JsonAuditExporter"],
+    expect: [
+      "FileAuditStore",
+      "InMemoryAuditStore",
+      "JsonAuditExporter",
+      "sealEntry",
+      "verifyTrail",
+      "describeVerification",
+      "CHAIN_DOMAIN",
+      "GENESIS_DIGEST",
+    ],
+  },
+  {
+    // The names this entry used to assert — `InMemoryBackupManager`,
+    // `InMemoryPITRManager` — are gone: neither moved a byte. What replaced them
+    // is asserted here, so the day `BackupManager` stops being exported is the
+    // day this gate fails rather than the day a deployment discovers it.
+    dir: "node",
+    entry: "./backup",
+    expect: [
+      "BackupManager",
+      "DirectoryBackupSource",
+      "InMemoryStorageBackend",
+      "RetentionPolicyEvaluator",
+      "BackupVerifier",
+      "compareLsn",
+      "readDirectoryArtifact",
+      "writeDirectoryArtifact",
+      "hashFile",
+    ],
   },
   {
     dir: "cluster",

@@ -30,7 +30,15 @@ import type { IChaosEngine } from '../../../chaosengine/index.js';
 
 import { HealthOrchestrator } from '../../../health/index.js';
 import { MetricsRegistry } from '../../../metrics/index.js';
-import { InMemoryBackupManager, InMemoryStorageBackend, RetentionPolicyEvaluator } from '../../../backup/index.js';
+import {
+  BackupManager,
+  DirectoryBackupSource,
+  InMemoryStorageBackend,
+  RetentionPolicyEvaluator,
+} from '../../../backup/index.js';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { InMemoryAuditStore } from '../../../audit/index.js';
 import { InMemoryDistributedTracer } from '../../../observability/index.js';
 import {
@@ -135,7 +143,11 @@ export class IntegratedFactory {
 
   createBackupManager(): IBackupManager {
     const retention = this.createRetentionPolicy();
-    return new InMemoryBackupManager(this.storage, retention);
+    const root = mkdtempSync(join(tmpdir(), 'integrated-backup-'));
+    mkdirSync(join(root, 'data'), { recursive: true });
+    return new BackupManager(new DirectoryBackupSource(join(root, 'data')), this.storage, retention, {
+      workDir: join(root, 'work'),
+    });
   }
 
   createRetentionPolicy(): IBackupRetentionPolicy {

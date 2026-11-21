@@ -1,48 +1,112 @@
 # Architecture
 
-## Position in the Framework
+## Position in the framework
 
-The backup package provides **data durability** — creating, storing, and restoring database snapshots. It's independent of other operational packages except core.
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                  db-node/backup                          │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │              IBackupManager                       │    │
-│  │  createBackup | listBackups | restoreFromSnapshot│    │
-│  │  pitr | prune | deleteBackup                     │    │
-│  └─────────────────────────────────────────────────┘    │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐     │
-│  │ IPITR    │ │ IStorage │ │ IBackupRetention      │     │
-│  │ Manager  │ │ Backend  │ │ Policy                │     │
-│  └──────────┘ └──────────┘ └──────────────────────┘     │
-├─────────────────────────────────────────────────────────┤
-│                    Dependencies                          │
-│              @agentix-e/db-node/core (types)                  │
-│              pino (logging)                               │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Design Principles
-
-1. **Composability** — `IBackupManager` orchestrates storage and retention as injected dependencies. This enables testing backup logic with `InMemoryStorageBackend` while using S3 in production.
-
-2. **Snapshot lifecycle** — Each snapshot goes through a well-defined state machine: `pending → in-progress → completed → verifying → verified` (or `→ failed`).
-
-3. **Retention as pluggable logic** — The `IBackupRetentionPolicy` interface allows custom retention strategies beyond the provided `RetentionPolicyEvaluator` (e.g., legal hold, compliance-based retention).
-
-## Retention Policy Rules
+`backup` is the **durability** module of a single node. It depends on `core` for the snapshot types and
+on nothing else in the package: a backup manager that needed the health registry and the metric registry
+to take a backup would be a manager nobody could run during an incident.
 
 ```
-evaluate(snapshots):
-  1. Sort newest first
-  2. Keep first maxFullSnapshots full snapshots
-  3. For remaining candidates:
-     a. Skip if keepRecent and age < keepRecent
-     b. Skip if minAge and age < minAge
-     c. Otherwise → mark for deletion
-  4. Enforce maxTotalBytes:
-     - Calculate total of remaining (non-deleted) snapshots
-     - If > maxTotalBytes, delete oldest until under limit
-  5. Return deletion candidates
+┌──────────────────────────────────────────────────────────────┐
+│                     db-node/backup                           │
+│                                                              │
+│   BackupManager ────────► IBackupSource         (engine port)│
+│        │      ──────────► IStorageBackend       (the bucket) │
+│        │      ──────────► IBackupRetentionPolicy (what stays)│
+│        │                                                     │
+│        ├─ backupArtifact   DBDIR1 container it wrote itself  │
+│        ├─ backupChain      sets: a base and what reaches it  │
+│        └─ BackupVerifier   the scheduled drill               │
+├──────────────────────────────────────────────────────────────┤
+│  Dependencies: @agentix-e/db-node/core (types), pino          │
+│  Optional peers: @aws-sdk/client-s3, @aws-sdk/lib-storage     │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+## Why the engine is a port and the rest is not
+
+A `pg_basebackup`, a SQLite `VACUUM INTO`, an LSM checkpoint and a `cp -a` of a data directory have
+almost nothing in common — except that each produces a cut of some state, and each can be told to
+replace that state with one. That is exactly `IBackupSource`, and it is the only part of a backup the
+middleware cannot supply.
+
+Everything around it *is* the same for every engine, and putting it here is the whole reason this module
+exists:
+
+- the artefact's container format and per-file digests,
+- the confirmation that the bucket lists what was uploaded,
+- the chain rules that make an incremental restorable or refuse it,
+- the retention rules that treat a chain as one unit,
+- the failure taxonomy an operator triages.
+
+An engine that reimplemented those would get them subtly wrong in the same three places every time: it
+would trust `upload` resolving, it would delete a base and keep its deltas, and it would call a restore
+successful without checking the digest.
+
+## The lifecycle, as it actually is
+
+```
+createBackup
+  capture ──► stat vs reported bytes ──► sha256 ──► upload ──► list(key)? size? ──► completed
+     │
+     └─ any failure ──► success: false, and no metadata stored
+
+restoreFromSnapshot
+  chain ──► download ──► size ──► digest ──► source.restore
+```
+
+`BackupMetadata.state` is `pending | in-progress | completed | failed | expired`. `in-progress` is the
+state of the object the manager is building; a `BackupManager` never stores it, so `listBackups()` cannot
+show a snapshot that is still being written.
+
+There is no `verifying`/`verified` state, and that is a decision rather than an omission: verification is
+not a phase a snapshot passes through once. It is a claim that decays — the object can be corrupted in
+the bucket a year later — so it is an operation (`BackupVerifier`) run on a schedule, not a flag stored
+at creation time.
+
+## Retention: why the unit is a set
+
+```
+inventory:    [base-a, inc-a1, inc-a2, base-b]
+policy names: [base-a]
+expandDeletions → [base-a, inc-a1, inc-a2]     one unit, removed together
+prune() returns 3                              what was deleted, not what was named
+```
+
+A policy that could return `[base-a]` and have the manager delete only that would produce bytes that are
+listed, billed, and impossible to replay. The expansion lives in one function so that `deleteBackup` and
+`prune` cannot disagree about it.
+
+Age is a property of the **base**, because a delta is only as new as the chain it can be replayed on. A
+floor on any member protects the whole set: keeping an incremental and deleting its base is the same bug
+as above, one step later.
+
+## The artefact format
+
+`DBDIR1` — magic line, JSON manifest, then the bytes. Three properties carry the weight:
+
+1. **Manifest first**, so a truncated file is refused at the size it claims rather than discovered as a
+   file that ends early.
+2. **Per-file digests**, so corruption is localised to a path an operator can name.
+3. **Two-pass capture** (hash, then copy-and-rehash), so a moving target fails the capture instead of
+   producing an artefact that restores a state no moment ever held.
+
+Two inputs are treated as hostile: a manifest path (`safeJoin` refuses absolute paths and any `..`) and a
+manifest length (`MAX_MANIFEST_BYTES` caps the assembly, because a bucket can return something that is
+not a manifest at all).
+
+## Failure taxonomy
+
+| Where | What the operator reads |
+|---|---|
+| capture | `<source> → <key>: <reason from the engine>` |
+| size disagreement | `directory reported 4096 bytes but wrote 31` |
+| upload / confirmation | `the bucket does not list <key> after the upload` |
+| wrong size in bucket | `the bucket lists <key> at 12 bytes, 4096 were uploaded` |
+| restore, missing base | `incremental <id> cannot be replayed: its base <id> is gone` |
+| restore, corrupt | `the artefact does not match the snapshot's digest (a1b2c3… ≠ d4e5f6…)` |
+| pitr, no target | `the target names neither a time nor an LSN` |
+| pitr, nothing before it | `no snapshot at or before LSN 16/10 (3 completed snapshot(s) considered)` |
+
+Each names the step and the object, because the reader has to choose between retrying, freeing space and
+calling the storage team — and "backup failed" answers none of those.

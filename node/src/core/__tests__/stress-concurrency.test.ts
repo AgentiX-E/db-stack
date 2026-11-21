@@ -18,7 +18,11 @@ import { MetricsRegistry } from '../../metrics/impl/MetricsRegistry.js';
 import { InMemoryLogger } from '../../logger/impl/InMemoryLogger.js';
 import { InMemoryDeadlockDetector } from '../../monitor/impl/InMemoryDeadlockDetector.js';
 import { InMemoryAlertRuleManager } from '../../monitor/impl/InMemoryAlertRuleManager.js';
-import { InMemoryBackupManager } from '../../backup/impl/InMemoryBackupManager.js';
+import { BackupManager } from '../../backup/impl/BackupManager.js';
+import { DirectoryBackupSource } from '../../backup/impl/DirectoryBackupSource.js';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { InMemoryStorageBackend } from '../../backup/impl/InMemoryStorageBackend.js';
 import { RetentionPolicyEvaluator } from '../../backup/impl/RetentionPolicyEvaluator.js';
 import { InMemoryAuditStore } from '../../audit/impl/InMemoryAuditStore.js';
@@ -310,15 +314,26 @@ describe('Section 4: Concurrent AlertRuleManager', () => {
 // ══════════════════════════════════════════════════════════════════════
 
 describe('Section 5: Concurrent BackupManager', () => {
-  let backupManager: InMemoryBackupManager;
+  let backupManager: BackupManager;
+  let root: string;
 
   beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'stress-backup-'));
+    const dataDir = join(root, 'data');
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(dataDir, 'table.bin'), 'rows');
     const storage = new InMemoryStorageBackend();
     const retention = new RetentionPolicyEvaluator({
       maxFullSnapshots: 100,
       maxTotalBytes: 10_000_000_000,
     });
-    backupManager = new InMemoryBackupManager(storage, retention);
+    backupManager = new BackupManager(new DirectoryBackupSource(dataDir), storage, retention, {
+      workDir: join(root, 'work'),
+    });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
   });
 
   it('10 concurrent createBackup() → listBackups().then(results.length === 10)', async () => {
@@ -348,11 +363,19 @@ describe('Section 5: Concurrent BackupManager', () => {
     ]);
     expect(results).toHaveLength(5);
 
-    // Delete one and list
+    // Delete one and list, concurrently.
     const firstId = results[0].snapshot!.snapshotId;
-    const [deleted, backups] = await Promise.all([backupManager.deleteBackup(firstId), backupManager.listBackups()]);
+    const [deleted, during] = await Promise.all([backupManager.deleteBackup(firstId), backupManager.listBackups()]);
     expect(deleted).toBe(true);
-    expect(backups).toHaveLength(4);
+
+    // The listing raced the delete, and a delete is not instantaneous once it has to
+    // remove an object first — so the snapshot it observed is either the state
+    // before (five) or the state after (four). What it may never be is a listing that
+    // still holds the id it was told was deleted while reporting the smaller count.
+    expect([4, 5]).toContain(during.length);
+    if (during.length === 4) expect(during.map((s) => s.snapshotId)).not.toContain(firstId);
+
+    expect(await backupManager.listBackups()).toHaveLength(4);
   });
 
   it('Concurrent restore + prune → both complete safely', async () => {
@@ -630,7 +653,12 @@ describe('Section 8: Cross-package Concurrent Scenario', () => {
         maxFullSnapshots: 100,
         maxTotalBytes: 10_000_000_000,
       });
-      const backupMgr = new InMemoryBackupManager(storage, retention);
+      const backupRoot = mkdtempSync(join(tmpdir(), 'stress-integrated-'));
+      mkdirSync(join(backupRoot, 'data'), { recursive: true });
+      writeFileSync(join(backupRoot, 'data', 'table.bin'), 'rows');
+      const backupMgr = new BackupManager(new DirectoryBackupSource(join(backupRoot, 'data')), storage, retention, {
+        workDir: join(backupRoot, 'work'),
+      });
       const audit = new InMemoryAuditStore();
 
       const backupCounter = metrics.counter('backups_created');

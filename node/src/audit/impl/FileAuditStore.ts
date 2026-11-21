@@ -50,7 +50,9 @@ import { join, extname, resolve } from 'node:path';
 import { createGzip, gunzipSync } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import type { IAuditStore, WriteAuditEntryOptions, AuditQueryFilter } from '../interfaces/index.js';
+import type { AuditTrailVerification } from '../interfaces/index.js';
 import type { AuditEntry } from '../../core/types.js';
+import { GENESIS_DIGEST, sealEntry, verifyTrail } from './auditChain.js';
 import { nodeDurableFileSystem } from './DurableFileSystem.js';
 import type { DurableFileSystem } from './DurableFileSystem.js';
 
@@ -107,6 +109,20 @@ export interface FileAuditStoreConfig {
    * times and then accuse its peers.
    */
   claim?: (path: string) => void;
+  /**
+   * This store's identity in the trail's hash chain.
+   *
+   * Two processes appending to one directory form two chains, and this is the name
+   * that separates them. The default is a fresh UUID per construction, because a
+   * name that is *reused* across process lifetimes would restart the sequence at 1
+   * and make the second run's entries look like a rewind of the first run's — the
+   * one shape `verify()` cannot distinguish from an attacker deleting entries.
+   *
+   * Set it when the identity matters to a reader (an operator who wants "which
+   * writer logged this"), and never set the same value in two processes that may
+   * overlap.
+   */
+  writerId?: string;
 }
 
 // ── Defaults ────────────────────────────────────────────────────
@@ -772,6 +788,13 @@ export class FileAuditStore implements IAuditStore {
   /** How a segment name is taken. See `FileAuditStoreConfig.claim`. */
   private readonly claim: (path: string) => void;
 
+  /** This store's identity in the hash chain. See `FileAuditStoreConfig.writerId`. */
+  private readonly writerId: string;
+
+  /** Position of the last entry this store sealed, and the digest it produced. */
+  private chainSeq = 0;
+  private chainPrev: string = GENESIS_DIGEST;
+
   /**
    * The segment being appended to, or `''` when this store has not named one yet.
    *
@@ -876,6 +899,7 @@ export class FileAuditStore implements IAuditStore {
     this.segmentReader = config.segmentReader ?? readSegmentFromDisk;
     this.fileSystem = config.fileSystem ?? nodeDurableFileSystem;
     this.claim = config.claim ?? ((path: string) => closeSync(openSync(path, 'wx')));
+    this.writerId = config.writerId ?? randomUUID();
 
     // Inverted until now: the directory was created only if it already existed, so
     // a store pointed at a fresh path failed on its first write with ENOENT.
@@ -1424,8 +1448,90 @@ export class FileAuditStore implements IAuditStore {
       traceId: options.traceId,
     };
 
+    // Sealed before the append, and the state advanced with it: the position a
+    // line claims has to be the position it occupies in the file, and the append
+    // is what decides that. A failed sync leaves the bytes in the segment, so the
+    // chain has moved on even though the caller was told to retry — which is the
+    // right answer, because the retry carries a new id and would otherwise be
+    // sealed against a predecessor the file already holds.
+    const link = sealEntry(entry, this.writerId, this.chainSeq + 1, this.chainPrev);
+    entry.chain = link;
+    this.chainSeq = link.seq;
+    this.chainPrev = link.hash;
+
     await this.appendLine(JSON.stringify(entry));
     return id;
+  }
+
+  /**
+   * Recompute the whole trail and name the first link that does not hold.
+   *
+   * The scan is unbounded on purpose. `query()` caps itself at `maxScanLines`
+   * because the cap is what keeps a grep-shaped read cheap; a verification that
+   * stopped at the same line would answer "intact" about the part it happened to
+   * look at, which is the one kind of report worse than no report.
+   *
+   * `close()` is not called first: an entry whose acknowledgement is still queued
+   * is not on the medium yet, and reporting it as missing would accuse the store of
+   * losing a line it is about to flush. `flush()` is, for the opposite reason —
+   * a caller asking "is my trail intact" after awaiting `write()` should be told
+   * about that write.
+   */
+  async verify(): Promise<AuditTrailVerification> {
+    this.flush();
+
+    const files = this.listReadableFiles();
+    if (files === null) return verifyTrail([], { unreadable: true });
+
+    const entries: AuditEntry[] = [];
+    const unparsable: Array<{ where: string }> = [];
+    let tornTail = false;
+
+    // Oldest first: a chain is a statement about append order, and the reader lists
+    // newest first for `query()`'s budget. The reverse of the listing is the order
+    // the lines were written, because segments are named by increasing timestamp.
+    for (const f of [...files].reverse()) {
+      const path = join(this.dataDir, f);
+      const content = this.readSegment(path, f.endsWith('.gz'));
+
+      // The legacy single-array export is not a segment: it holds one JSON array,
+      // not one entry per line. Reading it line-wise would push the array itself
+      // into the trail and report an unchained entry whose id is `undefined`.
+      if (f.endsWith('.json')) {
+        try {
+          const array = JSON.parse(content) as AuditEntry[];
+          for (const entry of array) entries.push(entry);
+        } catch {
+          unparsable.push({ where: `${f}` });
+        }
+        continue;
+      }
+
+      const lines = content.split('\n');
+      const endsWithNewline = content.endsWith('\n');
+      // A trailing empty string is what a final newline produces, not a line.
+      if (endsWithNewline) lines.pop();
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        if (line.trim() === '') continue;
+        const last = i === lines.length - 1;
+        const unterminated = !endsWithNewline && last;
+        try {
+          entries.push(JSON.parse(line) as AuditEntry);
+          if (unterminated) tornTail = true;
+        } catch {
+          // A fragment at the very end of the newest segment is a crash, not an
+          // attack: the store writes `line\n` in one call, so a line that does not
+          // end on a newline was never acknowledged. Anywhere else it is a line
+          // that was rewritten or truncated by somebody else.
+          if (unterminated) tornTail = true;
+          else unparsable.push({ where: `${f}:${i + 1}` });
+        }
+      }
+    }
+
+    return verifyTrail(entries, { tornTail, unparsable });
   }
 
   async query(filter: AuditQueryFilter): Promise<AuditEntry[]> {

@@ -11,7 +11,15 @@ import type { ILogger } from '../../../logger/index.js';
 
 import { HealthOrchestrator, componentProbe } from '../../../health/index.js';
 import { MetricsRegistry } from '../../../metrics/index.js';
-import { InMemoryBackupManager, InMemoryStorageBackend, RetentionPolicyEvaluator } from '../../../backup/index.js';
+import {
+  BackupManager,
+  DirectoryBackupSource,
+  InMemoryStorageBackend,
+  RetentionPolicyEvaluator,
+} from '../../../backup/index.js';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { InMemoryAuditStore } from '../../../audit/index.js';
 import { InMemoryDistributedTracer } from '../../../observability/index.js';
 import {
@@ -26,6 +34,8 @@ import { InMemoryLogger } from '../../../logger/index.js';
 export class InMemoryEngineFactory implements EngineFactory {
   private storage?: InMemoryStorageBackend;
   private logger?: InMemoryLogger;
+  /** Source root for the backup engine this factory plugs in, created once. */
+  private backupRoot?: string;
 
   createHealthProbe(): IHealthProbe {
     return componentProbe('engine-probe', 'Engine Probe', {
@@ -50,7 +60,16 @@ export class InMemoryEngineFactory implements EngineFactory {
   createBackupManager(): IBackupManager {
     const storage = this.createStorageBackend() as InMemoryStorageBackend;
     const retention = this.createRetentionPolicy();
-    return new InMemoryBackupManager(storage, retention);
+    // A real source over a real directory, because the port is what this factory is
+    // here to prove: an engine integrates by supplying `capture`/`restore`, not by
+    // being one of the implementations this package ships.
+    if (this.backupRoot === undefined) {
+      this.backupRoot = mkdtempSync(join(tmpdir(), 'inmemory-engine-backup-'));
+      mkdirSync(join(this.backupRoot, 'data'), { recursive: true });
+    }
+    return new BackupManager(new DirectoryBackupSource(join(this.backupRoot, 'data')), storage, retention, {
+      workDir: join(this.backupRoot, 'work'),
+    });
   }
 
   createStorageBackend(): IStorageBackend {

@@ -24,7 +24,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -39,7 +39,7 @@ import { HLC } from '../../hlc/HLC';
 
 // ── Repo C: db-node ─────────────────────────────────────────
 import { FileAuditStore } from '@agentix-e/db-node/audit';
-import { InMemoryBackupManager, InMemoryStorageBackend, RetentionPolicyEvaluator } from '@agentix-e/db-node/backup';
+import { BackupManager, DirectoryBackupSource, InMemoryStorageBackend, RetentionPolicyEvaluator } from '@agentix-e/db-node/backup';
 import { InMemoryAuditStore } from '@agentix-e/db-node/audit';
 
 // ── Constants ───────────────────────────────────────────────
@@ -67,9 +67,22 @@ function cdcEntry(msgId: string, payload: Record<string, unknown>, hlc: HLC): Ou
   };
 }
 
-/** Backup manager backed by in-memory storage with an unbounded retention policy. */
-function makeBackupManager(auditStore: InMemoryAuditStore): InMemoryBackupManager {
-  return new InMemoryBackupManager(
+/**
+ * Backup manager over an in-memory bucket and a real directory source.
+ *
+ * The source is a directory, not a simulator: a manager measured through a port
+ * that reports `1 024 bytes` and copies nothing measures the callback rather than
+ * the product. Four kilobytes of file give the capture something to hash, copy
+ * and then confirm against the bucket's own listing.
+ */
+function makeBackupManager(label: string): BackupManager {
+  const dataDir = tmpDir(`perf-backup-${label}`);
+  TEMP_DIRS.push(dataDir);
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(join(dataDir, 'table.ibd'), Buffer.alloc(4096, 7));
+
+  return new BackupManager(
+    new DirectoryBackupSource(dataDir),
     new InMemoryStorageBackend(),
     new RetentionPolicyEvaluator({ maxFullSnapshots: 1000, maxTotalBytes: 1024 * 1024 * 1024 }),
   );
@@ -553,7 +566,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           await cluster.start();
 
           const auditStore = new InMemoryAuditStore();
-          const backupMgr = makeBackupManager(auditStore);
+          const backupMgr = makeBackupManager('i11-4');
 
           // Mixed workload: backup create + audit write + restore + list + prune
           const writeAudit = async (id: number) => {
@@ -619,7 +632,7 @@ describe('Cross-Repo End-to-End Performance (D2)', () => {
           const leader = (await cluster.findLeader()).adapter;
 
           const auditStore = new InMemoryAuditStore();
-          const backupMgr = makeBackupManager(auditStore);
+          const backupMgr = makeBackupManager('i11-5');
 
           const ENTRIES = 10_000;
 

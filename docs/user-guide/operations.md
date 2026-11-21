@@ -165,33 +165,88 @@ to thread a handle through its own constructor to record a metric.
 
 ```ts
 import {
-  InMemoryBackupManager,
+  BackupManager,
+  DirectoryBackupSource,
   RetentionPolicyEvaluator,
   S3StorageBackend,
   BackupVerifier,
 } from "@agentix-e/db-node/backup";
 
-const backups = new InMemoryBackupManager(
+const backups = new BackupManager(
+  new DirectoryBackupSource("/var/lib/db/data"),          // the engine: how a cut is taken
   new S3StorageBackend({ bucket: "db-backups", region: "eu-west-1" }),
   new RetentionPolicyEvaluator({ maxFullSnapshots: 7, maxTotalBytes: 5e11, keepRecent: "P7D" }),
 );
 
 const result = await backups.createBackup({ type: "full" });
-if (!result.success) throw new Error(result.error);
+if (!result.success || !result.snapshot) throw new Error(result.error);
 
-const metadata = await backups.getBackup(result.snapshot!.snapshotId);
+const metadata = await backups.getBackup(result.snapshot.snapshotId);
 const report = await new BackupVerifier().verifyStream(await openStream(metadata!));
 if (!report.valid)
   throw new Error(`backup ${metadata!.snapshotId} failed verification: ${report.error}`);
 ```
 
-The manager takes its two collaborators **positionally** — a storage backend and a retention
-policy — rather than a configuration object, because both are interfaces with more than one
-implementation and neither has a sensible default: a manager that quietly backed up to memory
-would be a manager whose backups are gone at the next restart.
+The manager takes its three collaborators **positionally** — where the bytes come from, where they go, and
+what to keep — rather than a configuration object, because all three are interfaces with more than one
+implementation and none has a sensible default. A manager that quietly backed up to memory would be a
+manager whose backups are gone at the next restart; a manager that guessed at a retention policy would be
+one that deletes a customer's only copy.
+
+`createBackup` resolves `success: true` **only after the bucket lists the object it just uploaded at the
+size it reported**. Capture, digest and upload are three steps that can each pass while the artefact is
+wrong — a truncated upload is a `200` from the storage service — so the fourth step is the one that makes
+"the backup exists" a statement about the bucket rather than about the caller's intent. A failed backup
+leaves **no metadata behind**, so `listBackups()` never shows a snapshot that cannot be restored.
+
+`sizeBytes` in a listing is a measurement, not a placeholder: it is the length of the artefact that was
+hashed and uploaded, and `facts` carries what the engine reported about the cut (`lsn`, `dir.files`,
+`dir.bytes`).
 
 Verify on creation **and** on a schedule — a backup that was never restored is a hypothesis,
 not a backup.
+
+#### The engine side is one port, and it is yours
+
+Everything that is the same for every database is in `BackupManager`. What differs is how a consistent
+cut is taken and how it is put back, and that is the whole of `IBackupSource`:
+
+```ts
+import type { IBackupSource, SnapshotCapture } from "@agentix-e/db-node/backup";
+
+/**
+ * A decorator: any source, plus the one fact a restore decision needs.
+ * An engine records its log position while quiesced; this reads it from the
+ * environment so the example does not pretend to know an engine's internals.
+ */
+class WalAwareSource implements IBackupSource {
+  readonly name = "postgres-16";
+
+  constructor(private readonly inner: IBackupSource) {}
+
+  async capture(destination: string): Promise<SnapshotCapture> {
+    const cut = await this.inner.capture(destination);
+    const lsn = process.env.DB_CHECKPOINT_LSN ?? "0/0";
+    return { ...cut, facts: { ...cut.facts, lsn } };
+  }
+
+  async restore(source: string): Promise<void> {
+    await this.inner.restore(source);
+  }
+}
+```
+
+`new BackupManager(new WalAwareSource(new DirectoryBackupSource("/var/lib/postgresql/data")), …)` is the
+whole of what an engine has to supply: a cut, a replacement, and whatever facts make the next restore
+decision possible.
+
+`capture` must produce a **consistent** cut — the engine quiesced, or the cut taken from its own snapshot —
+because a backup of a moving target is a state no moment ever held. `DirectoryBackupSource` enforces that
+the only way it can: it hashes every file, copies, then re-hashes, and refuses the capture if anything
+changed in between. A slow capture fails; a silently wrong artefact cannot be produced.
+
+`restore` **replaces**, it does not merge. A merge leaves keys the snapshot never had, which is how a
+restored replica diverges from the cluster it is about to rejoin.
 
 #### The S3 backend needs two optional peers
 
@@ -221,7 +276,7 @@ const retention = new RetentionPolicyEvaluator({
 });
 
 const { toDelete, unreclaimedBytes } = retention.evaluateWithOutcome(inventory);
-for (const snapshot of toDelete) await backups.delete(snapshot.snapshotId);
+for (const snapshot of toDelete) await backups.deleteBackup(snapshot.snapshotId);
 if (unreclaimedBytes > 0) {
   // The floors forbid getting under the ceiling. This is a fact about the
   // deployment, not a bug in the evaluator: raise the limit, shorten a floor,

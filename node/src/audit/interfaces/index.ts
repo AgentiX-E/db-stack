@@ -5,6 +5,9 @@
  */
 
 import type { AuditEntry, AuditSeverity, ImportExportFormat } from '../../core/types.js';
+import type { AuditChainFailure, AuditChainFailureReason, AuditTrailVerification } from '../impl/auditChain.js';
+
+export type { AuditChainFailure, AuditChainFailureReason, AuditTrailVerification };
 
 /** Options for writing an audit entry. */
 export interface WriteAuditEntryOptions {
@@ -65,6 +68,22 @@ export interface IAuditStore {
    * Delete entries older than the given timestamp.
    */
   pruneOlderThan(timestamp: Date): Promise<number>;
+
+  /**
+   * Prove that the trail is what it says it is.
+   *
+   * An audit store is the component a regulator asks "how do you know nobody
+   * edited this", so the answer cannot be a property of the deployment's
+   * discipline. Every store in this package chains each entry to the one before
+   * it and answers this call by recomputing the chain; an implementation that
+   * cannot do so must say `ok: false` rather than answer `ok: true` because it
+   * checked nothing.
+   *
+   * The report names the first link that does not hold — an edited entry, a
+   * deleted one, a re-ordered pair, a line that is not JSON — and counts what it
+   * examined, so "no failures" is distinguishable from "no entries".
+   */
+  verify(): Promise<AuditTrailVerification>;
 
   /**
    * Graceful shutdown (optional).

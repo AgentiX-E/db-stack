@@ -61,14 +61,16 @@ health.registerComponent(
 const readiness = health.readiness(); // { ok: boolean, errors: string[] }
 const components = health.getComponentHealth(); // per-component detail
 
-// Backup: a manager is a storage backend plus a retention policy.
+// Backup: a manager is where the bytes come from, where they go, and what to keep.
 import {
-  InMemoryBackupManager,
+  BackupManager,
+  DirectoryBackupSource,
   InMemoryStorageBackend,
   RetentionPolicyEvaluator,
 } from '@agentix-e/db-node/backup';
 
-const backup = new InMemoryBackupManager(
+const backup = new BackupManager(
+  new DirectoryBackupSource('/var/lib/db/data'),
   new InMemoryStorageBackend(),
   new RetentionPolicyEvaluator({ maxFullSnapshots: 24, maxTotalBytes: 64 * 1024 ** 3 }),
 );
@@ -91,7 +93,8 @@ class DatabaseOperations {
   constructor() {
     this.logger = new InMemoryLogger('operations');
     this.metrics = new MetricsRegistry();
-    this.backup = new InMemoryBackupManager(
+    this.backup = new BackupManager(
+      new DirectoryBackupSource('/var/lib/db/data'),
       new InMemoryStorageBackend(),
       new RetentionPolicyEvaluator({ maxFullSnapshots: 24, maxTotalBytes: 64 * 1024 ** 3 }),
     );

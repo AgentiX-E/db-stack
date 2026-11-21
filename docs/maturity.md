@@ -165,11 +165,11 @@ under `node/docs/`.
 | `logger`         | Structured logging, levels, child loggers, backends                  | U · I         |
 | `metrics`        | Counters, gauges, histograms, sink fan-out                           | U · I         |
 | `monitor`        | Alert rules, thresholds, de-duplication                              | U · I         |
-| `backup`         | Full/incremental backup, verification, restore drills                | U · I · M     |
+| `backup`         | Capture, artefact digests, bucket confirmation, chains, PITR         | U · I · M     |
 | `maintenance`    | Maintenance windows, occurrence projection                           | U · I · M     |
 | `auth`           | Authentication providers and credentials (interfaces only)           | U · I         |
 | `security`       | Key rotation, envelope encryption, tamper-evident audit chain        | U · I · M     |
-| `audit`          | Append-only audit storage, query, verification, read and write ports | U · I · M · P |
+| `audit`          | Append-only storage, per-writer hash chain, verify, read/write ports | U · I · M · P |
 | `observability`  | W3C trace context, OpenTelemetry export                              | U · I         |
 | `otel`           | OpenTelemetry bridge for metrics and traces                          | U · I         |
 | `autotuner`      | Parameter tuning from workload analysis                              | U · I         |
@@ -354,9 +354,10 @@ documentation whatsoever.** Three rules replaced the one:
    and returned `{ snapshotId, type, state }` where `BackupResult` is `{ success, snapshot }`.
    The heading rule cannot see any of it, because a fenced block has no headings. The user guide
    had five more: `Counter` and `Histogram` from `metrics`, which exports `ICounter`/`IHistogram`
-   and creates them through `registry.counter()`; `BackupManager`, which is
-   `InMemoryBackupManager` and takes its storage and retention policy positionally; and
-   `report.passed`, where the field is `valid`. A guide that cannot compile is worse than no
+   and creates them through `registry.counter()`; `BackupManager`, which the guide
+   described as `InMemoryBackupManager` and as taking two collaborators positionally (it takes
+   three — a source, a bucket and a policy — and the class itself was replaced in iteration 63);
+   and `report.passed`, where the field is `valid`. A guide that cannot compile is worse than no
    guide, because it is the page a reader trusts.
 
 Nineteen of the 50 were internals — `audit` published nineteen helpers of `FileAuditStore`, and
@@ -442,7 +443,7 @@ rule — _mutate what decides deletion, durability, or when work runs_: durable 
 deleted (`node/.../RetentionPolicyEvaluator.ts`, `node/.../FileAuditStore.ts`), what a
 durable write costs (`node/.../DurableFileSystem.ts`), whether
 a backup can be replayed at all (`node/.../backupChain.ts`,
-`node/.../InMemoryBackupManager.ts`), which key material survives at all
+`node/.../BackupManager.ts`), which key material survives at all
 (`node/.../KeyManager.ts`), which key material survives a rotation
 (`node/.../KeyRotationManager.ts`), which key a blob was sealed with
 (`node/.../EnvelopeEncryptionProvider.ts`), what a cipher does when it is initialised twice

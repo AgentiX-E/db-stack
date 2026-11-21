@@ -1,6 +1,6 @@
 # @agentix-e/db-node
 
-**Everything a single database node needs — 20 modules, 2 950 test cases in 143 files, every
+**Everything a single database node needs — 20 modules, 3 020 test cases in 146 files, every
 coverage dimension at or above 95 %.**
 
 Twenty modules that operate on **one node**, in one package. A probe probes its own
@@ -24,12 +24,12 @@ node.health.HealthOrchestrator;
 
 | Module | What it is | Cases |
 | --- | --- | --- |
-| [`core`](./src/core/) | The shared base: 40+ types and the provider registry. | 549 |
-| [`audit`](./src/audit/) | Append-only audit log: crash-safe segments, rotation, export, query. | 212 |
+| [`core`](./src/core/) | The shared base: 40+ types and the provider registry. | 550 |
+| [`audit`](./src/audit/) | Append-only audit log: crash-safe segments, a hash chain per writer, rotation, export, query, verification. | 253 |
 | [`auth`](./src/auth/) | Authentication interfaces. Interfaces only — `security` implements them. | 32 |
 | [`autoscaler`](./src/autoscaler/) | Scaling decisions from multi-dimensional metrics. | 167 |
 | [`autotuner`](./src/autotuner/) | Tuning recommendations for engine parameters. | 27 |
-| [`backup`](./src/backup/) | PITR, WAL-LSN bookkeeping and snapshot chains. | 195 |
+| [`backup`](./src/backup/) | Real capture, artefact digests, bucket confirmation, snapshot chains, PITR. | 223 |
 | [`chaosengine`](./src/chaosengine/) | Fault definitions and the scenario runner. | 128 |
 | [`circuitbreaker`](./src/circuitbreaker/) | Breaker state per call site. | 15 |
 | [`configwatcher`](./src/configwatcher/) | Configuration watching and change notification. | 107 |
@@ -45,8 +45,8 @@ node.health.HealthOrchestrator;
 | [`security`](./src/security/) | TLS, RBAC and encryption at rest — the implementation of `auth`. | 629 |
 | [`slacollector`](./src/slacollector/) | SLA event collection. | 13 |
 
-**Total: `pnpm coverage` reports 143 files and 2 950 tests, 0 failures** (`test:unit`: 124 files /
-2 619; `test:integration`: 19 files / 331). Each row above is that module's contribution, so the
+**Total: `pnpm coverage` reports 146 files and 3 020 tests, 0 failures** (`test:unit`: 127 files /
+2 688; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
 column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
 any of these numbers disagrees with it — a number in prose has no compiler, so this gate is that
 compiler.
@@ -55,9 +55,9 @@ compiler.
 
 | Measure | Result |
 | --- | --- |
-| Coverage — lines / statements / functions / branches | 99.44 % / 99.44 % / 99.86 % / 98.57 %, every file gated at 95 % |
+| Coverage — lines / statements / functions / branches | 99.44 % / 99.44 % / 99.86 % / 98.46 %, every file gated at 95 % |
 | Mutation — thirteen files, gate at 86 | each mutant read against the tests the report attributes to it; the score and the survivor arguments are in [`docs/maturity.md`](../docs/maturity.md) |
-| Published surface | 22 entry points, 331 exports, 69 documents, and `pnpm check:docs-api` fails if a documented symbol is not exported |
+| Published surface | 22 entry points, 365 exports, 69 documents, and `pnpm check:docs-api` fails if a documented symbol is not exported |
 
 The thirteen mutated files are the ones that decide what gets deleted, whether a backup
 can be restored, which key material survives at all, which key a blob was sealed with,
@@ -97,7 +97,7 @@ the one to read first: it states what the module decides and what it deliberatel
 does not.
 
 ```bash
-npm test              # 143 files, 2 950 tests
+npm test              # 146 files, 3 020 tests
 npm run coverage      # writes coverage/test-report.json, the file check:test-counts reads
 ```
 

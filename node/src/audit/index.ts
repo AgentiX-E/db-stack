@@ -24,7 +24,23 @@ export type {
   WriteAuditEntryOptions,
   AuditQueryFilter,
   ExportOptions,
+  AuditChainFailure,
+  AuditChainFailureReason,
+  AuditTrailVerification,
 } from './interfaces/index.js';
+
+export {
+  CHAIN_DOMAIN,
+  GENESIS_DIGEST,
+  canonicalJson,
+  chainDigest,
+  chainPreimage,
+  describeVerification,
+  recomputeDigest,
+  sealEntry,
+  verifyTrail,
+} from './impl/auditChain.js';
+export type { VerifyTrailOptions } from './impl/auditChain.js';
 
 export { InMemoryAuditStore } from './impl/InMemoryAuditStore.js';
 export { JsonAuditExporter } from './impl/JsonAuditExporter.js';

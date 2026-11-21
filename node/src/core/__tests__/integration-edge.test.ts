@@ -36,6 +36,13 @@ import type {
 //  Vendored / In-memory implementations inline (import avoids cross-package
 //  dist dependencies).  These are kept here so the test file is self-
 //  contained within the core package.
+//
+//  Known debt (roadmap P3-59): `InMemoryBackupManager` below is a copy of the
+//  class the `backup` package deleted in iteration 63, and the nine `A2`/`B6`
+//  cases that drive it therefore assert on this file rather than on the
+//  product. They are not deleted here because the fix is to point them at the
+//  real `BackupManager`, which is a change to those cases and not to this
+//  comment.
 // ══════════════════════════════════════════════════════════════════════
 
 /**

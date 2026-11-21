@@ -24,8 +24,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { RetentionPolicyEvaluator } from '../impl/RetentionPolicyEvaluator.js';
-import { InMemoryBackupManager } from '../impl/InMemoryBackupManager.js';
+import { BackupManager } from '../impl/BackupManager.js';
+import { DirectoryBackupSource } from '../impl/DirectoryBackupSource.js';
 import { InMemoryStorageBackend } from '../impl/InMemoryStorageBackend.js';
 import { dependentsOf, newestCompletedSnapshot, unrestorableReason } from '../impl/backupChain.js';
 import type { IBackupRetentionPolicy } from '../interfaces/index.js';
@@ -262,9 +266,28 @@ describe('AC 59 — a snapshot is not the unit of retention, a set is', () => {
 });
 
 describe('AC 59 — the store keeps chains intact', () => {
-  function manager(retention?: IBackupRetentionPolicy): InMemoryBackupManager {
+  let root: string;
+  let dataDir: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'ac59-'));
+    dataDir = join(root, 'data');
+    mkdirSync(dataDir, { recursive: true });
+    // A directory source rather than a simulator: the chain rules are about what a
+    // restorable snapshot needs, and a source that never wrote an artefact would let
+    // a broken chain pass by not having any bytes to restore.
+    writeFileSync(join(dataDir, 'table.bin'), 'rows');
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function manager(retention?: IBackupRetentionPolicy): BackupManager {
     const policy = retention ?? new RetentionPolicyEvaluator({ maxFullSnapshots: 7, maxTotalBytes: 0 });
-    return new InMemoryBackupManager(new InMemoryStorageBackend(), policy);
+    return new BackupManager(new DirectoryBackupSource(dataDir), new InMemoryStorageBackend(), policy, {
+      workDir: join(root, 'work'),
+    });
   }
 
   it('AC 59.11: an incremental records the snapshot it extends', async () => {
@@ -316,9 +339,12 @@ describe('AC 59 — the store keeps chains intact', () => {
     expect(await mgr.listBackups()).toHaveLength(1);
   });
 
-  it('AC 59.15: restore refuses a chain whose base a policy removed, and names it', async () => {
-    // A caller-supplied policy is an injection point; the store cannot assume it
-    // is chain-aware. This one deletes the oldest snapshot and nothing else.
+  it('AC 59.15: a policy that removes a base takes its incrementals with it', async () => {
+    // A caller-supplied policy is an injection point; the store cannot assume it is
+    // chain-aware. This one deletes the oldest snapshot and nothing else — and the
+    // store refuses to leave the delta behind, because bytes that are listed,
+    // billed and impossible to replay are the state this whole criterion exists to
+    // make unrepresentable.
     const baseFirst: IBackupRetentionPolicy = {
       evaluate: (snapshots) => {
         const oldest = [...snapshots].sort(
@@ -334,12 +360,11 @@ describe('AC 59 — the store keeps chains intact', () => {
     const full = await mgr.createBackup({ type: 'full' });
     const inc = await mgr.createBackup({ type: 'incremental' });
 
-    expect(await mgr.prune()).toBe(1);
-
-    const restoredInc = await mgr.restoreFromSnapshot(inc.snapshot!.snapshotId);
-    expect(restoredInc.success).toBe(false);
-    expect(restoredInc.error).toContain(full.snapshot!.snapshotId);
-    expect(restoredInc.error).toContain('is missing');
+    expect(await mgr.prune()).toBe(2);
+    expect(await mgr.getBackup(full.snapshot!.snapshotId)).toBeNull();
+    expect(await mgr.getBackup(inc.snapshot!.snapshotId)).toBeNull();
+    // And the restore of the delta says the honest thing: nothing is there.
+    expect((await mgr.restoreFromSnapshot(inc.snapshot!.snapshotId)).error).toBe('not found');
   });
 
   it('AC 59.16: restore refuses an incremental that has no base at the root of its chain', async () => {

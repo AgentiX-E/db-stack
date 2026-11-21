@@ -44,7 +44,6 @@ import { BackupVerifier } from '@agentix-e/db-node/backup';
 import { FileAuditStore } from '@agentix-e/db-node/audit';
 import { SessionManager } from '@agentix-e/db-cluster';
 import { EventBus } from '@agentix-e/db-cluster';
-import { InMemoryBackupManager } from '@agentix-e/db-node/backup';
 import { InMemoryAuditStore } from '@agentix-e/db-node/audit';
 
 // ── Constants ───────────────────────────────────────────────

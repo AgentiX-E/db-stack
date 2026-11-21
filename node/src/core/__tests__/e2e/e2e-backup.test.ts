@@ -53,12 +53,23 @@ describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$na
     expect(restore.success).toBe(true);
   });
 
-  it('should perform PITR', async () => {
+  it('should perform PITR to a snapshot taken before the target', async () => {
     const backup = factory.createBackupManager();
-    const result = await backup.pitr({
-      targetTime: new Date().toISOString(),
-    });
+    const taken = await backup.createBackup({ type: 'full' });
+    const result = await backup.pitr({ targetTime: new Date(Date.now() + 1_000).toISOString() });
     expect(result.success).toBe(true);
+    // The recovery point is what was reached, which is the snapshot — not the
+    // timestamp that was asked for.
+    expect(result.recoveryPoint).toBe(taken.snapshot!.snapshotId);
+  });
+
+  it('should refuse PITR to a time before any snapshot', async () => {
+    const backup = factory.createBackupManager();
+    const result = await backup.pitr({ targetTime: '2020-01-01T00:00:00.000Z' });
+    // The simulator this replaced answered `{ success: true, recoveryPoint: 'unknown' }`
+    // for exactly this call.
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('no snapshot at or before 2020-01-01T00:00:00.000Z');
   });
 
   it('should prune old backups', async () => {

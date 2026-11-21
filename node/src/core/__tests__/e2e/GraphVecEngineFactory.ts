@@ -22,6 +22,8 @@ import {
   type IBackupRetentionPolicy,
 } from '../../../backup/index.js';
 import type { IAuditStore, AuditQueryFilter, WriteAuditEntryOptions } from '../../../audit/index.js';
+import { GENESIS_DIGEST, sealEntry, verifyTrail } from '../../../audit/index.js';
+import type { AuditTrailVerification } from '../../../audit/index.js';
 import type { IDistributedTracer, Span } from '../../../observability/index.js';
 import {
   InMemoryAlertRuleManager,
@@ -697,6 +699,9 @@ class GraphVecSecurityAuditStore implements IAuditStore {
   private native: SecurityAuditorStub;
   private entries: AuditEntry[] = [];
   private counter = 0;
+  private readonly writerId = 'graphvec-adapter';
+  private chainSeq = 0;
+  private chainPrev: string = GENESIS_DIGEST;
 
   constructor() {
     this.native = new SecurityAuditorStub();
@@ -704,7 +709,7 @@ class GraphVecSecurityAuditStore implements IAuditStore {
 
   async write(entry: WriteAuditEntryOptions): Promise<string> {
     const id = `gv-audit-${++this.counter}`;
-    this.entries.push({
+    const record: AuditEntry = {
       id,
       operation: entry.operation,
       actor: entry.actor,
@@ -714,8 +719,20 @@ class GraphVecSecurityAuditStore implements IAuditStore {
       timestamp: new Date().toISOString(),
       details: entry.details,
       traceId: entry.traceId,
-    });
+    };
+    // The chain is sealed from the published helpers, not reimplemented: an
+    // adapter that invents its own digest would pass its own verification and fail
+    // every other reader's.
+    const link = sealEntry(record, this.writerId, this.chainSeq + 1, this.chainPrev);
+    record.chain = link;
+    this.chainSeq = link.seq;
+    this.chainPrev = link.hash;
+    this.entries.push(record);
     return id;
+  }
+
+  async verify(): Promise<AuditTrailVerification> {
+    return verifyTrail(this.entries);
   }
 
   async get(id: string): Promise<AuditEntry | null> {

@@ -239,8 +239,11 @@ describe('AC 82 — group commit', () => {
   it('GC.5: a sync that fails half way acknowledges only what was durable', async () => {
     const fs = new CountingFileSystem();
     // Large enough for one more line, small enough that the second write rotates:
-    // the batch then holds the warm segment's last line and a brand-new one.
-    const store = new FileAuditStore({ dataDir, fileSystem: fs, maxFileSize: 200 });
+    // the batch then holds the warm segment's last line and a brand-new one. The
+    // budget is in bytes and a chained line is ~405 of them (the hash link costs
+    // about 170), so 600 is "one line fits, two do not" — a literal tuned to the
+    // pre-chain format would rotate on the warm line and change the batch shape.
+    const store = new FileAuditStore({ dataDir, fileSystem: fs, maxFileSize: 600 });
 
     // A warm segment: its name is already on the medium, so a line appended to it
     // can be acknowledged even if a later segment in the same batch cannot.

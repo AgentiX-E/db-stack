@@ -194,6 +194,70 @@ export interface IPITRManager {
 }
 
 /**
+ * What a capture reports about itself.
+ *
+ * The three numbers are facts about the artefact, not estimates: `bytes` is what
+ * the file the manager uploads is long, and `files` is how many things went into it.
+ * A backup listing that says 1 024 bytes because nobody measured is a listing an
+ * operator cannot use to decide whether the bucket will fill.
+ */
+export interface SnapshotCapture {
+  /** Size of the artefact on disk, in bytes. */
+  bytes: number;
+  /** Number of files (or keys, or chunks) the artefact was built from. */
+  files: number;
+  /**
+   * Engine facts recorded with the snapshot — `lsn`, `schemaVersion`, an epoch.
+   *
+   * A restore decision needs them and cannot derive them afterwards, which is why
+   * they travel in the metadata rather than in a log line.
+   */
+  facts?: Record<string, string>;
+}
+
+/**
+ * The engine side of a backup: how a consistent cut is taken, and how it is put back.
+ *
+ * This is the one port the middleware cannot supply. Everything around it — the
+ * artefact's checksum, the upload, the confirmation that the bucket holds what was
+ * uploaded, the store's own retention rules — is the same for every engine, and
+ * lives in `BackupManager`. What differs is how a database produces a cut of
+ * itself: a `pg_basebackup`, a SQLite `VACUUM INTO`, an LSM checkpoint, a copy of a
+ * data directory.
+ *
+ * `capture` must produce a **consistent** cut — the engine quiesced, or the cut
+ * taken from its own snapshot — because a backup of a moving target is a state no
+ * moment ever held. The reference implementation in this package refuses any file
+ * that changed while it was being copied, which turns a racy capture into an error
+ * instead of a silently wrong artefact.
+ */
+export interface IBackupSource {
+  /** Stable identifier for logs, metrics and listings. */
+  readonly name: string;
+
+  /**
+   * Write a consistent cut to `destination` (a file path the manager chose) and
+   * describe it.
+   *
+   * The manager uploads exactly this file once this resolves, so a partial artefact
+   * that resolves is a backup that cannot be restored. Throwing is expected on a
+   * full disk, a quiesce failure, or an unreadable file.
+   */
+  capture(destination: string): Promise<SnapshotCapture>;
+
+  /**
+   * Replace the engine's state with the artefact at `source` (a file path the
+   * manager downloaded and verified).
+   *
+   * Replace, not merge: a merge leaves keys the snapshot never had, which is how a
+   * restored replica diverges from the cluster it is about to rejoin. A rejection
+   * means the engine's state is unknown — the caller must restore again rather than
+   * assume it still holds what it held before.
+   */
+  restore(source: string): Promise<void>;
+}
+
+/**
  * Storage backend for backup data.
  */
 export interface IStorageBackend {

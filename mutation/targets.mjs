@@ -45,7 +45,7 @@ export const SHARED = {
  */
 export const TARGETS = {
   node: {
-    // Thirteen files that decide what gets deleted, whether a backup can be
+    // These files decide what gets deleted, whether a backup can be
     // restored, which key material survives at all, which key a blob was sealed
     // with, whether a compliance window passed, whether evidence is tamper-evident
     // and when a maintenance window runs. These are the answers a green suite is
@@ -53,7 +53,11 @@ export const TARGETS = {
     mutate: [
       "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
       "node/src/backup/impl/RetentionPolicyEvaluator.ts",
-      "node/src/backup/impl/InMemoryBackupManager.ts",
+      // The manager that decides whether a backup exists at all, and the chain that
+      // decides whether the audit trail proves itself. Both replaced a simulator this
+      // iteration; the mutants are the reason the replacements are believed.
+      "node/src/backup/impl/BackupManager.ts",
+      "node/src/audit/impl/auditChain.ts",
       "node/src/backup/impl/backupChain.ts",
       "node/src/maintenance/impl/cron.ts",
       "node/src/security/impl/KeyRotationManager.ts",
