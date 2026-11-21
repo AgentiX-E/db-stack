@@ -64,8 +64,18 @@ interface NodeStatus {
   appliedCount: number;
   applied: string[];
   stateSize: number;
+  /** The engine's key set — a count cannot say which write went missing. */
+  keys: string[];
   appliedIndex: number;
   engineName: string;
+  /** Indexes the engine was actually handed a command at, in order. */
+  engineIndexes: number[];
+  /** Applies the replica suppressed because it had already applied that index. */
+  skippedReplays: number;
+  /** Applies accepted over a gap raft left for its own CONFIG/NOOP entries. */
+  forwardJumps: number;
+  /** Non-null while the replica refuses to apply after a failed snapshot install. */
+  restoreFailure: string | null;
 }
 
 async function statusOf(node: ChildNode): Promise<NodeStatus> {
@@ -78,6 +88,11 @@ async function statusOf(node: ChildNode): Promise<NodeStatus> {
  * the entry" (lastLogIndex behind) from "it received it and never applied it"
  * (raftApplied behind) from "it applied it and the engine dropped it" (stateSize
  * behind while raftApplied is current).
+ *
+ * The key names are part of the message because a count cannot say *which* write
+ * went missing, and the two ways a command can vanish — the engine was never handed
+ * it, or the replica suppressed it as a replay — are told apart by the engine's own
+ * index list against the applied list, not by arithmetic.
  */
 async function describeDivergence(): Promise<string> {
   const rows = await Promise.all(
@@ -85,7 +100,14 @@ async function describeDivergence(): Promise<string> {
       if (node.exited) return `${node.label}: exited`;
       try {
         const s = await statusOf(node);
-        return `${node.label}: stateSize=${s.stateSize} applied=${s.raftApplied} commit=${s.commitIndex} lastLog=${s.lastLogIndex} snapshot=${s.snapshot?.lastIncludedIndex ?? 'none'}`;
+        const missing = written.filter((key) => !s.keys.includes(key));
+        return (
+          `${node.label}: stateSize=${s.stateSize} applied=${s.raftApplied} commit=${s.commitIndex} ` +
+          `lastLog=${s.lastLogIndex} snapshot=${s.snapshot?.lastIncludedIndex ?? 'none'} ` +
+          `engineApplies=${s.engineIndexes.length}/${s.appliedCount} skipped=${s.skippedReplays} ` +
+          `jumps=${s.forwardJumps}${s.restoreFailure === null ? '' : ` restoreFailure=${s.restoreFailure}`}` +
+          `${missing.length === 0 ? '' : ` missing=[${missing.join(',')}]`}`
+        );
       } catch (err) {
         return `${node.label}: status failed (${String(err)})`;
       }

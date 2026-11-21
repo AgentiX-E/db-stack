@@ -71,9 +71,10 @@ async function readValue(key) {
   return JSON.parse(response.toString('utf8')).value ?? null;
 }
 
-async function countKeys() {
+/** Every key the engine currently holds, sorted. */
+async function listKeys() {
   const response = await replica.query(Buffer.from(JSON.stringify({ op: 'keys' }), 'utf8'));
-  return JSON.parse(response.toString('utf8')).keys.length;
+  return JSON.parse(response.toString('utf8')).keys;
 }
 
 let adapter;
@@ -148,7 +149,7 @@ async function main() {
       } else if (msg.cmd === 'status') {
         // `getStatus` refreshes the snapshot view along the way; `getSnapshotMeta`
         // alone is a cache.
-        const [isLeader, term, commitIndex, progress, raftStatus, membership, quorum] = await Promise.all([
+        const [isLeader, term, commitIndex, progress, raftStatus, membership, quorum, keys] = await Promise.all([
           adapter.isLeader(),
           adapter.getTerm(),
           adapter.getCommitIndex(),
@@ -156,6 +157,7 @@ async function main() {
           adapter.getStatus(),
           adapter.getMembership(),
           adapter.getQuorumHealth(),
+          listKeys(),
         ]);
         send({
           type: 'status',
@@ -170,9 +172,22 @@ async function main() {
             snapshot: raftStatus?.snapshot ?? null,
             appliedCount: applied.length,
             applied: applied.slice(),
-            stateSize: await countKeys(),
+            stateSize: keys.length,
+            keys,
             appliedIndex: replica.lastAppliedIndex(),
             engineName: engine.name,
+            // The engine's own record of which index it was handed each command
+            // at. Comparing it with `applied` separates "raft never gave the
+            // command to the application" from "the application was handed it and
+            // dropped it", which a key count alone cannot do — and an apply that
+            // the replica suppresses as a replay leaves no trace in the log.
+            engineIndexes: engine.appliedContexts.map((context) => context.index),
+            // Suppressed replays and accepted forward jumps are normal in small
+            // numbers; they become the explanation when the key count disagrees
+            // with the applied list, because a suppressed apply is silent.
+            skippedReplays: replica.skippedReplays,
+            forwardJumps: replica.forwardJumps,
+            restoreFailure: replica.restoreFailure === null ? null : String(replica.restoreFailure),
             // The two answers a membership change is judged by: what this node
             // believes the committed configuration is, and whether it can still
             // hear a majority. Read from every node, because a change that only
