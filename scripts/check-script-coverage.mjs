@@ -229,6 +229,14 @@ export function measure(root = ROOT, options = {}) {
   // perfectly — the failure looks like missing coverage, not like recursion.
   const env = { ...process.env, [NESTED]: "1" };
   delete env.NODE_TEST_CONTEXT;
+  // A coverage directory inherited from whoever started this run makes the report
+  // below a *contribution* to that ancestor's report instead of a measurement of
+  // this run. The numbers then belong to a merge of two runs that loaded different
+  // amounts of the same script, and the percentage is a property of the caller. This
+  // gate is spawned by its own end-to-end case, so a nesting exists: the same commit
+  // read `replay-mutant.mjs` at 94.74 % in CI and 96.36 % locally, and one of the two
+  // was a merge. Stripping the variable makes both of them answer for themselves.
+  delete env.NODE_V8_COVERAGE;
 
   try {
     return exec(

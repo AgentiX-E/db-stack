@@ -385,9 +385,14 @@ test("run measures when no output is handed to it, and the measurement is isolat
 
     // The ambient test context is what a nested run inherits, and a child that
     // inherits it skips every file and measures nothing. Reproduce it here so the
-    // stripping is guarded rather than assumed.
+    // stripping is guarded rather than assumed. The coverage directory is the same
+    // class of inheritance: a nested run that keeps it writes its children's
+    // coverage into an ancestor's directory, and the ancestor's report is then a
+    // merge of two runs instead of a measurement of one.
     const before = process.env.NODE_TEST_CONTEXT;
+    const beforeCoverage = process.env.NODE_V8_COVERAGE;
     process.env.NODE_TEST_CONTEXT = "child";
+    process.env.NODE_V8_COVERAGE = "/tmp/ancestor-run-coverage";
     const lines = [];
     let code;
     try {
@@ -405,6 +410,8 @@ test("run measures when no output is handed to it, and the measurement is isolat
     } finally {
       if (before === undefined) delete process.env.NODE_TEST_CONTEXT;
       else process.env.NODE_TEST_CONTEXT = before;
+      if (beforeCoverage === undefined) delete process.env.NODE_V8_COVERAGE;
+      else process.env.NODE_V8_COVERAGE = beforeCoverage;
     }
 
     assert.equal(code, 0);
@@ -421,6 +428,7 @@ test("run measures when no output is handed to it, and the measurement is isolat
     );
     assert.equal(calls[0].options.env[NESTED], "1");
     assert.equal("NODE_TEST_CONTEXT" in calls[0].options.env, false);
+    assert.equal("NODE_V8_COVERAGE" in calls[0].options.env, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -510,6 +518,16 @@ test(
   () => {
     // The whole gate, over the real scripts: the tests must pass, every script
     // must be accounted for, and every recorded gap must still be true.
+    //
+    // `NODE_V8_COVERAGE` is dropped from the child's environment even though the
+    // child is spawned with the ambient one everywhere else. When this case runs
+    // under `node --test --experimental-test-coverage`, that variable points at the
+    // *outer* run's directory, so the gate started here would write the coverage of
+    // its own children there — and the outer report would be a merge of the inner
+    // run's numbers. Stripping it makes the inner run answer for itself, which is
+    // the only way its answer can be compared with the same command typed by hand.
+    const env = { ...process.env };
+    delete env.NODE_V8_COVERAGE;
     const child = spawnSync(
       process.execPath,
       [resolve(ROOT, "scripts/check-script-coverage.mjs")],
@@ -517,6 +535,7 @@ test(
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
         timeout: 600_000,
+        env,
       },
     );
 

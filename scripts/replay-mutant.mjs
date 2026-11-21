@@ -45,7 +45,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 
 import { replaceFile, splice } from "./lib/mutant-edit.mjs";
 
@@ -219,26 +218,39 @@ export function restore(root = REPOSITORY_ROOT) {
 }
 
 /**
- * Run only when this file is the program, not when a test imports it.
+ * Whether this file is the program, not a module a test imported.
  *
- * Without this guard, importing the module read `process.argv`, parsed whatever
- * the test runner had been given, and dispatched a command — the same defect
- * `check-package.mjs` carried until its debt was paid. `root` is a parameter for
- * the same reason: a test needs to point `apply` at a temp directory rather than
- * at this repository's source tree.
+ * `import.meta.filename` rather than `import.meta.url`: the filename is the path
+ * without the query string, so a test can re-import this module under `?direct` and
+ * have the guard answer "yes" for it. That is the only way the dispatch below can be
+ * executed by a test in the same process — a spawned child would run it, but its
+ * coverage is not this process's coverage, so the block would stay unmeasured while
+ * looking tested.
+ *
+ * The two arguments are parameters for the same reason they are in
+ * `check-script-coverage.mjs`: the interesting cases are "no argv[1] at all" (a REPL,
+ * `node -e`) and "a different file", and neither can be produced by running this
+ * script.
  */
-const invokedDirectly =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-
-if (invokedDirectly) {
-  const args = parseArgs(process.argv.slice(2));
-  if (args.command === "restore") {
-    restore();
-  } else {
-    const rows = loadSurvivors(args.report, args.status);
-    if (args.command === "list") printList(rows);
-    else if (args.command === "apply") apply(rows, args.index, args);
-    else throw new Error(`unknown command: ${args.command}`);
-  }
+export function isEntryPoint(entry, moduleFile = import.meta.filename) {
+  return entry !== undefined && path.resolve(entry) === moduleFile;
 }
+
+/**
+ * Run one command line.
+ *
+ * The dispatch used to sit at module scope, which meant it ran on import and could
+ * not be called with a `root`: the only way to see it work was to start a process,
+ * and the only root it could touch was this repository. Taking both as parameters
+ * costs nothing here and makes every branch below reachable from a test.
+ */
+export function dispatch(argv, root = REPOSITORY_ROOT) {
+  const args = parseArgs(argv);
+  if (args.command === "restore") return restore(root);
+  const rows = loadSurvivors(args.report, args.status);
+  if (args.command === "list") return printList(rows);
+  if (args.command === "apply") return apply(rows, args.index, args, root);
+  throw new Error(`unknown command: ${args.command}`);
+}
+
+if (isEntryPoint(process.argv[1])) dispatch(process.argv.slice(2));

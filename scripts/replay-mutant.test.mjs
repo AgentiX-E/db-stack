@@ -16,6 +16,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -31,6 +32,8 @@ import { join, resolve } from "node:path";
 
 import {
   apply,
+  dispatch,
+  isEntryPoint,
   loadSurvivors,
   printList,
   parseArgs,
@@ -300,4 +303,91 @@ test("printList says so when the filter selected nothing", () => {
     printed(() => printList([])),
     ["no mutants with that status"],
   );
+});
+
+test("the entry guard answers for this module, another file, and no file at all", () => {
+  const self = resolve(ROOT, "scripts/replay-mutant.mjs");
+  assert.equal(isEntryPoint(self), true);
+  assert.equal(isEntryPoint(resolve(ROOT, "scripts/mutation.mjs")), false);
+  assert.equal(isEntryPoint(undefined), false);
+});
+
+test("dispatch lists through the command line it parses", () => {
+  const { root, report } = sourceTree();
+  const lines = printed(() => dispatch(["list", "--report", report], root));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /sample\.ts:2:11-2:12/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("dispatch applies the mutant the command line names", () => {
+  const { root, source, report } = sourceTree();
+  printed(() => dispatch(["apply", "0", "--report", report], root));
+  assert.equal(readFileSync(source, "utf-8"), "const a = 1;\nconst b = 3;\n");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("dispatch restores in the root it was given, not this repository", () => {
+  const { root, source, report } = sourceTree();
+  printed(() => dispatch(["apply", "0", "--report", report], root));
+  printed(() => dispatch(["restore"], root));
+  assert.equal(readFileSync(source, "utf-8"), "const a = 1;\nconst b = 2;\n");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("dispatch refuses a command it does not know", () => {
+  // The report is named explicitly: the refusal this asserts is about the command,
+  // and a default report that happens not to exist on this machine would turn it
+  // into a file-not-found error that says nothing about dispatch.
+  const { root, report } = sourceTree();
+  assert.throws(
+    () => dispatch(["publish", "--report", report], root),
+    /unknown command: publish/,
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("the module runs its command line when it is the program", () => {
+  // A child process, not a re-import under a query string: V8 reports two module
+  // instances of one filename as an intersection of their coverage, so importing
+  // this file a second time would report the whole script as two-thirds covered.
+  // Across processes the runner merges by union, which is what makes this the way
+  // to reach the entry line without lowering the file's own number.
+  const { root, report } = sourceTree();
+  const child = spawnSync(
+    process.execPath,
+    [resolve(ROOT, "scripts/replay-mutant.mjs"), "list", "--report", report],
+    { encoding: "utf8" },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(child.stdout, /sample\.ts:2:11-2:12/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("loadSurvivors reads a file entry that carries no mutants key", () => {
+  // A Stryker report lists every file it compiled, including the ones where every
+  // mutant was killed before a report row existed. Those entries have no `mutants`,
+  // and a reader that assumed the key was there would throw on a real report.
+  const root = fixture();
+  const report = writeReport(root, {
+    "src/untouched.ts": {},
+    "src/a.ts": { mutants: [mutantAt(4, "1")] },
+  });
+  assert.deepEqual(
+    loadSurvivors(report, "Survived").map((row) => row.file),
+    ["src/a.ts"],
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("printList shows an empty replacement when the report recorded none", () => {
+  const lines = printed(() =>
+    printList([
+      {
+        file: "src/a.ts",
+        mutant: { ...mutantAt(3, ""), replacement: undefined },
+      },
+    ]),
+  );
+  assert.match(lines[0], /→ ""$/);
 });
