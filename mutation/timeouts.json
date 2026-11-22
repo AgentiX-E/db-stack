@@ -26,114 +26,90 @@
     },
     "node": {
       "capMs": 30000,
-      "resolvedOn": "2026-11-21",
+      "resolvedOn": "2026-11-22",
       "entries": [
         {
           "file": "node/src/audit/impl/FileAuditStore.ts",
-          "line": 1030,
+          "line": 1065,
           "mutator": "UpdateOperator",
           "replacement": "attempt--",
           "reason": "Hit limit reached (1701/1700)",
-          "id": "480",
+          "id": "487",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30094ms",
+          "evidence": "30182ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
           "file": "node/src/audit/impl/FileAuditStore.ts",
-          "line": 1094,
+          "line": 1129,
           "mutator": "ArrowFunction",
           "replacement": "() => undefined",
           "reason": "",
-          "id": "519",
+          "id": "526",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30200ms",
+          "evidence": "30290ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
           "file": "node/src/audit/impl/FileAuditStore.ts",
-          "line": 1288,
+          "line": 1422,
           "mutator": "BlockStatement",
           "replacement": "{}",
-          "reason": "Hit limit reached (4101/4100)",
-          "id": "605",
+          "reason": "Hit limit reached (5701/5700)",
+          "id": "660",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30205ms",
+          "evidence": "30292ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
           "file": "node/src/audit/impl/FileAuditStore.ts",
-          "line": 1288,
+          "line": 1422,
           "mutator": "EqualityOperator",
           "replacement": "this.pendingCompressions.size <= 0",
-          "reason": "Hit limit reached (18701/18700)",
-          "id": "604",
+          "reason": "Hit limit reached (22201/22200)",
+          "id": "659",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30106ms",
-          "tail": "✓ src/audit/__tests__/AC76-audit-reads-through-a-port.test.ts (11 tests | 2 skipped) 394ms ⏎ ✓ src/audit/__tests__/FileAuditStore.chaos.test.ts (2 tests) 511ms ⏎ ✓ FileAuditStore Chaos (D2) > B.1: rotations in flight, then a second store recovers every entry  505ms"
+          "evidence": "30293ms",
+          "tail": "✓ src/audit/__tests__/AC76-audit-reads-through-a-port.test.ts (11 tests | 2 skipped) 697ms ⏎ ✓ src/audit/__tests__/FileAuditStore.chaos.test.ts (2 tests) 1199ms ⏎ ✓ FileAuditStore Chaos (D2) > B.1: rotations in flight, then a second store recovers every entry  1110ms"
         },
         {
           "file": "node/src/audit/impl/FileAuditStore.ts",
-          "line": 1288,
+          "line": 1422,
           "mutator": "EqualityOperator",
           "replacement": "this.pendingCompressions.size >= 0",
-          "reason": "Hit limit reached (18701/18700)",
-          "id": "603",
+          "reason": "Hit limit reached (22201/22200)",
+          "id": "658",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30201ms",
+          "evidence": "30298ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
           "file": "node/src/audit/impl/FileAuditStore.ts",
-          "line": 1289,
+          "line": 1423,
           "mutator": "ArrayDeclaration",
           "replacement": "[]",
-          "reason": "Hit limit reached (4101/4100)",
-          "id": "606",
+          "reason": "Hit limit reached (5701/5700)",
+          "id": "661",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30197ms",
+          "evidence": "30301ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
-        },
-        {
-          "file": "node/src/audit/impl/FileAuditStore.ts",
-          "line": 1362,
-          "mutator": "BlockStatement",
-          "replacement": "{}",
-          "reason": "",
-          "id": "626",
-          "verdict": "failed",
-          "detail": "a test exceeded 15000ms — and the run never exited",
-          "evidence": "30094ms",
-          "tail": "× AC 87 — what counts as expired > EX.3: the sweep deletes what is past retention and keeps what is inside it 15013ms ⏎ → Test timed out in 15000ms. ⏎ If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
-        },
-        {
-          "file": "node/src/audit/impl/FileAuditStore.ts",
-          "line": 891,
-          "mutator": "BooleanLiteral",
-          "replacement": "true",
-          "reason": "",
-          "id": "424",
-          "verdict": "failed",
-          "detail": "a test exceeded 15000ms — and the run never exited",
-          "evidence": "30103ms",
-          "tail": "× AC 87 — what counts as expired > EX.3: the sweep deletes what is past retention and keeps what is inside it 15013ms ⏎ → Test timed out in 15000ms. ⏎ If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\"."
         },
         {
           "file": "node/src/backup/impl/BackupManager.ts",
-          "line": 191,
+          "line": 278,
           "mutator": "BlockStatement",
           "replacement": "{}",
-          "reason": "Hit limit reached (5901/5900)",
-          "id": "1103",
+          "reason": "Hit limit reached (7401/7400)",
+          "id": "1378",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30061ms",
+          "evidence": "30108ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -142,10 +118,10 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (16001/16000)",
-          "id": "1542",
+          "id": "1872",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30108ms",
+          "evidence": "30191ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -154,11 +130,11 @@
           "mutator": "ConditionalExpression",
           "replacement": "false",
           "reason": "Hit limit reached (16037/16000)",
-          "id": "1544",
+          "id": "1874",
           "verdict": "failed",
           "detail": "src/backup/__tests__/AC59-retention-chains.test.ts > AC 59 — a snapshot is not the unit of retention, a set is > AC 59.7: a cyclic chain terminates and stays re",
-          "evidence": "5208ms",
-          "tail": "Tests  1 failed | 46 passed | 95 skipped (142) ⏎ Start at  06:59:03 ⏎ Duration  4.98s (transform 641ms, setup 156ms, collect 1.11s, tests 4.02s, environment 1ms, prepare 3.20s)"
+          "evidence": "7644ms",
+          "tail": "Tests  1 failed | 46 passed | 95 skipped (142) ⏎ Start at  11:47:13 ⏎ Duration  7.31s (transform 1.21s, setup 279ms, collect 1.55s, tests 6.09s, environment 2ms, prepare 5.19s)"
         },
         {
           "file": "node/src/backup/impl/backupChain.ts",
@@ -166,22 +142,22 @@
           "mutator": "CallExpression",
           "replacement": ";",
           "reason": "Hit limit reached (501/500)",
-          "id": "1776",
+          "id": "2106",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30034ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/node ⏎ ✓ src/backup/__tests__/AC94-inventory-survives-the-process.test.ts (23 tests | 22 skipped) 12ms"
+          "evidence": "30090ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/node ⏎ ✓ src/backup/__tests__/AC94-inventory-survives-the-process.test.ts (23 tests | 22 skipped) 21ms"
         },
         {
           "file": "node/src/backup/impl/backupChain.ts",
           "line": 57,
           "mutator": "BlockStatement",
           "replacement": "{}",
-          "reason": "Hit limit reached (3901/3900)",
-          "id": "1736",
+          "reason": "Hit limit reached (4101/4100)",
+          "id": "2066",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30101ms",
+          "evidence": "30199ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -189,11 +165,11 @@
           "line": 57,
           "mutator": "EqualityOperator",
           "replacement": "pending.length >= 0",
-          "reason": "Hit limit reached (6301/6300)",
-          "id": "1734",
+          "reason": "Hit limit reached (6701/6700)",
+          "id": "2064",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30094ms",
+          "evidence": "30193ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -202,11 +178,11 @@
           "mutator": "ConditionalExpression",
           "replacement": "false",
           "reason": "Hit limit reached (1701/1700)",
-          "id": "1748",
+          "id": "2078",
           "verdict": "failed",
           "detail": "src/backup/__tests__/AC59-retention-chains.test.ts > AC 59 — the store keeps chains intact > AC 59.18: dependentsOf is transitive, excludes the snapshot itself,",
-          "evidence": "5188ms",
-          "tail": "Tests  1 failed | 7 passed | 92 skipped (100) ⏎ Start at  06:55:58 ⏎ Duration  4.96s (transform 301ms, setup 69ms, collect 412ms, tests 4.02s, environment 1ms, prepare 1.22s)"
+          "evidence": "8619ms",
+          "tail": "Tests  1 failed | 7 passed | 92 skipped (100) ⏎ Start at  11:44:04 ⏎ Duration  8.24s (transform 587ms, setup 111ms, collect 821ms, tests 6.79s, environment 1ms, prepare 2.28s)"
         },
         {
           "file": "node/src/backup/impl/backupChain.ts",
@@ -214,10 +190,10 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (4101/4100)",
-          "id": "1755",
+          "id": "2085",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30100ms",
+          "evidence": "30087ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -226,10 +202,10 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (201/200)",
-          "id": "1769",
+          "id": "2099",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30103ms",
+          "evidence": "30098ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -238,11 +214,11 @@
           "mutator": "ConditionalExpression",
           "replacement": "false",
           "reason": "Hit limit reached (901/900)",
-          "id": "1768",
+          "id": "2098",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30091ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/node ⏎ ✓ src/backup/__tests__/AC99-inventory-cost.test.ts (8 tests | 7 skipped) 10ms ⏎ ✓ src/backup/__tests__/AC94-inventory-survives-the-process.test.ts (23 tests | 22 skipped) 15ms"
+          "evidence": "30094ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/node ⏎ ✓ src/backup/__tests__/AC99-inventory-cost.test.ts (8 tests | 7 skipped) 14ms ⏎ ✓ src/backup/__tests__/AC94-inventory-survives-the-process.test.ts (23 tests | 22 skipped) 23ms"
         },
         {
           "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
@@ -250,10 +226,10 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (26001/26000)",
-          "id": "2334",
+          "id": "2664",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30115ms",
+          "evidence": "30204ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -262,10 +238,10 @@
           "mutator": "AssignmentOperator",
           "replacement": "currentMs -= DAY_MS",
           "reason": "",
-          "id": "2336",
+          "id": "2666",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30191ms",
+          "evidence": "30200ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -274,10 +250,10 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (59101/59100)",
-          "id": "2355",
+          "id": "2685",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30094ms",
+          "evidence": "30191ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -286,10 +262,10 @@
           "mutator": "ArithmeticOperator",
           "replacement": "cursorMs - DAY_MS",
           "reason": "Hit limit reached (59101/59100)",
-          "id": "2360",
+          "id": "2690",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30100ms",
+          "evidence": "30204ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -298,10 +274,10 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (5401/5400)",
-          "id": "2372",
+          "id": "2702",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30102ms",
+          "evidence": "30192ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -310,10 +286,10 @@
           "mutator": "ArithmeticOperator",
           "replacement": "month - 1",
           "reason": "Hit limit reached (5401/5400)",
-          "id": "2397",
+          "id": "2727",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30098ms",
+          "evidence": "30196ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -322,10 +298,10 @@
           "mutator": "ArithmeticOperator",
           "replacement": "year - 1",
           "reason": "Hit limit reached (1101/1100)",
-          "id": "2402",
+          "id": "2732",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30101ms",
+          "evidence": "30188ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -334,11 +310,11 @@
           "mutator": "ConditionalExpression",
           "replacement": "false",
           "reason": "Hit limit reached (5401/5400)",
-          "id": "2399",
+          "id": "2729",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30091ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/node ⏎ ✓ src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 4ms"
+          "evidence": "30105ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/node ⏎ ✓ src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 5ms"
         },
         {
           "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
@@ -346,10 +322,10 @@
           "mutator": "ConditionalExpression",
           "replacement": "true",
           "reason": "Hit limit reached (5401/5400)",
-          "id": "2403",
+          "id": "2733",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30099ms",
+          "evidence": "30196ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -358,11 +334,11 @@
           "mutator": "EqualityOperator",
           "replacement": "newMonth <= 11",
           "reason": "Hit limit reached (5401/5400)",
-          "id": "2406",
+          "id": "2736",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30098ms",
-          "tail": "× AC 54 — weekly projection lower bound > AC 54.12: monthly projection honours the lower bound 6ms ⏎ → expected [] to deeply equal [ 1797314400000 ] ⏎ ↓ AC 54 — weekly projection lower bound > AC 54.13: cron projection honours the lower bound"
+          "evidence": "30184ms",
+          "tail": "× AC 54 — weekly projection lower bound > AC 54.12: monthly projection honours the lower bound 12ms ⏎ → expected [] to deeply equal [ 1797314400000 ] ⏎ ↓ AC 54 — weekly projection lower bound > AC 54.13: cron projection honours the lower bound"
         },
         {
           "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
@@ -370,11 +346,11 @@
           "mutator": "EqualityOperator",
           "replacement": "newMonth >= 11",
           "reason": "Hit limit reached (5401/5400)",
-          "id": "2405",
+          "id": "2735",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30094ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/node ⏎ ✓ src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 3ms"
+          "evidence": "30104ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/node ⏎ ✓ src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 4ms"
         },
         {
           "file": "node/src/maintenance/impl/MaintenanceWindowScheduler.ts",
@@ -382,10 +358,10 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (16772401/16772400)",
-          "id": "2419",
+          "id": "2749",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30096ms",
+          "evidence": "30116ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -406,23 +382,11 @@
           "mutator": "LogicalOperator",
           "replacement": "cursor.getTime() < toMs || iterations < maxIterations",
           "reason": "",
-          "id": "2412",
-          "verdict": "failed",
-          "detail": "a test exceeded 15000ms",
-          "evidence": "19923ms",
-          "tail": "Tests  10 failed | 25 passed | 249 skipped (284) ⏎ Start at  07:07:55 ⏎ Duration  19.69s (transform 475ms, setup 528ms, collect 744ms, tests 21.13s, environment 1ms, prepare 4.07s)"
-        },
-        {
-          "file": "node/src/maintenance/impl/cron.ts",
-          "line": 109,
-          "mutator": "ConditionalExpression",
-          "replacement": "false",
-          "reason": "",
-          "id": "2650",
+          "id": "2742",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30086ms",
-          "tail": "↓ AC 58 — instance identity > AC 58.9: two windows starting at the same instant keep their own instances ⏎ ↓ AC 58 — range boundaries > AC 58.10: an occurrence exactly at the range start is included ⏎ ↓ AC 58 — range boundaries > AC 58.11: a once window with an unreadable timestamp projects nothing"
+          "evidence": "30107ms",
+          "tail": "✓ AC 63 — the grammar as the scheduler uses it > projects nothing for a minute the field does not have 91ms ⏎ × AC 63 — the grammar as the scheduler uses it > stops scanning at the iteration cap rather than running to the end of the range 226ms ⏎ → expected 4800 to be 1667 // Object.is equality"
         },
         {
           "file": "node/src/maintenance/impl/cron.ts",
@@ -430,11 +394,23 @@
           "mutator": "ConditionalExpression",
           "replacement": "false",
           "reason": "",
-          "id": "2653",
+          "id": "2980",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30097ms",
+          "tail": "→ */x * * * *: expected [ { id: 'inst-1', …(4) }, …(1) ] to have a length of +0 but got 2 ⏎ ↓ AC 61 — cron fields at their edges, and a terminal state that stays terminal > AC 61.19: finishing a failed instance twice is refused, and says so ⏎ ↓ AC 61 — cron fields at their edges, and a terminal state that stays terminal > AC 61.20: completing an instance twice is refused, and says so"
+        },
+        {
+          "file": "node/src/maintenance/impl/cron.ts",
+          "line": 109,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "reason": "",
+          "id": "2983",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
           "evidence": "30096ms",
-          "tail": "✓ src/maintenance/__tests__/i33-maintenance-windows.test.ts (54 tests | 53 skipped) 5ms ⏎ ✓ src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 5ms ⏎ ✓ src/maintenance/__tests__/AC61-schedule-boundaries.test.ts (20 tests | 17 skipped) 7ms"
+          "tail": "✓ src/maintenance/__tests__/i33-maintenance-windows.test.ts (54 tests | 53 skipped) 4ms ⏎ ✓ src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 6ms ⏎ ✓ src/maintenance/__tests__/AC61-schedule-boundaries.test.ts (20 tests | 17 skipped) 13ms"
         },
         {
           "file": "node/src/maintenance/impl/cron.ts",
@@ -442,11 +418,11 @@
           "mutator": "EqualityOperator",
           "replacement": "step < 0",
           "reason": "",
-          "id": "2654",
+          "id": "2984",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30087ms",
-          "tail": "✓ src/maintenance/__tests__/i33-maintenance-windows.test.ts (54 tests | 53 skipped) 60ms ⏎ ✓ src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 4ms ⏎ ✓ src/maintenance/__tests__/AC61-schedule-boundaries.test.ts (20 tests | 17 skipped) 63ms"
+          "evidence": "30096ms",
+          "tail": "✓ src/maintenance/__tests__/i33-maintenance-windows.test.ts (54 tests | 53 skipped) 5ms ⏎ ✓ src/maintenance/__tests__/MaintenanceWindowSchedulerSurvivors.test.ts (42 tests | 40 skipped) 5ms ⏎ ✓ src/maintenance/__tests__/AC61-schedule-boundaries.test.ts (20 tests | 17 skipped) 12ms"
         },
         {
           "file": "node/src/maintenance/impl/cron.ts",
@@ -454,10 +430,10 @@
           "mutator": "LogicalOperator",
           "replacement": "!Number.isFinite(step) && step <= 0",
           "reason": "",
-          "id": "2304",
+          "id": "2981",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30106ms",
+          "evidence": "30099ms",
           "tail": "→ */x * * * *: expected [ { id: 'inst-1', …(4) }, …(1) ] to have a length of +0 but got 2 ⏎ ↓ AC 61 — cron fields at their edges, and a terminal state that stays terminal > AC 61.19: finishing a failed instance twice is refused, and says so ⏎ ↓ AC 61 — cron fields at their edges, and a terminal state that stays terminal > AC 61.20: completing an instance twice is refused, and says so"
         },
         {
@@ -466,10 +442,10 @@
           "mutator": "AssignmentOperator",
           "replacement": "value -= step",
           "reason": "Hit limit reached (15501/15500)",
-          "id": "2669",
+          "id": "2999",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30181ms",
+          "evidence": "30190ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -478,10 +454,10 @@
           "mutator": "UpdateOperator",
           "replacement": "value--",
           "reason": "Hit limit reached (290901/290900)",
-          "id": "2614",
+          "id": "2944",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "14377ms",
+          "evidence": "15953ms",
           "tail": "❯ MessagePort.<anonymous> node:internal/per_context/messageport:23:28 ⏎ ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ ⏎ Serialized Error: { code: 'ERR_IPC_CHANNEL_CLOSED' }"
         },
         {
@@ -490,10 +466,10 @@
           "mutator": "UpdateOperator",
           "replacement": "value--",
           "reason": "Hit limit reached (9901/9900)",
-          "id": "2646",
+          "id": "2976",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30080ms",
+          "evidence": "30098ms",
           "tail": "↓ MWN12: Statistics and edge cases > empty upcoming range returns empty ⏎ ↓ MWN12: Statistics and edge cases > approved instance has approver metadata ⏎ ↓ MWN12: Statistics and edge cases > force started instances appear in getWindowInstances"
         },
         {
@@ -502,10 +478,10 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (1601/1600)",
-          "id": "3031",
+          "id": "3361",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30085ms",
+          "evidence": "30100ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -514,7 +490,7 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (1301/1300)",
-          "id": "3048",
+          "id": "3378",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
           "evidence": "30092ms",
@@ -526,10 +502,10 @@
           "mutator": "BlockStatement",
           "replacement": "{}",
           "reason": "Hit limit reached (14301/14300)",
-          "id": "3392",
+          "id": "3722",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30088ms",
+          "evidence": "30085ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -538,10 +514,10 @@
           "mutator": "EqualityOperator",
           "replacement": "this.kekCache.size <= MAX_CACHED_KEKS",
           "reason": "Hit limit reached (58001/58000)",
-          "id": "3391",
+          "id": "3721",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30206ms",
+          "evidence": "30207ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         },
         {
@@ -550,10 +526,10 @@
           "mutator": "CallExpression",
           "replacement": ";",
           "reason": "Hit limit reached (14301/14300)",
-          "id": "3394",
+          "id": "3724",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30049ms",
+          "evidence": "30092ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/node"
         }
       ]
