@@ -1516,3 +1516,132 @@ has no such repair, and "applied once, in write order" was a promise the pipelin
 made while standing on a transport that did not keep it. A layer cannot promise an
 order it does not own — or, as here, it can, until the day a compression callback
 takes longer than the one before it.
+
+## The first implementation of a port is a test of the port
+
+`IMemberSet` has existed for three iterations. Every claim the four cluster
+assemblers make — which member leaves, which batch costs quorum, which partition
+is emitted — is a claim about a set read through it, and the only implementation
+it had ever had was `InMemoryClusterTopology`, written by the same hand as the
+executors and tested by the same suite.
+
+Iteration 71 wrote the second one. `e2e/tests/cluster-scaling.test.ts` starts
+three real Raft processes over mTLS, wraps them in an `IMemberSet`, and runs
+`ClusterScalingExecutor` against what the *processes* answer.
+
+Two things the port turned out to require that the reference implementation had
+never had to express:
+
+- **The members are the committed configuration, not the peer list.** A process
+  is started with a list of addresses; the group's configuration is what a
+  majority agreed to, and the two disagree from the first membership change
+  onwards. The adapter reads the leader's copy, because a follower's can lag by
+  one entry and a member set that lags by one entry is the drift the executor was
+  written to survive — it should not also be the drift it is fed.
+- **A removal is a request whose refusal is a value.** `removeNode` appends a
+  configuration entry and throws the typed error the assemblers already branch
+  on, carrying the consensus layer's own reason (`no-quorum`, `rejected`) rather
+  than a summary of it.
+
+`AC-C25` asks for a scale-down from three voters to one. The executor removes one
+follower, keeps the leader, reports `clampedBy: 'quorum-floor'`, and the cluster —
+asked afterwards, in its own words — holds two voters. `AC-C26` asks again and
+removes nothing: a majority of two is two, so there is no removal this group can
+afford, and the note says so instead of leaving an operator to infer it from a
+graph. `AC-C27` sets the policy floor above the observed size and checks the
+clamp is named `policy-min`: a scale-down does not mend an under-sized group, and
+an executor that quietly grew one would be answering a question nobody asked.
+
+**The instrument fails on purpose.** Removing the quorum floor from the executor —
+one line, `Math.max(this.minNodes, quorumFloor)` become `this.minNodes` — makes
+`AC-C25` fail on `skipped`:
+
+```
+AssertionError: expected [ { id: '2', …(1) } ] to deeply equal []
+```
+
+That entry is the second removal: with only the policy floor in the way, the
+executor tries to take a two-voter group down to one, the consensus layer refuses
+because the configuration entry cannot commit, and the executor stops. The test
+does not see a wrong number; it sees an attempt that should not have been made,
+which is the defect.
+
+**What the adapter does not do, and says so.** `addNode` throws
+`ClusterMembershipError('unsupported')`: the port takes an id, the consensus layer
+needs an address to dial, and this member set reads its ids from a running group.
+A scale-up through it would be a member that exists in the member set and nowhere
+in the cluster — the exact state the executor's own notes warn about.
+
+**One semantic worth writing down.** In the scale-down path `targetCount` reports
+the member count that *is*, not the target that was asked for, and `AC-C27` pins
+it at two while the policy says three. That is not a rounding of the target: the
+executor was asked to shrink, it shrank nothing, and the gap between the policy and
+the group is the operator's to resolve. An outcome that reported three would be
+describing a cluster that does not exist.
+
+## What a mutation score measures when the module is a wire
+
+`RaftTcpTransport.ts` has been the subject of two iterations of narrative in this
+document and was never judged by the gate that judges `SqliteStorage.ts` and the
+four assemblers. Iteration 71 put it there. The first measurement was **77.68 %**
+over 548 mutants — 120 survivors and 9 timeouts — and the number is the useful
+part: a module whose every ordering claim the cluster depends on had a hundred and
+twenty behaviours no test named.
+
+Five rounds, each one reading the survivors and asking what each of them said:
+
+| Round | Score | Survivors | What the round added |
+|---|---:|---:|---|
+| first measurement | 77.68 % | 120 | nothing — the baseline |
+| mTLS material, TLS parameters, queue cleanup | 85.06 % | 81 | 14 cases |
+| inbound sockets, buffers, the frame path | 87.45 % | 68 | 14 cases |
+| bound port, health check, zero-length frames | 87.64 % | 67 | 6 cases |
+| what `send()` addresses, what `stop()` releases | **89.11 %** | 59 | 10 cases |
+
+The third round moved the score by 0.19 and was not wasted: it converted two
+timeouts into failures, and a timeout is not a verdict — it says the runner
+stopped, not that a test objected. The gate requires every one of them to be read
+and recorded, which is why `mutation/timeouts.json` grew seven entries that name
+the mechanism (`stuck`: this edit does not terminate) rather than a score.
+
+**What the 44 tests actually assert.** Not "coverage". Each one names a contract
+that a caller outside this package relies on:
+
+- **The material `start()` refuses to proceed without.** Three fields, and the
+  whitespace-only case — which is what a configuration templated from an unset
+  variable looks like: present, non-empty and useless.
+- **The TLS parameters as a whole.** `minVersion`, `maxVersion`, `ciphers`,
+  `ecdhCurve`, `requestCert`, `rejectUnauthorized`, asserted as one object,
+  because "TLS 1.3 only" is a security claim and a claim that survives one field
+  being dropped is not the claim.
+- **The CN prefix as a literal.** `raft.` in the allowed-prefix list must not match
+  `raftx7`: an unescaped dot accepts a certificate issued for a name the
+  deployment never said it trusted.
+- **The per-peer queues' release.** Both maps, on drain and on `stop()`. A map
+  entry per peer that is never removed is a leak that only shows under churn, and
+  a transport that stops and starts under a membership change would accumulate one
+  queue per peer per generation.
+- **The two-second fallback in `stop()`.** Asserted with fake timers against a
+  listener that never reports closed. Without it a shutdown waits on a callback
+  the operating system may never send.
+- **The compression threshold's boundary.** A payload of exactly the threshold is
+  queued; one byte less is written synchronously. `<` and `<=` differ by exactly
+  that frame, and the frame is the one the ordering queue exists for.
+- **A batch that is not re-initialised per message**, and a frame that never passed
+  through zstd not being sent through the decompressor.
+
+**The 59 survivors are argued, not silenced.** Most are `StringLiteral` edits to
+log lines: the message an operator reads is not a behaviour any test can fail on,
+and asserting the text of a `console.warn` would be testing the logging library.
+The rest are type guards the compiler already enforces (`typeof cert === 'string'`
+is always true for a `string | Buffer` field reached from a typed caller), a
+`clearInterval(null)` that is harmless by construction, and two `.clear()` calls
+whose absence cannot be observed before the next `start()` repopulates the maps.
+No `// Stryker disable` was added: a survivor with a reason in prose is a fact
+about the code, and a suppressed one is a fact about the gate.
+
+**The CI budget moved with the gate.** Local, this target alone costs twelve
+minutes; the three targets together were thirty-one minutes before it was added.
+The job's cap went from sixty to ninety, derived from that measurement rather than
+guessed, because a job killed at its cap reports nothing about the mutants it had
+not reached — and a gate whose budget is a guess fails on the day it matters.
