@@ -93,12 +93,32 @@ The two failures are handled in opposite directions on purpose:
 | --------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | record present, object gone | restore refuses at the size check                                           | a listing entry that cannot be restored is caught at the only moment it matters      |
 | record unreadable           | `inventoryProblems()` reports `{ key, reason }`, the snapshot is not listed | one damaged kilobyte must not stop every backup; an operator needs to see it         |
-| object present, no record   | invisible                                                                   | bytes are not a backup until something says they are; a lifecycle rule reclaims them |
+| object present, no record   | `reconcile()` reports it; a lifecycle rule reclaims it                       | bytes are not a backup until something says they are, and a delete that failed between the record and the artefact leaves exactly this |
 
 The record is written **after** the artefact and confirmed the same way. That ordering is the whole
 difference between "a crash leaves nothing announced" and "a crash leaves a snapshot that cannot be
 restored": in the window between the two uploads, a killed process leaves an artefact no listing
 mentions, which is the state a person can clean up.
+
+That state has a second producer, and it is the ordinary one: a delete removes the record first and the
+artefact second, so a delete that fails in between leaves an object no record names. `reconcile()`
+compares the listing with the inventory and answers three lists — `orphaned` (no record, past a grace
+window), `inFlight` (no record *yet*, inside it) and `missing` (a record with no object). The grace
+window is what makes it safe to run on a schedule: an artefact younger than `RECONCILE_GRACE_MS` may be
+a backup that is being written, and reclaiming it would delete the thing the caller is waiting for.
+
+```
+  list(prefix) ──┬── record keys ──→ ids that name an object
+                 ├── artefact keys ─┬─ named by a `location`          → neither list
+                 │                  ├─ named by a record's id         → neither list (damaged record)
+                 │                  ├─ unnamed, older than grace      → orphaned  (reclaim deletes)
+                 │                  └─ unnamed, inside grace          → inFlight  (never deleted)
+                 └── records whose `location` is not listed           → missing   (reported only)
+```
+
+Deletion is behind `reclaim`, because the comparison is only as good as the listing: a bucket behind a
+cache, or a replica that has not caught up, makes a record look absent, and an object that looks unnamed
+is one delete away from being a backup nobody has.
 
 ## Retention: why the unit is a set
 

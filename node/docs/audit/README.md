@@ -77,8 +77,8 @@ console.log(json);
 | `query(filter)` | `Promise<AuditEntry[]>` | Query entries with filters |
 | `get(id)` | `Promise<AuditEntry \| null>` | Get entry by ID |
 | `count(filter?)` | `Promise<number>` | Count entries matching filter |
-| `pruneOlderThan(timestamp)` | `Promise<number>` | Delete entries older than timestamp, returns count |
-| `verify()` | `Promise<AuditTrailVerification>` | Walk the whole trail and report the first break |
+| `pruneOlderThan(timestamp)` | `Promise<number>` | Give up closed segments last written before the timestamp, recording what each held, and return how many went |
+| `verify()` | `Promise<AuditTrailVerification>` | Walk the whole trail, check it against the anchor, and report the first break |
 
 #### `IAuditExporter`
 
@@ -295,7 +295,12 @@ The pieces are published because the rule has to be checkable by someone who doe
 | `sealEntry(entry, writer, seq, prev)` | The `AuditChainLink` a writer attaches |
 | `recomputeDigest(entry)` | The digest an entry *claims*, recomputed from its content |
 | `verifyTrail(entries, options?)` | Verify a sequence; returns `AuditTrailVerification` |
+| `parseSegmentText(text)` | One segment's bytes as `{ entries, unparsable, tornTail }` — the reader `verify()` and the prune share |
 | `describeVerification(result)` | One sentence for an operator |
+
+The report itself is a type a consumer can write down: `AuditTrailVerification` names `ChainHead`
+(`{ writer, seq, hash }`) for the head of each chain and for the floors an anchor records, and
+`VerifyTrailOptions` is the shape a caller passes to `verifyTrail`.
 
 ```typescript
 import { FileAuditStore, describeVerification } from '@agentix-e/db-node/audit';
@@ -309,13 +314,15 @@ if (!result.ok) {
 }
 ```
 
-Five failure reasons, each a different sentence to an operator:
+Seven failure reasons, each a different sentence to an operator:
 
 | Reason | What it means |
 |---|---|
 | `content` | The entry's content changed after it was sealed |
 | `link` | `prev` does not name the previous entry of this writer |
 | `sequence-gap` | The sequence numbers skip — an entry was deleted |
+| `anchor-gap` | The trail resumes *above* the position the anchor says was pruned |
+| `anchor-link` | The trail resumes at the anchor's position but does not name the digest it recorded |
 | `unchained` | The entry carries no link at all (written before this version, or appended by hand) |
 | `unparsable` | The line is not an audit entry |
 
@@ -346,6 +353,66 @@ Four properties worth knowing before you rely on it:
   a truncated archive, a volume that went away, a reader that failed. `query()` still serves every
   segment it can (an incident report must not be refused); `verify()` answers `ok: false`, because a
   verification that skipped a file it could not decode would attest to evidence it never saw.
+
+### The anchor: a deleted prefix is a finding
+
+A chain proves what is *present*. Delete the beginning of a trail and every remaining link still holds —
+the first survivor names a `prev` nobody can see, which is exactly what a pruned trail looks like. That
+forgiveness is necessary (retention prunes) and it is the one deletion the digest cannot report.
+
+So a store records what it gives up. Before a segment is unlinked, `${filePrefix}.anchor` gains a floor
+per writer: the sequence number and digest of the last entry that segment held. The file is small,
+written to `${filePrefix}.anchor.part`, synced, and renamed into place, so a reader sees the old anchor
+or the new one and never a torn one.
+
+```json
+{
+  "version": 1,
+  "generatedAt": "2026-11-22T01:02:03.000Z",
+  "pruned": [{ "writer": "b1e0…", "seq": 40, "hash": "9c4d…" }]
+}
+```
+
+`verify()` reads it and compares:
+
+| What the trail says | What it means |
+|---|---|
+| first entry is `seq` 41, anchor says 40, `prev` names the anchored hash | anchored — the record accounts for the missing forty |
+| first entry is `seq` 43, anchor says 40 | `anchor-gap` — 41 and 42 are gone and nothing recorded giving them up |
+| first entry is `seq` 41, `prev` names something else | `anchor-link` — the entry that survived does not continue the entry that was pruned |
+| first entry is `seq` 41, no anchor at all | `unanchored` — reported, not a failure |
+| the anchor exists and cannot be read | `ok: false`, `anchorUnreadable: true` |
+
+The last two rows are the honest limits, and they are stated here rather than implied away:
+
+- **A legacy trail, or one restored from an archive, starts above 1 with no record.** That is not
+  tampering, and calling it tampering would make every trail written before this version unreadable. It
+  is counted in `unanchored` so a reader sees it.
+- **The anchor is unkeyed, like the chain it anchors.** An attacker with write access to the directory
+  can delete the anchor as well as the segments, and then the trail is `unanchored` again. What the
+  anchor makes possible is *accountable* deletion: every prune the store performs is a fact a later
+  verification reads, so a hand-deletion after one is a break. A trail that must resist its own
+  administrator needs an external witness — the daily digest from `JsonAuditExporter`, a WORM bucket, a
+  remote log — and no local file can be one.
+
+Two rules keep the record true:
+
+- **It is written before the unlink, and a prune that cannot write it removes nothing.** A record written
+  afterwards leaves a window in which the entries are gone and nothing says why; a prune that failed to
+  record is a prune that would make the hole wider.
+- **It only ever rises.** Floors are per writer and monotone, so two prunes and two processes converge on
+  the highest position each writer has lost. A floor for a writer whose entries are still present is not
+  a lie that matters — the check is "the trail does not start *above* the record", and a trail that
+  starts below it is a restored copy.
+
+Two things follow for operators:
+
+- **A segment that does not verify is not pruned.** Retention deletes closed segments by age; before it
+  does, the segment is read and checked as a segment (every line parsed, every link inside it holds). A
+  break is evidence, and evidence is not destroyed by a cleanup — the file stays, `verify()` names it, and
+  the next sweep tries again.
+- **A segment that cannot be read is not pruned either.** Its floors cannot be recorded, and an
+  unrecorded removal is precisely the state the anchor exists to make impossible.
 
 ### `JsonAuditExporter`
 

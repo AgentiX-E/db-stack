@@ -117,6 +117,64 @@ also rewrite the digest. Same limit as the audit trail's chain, stated rather th
 
 ---
 
+## The bytes no record names
+
+Deleting a snapshot removes the record first and the artefact second, on purpose: a record whose
+artefact is gone is a listing entry that cannot be restored, and the listing is what a recovery is
+planned from. The price of that order is the state this section is about — a delete that fails between
+the two steps leaves an object no record names. It is invisible to `listBackups()`, costs money, cannot
+be restored, and until `reconcile()` existed it could only be found by listing the bucket by hand and
+comparing it with the inventory.
+
+`manager.reconcile()` is that comparison, and it answers three lists plus a count:
+
+```ts
+const report = await backups.reconcile();
+// { orphaned: [...], inFlight: [...], missing: [...], reclaimed: 0 }
+```
+
+| Field | What it holds | What to do |
+|---|---|---|
+| `orphaned` | Objects under the prefix that no record names, older than the grace window | reclaim them, or leave them to a bucket lifecycle rule |
+| `inFlight` | The same, younger than the grace window | nothing — this is a backup being taken |
+| `missing` | Records whose artefact the bucket does not hold | look at them: a listing that names a snapshot nobody can restore |
+| `reclaimed` | How many objects were deleted — `0` unless `reclaim: true` | reconcile with what the bucket now holds |
+
+The split between `orphaned` and `inFlight` is the whole safety argument. `createBackup()` uploads the
+artefact and *then* writes its record, so for the length of one confirmation there is an object that
+nothing names — and it is the backup the caller is waiting for. Age is the only thing that separates the
+two states: `RECONCILE_GRACE_MS` (ten minutes) is longer than any confirmation and far shorter than a
+retention cycle. `{ graceMs }` overrides it, and an object whose `lastModified` cannot be parsed is
+treated as in flight — an age that cannot be read is not a verdict about age. The age is measured
+against the manager's own clock, the one `createBackup()` stamped the record with, so an object exactly
+`graceMs` old is garbage and one a millisecond younger is still a backup being taken.
+
+The report is about **this** manager's prefix and nothing else: a bucket shared with another deployment
+— a second cluster, a warehouse of restored copies — keeps its objects out of the report, and out of
+`reclaim`'s reach.
+
+**Nothing is deleted unless `reclaim: true` is passed.** That default is the point: a listing can be
+stale — a bucket behind a cache, a replica that has not caught up — and a stale listing makes a record
+look absent. An object that merely *looks* unnamed is one delete away from being a backup nobody has.
+With `reclaim: true`, only `orphaned` is touched, one key at a time; a delete that fails leaves the
+object for the next run, and `reclaimed` counts what is actually gone rather than what was named.
+
+**A record names its artefact two ways, and both are honoured.** The `location` it carries is what a
+restore downloads, so an object under the prefix whose name is not one this build writes — a bucket
+migrated from an earlier version, artefacts copied under another suffix — is protected by the record
+that points at it. The id in the record's *key* is the second way, and it needs no parsing at all:
+that is what protects the artefact of a record this process could not read, because a damaged record is
+a snapshot an operator has to be able to look at rather than a licence to delete bytes. `artifactIdOf`
+reads an id out of a name of the shape `backups/full/<id>.artifact`; an object whose name is not one
+this package writes and which no record points at is reported with `snapshotId: null` rather than
+guessed at.
+
+Both halves of the report are sorted by key — code-unit order, the same on every machine and in every
+locale — so two runs against two backends that hold the same objects produce the same report, and a
+diff of two reconciles shows what changed rather than what the listing order happened to be.
+
+---
+
 ## Quick start
 
 ```ts

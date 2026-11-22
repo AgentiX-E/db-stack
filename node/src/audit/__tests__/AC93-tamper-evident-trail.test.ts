@@ -543,18 +543,24 @@ describe('AC 93 — the sentence an operator reads', () => {
 
   it('DV.2: a trail with no failure recorded still answers, rather than crashing', () => {
     // Not a shape `verifyTrail` produces — it is what a caller that recorded its own
-    // verification holds, and the formatter is public.
+    // verification holds, and the formatter is public. That is also why this literal
+    // has to be written out in full: it is the compiler's reminder that a report type
+    // is a contract with its readers, not an implementation detail.
     const text = describeVerification({
       ok: false,
       entries: 3,
       chained: 3,
       unchained: 0,
       writers: 1,
+      anchored: 1,
+      unanchored: 0,
       failures: 0,
       firstFailure: null,
       tornTail: false,
       unreadable: false,
+      anchorUnreadable: false,
       reported: [],
+      heads: [],
     });
     expect(text).toBe('audit trail: first break: unknown');
   });

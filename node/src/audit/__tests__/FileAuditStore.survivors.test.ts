@@ -63,6 +63,21 @@
  *   `'at-rest'` → `''` in the sweep's call to `repairFor` — the function asks
  *   `when === 'live'`, so every value that is not the word `live` takes the at-rest path;
  *   the parameter is two names for the reader, not a discriminant at runtime.
+ *
+ * Iteration 66 added `pruneSegments` — the prune that reads a segment and records its
+ * floor before unlinking it — and read its survivors the same way. Nine of that method's
+ * mutants were closed rather than argued: two guards were deleted because nothing they
+ * skipped could be observed (`candidates.length === 0`, and `prunable.length === 0`
+ * followed by a loop over an empty list), `AN.25` kills the pair that let a damaged
+ * anchor block a segment which records nothing, `AN.26` kills the `{}` that dropped the
+ * unparsable positions and the arrow that returned `undefined`, and the position string
+ * itself moved into `unparsableAt`, which `AC 95` already asserts — one function for the
+ * reader that prints a position and the prune that only counts it. The file measures
+ * **97.23 %** (765 killed, 6 timeout, 22 survived, **0 uncovered**), and one survivor is
+ * new:
+ *
+ *   SA.11 a canary in `prunable` is removed by a `remove` that refuses a path it cannot
+ *         find, so the count and the directory are the same either way
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

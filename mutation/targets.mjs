@@ -63,6 +63,9 @@ export const TARGETS = {
       "node/src/backup/impl/inventory.ts",
       "node/src/backup/impl/FileSystemStorageBackend.ts",
       "node/src/audit/impl/auditChain.ts",
+      // The anchor: the one file that decides whether a deleted prefix is a finding or
+      // a pruned trail. Its mutants are why "the head is anchored" is a measurement.
+      "node/src/audit/impl/auditAnchor.ts",
       "node/src/backup/impl/backupChain.ts",
       "node/src/maintenance/impl/cron.ts",
       "node/src/security/impl/KeyRotationManager.ts",

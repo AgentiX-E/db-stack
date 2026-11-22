@@ -63,6 +63,8 @@ export type AuditChainFailureReason =
   | 'content' //  the entry's own digest does not match its bytes
   | 'link' //     the entry does not name its predecessor's digest
   | 'sequence-gap' // the entry's sequence does not follow its predecessor's
+  | 'anchor-gap' // the trail resumes after a prefix nobody recorded giving up
+  | 'anchor-link' // the first surviving entry does not join the recorded prefix
   | 'unparsable'; // a line that is not JSON at all
 
 /** The first thing about a trail that does not hold. */
@@ -88,6 +90,28 @@ export interface AuditTrailVerification {
   unchained: number;
   /** Distinct writer ids seen. */
   writers: number;
+  /**
+   * Chains whose beginning is accounted for: either the writer's first surviving
+   * entry is its genesis, or the anchor says which entries were given up before it
+   * and the first survivor is the one that follows them.
+   *
+   * This is the number that makes a pruned trail auditable. Without it, "the first
+   * forty entries are missing" and "the first surviving entry is number forty-one"
+   * are the same observation, which is exactly the deletion a digest chain cannot
+   * report on its own. `anchored + unanchored === writers`, always.
+   */
+  anchored: number;
+  /**
+   * Chains whose beginning is not accounted for.
+   *
+   * Two shapes, and only one of them is a break. A trail that starts above its
+   * genesis with nothing recording what came before — written before the anchor
+   * existed, or restored from an archive of segments — legitimately looks like that,
+   * and `ok` stays `true`. A trail that starts where the record contradicts is an
+   * `anchor-gap` or an `anchor-link` failure, and is counted here as well, because
+   * the chain's head is unaccounted for either way.
+   */
+  unanchored: number;
   /** Exact number of failures, which may exceed `failures.length`-style reports. */
   failures: number;
   /** The first failure in trail order, or `null`. */
@@ -103,8 +127,43 @@ export interface AuditTrailVerification {
   tornTail: boolean;
   /** The trail could not be read at all (the directory could not be listed). */
   unreadable: boolean;
+  /**
+   * The anchor exists and could not be read, so what the directory pruned is unknown.
+   *
+   * A verification that cannot read the record of its own deletions is not an
+   * attestation, for the same reason a segment it could not read is not one — and
+   * this one is worse, because the file that could have named the hole is the file
+   * that is damaged.
+   */
+  anchorUnreadable: boolean;
   /** Up to `MAX_REPORTED_FAILURES` failures, in trail order. */
   reported: AuditChainFailure[];
+  /**
+   * The last link of each writer's chain, in writer order.
+   *
+   * The head of a chain is what an anchor has to record before the entries under it
+   * are given up, so a store that prunes reads them from here rather than walking
+   * the entries a second time.
+   */
+  heads: ChainHead[];
+}
+
+/**
+ * One position in a writer's chain: the sequence number and the digest of the entry
+ * that occupied it.
+ *
+ * Named once because the same pair answers three questions — what the head of a
+ * surviving chain is, what a store gave up when it pruned, and whether the first
+ * survivor joins the record. Two shapes would let those three drift apart, and the
+ * whole value of an anchor is that all three are the same fact.
+ */
+export interface ChainHead {
+  /** The writer whose chain this position belongs to. */
+  writer: string;
+  /** The sequence number of the entry at this position. */
+  seq: number;
+  /** The digest that entry recorded. */
+  hash: string;
 }
 
 /**
@@ -163,7 +222,9 @@ export function chainPreimage(entry: AuditEntry, writer: string, seq: number, pr
 
 /** SHA-256 of the pre-image, lowercase hex. */
 export function chainDigest(preimage: string): string {
-  return createHash('sha256').update(preimage, 'utf8').digest('hex');
+  // No encoding argument: `update` reads a string as UTF-8, and an argument that cannot
+  // change the answer is an argument only a mutant reads.
+  return createHash('sha256').update(preimage).digest('hex');
 }
 
 /**
@@ -190,6 +251,90 @@ export function recomputeDigest(entry: AuditEntry): string | null {
   return chainDigest(chainPreimage(entry, link.writer, link.seq, link.prev));
 }
 
+/**
+ * One segment's bytes, as lines and the reasons they are not entries.
+ *
+ * The reader is here rather than in the store because three callers need the same
+ * three answers and they must not disagree: `verify()` builds a report from them,
+ * a prune decides from them whether a file may be given up, and a test asserts
+ * them. A second parsing loop in the store would be a second opinion about what a
+ * torn tail is, and the two would drift the first time one of them changed.
+ */
+export interface ParsedSegment {
+  /** The entries that parsed, in file order. */
+  entries: AuditEntry[];
+  /** 1-based line numbers that were not JSON. */
+  unparsable: number[];
+  /**
+   * The last line has no newline after it.
+   *
+   * True whether that last line parsed or not, because both are the same event: a
+   * process that died inside `append`. It is reported next to the entries rather
+   * than as a failure — the bytes that landed are a whole entry often enough that
+   * calling them damage would lose one.
+   */
+  tornTail: boolean;
+}
+
+/**
+ * Read a segment's text the way the store always has: one JSON object per line, a
+ * final newline that is not a line, blank lines skipped, and the last line read as
+ * a torn tail when it has no newline.
+ *
+ * `''` is an empty segment, not an unreadable one: this function is only reached
+ * with the *text* of a segment, and the question of whether a segment could be read
+ * at all is answered by the port, where `null` means it could not.
+ */
+export function parseSegmentText(text: string): ParsedSegment {
+  const entries: AuditEntry[] = [];
+  const unparsable: number[] = [];
+  // A final newline leaves an empty last element, and an empty line is skipped two lines
+  // below — so there is nothing to remove and nothing to remember: the position test for
+  // a torn tail is "the last element", whether that element is a line or the space after
+  // one. The version of this function that popped it carried two branches no case could
+  // reach, because the guard that skipped empty lines had already made them no-ops.
+  const lines = text.split('\n');
+
+  let tornTail = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.trim() === '') continue;
+    const unterminated = i === lines.length - 1;
+    try {
+      entries.push(JSON.parse(line) as AuditEntry);
+      if (unterminated) tornTail = true;
+    } catch {
+      // A fragment at the very end of a segment is a crash, not an attack: the store
+      // writes `line\n` in one call, so a line that does not end on a newline was
+      // never acknowledged. Anywhere else it is a line that was rewritten or
+      // truncated by somebody else.
+      if (unterminated) tornTail = true;
+      else unparsable.push(i + 1);
+    }
+  }
+  return { entries, unparsable, tornTail };
+}
+
+/**
+ * The last link of each chain in a map of chains, sorted by writer.
+ *
+ * A map's iteration order is the order the entries were met in, which is a fact about
+ * how a trail happened to interleave its writers rather than about the trail. Two reports
+ * of the same trail have to be comparable, so the list is sorted — and by the *names*,
+ * with the default sort, because a comparator is three branches (less, greater, equal)
+ * of which the third cannot occur when the keys are a map's.
+ */
+export function chainHeads(state: ReadonlyMap<string, { seq: number; hash: string }>): ChainHead[] {
+  const heads: ChainHead[] = [];
+  for (const writer of [...state.keys()].sort()) {
+    // The assertion rather than a guard: the key came out of this map, so the lookup
+    // cannot miss, and a guard here could never be the reason a head was skipped.
+    const head = state.get(writer) as { seq: number; hash: string };
+    heads.push({ writer, seq: head.seq, hash: head.hash });
+  }
+  return heads;
+}
+
 /** Options for `verifyTrail`. */
 export interface VerifyTrailOptions {
   /** The newest segment ends mid-line. See `AuditTrailVerification.tornTail`. */
@@ -198,6 +343,20 @@ export interface VerifyTrailOptions {
   unparsable?: ReadonlyArray<{ where: string }>;
   /** The trail could not be read. See `AuditTrailVerification.unreadable`. */
   unreadable?: boolean;
+  /**
+   * What the directory recorded giving up: the last link of each pruned prefix,
+   * by writer.
+   *
+   * A writer absent from this map is a writer whose beginning nothing explains; a
+   * writer present in it has a *floor*, and the first surviving entry is checked
+   * against that floor. Two things can then be said that a chain alone cannot: the
+   * trail resumes above the floor — entries between the two are gone with nothing
+   * recording that they were deliberately pruned — or it resumes exactly at the
+   * floor and does not name the digest the floor recorded.
+   */
+  anchor?: ReadonlyMap<string, ChainHead>;
+  /** The anchor exists and could not be read. See `AuditTrailVerification.anchorUnreadable`. */
+  anchorUnreadable?: boolean;
 }
 
 /**
@@ -215,6 +374,15 @@ export interface VerifyTrailOptions {
  * "the prefix is gone" is not "the links are broken". What cannot be forgiven is
  * a gap *inside* what is present — that is a deleted entry — which is what the
  * `sequence-gap` and `link` reasons name.
+ *
+ * The one thing a chain cannot say about its own beginning is whether the prefix
+ * was given up or taken, so `options.anchor` supplies the directory's record of
+ * what it pruned and the two answers differ: resuming *above* a recorded floor is
+ * `anchor-gap`, resuming *at* it without naming the digest the floor recorded is
+ * `anchor-link`, and resuming above 1 with no record at all is reported as
+ * `unanchored` rather than as a break — a trail written before the record existed
+ * looks exactly like that, and accusing every legacy trail of tampering is how a
+ * report stops being read.
  */
 export function verifyTrail(entries: readonly AuditEntry[], options: VerifyTrailOptions = {}): AuditTrailVerification {
   const state = new Map<string, { seq: number; hash: string }>();
@@ -222,6 +390,8 @@ export function verifyTrail(entries: readonly AuditEntry[], options: VerifyTrail
   let failures = 0;
   let chained = 0;
   let unchained = 0;
+  let anchored = 0;
+  let unanchored = 0;
 
   const note = (failure: AuditChainFailure): void => {
     failures += 1;
@@ -237,6 +407,38 @@ export function verifyTrail(entries: readonly AuditEntry[], options: VerifyTrail
     }
 
     chained += 1;
+
+    // The beginning of this writer's surviving run, judged before its own bytes are:
+    // the two counts are about *positions*, and a line whose digest does not hold
+    // still tells us where the chain it belongs to begins. Every writer lands in
+    // exactly one of them, which is what makes `anchored + unanchored === writers`
+    // an invariant rather than a coincidence.
+    const previous = state.get(link.writer);
+    let head: AuditChainFailureReason | null = null;
+    if (previous === undefined) {
+      const record = options.anchor?.get(link.writer);
+      if (record === undefined) {
+        // Nothing recorded a prune for this writer. A chain that starts at its
+        // genesis needs no record; one that starts above it is unaccounted for, not
+        // broken.
+        if (link.seq > 1) unanchored += 1;
+        else anchored += 1;
+      } else if (link.seq > record.seq + 1) {
+        // The record says everything up to `record.seq` was given up, and this is
+        // not the entry that follows it: the entries in between were removed
+        // without being recorded, which is the deletion a chain cannot see.
+        unanchored += 1;
+        head = 'anchor-gap';
+      } else if (link.seq === record.seq + 1 && link.prev !== record.hash) {
+        // The right position, the wrong predecessor: the entry that was pruned is
+        // not the entry this one continues.
+        unanchored += 1;
+        head = 'anchor-link';
+      } else {
+        anchored += 1;
+      }
+    }
+
     const recomputed = recomputeDigest(entry);
     if (recomputed !== link.hash) {
       // Before the link check, because a rewritten entry usually also breaks its
@@ -247,13 +449,12 @@ export function verifyTrail(entries: readonly AuditEntry[], options: VerifyTrail
       continue;
     }
 
-    const previous = state.get(link.writer);
-    if (previous !== undefined) {
-      if (link.seq !== previous.seq + 1) {
-        note({ reason: 'sequence-gap', where: entry.id, writer: link.writer, seq: link.seq });
-      } else if (link.prev !== previous.hash) {
-        note({ reason: 'link', where: entry.id, writer: link.writer, seq: link.seq });
-      }
+    if (previous === undefined) {
+      if (head !== null) note({ reason: head, where: entry.id, writer: link.writer, seq: link.seq });
+    } else if (link.seq !== previous.seq + 1) {
+      note({ reason: 'sequence-gap', where: entry.id, writer: link.writer, seq: link.seq });
+    } else if (link.prev !== previous.hash) {
+      note({ reason: 'link', where: entry.id, writer: link.writer, seq: link.seq });
     }
 
     state.set(link.writer, { seq: link.seq, hash: link.hash });
@@ -264,25 +465,42 @@ export function verifyTrail(entries: readonly AuditEntry[], options: VerifyTrail
   }
 
   const unreadable = options.unreadable === true;
+  const anchorUnreadable = options.anchorUnreadable === true;
   return {
-    ok: !unreadable && failures === 0 && unchained === 0,
+    // `unchained === 0` is not stated separately, because every unchained line is already
+    // counted as a failure: a clause that cannot be the reason `ok` is false is a clause
+    // that only a mutant reads.
+    ok: !unreadable && !anchorUnreadable && failures === 0,
     entries: entries.length,
     chained,
     unchained,
     writers: state.size,
+    anchored,
+    unanchored,
     failures,
     firstFailure: reported[0] ?? null,
     tornTail: options.tornTail === true,
     unreadable,
+    anchorUnreadable,
     reported,
+    heads: chainHeads(state),
   };
 }
 
 /** One line an operator can act on, or the absence of one when nothing failed. */
 export function describeVerification(result: AuditTrailVerification): string {
   if (result.unreadable) return 'audit trail: unreadable — the data directory could not be listed';
+  if (result.anchorUnreadable) {
+    return 'audit trail: the anchor cannot be read — what this directory pruned is unknown';
+  }
   if (result.ok) {
-    return `audit trail: ${result.entries} entries across ${result.writers} chain(s), every link holds`;
+    const counts = `${result.entries} entries across ${result.writers} chain(s), every link holds`;
+    // The head, when it is not accounted for, belongs in the sentence that says the
+    // trail is intact: the two are both answers to "what am I looking at", and a
+    // reader who has to open the object to learn that a chain starts at 41 has been
+    // told half the truth.
+    if (result.unanchored === 0) return `audit trail: ${counts}`;
+    return `audit trail: ${counts}, ${result.unanchored} of them starting above their first entry with no record of a prune`;
   }
   const first = result.firstFailure;
   const where =

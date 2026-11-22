@@ -1,10 +1,20 @@
 /**
- * The survivors of `BackupManager.ts`'s first mutation run, read one by one.
+ * The survivors of `BackupManager.ts`'s mutation runs, read one by one.
  *
  * The first run scored 88.25 % and 35 mutants survived. Every one is either killed by a
  * case below or argued here, because a survivor is a line whose behaviour the suite does
  * not distinguish — and the two acceptable answers are "add the case" and "show why no
- * case can exist". After these cases the file measures 96.51 %.
+ * case can exist".
+ *
+ * Iteration 66 added `reconcile()` and read its survivors the same way. Eleven were killed
+ * rather than argued: the prefix the listing is read with (`RC.12`), the `location` a
+ * record names its artefact by when the object's *name* is not one this build writes
+ * (`RC.13`), the grace window's boundary to the millisecond read from the manager's own
+ * clock (`RC.14`), and the order of the in-progress half of the report (`RC.15`). The
+ * hand-written comparator the two halves were sorted with went with them: the default
+ * comparator is code-unit order — the same on every machine and in every locale, which
+ * `localeCompare` is not — and it is a line that cannot be wrong about ties. The file
+ * measures **96.63 %** (458 killed, 1 timeout, 16 survived, none uncovered).
  *
  * Killed here:
  *
@@ -28,7 +38,7 @@
  *   SV.17 `skipVerification` restores an artefact whose digest does not match, and still
  *         refuses one whose size does
  *
- * Argued as unreachable or equivalent — the 11 that remain after these cases:
+ * Argued as unreachable or equivalent — the 16 that remain:
  *
  *   `left[0] < right[0]` in `compareLsn` → `<=` — the ternary is only evaluated when the
  *   two segments differ, where the two comparisons agree.
@@ -37,18 +47,30 @@
  *   catches what they do not. That is what the function is for.
  *   `if (!byId.has(id)) continue` — the final `filter` already drops a name the inventory
  *   does not hold, so skipping early and skipping late produce the same list.
+ *   `this.stamps.delete(id)` in `readInventory` — the `stale` filter's own
+ *   `!this.snapshots.has(id)` already forces a re-read, so clearing the stamp changes
+ *   which records are read not at all. The line stays because a stamp nobody clears is a
+ *   map that only grows.
+ *   `if (!present.has(key)) this.damaged.delete(key)` → `true` — the same pass that would
+ *   forget the problem re-reads the record: it is in `stale`, so a read that fails puts
+ *   the problem back. Forgetting and re-learning produce the same answer.
+ *   `if (stale.length === 0) return;` → never — the guard saves a `mkdir` on a directory
+ *   that already exists and an `eachLimited` over an empty list, both of which do nothing.
+ *   `readFile(local, 'utf8')` → `readFile(local, '')` — `''` is not an encoding, so Node
+ *   hands back the bytes and `JSON.parse` calls `toString()`, which is UTF-8: same text.
+ *   `if (id !== null) namedIds.add(id)` → `true`, and `snapshotId !== null &&` → `true` —
+ *   a key without an id adds `null` to a `Set<string>`, and the only `has` call is guarded
+ *   by `snapshotId !== null`, so the question `has(null)` can be asked and is always false.
  *   `deadline === undefined` — `Date.now() + undefined` is `NaN`, and every comparison
  *   against `NaN` is false, so the "no budget" branch and the mutated one behave alike.
  *   `state: 'in-progress'` — the snapshot is stored only after it becomes `completed`; the
  *   interim value never leaves the method, so nothing can observe it.
- *   `durationMs` on the `unrestorableReason` branch — `deleteBackup` cascades, the
- *   inventory is private, and a snapshot whose base is gone therefore cannot be held by a
- *   manager. The rule itself is tested directly (`backupChain`'s `unrestorableReason`).
+ *   `this.snapshots.delete(...)` and `this.stamps.delete(...)` in `discard` — every public
+ *   entry point reconciles against the listing first, so the next read removes what the
+ *   delete would have. The lines stay because a manager whose map still named a deleted
+ *   snapshot would be wrong for as long as nothing asked it anything.
  *   `snapshot.checksum !== undefined` — every snapshot the manager creates has one, and
  *   there is no public way to construct one that does not.
- *   `Array.from(this.snapshots.values())` and `filter((s) => s.state === 'completed')` in
- *   `pitr` — every snapshot in the map was completed before it was stored, so the
- *   predicate is never false and the collection never holds anything else.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

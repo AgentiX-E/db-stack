@@ -157,6 +157,24 @@ export function expandDeletions(inventory: readonly BackupMetadata[], ids: reado
 }
 
 /**
+ * The snapshot id an artefact's key carries, or `null` when the name is not one this
+ * package writes.
+ *
+ * `${prefix}/${type}/${id}.artifact` is the shape `createBackup` produces, and the id is
+ * the only part of it a record can be matched by when the record itself cannot be read.
+ * `null` rather than a guess: an object under the prefix whose name does not have this
+ * shape is still an object no record names, and reporting it is the honest answer — it
+ * simply cannot be attributed to a snapshot, which is what `null` says.
+ */
+export function artifactIdOf(key: string): string | null {
+  const name = key.slice(key.lastIndexOf('/') + 1);
+  const suffix = '.artifact';
+  if (!name.endsWith(suffix)) return null;
+  const id = name.slice(0, -suffix.length);
+  return id === '' ? null : id;
+}
+
+/**
  * How many record downloads may be in flight at once while hydrating.
  *
  * One per record would be a bucket listing's worth of latency spent in series; all of
@@ -177,6 +195,75 @@ export interface InventoryProblem {
 /** The listing's own fingerprint of an object, as the bucket reported it. */
 function stampOf(entry: { size: number; lastModified: string }): string {
   return `${entry.size}:${entry.lastModified}`;
+}
+
+/**
+ * How long an object no record names is still read as a backup in progress.
+ *
+ * `createBackup` uploads the artefact and *then* writes its record, so for the length of
+ * one confirmation there is an object in the bucket that nothing names — and it is a
+ * backup, not garbage. Ten minutes is longer than any confirmation (one upload, one
+ * listing, one small PUT) and far shorter than a retention cycle, so an object that is
+ * still nameless ten minutes later is a delete that failed, not a backup that is
+ * running.
+ *
+ * A parameter rather than a constant in the method because two deployments disagree
+ * about it: a bucket with a slow replication path needs longer, and an operator cleaning
+ * up after an incident wants it shorter.
+ */
+export const RECONCILE_GRACE_MS = 10 * 60 * 1000;
+
+/** An object under the backup prefix that no record names. */
+export interface OrphanArtifact {
+  /** Where the object is. */
+  key: string;
+  /** How large the bucket says it is. */
+  size: number;
+  /** When the bucket says it was last written. */
+  lastModified: string;
+  /** The snapshot id its name carries, or `null` for an object this package did not name. */
+  snapshotId: string | null;
+}
+
+/** A record whose artefact the bucket does not hold. */
+export interface MissingArtefact {
+  /** The snapshot the record describes. */
+  snapshotId: string;
+  /** The key the record names. */
+  key: string;
+}
+
+/** What `reconcile` found, and whether it acted. */
+export interface ReconcileReport {
+  /** Nameless objects old enough to be garbage. */
+  orphaned: OrphanArtifact[];
+  /**
+   * Nameless objects young enough to be a backup in progress.
+   *
+   * Reported separately because the two demand opposite actions: one is bytes to reclaim,
+   * the other is bytes to leave alone. A single list would make the caller decide which
+   * is which, and the wrong decision here deletes a backup that was about to be written.
+   */
+  inFlight: OrphanArtifact[];
+  /** Records whose artefact is absent: listed, restorable in principle, gone in fact. */
+  missing: MissingArtefact[];
+  /** How many orphans were deleted — `0` unless `reclaim` was asked for. */
+  reclaimed: number;
+}
+
+/** Options for `reconcile`. */
+export interface ReconcileOptions {
+  /**
+   * Delete the orphans.
+   *
+   * Off by default, and the default is the point: a listing that is merely stale — a
+   * bucket which has not finished replicating, a cache in front of it — makes a record
+   * look absent, and an object no record *appears* to name is one delete away from being
+   * a backup nobody has.
+   */
+  reclaim?: boolean;
+  /** Override `RECONCILE_GRACE_MS`. */
+  graceMs?: number;
 }
 
 /**
@@ -389,6 +476,105 @@ export class BackupManager implements IBackupManager {
    */
   inventoryProblems(): InventoryProblem[] {
     return [...this.damaged.entries()].map(([key, failure]) => ({ key, reason: failure }));
+  }
+
+  /**
+   * List the objects under the backup prefix that no record names, and say what is missing.
+   *
+   * The bucket is the inventory, so an object no record names is not a snapshot: it is
+   * invisible bytes. The delete path produces them on purpose — the record goes first, so
+   * that a listing never names an artefact that cannot be restored — and the price is that
+   * a delete which fails between the two leaves bytes that cost money, cannot be restored,
+   * and cannot be found without listing the bucket. This is that listing.
+   *
+   * Three answers, and the split between them is the whole design:
+   *
+   *   - **orphaned** — no record names it, and it has been that way for longer than the
+   *     grace window. Garbage from a failed delete.
+   *   - **inFlight** — no record names it *yet*. `createBackup` uploads and then records,
+   *     so an object in that window is a backup being taken, and reclaiming it would delete
+   *     the thing the caller is waiting for. Age is how the two are told apart, because
+   *     nothing else about an object says which of the two it is.
+   *   - **missing** — a record whose artefact is gone. The mirror image, and worse in one
+   *     way: a listing names a snapshot that cannot be restored.
+   *
+   * Nothing is deleted unless `reclaim` is asked for, and even then only the first kind.
+   * A reconcile that deleted on its own would turn one stale listing into a bucket of
+   * missing backups, and a stale listing is the ordinary state of a bucket behind a cache.
+   *
+   * A record this process could not read still protects its artefact: the id is in the
+   * record's *key*, which needs no parsing, and a damaged record is a snapshot an operator
+   * has to be able to look at rather than a licence to delete bytes.
+   */
+  async reconcile(options: ReconcileOptions = {}): Promise<ReconcileReport> {
+    await this.sync();
+    const listed = await this.storage.list(`${this.prefix}/`);
+    const listedKeys = new Set(listed.map((entry) => entry.key));
+
+    // Both ways a record names an object: the `location` a readable one carries, and the id
+    // every record's key carries — the second is what protects a record this process could
+    // not parse.
+    const namedLocations = new Set<string>();
+    for (const snapshot of this.snapshots.values()) namedLocations.add(snapshot.location);
+    const namedIds = new Set<string>();
+    for (const entry of listed) {
+      const id = inventoryIdOf(this.prefix, entry.key);
+      if (id !== null) namedIds.add(id);
+    }
+
+    const graceMs = options.graceMs ?? RECONCILE_GRACE_MS;
+    // The manager's own clock, not `Date.now()`. `createBackup` stamps `createdAt` with
+    // `this.clock()`, so an age measured against a different clock is an age an operator
+    // cannot reconcile — and a boundary no test can stand exactly on, which is how a
+    // `<` and a `<=` come to be the same line.
+    const now = this.clock().getTime();
+    const unnamed = new Map<string, OrphanArtifact>();
+    const garbage: string[] = [];
+    const pending: string[] = [];
+    for (const entry of listed) {
+      if (inventoryIdOf(this.prefix, entry.key) !== null) continue;
+      const snapshotId = artifactIdOf(entry.key);
+      if (namedLocations.has(entry.key)) continue;
+      if (snapshotId !== null && namedIds.has(snapshotId)) continue;
+      unnamed.set(entry.key, { key: entry.key, size: entry.size, lastModified: entry.lastModified, snapshotId });
+      // An object whose age cannot be read is not one to reclaim: `Date.parse` answering
+      // `NaN` is the bucket saying something this code does not understand, and a failed
+      // observation is not a verdict about age — the same rule the audit store's prune
+      // applies to a segment it cannot date.
+      const age = now - Date.parse(entry.lastModified);
+      if (!Number.isFinite(age) || age < graceMs) pending.push(entry.key);
+      else garbage.push(entry.key);
+    }
+
+    let reclaimed = 0;
+    if (options.reclaim === true) {
+      for (const key of garbage) {
+        try {
+          await this.storage.delete(key);
+          reclaimed += 1;
+        } catch {
+          // A delete that fails is an object that stays, and the next reconcile reports it
+          // again. Swallowed for the reason `abandon` swallows: the report the caller is
+          // holding is worth more than the reason one line of it could not be tidied.
+        }
+      }
+    }
+
+    const missing: MissingArtefact[] = [];
+    for (const snapshot of this.snapshots.values()) {
+      if (!listedKeys.has(snapshot.location)) {
+        missing.push({ snapshotId: snapshot.snapshotId, key: snapshot.location });
+      }
+    }
+
+    // Sorted, because a listing's order is the backend's business: two runs against two
+    // backends that hold the same objects have to produce the same report. The default
+    // comparator is code-unit order — the same on every machine and in every locale,
+    // which `localeCompare` is not — and it needs no comparator function to be written
+    // and no ties to be arbitrated: a bucket holds one object per key.
+    const inKeyOrder = (keys: string[]): OrphanArtifact[] =>
+      keys.sort().map((key) => unnamed.get(key) as OrphanArtifact);
+    return { orphaned: inKeyOrder(garbage), inFlight: inKeyOrder(pending), missing, reclaimed };
   }
 
   /**

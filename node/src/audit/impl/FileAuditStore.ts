@@ -46,13 +46,15 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
-import { join, extname, resolve } from 'node:path';
+import { basename, join, extname, resolve } from 'node:path';
 import { createGzip, gunzipSync } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import type { IAuditStore, WriteAuditEntryOptions, AuditQueryFilter } from '../interfaces/index.js';
 import type { AuditTrailVerification } from '../interfaces/index.js';
 import type { AuditEntry } from '../../core/types.js';
-import { GENESIS_DIGEST, sealEntry, verifyTrail } from './auditChain.js';
+import { GENESIS_DIGEST, parseSegmentText, sealEntry, verifyTrail } from './auditChain.js';
+import type { ChainHead } from './auditChain.js';
+import { absorbPrefixes, anchorPath, parseAnchor, publishAnchor, renderAnchor } from './auditAnchor.js';
 import { nodeDurableFileSystem } from './DurableFileSystem.js';
 import type { DurableFileSystem } from './DurableFileSystem.js';
 
@@ -601,6 +603,39 @@ export function removeFile(path: string, remove: (path: string) => void = unlink
     if (isUnlinkRefusal(error)) return false;
     throw error;
   }
+}
+
+/**
+ * `removeFile` for a caller with nobody to tell.
+ *
+ * The retention sweep runs from a compression job's `finally`, so an error there has no
+ * caller to receive it — and a rejection inside a `finally` is an unhandled rejection in
+ * a process that is otherwise fine. This answers "it stays" instead, which is the same
+ * outcome as a refusal and, for the medium, the same evidence: a file that could not be
+ * removed is a file the next sweep tries again.
+ *
+ * `remove` is injectable for the reason `removeFile`'s is: the arm that matters is a
+ * failure that is *not* a refusal, which a runner that deletes as root cannot produce.
+ */
+export function removeIfPossible(path: string, remove: (path: string) => void = unlinkSync): boolean {
+  try {
+    return removeFile(path, remove);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The position of a line a reader could not parse, in the form a report carries it.
+ *
+ * `file:line` is what an operator opens; the file is a name rather than a path because
+ * the directory is the store's, not the report's. One function for the two readers that
+ * produce it — `verify()`, which prints it, and the prune, which only counts it — so that
+ * a verification naming a line and a retention decision about the same line cannot
+ * disagree about where it was.
+ */
+function unparsableAt(file: string, line: number): { where: string } {
+  return { where: `${file}:${line}` };
 }
 
 /**
@@ -1259,6 +1294,7 @@ export class FileAuditStore implements IAuditStore {
     const files = listDirectory(this.dataDir);
     if (files === null) return;
 
+    const candidates: string[] = [];
     for (const f of files) {
       if (!segment.test(f)) continue;
       const path = join(this.dataDir, f);
@@ -1270,7 +1306,105 @@ export class FileAuditStore implements IAuditStore {
       // `activeFilePath` to the segment that was just opened, so the file being
       // expired is by definition a closed one. The guard that used to be here could
       // never be true for an expired path, which is why no test could see it.
-      removeFile(path);
+      candidates.push(path);
+    }
+
+    // `removeIfPossible`: this runs from a compression job's `finally`, where there is
+    // no caller left to receive an error, so the removal *reports* rather than throws.
+    // The next rotation is the retry.
+    this.pruneSegments(candidates, removeIfPossible);
+  }
+
+  /**
+   * Record what these segments hold, then remove them.
+   *
+   * The order is the whole method, and it is the answer to "how do you know nobody
+   * deleted this" that a chain alone cannot give:
+   *
+   *   1. read the segment, and verify it **as a segment** — every line parsed, every
+   *      link inside it holds. A segment that does not verify is evidence of a break,
+   *      and retention does not destroy evidence; it is kept, and `verify()` names it.
+   *   2. take the last link of each writer's run in it. That is what is about to be
+   *      given up, per writer.
+   *   3. merge those floors into the directory's anchor and publish it — before the
+   *      unlink, because a record written afterwards leaves a window in which the
+   *      entries are gone and nothing says why.
+   *   4. only then unlink, one file at a time, reporting the ones that went.
+   *
+   * Every step that cannot be completed stops the ones after it, and the stop is
+   * always in the safe direction: a segment that cannot be read, that does not
+   * verify, or whose floor cannot be written is *kept*. The cost is a retention
+   * that lags; the alternative is a trail whose front is gone and whose anchor never
+   * said so.
+   *
+   * Unchained lines are not a break — a trail written before the chain existed is
+   * full of them — so the test is `failures !== unchained`: every failure this
+   * segment produced is explained by a line that had no link to lose.
+   */
+  private pruneSegments(candidates: readonly string[], remove: (path: string) => boolean = removeFile): number {
+    const floors = new Map<string, ChainHead>();
+    const prunable: string[] = [];
+    for (const path of candidates) {
+      const text = this.readSegment(path, path.endsWith('.gz'));
+      if (text === null) continue;
+      const parsed = parseSegmentText(text);
+      const verdict = verifyTrail(parsed.entries, {
+        unparsable: parsed.unparsable.map((line) => unparsableAt(basename(path), line)),
+      });
+      if (verdict.failures !== verdict.unchained) continue;
+      prunable.push(path);
+      absorbPrefixes(floors, verdict.heads);
+    }
+
+    // Nothing to record: these segments hold no chained entry, so giving them up
+    // cannot leave a chain starting at an unexplained number.
+    if (floors.size > 0) {
+      const recorded = this.readAnchor();
+      // An anchor that cannot be read cannot be added to without destroying what it
+      // tried to say, and a prune whose deletions the record would not learn about is
+      // the exact hole the record exists to prevent.
+      if (recorded.unreadable) return 0;
+      if (absorbPrefixes(recorded.floors, floors.values())) {
+        try {
+          publishAnchor(this.anchorFile(), renderAnchor(recorded.floors, new Date().toISOString()));
+        } catch {
+          return 0;
+        }
+      }
+    }
+
+    let removed = 0;
+    for (const path of prunable) {
+      if (remove(path)) removed += 1;
+    }
+    return removed;
+  }
+
+  /** The anchor's path in this store's directory. */
+  private anchorFile(): string {
+    return anchorPath(this.dataDir, this.filePrefix);
+  }
+
+  /**
+   * What this directory has recorded giving up, per writer.
+   *
+   * Three answers, and only one of them is the empty map: a directory that has never
+   * pruned has no anchor, a directory that has one has floors, and a directory whose
+   * anchor cannot be read has damage. Folding the last two together would make a
+   * verification that cannot see the record report the same thing as one with nothing
+   * to record — the mistake `readSegment` returning `''` used to make for segments.
+   */
+  private readAnchor(): { floors: Map<string, ChainHead>; unreadable: boolean } {
+    const path = this.anchorFile();
+    const text = this.readSegment(path, false);
+    if (text === null) {
+      // Present and unreadable is damage; absent is a directory that has not pruned.
+      return { floors: new Map(), unreadable: isRegularFile(path) };
+    }
+    try {
+      return { floors: parseAnchor(text), unreadable: false };
+    } catch {
+      return { floors: new Map(), unreadable: true };
     }
   }
 
@@ -1498,6 +1632,12 @@ export class FileAuditStore implements IAuditStore {
    * losing a line it is about to flush. `flush()` is, for the opposite reason —
    * a caller asking "is my trail intact" after awaiting `write()` should be told
    * about that write.
+   *
+   * The anchor is read here rather than inside `verifyTrail`, because reading it is
+   * this store's business (a path, a port, a directory) and comparing it is not. Its
+   * absence is a directory that has never pruned; its damage is an answer of its
+   * own, and one that blocks `ok` — a verification that cannot see the record of
+   * what was given up has not verified the beginning of anything.
    */
   async verify(): Promise<AuditTrailVerification> {
     this.flush();
@@ -1505,6 +1645,7 @@ export class FileAuditStore implements IAuditStore {
     const files = this.listReadableFiles();
     if (files === null) return verifyTrail([], { unreadable: true });
 
+    const anchor = this.readAnchor();
     const entries: AuditEntry[] = [];
     const unparsable: Array<{ where: string }> = [];
     let tornTail = false;
@@ -1537,31 +1678,19 @@ export class FileAuditStore implements IAuditStore {
         continue;
       }
 
-      const lines = content.split('\n');
-      const endsWithNewline = content.endsWith('\n');
-      // A trailing empty string is what a final newline produces, not a line.
-      if (endsWithNewline) lines.pop();
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i]!;
-        if (line.trim() === '') continue;
-        const last = i === lines.length - 1;
-        const unterminated = !endsWithNewline && last;
-        try {
-          entries.push(JSON.parse(line) as AuditEntry);
-          if (unterminated) tornTail = true;
-        } catch {
-          // A fragment at the very end of the newest segment is a crash, not an
-          // attack: the store writes `line\n` in one call, so a line that does not
-          // end on a newline was never acknowledged. Anywhere else it is a line
-          // that was rewritten or truncated by somebody else.
-          if (unterminated) tornTail = true;
-          else unparsable.push({ where: `${f}:${i + 1}` });
-        }
-      }
+      const parsed = parseSegmentText(content);
+      for (const entry of parsed.entries) entries.push(entry);
+      if (parsed.tornTail) tornTail = true;
+      for (const line of parsed.unparsable) unparsable.push(unparsableAt(f, line));
     }
 
-    return verifyTrail(entries, { tornTail, unparsable, unreadable });
+    return verifyTrail(entries, {
+      tornTail,
+      unparsable,
+      unreadable,
+      anchor: anchor.floors,
+      anchorUnreadable: anchor.unreadable,
+    });
   }
 
   async query(filter: AuditQueryFilter): Promise<AuditEntry[]> {
@@ -1606,22 +1735,29 @@ export class FileAuditStore implements IAuditStore {
    * one unreadable segment used to abandon the whole sweep through the outer
    * `catch`, leaving evidence past its retention date and reporting a partial
    * number as the result.
+   *
+   * What "went" now means is narrower than "was old": a segment is removed only
+   * after its contents have been read and recorded (see `pruneSegments`). The
+   * returned number is therefore the number of files that are gone, and a caller
+   * that expected every old file to go has to look at why the others stayed —
+   * `verify()` names the same files, and the anchor is the record the removal leaves
+   * behind.
    */
   async pruneOlderThan(timestamp: Date): Promise<number> {
     const segment = segmentPattern(this.filePrefix);
     const files = listDirectory(this.dataDir);
     if (files === null) return 0;
 
-    let removed = 0;
+    const candidates: string[] = [];
     for (const f of files) {
       if (!segment.test(f)) continue;
       const path = join(this.dataDir, f);
       if (path === this.activeFilePath) continue;
       const mtime = mtimeOf(path);
       if (mtime === null || mtime >= timestamp.getTime()) continue;
-      if (removeFile(path)) removed++;
+      candidates.push(path);
     }
-    return removed;
+    return this.pruneSegments(candidates);
   }
 
   // ── Internal ────────────────────────────────────────────────

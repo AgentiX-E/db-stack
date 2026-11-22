@@ -36,11 +36,15 @@ export {
   chainDigest,
   chainPreimage,
   describeVerification,
+  parseSegmentText,
   recomputeDigest,
   sealEntry,
   verifyTrail,
 } from './impl/auditChain.js';
-export type { VerifyTrailOptions } from './impl/auditChain.js';
+// `ChainHead` is named because two public signatures use it: the report says what the
+// head of each chain is, and `VerifyTrailOptions.anchor` says what a directory
+// recorded giving up. A consumer holding either has to be able to write the type.
+export type { ChainHead, ParsedSegment, VerifyTrailOptions } from './impl/auditChain.js';
 
 export { InMemoryAuditStore } from './impl/InMemoryAuditStore.js';
 export { JsonAuditExporter } from './impl/JsonAuditExporter.js';

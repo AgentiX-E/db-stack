@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The head of the audit chain is anchored.** A chain proves the entries that are *present*: delete the
+  beginning of a trail and every remaining link still holds, because the first survivor names a `prev`
+  that retention could equally have pruned. That was the one deletion the digest could not report. A
+  store now records what it gives up — `${filePrefix}.anchor`, one floor per writer, holding the
+  sequence number and digest of the last entry of each prefix it pruned — and `verify()` compares the
+  first surviving entry against it: resuming *above* the floor is `anchor-gap`, resuming *at* it without
+  naming the recorded digest is `anchor-link`, and resuming above 1 with no record at all is reported as
+  `unanchored` rather than accused, because a trail written before the record existed looks exactly
+  like that. The file is written to `.part`, synced, and renamed, so a reader sees the old anchor or the
+  new one; it is read through the store's own `segmentReader`; and a prune that cannot write it removes
+  nothing. `AuditTrailVerification` grew `anchored`, `unanchored`, `anchorUnreadable` and `heads` — the
+  last link of each chain, which is what a prune records and what an external witness can compare
+  against — and `parseSegmentText` is published as the reader `verify()` and the prune share.
+- **A prune reads before it deletes.** `pruneOlderThan()` and the retention sweep used to remove a closed
+  segment by age alone. They now read it and check it as a segment first — every line parsed, every link
+  inside it holds, with `unchained` lines counting as a legacy trail rather than as damage — and keep
+  what does not verify, because retention is the one operation that can destroy a break. A segment that
+  cannot be read is kept for the same reason: its floors cannot be recorded, and an unrecorded removal
+  is the hole the anchor exists to prevent. The sweep reports a removal failure instead of throwing
+  (`removeIfPossible`), since it runs from a compression job's `finally` where no caller can receive an
+  error.
+- **`BackupManager.reconcile()`.** Deletion removes a snapshot's record first and its artefact second, so
+  a delete that fails between the two leaves an object no record names: invisible, billed,
+  unrestorable, and impossible to find without listing the bucket and comparing it with the inventory.
+  `reconcile()` is that comparison, and it answers three lists: `orphaned` (no record names it, older
+  than `RECONCILE_GRACE_MS`), `inFlight` (no record names it *yet* — a backup being written, which
+  reclaiming would delete), and `missing` (a record whose artefact is gone). Nothing is deleted unless
+  `reclaim: true` is passed, because a listing can be stale and an object that merely looks unnamed is
+  one delete away from being a backup nobody has; with it, `reclaimed` counts what is actually gone and
+  a failed delete leaves the object for the next run. The age is measured against the manager's own
+  clock, so the window's boundary is a millisecond an operator can stand on, and the report covers this
+  manager's prefix and nothing else. A record names its artefact two ways and both are honoured — the
+  `location` it carries, which protects an object whose *name* this build does not write, and the id in
+  its own *key*, which needs no parsing and therefore protects the artefact of a record that cannot be
+  read; `artifactIdOf` publishes the naming rule and answers `null` rather than guessing. Both halves of
+  the report are ordered by key with the default comparator — code-unit order, the same on every
+  machine and in every locale.
+
 ### Fixed
 
 - **`verify()` no longer attests to a segment it could not read.** A segment whose bytes could not be
