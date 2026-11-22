@@ -176,6 +176,10 @@ export async function getFreePort(): Promise<number> {
     if (probe === 'free') return port;
     if (probe === 'unreadable') throw new Error('failed to allocate port');
   }
+  // Unreachable in a test on purpose: a slot is eight ports, and reaching this needs eight
+  // sockets held by something other than this suite inside a window this suite owns. It is
+  // here because "the allocator returned a port it never bound" is the failure this file
+  // must not have, and a silent fallback to the ephemeral pool would be exactly that.
   throw new Error(`failed to allocate port: no free port in the harness window at ${base}`);
 }
 

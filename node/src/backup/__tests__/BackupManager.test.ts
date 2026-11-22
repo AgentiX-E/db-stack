@@ -265,6 +265,24 @@ describe('AC 95 — refusals', () => {
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/the capture took longer than 1 ms/);
   });
+
+  it('BM.10b: a capture that spends exactly the budget is not a refusal', async () => {
+    // The boundary: over budget is a refusal, *at* the budget is not. Without this the
+    // comparison could be `>=` and every case above would still pass — which is exactly
+    // what the mutation run reported.
+    const { skew, clock } = movableClock();
+    const exactly: IBackupSource = {
+      name: 'exactly',
+      async capture(destination: string): Promise<SnapshotCapture> {
+        skew.ms = 1;
+        writeFileSync(destination, 'x');
+        return { bytes: 1, files: 1 };
+      },
+      async restore(): Promise<void> {},
+    };
+    const result = await manager(undefined, exactly, undefined, clock).createBackup({ type: 'full', timeoutMs: 1 });
+    expect(result.success).toBe(true);
+  });
 });
 
 describe('AC 95 — restore', () => {
@@ -649,6 +667,20 @@ describe('AC 95 — the budget covers the upload too', () => {
     const result = await manager(undefined, undefined, slowBucket, clock).createBackup({ type: 'full', timeoutMs: 1 });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/the upload finished after the 1 ms budget/);
+  });
+
+  it('BM.26b: an upload that spends exactly the budget is not a refusal', async () => {
+    // The same boundary on the second check: a bucket that takes the whole budget and no
+    // more is a bucket that kept its promise.
+    const { skew, clock } = movableClock();
+    const exactBucket = passthrough({
+      upload: async (sourcePath: string, destKey: string) => {
+        skew.ms = 1;
+        await storage.upload(sourcePath, destKey);
+      },
+    });
+    const result = await manager(undefined, undefined, exactBucket, clock).createBackup({ type: 'full', timeoutMs: 1 });
+    expect(result.success).toBe(true);
   });
 });
 
