@@ -240,10 +240,27 @@ describe('CDC over a real log, TLS and an HTTP sink', () => {
   }, 120_000);
 
   it('AC-C17: the sender own counters satisfy the conservation identity', async () => {
+    // Wait for the last confirmation before reading the checkpoint. The tail reads ahead
+    // of the confirmed position by design — that gap is the in-flight window, and it is
+    // the window that makes "delivered" mean something the peer said rather than
+    // something the local kernel accepted — so comparing the two before the peer has
+    // answered compares two different things.
+    await waitUntil(
+      async () => {
+        const status = await state.sender.status<SenderStatus>();
+        return status.metrics.outboxDelivered === FIRST_BURST && status.metrics.pendingCount === 0;
+      },
+      60_000,
+      'every change confirmed by the peer',
+      50,
+      () => state.sender.status<SenderStatus>(),
+    );
+
     const status = await state.sender.status<SenderStatus>();
 
     expect(status.engine.emitted).toBe(FIRST_BURST);
     expect(status.engine.readErrors).toBe(0);
+    // Once nothing is in flight, the confirmed position is the position the tail read to.
     expect(status.engine.position).toBe(status.checkpoint.lastConfirmedLSN[TABLE]);
 
     expect(status.pump).not.toBeNull();
@@ -281,6 +298,10 @@ describe('CDC over a real log, TLS and an HTTP sink', () => {
 
   it('AC-C18: a sender killed mid-stream resumes from its checkpoint without loss or double apply', async () => {
     const before = readJsonl<AppliedRow>(state.appliedFile);
+    // AC-C17 already waited for the last confirmation, so the checkpoint here is the
+    // position of the last change written and not an in-flight one. A resume point read
+    // mid-flight would be behind by the window, and the case would then be measuring the
+    // window rather than the recovery.
     const checkpoint = (await state.sender.status<SenderStatus>()).checkpoint;
     // The checkpoint names the writer's last position, not the outbox's local
     // sequence — `entry:12`.split(':')[0] is `entry`, which is what the pump

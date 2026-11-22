@@ -65,6 +65,19 @@ let appliedFd = null;
 let applied = 0;
 /** Sends the pump attempted and the transport refused, for this process's lifetime. */
 let refusals = 0;
+/**
+ * How many inbound changes this node is willing to apply — `Infinity` unless the
+ * test asked for a hold.
+ *
+ * A frame beyond the limit is dropped **before** the dedup ring sees it, which is
+ * what a write the kernel accepted and the peer never received looks like from
+ * the receiving end: nothing arrived. The sender's frame sat in a socket and the
+ * local kernel reported success. That is the case `outboxDelivered` used to get
+ * wrong, so it is the case this process has to be able to produce.
+ */
+let applyLimit = cfg.applyLimit ?? Infinity;
+/** Frames that reached this process and were never applied, retries included. */
+let held = 0;
 
 function appendApplied(event) {
   const line = `${JSON.stringify({
@@ -103,21 +116,34 @@ async function startReceiver() {
   mkdirSync(cfg.dir, { recursive: true });
   appliedFd = openSync(cfg.appliedFile, 'a');
 
-  // The dedup half of the pipeline: no outbox, no transport — only the ring
-  // that decides whether an inbound message has been seen before.
+  // The transport exists before the pipeline because the pipeline needs it to
+  // answer: a confirmation is a frame, and a node without a transport cannot
+  // send one. The pipeline's own outbox stays empty — a receiver produces
+  // nothing — so its pump has nothing to ship.
+  transport = new TcpSecureTransport(transportConfig());
   pipeline = new ExactlyOnceCDCPipeline({
     nodeId: cfg.nodeId,
     cdcConfig: { nodeId: cfg.nodeId },
     outboxConfig: { dataDir: join(cfg.dir, 'outbox') },
     checkpointDir: join(cfg.dir, 'outbox'),
     dedupTtlMs: 900_000,
+    transport,
+    pumpIntervalMs: 1_000,
   });
   await pipeline.start();
 
-  transport = new TcpSecureTransport(transportConfig());
   transport.onMessage((message) => {
+    if (message.type === 'cdc_ack') return;
+    if (applied >= applyLimit) {
+      held += 1;
+      return;
+    }
     const result = pipeline.processInbound(message);
     if (result.event) appendApplied(result.event);
+    // After `appendApplied`, which fsyncs: the confirmation says *applied*, and a
+    // duplicate is answered too — it was applied on the first attempt, and the
+    // sender must be allowed to stop retrying it.
+    void pipeline.acknowledge(message);
   });
   stage('transport-start');
   await transport.start();
@@ -153,14 +179,14 @@ async function startSender() {
     nodeId: cfg.nodeId,
     cdcConfig: { nodeId: cfg.nodeId },
     engine,
-    // `maxRetries` is the number of failed attempts after which the outbox moves an
-    // entry to the dead-letter queue. It is a *time* budget in disguise — the pump
-    // retries the head of the queue once per cycle — so a test that wants to hold the
-    // peer down for a second has to raise it, or the outage would fill the dead-letter
-    // queue and the test would be measuring that instead of delivery order.
     outboxConfig: {
       dataDir: checkpointDir,
-      maxRetries: cfg.outboxMaxRetries ?? 10,
+      // Two budgets, and the time one is the real one: `maxRetries` is an attempt
+      // cap that a deployment may set when it wants three strikes, while the window
+      // is how long a peer may be away before changes start moving to the dead
+      // letter. A test that intends an outage of minutes says so here.
+      ...(cfg.outboxMaxRetries === undefined ? {} : { maxRetries: cfg.outboxMaxRetries }),
+      ...(cfg.outboxRetryWindowMs === undefined ? {} : { retryWindowMs: cfg.outboxRetryWindowMs }),
       mapSize: 32 * 1024 * 1024,
     },
     checkpointDir,
@@ -168,6 +194,9 @@ async function startSender() {
     remoteNodeId: cfg.peer.nodeId,
     pumpIntervalMs: cfg.pumpIntervalMs ?? 20,
     pumpBatchSize: 32,
+    // Short enough that a test which holds the peer down does not wait five
+    // seconds per cycle to learn that nothing answered.
+    ackTimeoutMs: cfg.ackTimeoutMs ?? 1_000,
   });
   // Every refused send is a `pump_error`; the count is what makes "a refusal happened"
   // an observation rather than an assumption about the run.
@@ -213,6 +242,8 @@ async function status() {
       appliedFile: cfg.appliedFile,
       deduped: metrics.totalDeduped,
       delivered: metrics.totalDelivered,
+      held,
+      applyLimit,
     };
   }
 
@@ -245,6 +276,9 @@ async function main() {
     try {
       if (msg.cmd === 'status') {
         send({ type: 'status', data: await status() });
+      } else if (msg.cmd === 'release') {
+        applyLimit = Infinity;
+        send({ type: 'released', data: { applied, held } });
       } else if (msg.cmd === 'stop') {
         if (pump) await pump.stop();
         if (pipeline) await pipeline.cleanup();

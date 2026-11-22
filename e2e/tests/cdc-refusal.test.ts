@@ -167,12 +167,11 @@ describe('CDC across a refused send and a returning peer', () => {
           tls: certs.nodes[0],
           pollIntervalMs: 10,
           pumpIntervalMs: 20,
-          // The outage below lasts longer than the outbox's default retry budget — three
-          // attempts, which at a 20 ms pump interval is 60 ms of peer absence — and a
-          // change in the dead-letter queue is not a refusal this suite is about: it is a
-          // change thrown away. That budget is P3-67; here the case needs the entries to
-          // still be there when the receiver comes back.
-          outboxMaxRetries: 100_000,
+          // The outage below lasts as long as two `waitUntil` calls take, and a change in
+          // the dead-letter queue is not a refusal this suite is about: it is a change
+          // thrown away. The budget is a *window* now (P3-67), so the case names the
+          // window it needs rather than an attempt count that only stood for one.
+          outboxRetryWindowMs: 300_000,
         },
         'sender',
       ),
@@ -259,6 +258,23 @@ describe('CDC across a refused send and a returning peer', () => {
       async () => ({
         applied: readJsonl<AppliedRow>(appliedFile).length,
         sender: await sender.status<SenderStatus>(),
+      }),
+    );
+
+    // The receiver applies before it confirms, so the applied file fills before the
+    // sender's outbox does. Waiting on the applied file alone reads the sender mid-cycle
+    // and compares a finished number with an unfinished one; wait for both.
+    await waitUntil(
+      async () => {
+        const status = await sender.status<SenderStatus>();
+        return status.metrics.outboxDelivered === total && status.metrics.pendingCount === 0;
+      },
+      60_000,
+      `the sender to confirm all ${total} changes`,
+      50,
+      async () => ({
+        applied: readJsonl<AppliedRow>(appliedFile).length,
+        metrics: (await sender.status<SenderStatus>()).metrics,
       }),
     );
 

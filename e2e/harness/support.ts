@@ -45,7 +45,9 @@ export interface NodeMessage {
     | 'read'
     | 'membership'
     | 'written'
-    | 'done';
+    | 'done'
+    // The CDC relay's answer to `release`, which lifts the receiver's `applyLimit`.
+    | 'released';
   nodeId: number | string;
   data?: unknown;
   fatal?: boolean;
