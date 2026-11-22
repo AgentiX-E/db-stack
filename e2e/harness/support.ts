@@ -92,21 +92,91 @@ export function portFromAddress(address: { port: number } | string | null): numb
   return address && typeof address === 'object' ? address.port : null;
 }
 
-/** Ask the kernel for a free TCP port (the socket is closed before the child binds). */
-export function getFreePort(): Promise<number> {
-  return new Promise((resolvePort, reject) => {
+/**
+ * First port the harness hands out.
+ *
+ * Below the range Linux picks ephemeral ports from (32768–60999) on purpose. Asking the
+ * kernel for port 0 and then handing the number to a child is a promise this process
+ * cannot keep: between the probe and the child's `listen`, any outbound connection on the
+ * runner may take that port out of the ephemeral pool. That is not hypothetical — a CI run
+ * lost its west gateway to `EADDRINUSE` on 127.0.0.1:38473, four cross-cluster cases timed
+ * out behind it, and the failure read as a federation bug. A port the kernel never hands
+ * out on its own cannot be taken that way.
+ */
+export const PORT_BASE = 20_000;
+
+/** Ports reserved per worker. Six workers cover 20000–31999, all of it non-ephemeral. */
+export const PORT_STRIDE = 2_000;
+
+/** Ports reserved per allocation, so two calls in flight at once cannot collide. */
+export const PORT_SLOT = 8;
+
+/**
+ * The window this worker draws from.
+ *
+ * Vitest gives each worker its own module instance, so a counter alone would restart at
+ * `PORT_BASE` in every worker and hand two suites the same port. The worker id is what
+ * makes two workers' windows disjoint — and the modulus keeps a seventh worker inside the
+ * range instead of running off the end of it.
+ */
+function workerWindow(workerId: string | undefined): { start: number; end: number } {
+  const parsed = Number(workerId ?? '1');
+  const index = Number.isInteger(parsed) && parsed > 0 ? parsed - 1 : 0;
+  const start = PORT_BASE + (index % 6) * PORT_STRIDE;
+  return { start, end: start + PORT_STRIDE };
+}
+
+/** What a probe learned about one port. */
+export type PortProbe = 'free' | 'busy' | 'unreadable';
+
+/**
+ * Bind `port` once and report what the kernel said.
+ *
+ * `unreadable` is the case a real kernel never produces and a fake one can: a socket that
+ * is listening and reports no address is not a port, so it is an error rather than "busy" —
+ * retrying would walk the whole window and fail with a message about the window.
+ */
+export function probePort(port: number): Promise<PortProbe> {
+  return new Promise((resolvePort) => {
     const server = createServer();
     server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const port = portFromAddress(server.address());
-      if (port === null) {
-        server.close(() => reject(new Error('failed to allocate port')));
-        return;
-      }
-      server.close(() => resolvePort(port));
+    server.on('error', () => resolvePort('busy'));
+    server.listen(port, '127.0.0.1', () => {
+      const bound = portFromAddress(server.address());
+      server.close(() => resolvePort(bound === null ? 'unreadable' : 'free'));
     });
   });
+}
+
+let cursor: number | null = null;
+let window: { start: number; end: number } | null = null;
+
+/** Claim the next slot of ports synchronously, so concurrent callers never share one. */
+function reserveSlot(): number {
+  if (cursor === null || window === null) {
+    window = workerWindow(process.env.VITEST_WORKER_ID ?? process.env.VITEST_POOL_ID);
+    cursor = window.start;
+  }
+  const base = cursor;
+  cursor += PORT_SLOT;
+  return base;
+}
+
+/**
+ * Ask for a free TCP port (the socket is closed before the child binds).
+ *
+ * Drawn from this worker's own window rather than from the kernel's ephemeral pool, so the
+ * number a child is given is still the number it gets to bind.
+ */
+export async function getFreePort(): Promise<number> {
+  const base = reserveSlot();
+  const limit = Math.min(base + PORT_SLOT, window?.end ?? base + PORT_SLOT);
+  for (let port = base; port < limit; port += 1) {
+    const probe = await probePort(port);
+    if (probe === 'free') return port;
+    if (probe === 'unreadable') throw new Error('failed to allocate port');
+  }
+  throw new Error(`failed to allocate port: no free port in the harness window at ${base}`);
 }
 
 export async function getFreePorts(count: number): Promise<number[]> {

@@ -14,10 +14,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { createServer } from 'node:net';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { ChildNode, portFromAddress, removeTempDir, waitUntil } from '../harness/support';
+import {
+  ChildNode,
+  getFreePorts,
+  PORT_BASE,
+  PORT_STRIDE,
+  portFromAddress,
+  probePort,
+  removeTempDir,
+  waitUntil,
+} from '../harness/support';
 
 /** A child that prints one line and then sleeps until it is killed. */
 function spawnSleeper(label = 'sleeper'): ChildNode {
@@ -183,6 +193,33 @@ describe('harness contract', () => {
       vi.doUnmock('node:net');
       vi.resetModules();
     }
+  }, 10_000);
+
+  it('ports are drawn from the harness window, never from the ephemeral range', async () => {
+    // The reason the window exists: a port the kernel may hand to any outbound
+    // connection is a port a child can lose between the probe and its own listen.
+    // Linux picks ephemeral ports from 32768 up, so everything handed out is below it.
+    const ports = await getFreePorts(6);
+    expect(new Set(ports).size).toBe(6);
+    for (const port of ports) {
+      expect(port).toBeGreaterThanOrEqual(PORT_BASE);
+      expect(port).toBeLessThan(32_768);
+      expect(port).toBeLessThan(PORT_BASE + PORT_STRIDE * 6);
+    }
+  }, 10_000);
+
+  it('a port somebody already holds is reported busy, then free once it is released', async () => {
+    // The probe, not the promise: the allocator can only skip a taken port if the
+    // probe tells it the truth about one.
+    const port = (await getFreePorts(1))[0]!;
+    const holding = createServer();
+    await new Promise<void>((listening) => holding.listen(port, '127.0.0.1', listening));
+    try {
+      expect(await probePort(port)).toBe('busy');
+    } finally {
+      await new Promise<void>((closed) => holding.close(() => closed()));
+    }
+    expect(await probePort(port)).toBe('free');
   }, 10_000);
 
   it('portFromAddress reads the port of a listening socket and rejects anything else', () => {
