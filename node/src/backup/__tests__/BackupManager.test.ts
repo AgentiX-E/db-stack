@@ -283,7 +283,7 @@ describe('AC 95 — restore', () => {
     // Same size, different bytes: only the digest can see this, which is why the
     // digest is checked before the engine is touched.
     expect(restore.error).toMatch(
-      /the artefact does not match the snapshot's digest \([0-9a-f]{12}… ≠ [0-9a-f]{12}…\)/,
+      /the artefact of \S+ does not match the snapshot's digest \([0-9a-f]{12}… ≠ [0-9a-f]{12}…\)/,
     );
     expect(readFileSync(join(dataDir, 'table.bin'), 'utf8')).toBe('state that must survive the refusal');
   });
@@ -299,7 +299,7 @@ describe('AC 95 — restore', () => {
     const snapshot = (await mgr.createBackup({ type: 'full' })).snapshot!;
     const restore = await mgr.restoreFromSnapshot(snapshot.snapshotId);
     expect(restore.success).toBe(false);
-    expect(restore.error).toMatch(/^the artefact is 20 bytes, the snapshot recorded \d+$/);
+    expect(restore.error).toMatch(/^the artefact of \S+ is 20 bytes, the snapshot recorded \d+$/);
   });
 
   it('BM.14: skipVerification skips the digest and not the size', async () => {

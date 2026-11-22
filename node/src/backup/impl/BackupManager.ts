@@ -59,7 +59,7 @@ import type {
   RestoreOptions,
 } from '../interfaces/index.js';
 import type { BackupMetadata, BackupResult, PITRTarget, RestoreResult } from '../../core/types.js';
-import { dependentsOf, newestCompletedSnapshot, unrestorableReason } from './backupChain.js';
+import { dependentsOf, newestCompletedSnapshot, resolveChain } from './backupChain.js';
 import { hashFile } from './backupArtifact.js';
 import { inventoryIdOf, inventoryKey, inventoryPrefix, parseRecord, serializeRecord } from './inventory.js';
 
@@ -732,12 +732,23 @@ export class BackupManager implements IBackupManager {
   }
 
   /**
-   * Restore a snapshot: download, verify, and only then touch the engine.
+   * Restore a snapshot: resolve the chain, download and verify every link, and only
+   * then touch the engine.
    *
    * The order is the whole method. Every check that can be made against the metadata
-   * — the chain, the size, the digest — happens before `restore` is called, because
-   * the one thing a rejected restore must not have done is replace half of a healthy
-   * database with half of a corrupt artefact.
+   * — the chain, the size, the digest — happens before an engine method is called,
+   * because the one thing a rejected restore must not have done is replace half of a
+   * healthy database with half of a corrupt artefact.
+   *
+   * **A chain is replayed, not assumed away.** An incremental is replayable only on
+   * top of its ancestors, and the inventory has always been able to say which
+   * ancestors those are — `resolveChain` — while this method used to hand the source
+   * one file and call it a restore. For a whole-capture source that is correct and
+   * stays correct (`whole: true`, one download); for a delta source it would write
+   * the newest delta over a data directory as if it were a full copy, and report
+   * success. So a chain of more than one artefact reaching a source that declares
+   * neither a whole capture nor a chain replay is refused by name, and a source that
+   * can replay one is handed every link oldest first.
    */
   async restoreFromSnapshot(snapshotId: string, options?: RestoreOptions): Promise<RestoreResult> {
     const started = Date.now();
@@ -748,40 +759,76 @@ export class BackupManager implements IBackupManager {
     const snapshot = this.snapshots.get(snapshotId);
     if (snapshot === undefined) return { success: false, error: 'not found', durationMs: 0 };
 
-    const unrestorable = unrestorableReason(this.snapshots, snapshot);
+    // One walk, two answers: what to replay and whether it may be replayed at all.
+    const { chain, reason: unrestorable } = resolveChain(this.snapshots, snapshot);
     if (unrestorable !== null) return { success: false, error: unrestorable, durationMs: Date.now() - started };
 
-    const staging = join(this.workDir, `${snapshotId}.restore.artifact`);
+    // Two questions for the source, asked once: is every artefact a whole copy, and if
+    // not, can it replay a chain? A source that says "whole" is never handed a chain —
+    // the newest artefact is a restore, and the ones above it are history.
+    const declaresWhole = this.source.whole === true;
+    const replayChain = declaresWhole ? null : (this.source.restoreChain ?? null);
+    if (replayChain === null && !declaresWhole && chain.length > 1) {
+      return {
+        success: false,
+        error:
+          `snapshot ${snapshotId} needs ${chain.length} artefacts to replay and source "${this.source.name}" ` +
+          'can neither replay a chain nor declare itself whole',
+        durationMs: Date.now() - started,
+      };
+    }
+
+    const links = replayChain === null ? [snapshot] : chain;
+    const staged: string[] = [];
     try {
       await mkdir(this.workDir, { recursive: true });
-      await this.storage.download(snapshot.location, staging);
-
-      const { size } = await stat(staging);
-      if (size !== snapshot.sizeBytes) {
-        return {
-          success: false,
-          error: `the artefact is ${size} bytes, the snapshot recorded ${snapshot.sizeBytes}`,
-          durationMs: Date.now() - started,
-        };
-      }
-      if (options?.skipVerification !== true && snapshot.checksum !== undefined) {
-        const { sha256 } = await hashFile(staging);
-        if (sha256 !== snapshot.checksum) {
-          return {
-            success: false,
-            error: `the artefact does not match the snapshot's digest (${sha256.slice(0, 12)}… ≠ ${snapshot.checksum.slice(0, 12)}…)`,
-            durationMs: Date.now() - started,
-          };
-        }
+      for (const link of links) {
+        const path = join(this.workDir, `${link.snapshotId}.restore.artifact`);
+        staged.push(path);
+        await this.storage.download(link.location, path);
+        const wrong = await this.verifyArtefact(link, path, options);
+        if (wrong !== null) return { success: false, error: wrong, durationMs: Date.now() - started };
       }
 
-      await this.source.restore(staging);
-      return { success: true, recoveryPoint: snapshotId, durationMs: Date.now() - started };
+      if (replayChain === null) {
+        await this.source.restore(staged[staged.length - 1]!);
+      } else {
+        // `call` rather than a bare reference: the source's own `this` has to travel
+        // with it, and a destructured method would arrive detached.
+        await replayChain.call(this.source, staged);
+      }
+      return { success: true, recoveryPoint: snapshotId, artefacts: links.length, durationMs: Date.now() - started };
     } catch (error) {
       return { success: false, error: reason(error), durationMs: Date.now() - started };
     } finally {
-      await removeQuietly(staging);
+      for (const path of staged) await removeQuietly(path);
     }
+  }
+
+  /**
+   * Why the artefact at `path` is not the one `snapshot` describes, or `null` when it
+   * is.
+   *
+   * Names the snapshot in both messages because a chain restore verifies several
+   * artefacts and "the artefact is 20 bytes" does not say which one was wrong.
+   */
+  private async verifyArtefact(
+    snapshot: BackupMetadata,
+    path: string,
+    options?: RestoreOptions,
+  ): Promise<string | null> {
+    const { size } = await stat(path);
+    if (size !== snapshot.sizeBytes) {
+      return `the artefact of ${snapshot.snapshotId} is ${size} bytes, the snapshot recorded ${snapshot.sizeBytes}`;
+    }
+    if (options?.skipVerification === true || snapshot.checksum === undefined) return null;
+
+    const { sha256 } = await hashFile(path);
+    if (sha256 === snapshot.checksum) return null;
+    return (
+      `the artefact of ${snapshot.snapshotId} does not match the snapshot's digest ` +
+      `(${sha256.slice(0, 12)}… ≠ ${snapshot.checksum.slice(0, 12)}…)`
+    );
   }
 
   /**
@@ -813,7 +860,10 @@ export class BackupManager implements IBackupManager {
         return { success: false, error: `targetTime ${target.targetTime} is not a date`, durationMs: 0 };
       }
       const candidates = completed.filter((s) => new Date(s.createdAt).getTime() <= boundary);
-      const chosen = candidates.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+      const chosen = this.newest(
+        candidates,
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
       if (chosen === undefined) {
         return { success: false, error: `no snapshot at or before ${target.targetTime}`, durationMs: 0 };
       }
@@ -825,7 +875,7 @@ export class BackupManager implements IBackupManager {
         const lsn = s.facts?.['lsn'];
         return lsn !== undefined && compareLsn(lsn, target.targetLsn!) <= 0;
       });
-      const chosen = candidates.sort((a, b) => compareLsn(b.facts!['lsn']!, a.facts!['lsn']!))[0];
+      const chosen = this.newest(candidates, (a, b) => compareLsn(b.facts!['lsn']!, a.facts!['lsn']!));
       if (chosen === undefined) {
         return {
           success: false,
@@ -837,6 +887,39 @@ export class BackupManager implements IBackupManager {
     }
 
     return { success: false, error: 'the target names neither a time nor an LSN', durationMs: 0 };
+  }
+
+  /**
+   * The newest candidate under `newer`, with a tie broken by depth and then by id.
+   *
+   * A tie is not hypothetical. `createBackup` stamps `createdAt` from the manager's clock,
+   * so two incrementals taken inside one millisecond share a timestamp — and two snapshots
+   * that recorded the same `lsn` are exactly as close. A plain sort decides those by
+   * whatever order the bucket listed them in, and the *older* candidate comes first there,
+   * so a caller asking for "the newest at or before T" would be handed the base of a chain
+   * whose head is also at T and be told that is the recovery point. Depth — the number of
+   * artefacts it takes to replay the snapshot — is the tie-break that means "more history
+   * replayed", and the id makes the answer total.
+   *
+   * `createBackup` does not need this and does not use it: any completed snapshot is a
+   * valid parent for a delta, and picking the shallower one costs a re-recorded file
+   * rather than a recovery point that is older than it says.
+   */
+  private newest(
+    candidates: readonly BackupMetadata[],
+    newer: (a: BackupMetadata, b: BackupMetadata) => number,
+  ): BackupMetadata | undefined {
+    const ranked = candidates.map((snapshot) => ({
+      snapshot,
+      depth: resolveChain(this.snapshots, snapshot).chain.length,
+    }));
+    ranked.sort((a, b) => {
+      const byAge = newer(a.snapshot, b.snapshot);
+      if (byAge !== 0) return byAge;
+      if (a.depth !== b.depth) return b.depth - a.depth;
+      return a.snapshot.snapshotId.localeCompare(b.snapshot.snapshotId);
+    });
+    return ranked[0]?.snapshot;
   }
 
   /**

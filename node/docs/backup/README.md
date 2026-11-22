@@ -248,14 +248,34 @@ cut is taken and how it is put back:
 | Member                 | Meaning                                                                                |
 | ---------------------- | -------------------------------------------------------------------------------------- |
 | `name`                 | Stable identifier for logs, metrics and error messages                                 |
+| `whole`                | `true` when every artefact this source captures is a complete copy of the engine        |
 | `capture(destination)` | Write a **consistent** cut to `destination`; report `bytes`, `files`, optional `facts` |
 | `restore(source)`      | **Replace** the engine's state with the verified artefact                              |
+| `restoreChain(chain)`  | **Rebuild** the engine's state from every artefact in `chain`, oldest first            |
 
 `capture` must not resolve with a partial artefact: the manager uploads exactly the file it named, so
 a capture that resolves with half a database is a backup that cannot be restored. `restore` must
 replace rather than merge — a merge leaves keys the snapshot never had, which is how a restored
 replica diverges from the cluster it is about to rejoin — and a rejection means the engine's state is
 unknown, so the caller must restore again rather than assume it still holds what it held before.
+
+**A source must say which of the two things it is**, and the manager will not guess:
+
+| Declaration            | What the manager does with a chain of three              |
+| ---------------------- | -------------------------------------------------------- |
+| `whole: true`          | Downloads and verifies the **newest** artefact, restores |
+| `restoreChain` defined | Downloads and verifies **all three**, hands over a chain |
+| neither                | Refuses, naming the count and the source                 |
+
+The third row is the point of the table. A source that declares nothing may be capturing deltas, and
+handing it the newest artefact would write a fragment over a data directory and then report success —
+the one failure mode that looks like a recovery. A refusal is what that source can act on. If a
+source declares both, `whole` wins: a whole-capture engine needs no chain, and the ones above it are
+history.
+
+`restoreChain` receives paths that have already been downloaded and verified, in **genealogical**
+order — base first, the target last — and never a skipped link, because a skipped delta is a state
+that never existed. It is optional and mandatory only for a source that captures deltas.
 
 ### `DirectoryBackupSource`
 
@@ -267,6 +287,11 @@ it is invisible in every other field.
 It is deliberately not clever: no incremental capture, no hard links, no compression. Each of those
 is a decision that belongs to the engine, which knows which pages changed and which files are
 derivable. What this class must be is _correct_.
+
+Because every capture is the whole tree, it declares `whole: true` — so a restore of the newest
+snapshot of a three-snapshot chain downloads one artefact, not three. That is a statement about this
+class rather than a default: an engine whose `capture` writes a delta has to say so by defining
+`restoreChain` instead, and a source that says neither is refused a chain by name.
 
 ### `IStorageBackend`
 
@@ -386,21 +411,49 @@ becoming an allocation.
 ## Restore, in the order the checks happen
 
 ```
-chain check      is every snapshot this one needs still here?
-download         the artefact is in workDir, not yet near the engine
-size check       does it match the length the metadata recorded?
-digest check     does it match the SHA-256 the metadata recorded?  (skipVerification opts out)
-source.restore   only now does the engine see anything
+chain check      is every snapshot this one needs still here, and with what?
+                 └─ a chain of N reaching a source that declares neither
+                    a whole capture nor a chain replay is refused here, by name
+download         every artefact the plan needs is in workDir, none near the engine
+size check       does each one match the length the metadata recorded?
+digest check     does each one match the SHA-256 the metadata recorded?  (skipVerification opts out)
+source.restore   only now does the engine see anything — one artefact, or the whole chain
 ```
 
 Every check that can be made against the metadata happens **before** the engine is touched, because
 the one thing a rejected restore must not have done is replace half of a healthy database with half of
 a corrupt artefact.
 
-An incremental can be replayed only on top of its whole chain, so a restore whose base is gone reports
-`success: false` and names the missing link. `unrestorableReason` is the decision, `dependentsOf` is
-the reverse lookup it uses, and `newestCompletedSnapshot` is how `createBackup` picks the parent of a
-new incremental.
+### A chain is replayed, not assumed away
+
+An incremental can be replayed only on top of its whole chain. The inventory has always been able to
+say which ancestors those are; what `restoreFromSnapshot` did with that answer was hand the source a
+**single** artefact and call it a restore. For the reference source that is correct — a directory
+capture is a whole tree, so the newest artefact is a complete state — and for a source that captures
+deltas it is a fragment written over a data directory, reported as a success. That is the one failure
+mode worse than a refusal, because it looks like a recovery.
+
+`resolveChain` answers both questions in one walk — *may this be replayed*, and *with what* — so the
+check and the replay cannot disagree about which set of artefacts is being discussed. Then the source
+decides the shape:
+
+| Source                 | What a chain of three becomes                                       |
+| ---------------------- | ------------------------------------------------------------------- |
+| `whole: true`          | one artefact downloaded, verified and restored                      |
+| `restoreChain` defined | all three downloaded, verified and handed over oldest first          |
+| neither                | `success: false`, naming the count and the source                   |
+
+`artefacts` in the result says how many were downloaded and verified, so a caller can see whether it
+had one file to apply or three.
+
+The order is genealogical, not alphabetical and not whatever order the bucket listed: the walk starts
+at the target and collects parents, so the delivered chain is base → delta → delta → target. `pitr`
+reaches the same code by construction, because both of its answers end in `restoreFromSnapshot` — the
+replay lives in one place rather than in each caller.
+
+A refusal here is not a defect in the chain: the chain is fine, and a source that can act on it will
+be handed it. The refusal says which capability is missing, which is the only thing a deployment can
+change.
 
 ---
 
@@ -416,6 +469,13 @@ Three ways to name a target, each answered by a comparison rather than an invent
 
 `recoveryPoint` in the result is the position **reached**, not the target that was asked for. A caller
 who wanted 12:30 and got 12:27 has to be able to see that in the answer.
+
+**"Newest" is not "first in the listing".** Two incrementals taken inside one millisecond share a
+`createdAt`, and two snapshots that recorded the same `lsn` are exactly as close; a plain sort decides
+those by the order the bucket happened to return, which puts the *older* candidate first — so a target
+would resolve to the base of a chain whose head is also at that instant, and be reported as the
+recovery point. Ties are broken by **depth** (how many artefacts it takes to replay the snapshot), and
+then by id so the answer is total and does not depend on the listing at all.
 
 A target that names nothing is refused: an empty `pitr({})` returns
 `{ success: false, error: "the target names neither a time nor an LSN" }` rather than a recovery point

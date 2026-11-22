@@ -146,6 +146,15 @@ export interface RestoreResult {
   success: boolean;
   /** Target LSN or recovery point. */
   recoveryPoint?: string;
+  /**
+   * How many artefacts were downloaded and verified before the engine was touched.
+   *
+   * `1` for a whole-capture source and for any snapshot whose chain has no delta
+   * above the base; more when the target is an incremental and the source replays a
+   * chain. Present on success only, because a refused restore verified nothing it
+   * could report — the error names the artefact that failed instead.
+   */
+  artefacts?: number;
   /** Error message on failure. */
   error?: string;
   /** Duration of the restore operation in ms. */

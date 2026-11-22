@@ -63,6 +63,8 @@ let pipeline;
 let pump;
 let appliedFd = null;
 let applied = 0;
+/** Sends the pump attempted and the transport refused, for this process's lifetime. */
+let refusals = 0;
 
 function appendApplied(event) {
   const line = `${JSON.stringify({
@@ -151,12 +153,26 @@ async function startSender() {
     nodeId: cfg.nodeId,
     cdcConfig: { nodeId: cfg.nodeId },
     engine,
-    outboxConfig: { dataDir: checkpointDir, maxRetries: 10, mapSize: 32 * 1024 * 1024 },
+    // `maxRetries` is the number of failed attempts after which the outbox moves an
+    // entry to the dead-letter queue. It is a *time* budget in disguise — the pump
+    // retries the head of the queue once per cycle — so a test that wants to hold the
+    // peer down for a second has to raise it, or the outage would fill the dead-letter
+    // queue and the test would be measuring that instead of delivery order.
+    outboxConfig: {
+      dataDir: checkpointDir,
+      maxRetries: cfg.outboxMaxRetries ?? 10,
+      mapSize: 32 * 1024 * 1024,
+    },
     checkpointDir,
     transport,
     remoteNodeId: cfg.peer.nodeId,
     pumpIntervalMs: cfg.pumpIntervalMs ?? 20,
     pumpBatchSize: 32,
+  });
+  // Every refused send is a `pump_error`; the count is what makes "a refusal happened"
+  // an observation rather than an assumption about the run.
+  pipeline.onEvent((event) => {
+    if (event.type === 'pump_error') refusals += 1;
   });
   await pipeline.start();
 
@@ -207,6 +223,7 @@ async function status() {
     pump: pumpStatus,
     pumpConservation: pumpStatus ? pumpConservation(pumpStatus) : null,
     metrics,
+    refusals,
     pipelineConservation: pipelineConservation(metrics),
     checkpoint: pipeline.getCheckpoint(),
     resumePosition: ExactlyOnceCDCPipeline.resumePosition(pipeline.getCheckpoint()),

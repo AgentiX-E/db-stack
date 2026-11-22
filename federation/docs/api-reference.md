@@ -600,9 +600,23 @@ const pump = new CDCSubscriptionPump({
 ### `ExactlyOnceCDCPipeline`
 
 Exactly-once delivery on top of an at-least-once transport. Outbound, a change is
-appended to the outbox before it is sent and the checkpoint advances only after
-the peer confirms; inbound, the dedup ring rejects replays and the checkpoint
-file makes a restart resume instead of re-send.
+appended to the outbox before it is sent and the checkpoint advances only after the
+**transport accepts the frame**; inbound, the dedup ring rejects replays and the
+checkpoint file makes a restart resume instead of re-send.
+
+Two limits follow from that wording, and they are stated here because a deployment
+plans around them rather than discovering them:
+
+- **An accepted frame is not an applied frame.** `send()` resolves `true` when the
+  local socket took the bytes, and a TCP write into a connection whose peer has gone
+  is accepted by the kernel. A reset therefore loses whatever was in flight while the
+  outbox records it delivered. Closing that gap needs the receiver to confirm — an ack,
+  not a write — which the transport does not have yet.
+- **A refused send costs one retry.** `OutboxStore` counts it as an attempt, and the
+  default `maxRetries` is 3, so at a 20 ms pump interval roughly 60 ms of peer absence
+  moves a change to the dead-letter queue. Raise `maxRetries` to the outage a
+  deployment intends to survive, or read the dead-letter queue as part of the recovery
+  procedure.
 
 One ordering rule is part of the contract: **a pump cycle ends at the first send
 the transport refuses.** The outbox returns entries oldest-first, but a loop that

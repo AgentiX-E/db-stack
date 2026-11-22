@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A restore replays the chain it was given, or refuses it by name.** `restoreFromSnapshot` verified
+  that every base an incremental needs was still stored — and then handed `IBackupSource.restore` a
+  single file. `DirectoryBackupSource` captures a whole tree every time, so for it that was correct; for
+  an engine whose `capture` produces a delta it wrote the newest delta over a data directory as if it
+  were a full copy and reported success, which is the one outcome worse than a refusal because it looks
+  like a recovery. `resolveChain` now answers *may this be replayed* and *with what* in one walk, so the
+  check and the replay cannot disagree, and the port makes the source say which of the two things it is:
+  `whole: true` for a whole-capture engine (the newest artefact is the restore), or `restoreChain(chain)`
+  for one that captures deltas (every artefact, oldest first, all of them already verified). A source
+  that declares neither is refused a chain longer than one artefact, with the count and its own name in
+  the message — the alternative is guessing, and guessing is what produced the fragment.
+  `RestoreResult.artefacts` says how many were downloaded and verified. `DirectoryBackupSource` declares
+  `whole: true` and its behaviour is unchanged.
+- **`pitr` breaks a timestamp or LSN tie by chain depth.** Two incrementals taken inside one millisecond
+  share a `createdAt`, and two snapshots that recorded the same `lsn` are exactly as close; a plain sort
+  left those to the order the bucket happened to list, which puts the *older* candidate first — so "the
+  newest at or before T" could resolve to the base of a chain whose head is also at T and be reported as
+  the recovery point. Depth decides, and the id makes the answer total, so the recovery point no longer
+  depends on the listing at all.
 - **The head of the audit chain is anchored.** A chain proves the entries that are *present*: delete the
   beginning of a trail and every remaining link still holds, because the first survivor names a `prev`
   that retention could equally have pruned. That was the one deletion the digest could not report. A

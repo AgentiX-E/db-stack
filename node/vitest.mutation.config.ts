@@ -43,6 +43,7 @@ export default defineConfig({
       'src/backup/__tests__/FileSystemStorageBackend.test.ts',
       'src/backup/__tests__/AC99-inventory-cost.test.ts',
       'src/backup/__tests__/AC101-what-no-record-names.test.ts',
+      'src/backup/__tests__/AC102-a-chain-is-replayed.test.ts',
       'src/backup/__tests__/backupArtifact.test.ts',
       'src/backup/__tests__/AC62-backup-store-surface.test.ts',
       'src/backup/__tests__/AC65-retention-order-independence.test.ts',

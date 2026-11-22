@@ -8,7 +8,7 @@
     "test": "vitest run tests/",
     "test:cluster": "vitest run tests/cluster-tls.test.ts",
     "test:federation": "vitest run tests/cross-cluster-sync.test.ts",
-    "test:cdc": "vitest run tests/cdc-stream.test.ts",
+    "test:cdc": "vitest run tests/cdc-stream.test.ts tests/cdc-refusal.test.ts",
     "test:operations": "vitest run tests/operations-real-process.test.ts",
     "coverage": "vitest run --coverage",
     "bench": "tsx bench/real-ycsb.ts",

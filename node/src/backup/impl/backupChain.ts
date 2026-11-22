@@ -70,37 +70,73 @@ export function dependentsOf(inventory: readonly BackupMetadata[], snapshotId: s
   return dependents;
 }
 
+/** What a restore needs from the inventory: the artefacts, oldest first, or why it cannot. */
+export interface ChainResolution {
+  /**
+   * The artefacts to replay, **oldest first**: the base, every delta above it, and
+   * `snapshot` itself last. Empty when the chain cannot be replayed.
+   */
+  chain: BackupMetadata[];
+  /** Why that chain cannot be replayed, or `null` when it can. */
+  reason: string | null;
+}
+
 /**
- * Why `snapshot` cannot be replayed, or `null` when it can.
+ * The chain a restore of `snapshot` needs, and the reason it has none.
  *
  * Two failures matter. A **missing link** — a parent that is no longer stored —
  * means the delta has nothing to apply to. A **chain without a base** — one that
  * ends at an incremental instead of a full or logical snapshot — means there was
  * never anything to apply the deltas to. A cycle is reported as the link that
  * repeats.
+ *
+ * One walk answers both questions on purpose. `unrestorableReason` asks *may this be
+ * replayed* and the manager then has to ask *with what*; two walks are two chances to
+ * disagree, and the failure mode of that disagreement is a restore that passes the
+ * check and then replays a different set of artefacts — the exact shape P3-62
+ * describes. Returning both from one function makes them agree by construction.
  */
-export function unrestorableReason(
+export function resolveChain(
   inventory: ReadonlyMap<string, BackupMetadata>,
   snapshot: BackupMetadata,
-): string | null {
+): ChainResolution {
+  const walked: BackupMetadata[] = [snapshot];
   const seen = new Set<string>([snapshot.snapshotId]);
   let current: BackupMetadata = snapshot;
+
+  const refuse = (reason: string): ChainResolution => ({ chain: [], reason });
 
   for (;;) {
     const parentId: string | undefined = current.parentSnapshotId;
     if (parentId === undefined) {
       const isBase = current.type !== 'incremental';
-      if (isBase) return null;
-      return `incremental snapshot ${snapshot.snapshotId} has no full snapshot at the root of its chain`;
+      if (!isBase) {
+        return refuse(`incremental snapshot ${snapshot.snapshotId} has no full snapshot at the root of its chain`);
+      }
+      return { chain: walked.reverse(), reason: null };
     }
     if (seen.has(parentId)) {
-      return `parent chain of snapshot ${snapshot.snapshotId} is cyclic at ${parentId}`;
+      return refuse(`parent chain of snapshot ${snapshot.snapshotId} is cyclic at ${parentId}`);
     }
     const parent = inventory.get(parentId);
     if (parent === undefined) {
-      return `base snapshot ${parentId} of incremental ${snapshot.snapshotId} is missing`;
+      return refuse(`base snapshot ${parentId} of incremental ${snapshot.snapshotId} is missing`);
     }
     seen.add(parentId);
+    walked.push(parent);
     current = parent;
   }
+}
+
+/**
+ * Why `snapshot` cannot be replayed, or `null` when it can.
+ *
+ * The reason half of `resolveChain`, kept as its own name because most callers only
+ * ask this question and a boolean-shaped answer reads better at those sites.
+ */
+export function unrestorableReason(
+  inventory: ReadonlyMap<string, BackupMetadata>,
+  snapshot: BackupMetadata,
+): string | null {
+  return resolveChain(inventory, snapshot).reason;
 }

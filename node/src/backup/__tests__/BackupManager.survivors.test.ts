@@ -72,8 +72,10 @@
  *   entry point reconciles against the listing first, so the next read removes what the
  *   delete would have. The lines stay because a manager whose map still named a deleted
  *   snapshot would be wrong for as long as nothing asked it anything.
- *   `snapshot.checksum !== undefined` — every snapshot the manager creates has one, and
- *   there is no public way to construct one that does not.
+ *   `if (skipVerification === true || snapshot.checksum === undefined) return null` →
+ *   `if (false)` — `skipVerification` is exercised (SV.17), and the other half asks a
+ *   question whose answer is always "there is a checksum": every snapshot the manager
+ *   creates has one, and there is no public way to construct one that does not.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -452,6 +454,6 @@ describe('SV — skipVerification skips the digest, and only the digest', () => 
     };
     const wrongSize = await mgr.restoreFromSnapshot(created.snapshot!.snapshotId, { skipVerification: true });
     expect(wrongSize.success).toBe(false);
-    expect(wrongSize.error).toMatch(/the artefact is 5 bytes/);
+    expect(wrongSize.error).toMatch(/the artefact of \S+ is 5 bytes/);
   });
 });

@@ -230,10 +230,31 @@ export interface SnapshotCapture {
  * moment ever held. The reference implementation in this package refuses any file
  * that changed while it was being copied, which turns a racy capture into an error
  * instead of a silently wrong artefact.
+ *
+ * **A source must say which of two things it is.** Either every artefact it
+ * captures is a whole copy of the engine (`whole: true` — a directory tree, a
+ * `VACUUM INTO`), in which case the newest artefact alone is a restore and the
+ * chain above it is history; or an artefact may be a delta that is replayable only
+ * on top of its ancestors, in which case the source implements `restoreChain` and
+ * is handed all of them, oldest first. The manager will not guess: a chain longer
+ * than one artefact reaching a source that declares neither is refused rather than
+ * delivered as a single file, because a restored fragment reports success.
  */
 export interface IBackupSource {
   /** Stable identifier for logs, metrics and listings. */
   readonly name: string;
+
+  /**
+   * Whether every artefact this source captures is a complete copy of the engine.
+   *
+   * `true` means a restore needs exactly one artefact — the newest — and that the
+   * manager may hand it the head of an incremental chain. `false` or absent means
+   * the manager must assume a delta and give the source its whole chain.
+   *
+   * A source that declares this takes on the obligation it names: if some artefacts
+   * are whole and some are deltas, the answer is `false`.
+   */
+  readonly whole?: boolean;
 
   /**
    * Write a consistent cut to `destination` (a file path the manager chose) and
@@ -255,6 +276,28 @@ export interface IBackupSource {
    * assume it still holds what it held before.
    */
   restore(source: string): Promise<void>;
+
+  /**
+   * Rebuild the engine's state from `chain`, oldest artefact first and the target
+   * last — the operation a delta engine actually needs.
+   *
+   * Every path the manager passes has already been downloaded and verified, and
+   * `chain[chain.length - 1]` is the artefact of the snapshot the caller asked for.
+   * The list is contiguous from a base to that snapshot: no link is skipped, because
+   * a skipped delta is a state that never existed.
+   *
+   * Optional, and mandatory only for a source that captures deltas. A source
+   * declares `whole: true` instead and is never asked. A source that declares
+   * neither is refused a chain — see the note on this interface — which is the
+   * behaviour that stops a delta being written over a data directory as if it were
+   * a full copy.
+   *
+   * Same contract as `restore` about replacement and about what a rejection means,
+   * and one rule more: by the time this is called, the engine is about to be
+   * destroyed and rebuilt, so partial work on a rejection has to be recoverable by
+   * calling it again from the same chain.
+   */
+  restoreChain?(chain: readonly string[]): Promise<void>;
 }
 
 /**

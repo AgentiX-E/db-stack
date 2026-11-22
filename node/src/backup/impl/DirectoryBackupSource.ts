@@ -33,6 +33,14 @@ export const DIRECTORY_SOURCE_NAME = 'directory';
 export class DirectoryBackupSource implements IBackupSource {
   readonly name = DIRECTORY_SOURCE_NAME;
 
+  /**
+   * Every artefact this source writes is the whole tree, so the newest one alone is a
+   * restore and a chain above it is history. Declared rather than left to be assumed:
+   * a manager that had to read `capture`'s source to know this could not have known
+   * it at all.
+   */
+  readonly whole = true;
+
   constructor(private readonly directory: string) {}
 
   /** @inheritdoc */

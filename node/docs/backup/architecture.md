@@ -53,8 +53,17 @@ createBackup
      └─ any failure ──► success: false; anything uploaded is taken back
 
 restoreFromSnapshot
-  inventory ──► chain ──► download ──► size ──► digest ──► source.restore
+  inventory ──► resolveChain ──► plan ──► [download ──► size ──► digest] × N ──► source.restore | restoreChain
+                    │
+                    └─ no chain ─────────► success: false, naming the missing link
+                       chain > 1, source declares neither
+                       whole nor restoreChain ─► success: false, naming the count
 ```
+
+The bracket is the shape of a chain restore: a plan of one artefact (a whole-capture source, or a
+snapshot with no delta above its base) or of all of them (a source that defines `restoreChain`). Every
+artefact in the plan is downloaded and verified before the engine is touched, so a chain with a corrupt
+middle link costs three downloads and no damage rather than a half-applied restore.
 
 `BackupMetadata.state` is `pending | in-progress | completed | failed | expired`. `in-progress` is the
 state of the object the manager is building; a `BackupManager` never stores it, so `listBackups()` cannot
@@ -159,8 +168,9 @@ not a manifest at all).
 | size disagreement       | `directory reported 4096 bytes but wrote 31`                              |
 | upload / confirmation   | `the bucket does not list <key> after the upload`                         |
 | wrong size in bucket    | `the bucket lists <key> at 12 bytes, 4096 were uploaded`                  |
-| restore, missing base   | `incremental <id> cannot be replayed: its base <id> is gone`              |
-| restore, corrupt        | `the artefact does not match the snapshot's digest (a1b2c3… ≠ d4e5f6…)`   |
+| restore, missing base   | `base snapshot <id> of incremental <id> is missing`                       |
+| restore, corrupt        | `the artefact of <id> does not match the snapshot's digest (a1b2c3… ≠ …)` |
+| restore, no chain replay | `snapshot <id> needs 3 artefacts to replay and it is not a chain source` |
 | pitr, no target         | `the target names neither a time nor an LSN`                              |
 | pitr, nothing before it | `no snapshot at or before LSN 16/10 (3 completed snapshot(s) considered)` |
 
