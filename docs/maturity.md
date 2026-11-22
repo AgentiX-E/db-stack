@@ -406,6 +406,7 @@ pnpm check:docs-api                                  # every API heading resolve
 pnpm check:doc-examples                              # every fenced example type-checks
 pnpm check:public-types                              # every type a public signature names is exported
 pnpm check:script-bins                               # every script's binary is installed
+pnpm check:legacy-names                              # the 2.0 migration page matches the exports
 pnpm test:scripts && pnpm check:script-coverage      # the gates' own tests, and their coverage
 pnpm typecheck && pnpm typecheck:tests               # static gates, production and tests
 pnpm lint && pnpm format:check                       # the packages' sources

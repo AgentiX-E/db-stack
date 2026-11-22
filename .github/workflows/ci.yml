@@ -100,6 +100,8 @@ jobs:
         run: pnpm check:public-types
       - name: Every script invokes a binary that is installed
         run: pnpm check:script-bins
+      - name: No source imports a retired 1.x name, and the migration page matches the exports
+        run: pnpm check:legacy-names
       - name: ESLint (one shared config for the whole workspace)
         run: pnpm lint
       - name: Prettier
