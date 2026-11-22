@@ -92,6 +92,7 @@ vi.mock('../../consensus/transport/ConnectionPool', () => ({
 
 import { RaftTcpTransport, type RaftNodeConfig } from '../../consensus/transport/RaftTcpTransport';
 import { MessageCodec } from '../../consensus/transport/MessageCodec';
+import { MessageCompressor } from '../../consensus/helpers/MessageCompressor';
 
 function validConfig(overrides: any = {}): any {
   return {
@@ -411,6 +412,46 @@ describe('RaftTcpTransport — _processData', () => {
     await vi.waitFor(() => expect(errHandler).toHaveBeenCalled());
   });
 
+  it('decodes a chunk only after the chunk handed over before it', async () => {
+    const t = new RaftTcpTransport(validConfig());
+    const seen: string[] = [];
+    t.on('message', (msg: any) => seen.push(String(msg.index)));
+
+    // Real zstd, real frames: the transport's own wire format, built the way its
+    // send path builds it.
+    const compressor = new MessageCompressor({ threshold: 1024 });
+    const frame = async (index: string, bytes: number): Promise<Buffer> => {
+      const encoded = MessageCodec.encode({
+        msgType: 3,
+        from: '2',
+        to: '1',
+        term: '1',
+        index,
+        entries: [{ index, term: '1', entryType: 0, data: 'x'.repeat(bytes) }],
+      } as any);
+      const compressed = await compressor.compress(encoded.subarray(4));
+      const header = Buffer.alloc(4);
+      header.writeUInt32BE(compressed.length, 0);
+      return Buffer.concat([header, compressed]);
+    };
+
+    // Four megabytes take the decompressor an order of magnitude longer than a
+    // kilobyte, so the frame handed over second is ready to decode first. That
+    // is the whole point: the order has to come from the handover, not from
+    // which decompression finishes first.
+    const first = await frame('1', 4 * 1024 * 1024);
+    const second = await frame('2', 1_200);
+
+    // Two `data` events arrive back to back, so the second call is made while the
+    // first is still awaiting its decompression — the shape that used to let the
+    // second loop read the shared buffer and decode ahead of its predecessor.
+    const firstChunk = priv(t)._processData(2, first);
+    const secondChunk = priv(t)._processData(2, second);
+    await Promise.all([firstChunk, secondChunk]);
+
+    expect(seen).toEqual(['1', '2']);
+  });
+
   it('buffers partial frames across chunks', async () => {
     const t = new RaftTcpTransport(validConfig());
     const msgHandler = vi.fn();
@@ -541,6 +582,44 @@ describe('RaftTcpTransport — compression path', () => {
 
     priv(t)._sendFrame(2, frame, false);
     await vi.waitFor(() => expect(conn.write).toHaveBeenCalled());
+    await t.stop();
+  });
+
+  it("writes a peer's frames in the order they were submitted, not the order they compress", async () => {
+    const t = new RaftTcpTransport(validConfig());
+    await t.start();
+    const pool = freshPool();
+    /** First byte of each frame's payload, in the order the connection wrote them. */
+    const written: number[] = [];
+    const conn = {
+      write: vi.fn(async (frame: Buffer) => {
+        written.push(frame.subarray(4)[0]!);
+      }),
+    };
+    pool.tryGetConnection.mockReturnValue(conn);
+
+    // The frame submitted first is the one whose compression finishes last. zstd
+    // runs on libuv's thread pool, so a busy machine does exactly this to two
+    // frames handed over back to back — and the write used to happen in that
+    // callback, which made the completion order the wire order.
+    vi.spyOn(priv(t)._compressor, 'compress').mockImplementation(async (...args: unknown[]) => {
+      const payload = args[0] as Buffer;
+      if (payload[0] === 0x41) await new Promise((resolve) => setTimeout(resolve, 30));
+      return payload;
+    });
+
+    const framed = (byte: number): Buffer => {
+      const body = Buffer.alloc(5000, byte); // over the threshold, so it is queued
+      const header = Buffer.alloc(4);
+      header.writeUInt32BE(body.length, 0);
+      return Buffer.concat([header, body]);
+    };
+
+    priv(t)._sendFrame(2, framed(0x41), false);
+    priv(t)._sendFrame(2, framed(0x42), false);
+
+    await vi.waitFor(() => expect(written).toHaveLength(2));
+    expect(written).toEqual([0x41, 0x42]);
     await t.stop();
   });
 

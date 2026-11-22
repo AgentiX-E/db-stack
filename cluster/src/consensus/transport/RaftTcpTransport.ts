@@ -121,6 +121,16 @@ export class RaftTcpTransport extends EventEmitter {
   private _pendingMessages: Map<number, Buffer[]> = new Map();
   /** Consecutive failed flush attempts per peer; reset by a write that succeeds. */
   private _flushAttempts: Map<number, number> = new Map();
+  /**
+   * The tail of each peer's send queue: frames are compressed and written one at
+   * a time, in the order they were submitted. See {@link _sendFrame}.
+   */
+  private _sendChains: Map<number, Promise<void>> = new Map();
+  /**
+   * The tail of each peer's receive queue: chunks are decoded one at a time, in
+   * arrival order. See {@link _processData}.
+   */
+  private _processChains: Map<number, Promise<void>> = new Map();
   /** Frames discarded because they could not be delivered. Monotonic. */
   private _droppedFrames = 0;
   private _outstandingReconnects: Set<number> = new Set();
@@ -392,6 +402,10 @@ export class RaftTcpTransport extends EventEmitter {
     // are a record of what happened, not state to resume from.
     this._pendingMessages.clear();
     this._flushAttempts.clear();
+    // Queued links still run; they find no pool and drop their frame, which is
+    // the same answer every other path gives once the transport is stopped.
+    this._sendChains.clear();
+    this._processChains.clear();
 
     if (this._healthCheckTimer) {
       clearInterval(this._healthCheckTimer);
@@ -709,39 +723,85 @@ export class RaftTcpTransport extends EventEmitter {
   }
 
   /**
-   * Fire-and-forget frame delivery.
+   * Fire-and-forget frame delivery, in submission order.
    *
    * 1) Compress the payload (async, outside the WASM queue critical path).
    * 2) Delegate to _doSendFrame for the actual connection lookup + write.
    *    NEVER blocks the caller on TLS handshake or socket write.
+   *
+   * The two halves are queued **per peer** and in the order the frames were
+   * handed over, because zstd runs on libuv's thread pool: `compress()` resolves
+   * when a worker is free rather than when it was asked. Writing the frame inside
+   * that callback made the wire order the *completion* order, and a frame handed
+   * over first could be read last. A framed stream carries one promise about
+   * order — first in, first read — and both layers above this one act on it: Raft
+   * asks a follower to append after an index it has not sent yet, and the CDC
+   * consumer applies changes in arrival order, so an overtaking frame becomes a
+   * change applied out of order in another datacenter. Observed on a loaded CI
+   * runner as `1,2,3,5,4,6,7,3,5,4,…` — reordered *and* duplicated.
+   *
+   * One chain per peer, and each link does both halves: the write is the part
+   * that has to be ordered, so it cannot be in a second queue that the
+   * compressor's callbacks enter in their own order. Peers never wait for each
+   * other — this is a per-peer queue, not a global lock.
+   *
+   * A frame the compressor would pass through untouched — compression off, or a
+   * payload under the threshold, which is most Raft frames — takes no queue at
+   * all: there is no async step to reorder anything, so the write stays exactly
+   * where it was. The queue exists for the defect and is absent everywhere the
+   * defect could not be.
    */
   private _sendFrame(peerId: number, frame: Buffer, isHeartbeat: boolean): void {
     if (!this.pool) throw new Error('Transport not started');
 
     const payload = frame.subarray(4); // Strip 4-byte length header for compression
 
-    const sendIt = (compressedPayload: Buffer) => {
-      if (!this.pool) {
-        this._drainPending(peerId);
-        return; // Transport stopped during async compression
-      }
-      const newHeader = Buffer.alloc(4);
-      newHeader.writeUInt32BE(compressedPayload.length, 0);
-      const newFrame = Buffer.concat([newHeader, compressedPayload]);
-      this._doSendFrame(peerId, newFrame, isHeartbeat);
-    };
-
-    if (this._compressionEnabled) {
-      this._compressor
-        .compress(payload)
-        .then(sendIt)
-        .catch((err: unknown) => {
-          console.warn('[RaftTcpTransport] Compression failed, sending uncompressed:', err);
-          sendIt(payload);
-        });
-    } else {
-      sendIt(payload);
+    if (!this._compressionEnabled || payload.length < this._compressor.getThreshold()) {
+      this._writeFrame(peerId, payload, isHeartbeat);
+      return;
     }
+
+    const previous = this._sendChains.get(peerId) ?? Promise.resolve();
+    const link = previous.then(() => this._compressAndWrite(peerId, payload, isHeartbeat));
+
+    // Stored already-settled: a rejection here would leave every later frame for
+    // this peer unwritten. Neither half rejects — a failed compression falls back
+    // to the uncompressed payload and `_doSendFrame` reports its own failures —
+    // but a queue that can be poisoned by one frame is a queue that will be.
+    const settled = link.catch(() => undefined);
+    this._sendChains.set(peerId, settled);
+
+    // One entry per peer, dropped once its queue drains, so a transport that
+    // talked to a thousand peers and then to none holds no frames.
+    void settled.then(() => {
+      if (this._sendChains.get(peerId) === settled) this._sendChains.delete(peerId);
+    });
+  }
+
+  /** One link of a peer's send queue: compress, then write, in that order. */
+  private async _compressAndWrite(peerId: number, payload: Buffer, isHeartbeat: boolean): Promise<void> {
+    let compressedPayload: Buffer;
+    try {
+      compressedPayload = await this._compressor.compress(payload);
+    } catch (err: unknown) {
+      // The frame still has to go out: the peer decides whether it is compressed
+      // from the magic bytes rather than from a flag the two sides have to agree
+      // on, so an uncompressed frame is a frame the peer understands.
+      console.warn('[RaftTcpTransport] Compression failed, sending uncompressed:', err);
+      compressedPayload = payload;
+    }
+    this._writeFrame(peerId, compressedPayload, isHeartbeat);
+  }
+
+  /** Prefix the four-byte length header and hand the frame to the write path. */
+  private _writeFrame(peerId: number, payload: Buffer, isHeartbeat: boolean): void {
+    if (!this.pool) {
+      this._drainPending(peerId);
+      return; // Transport stopped during async compression
+    }
+    const newHeader = Buffer.alloc(4);
+    newHeader.writeUInt32BE(payload.length, 0);
+    this._doSendFrame(peerId, Buffer.concat([newHeader, payload]), isHeartbeat);
   }
 
   /**
@@ -873,7 +933,39 @@ export class RaftTcpTransport extends EventEmitter {
     }
   }
 
-  private async _processData(peerId: number, data: Buffer): Promise<void> {
+  /**
+   * Decode the frames in one chunk of a peer's stream, after any chunk before it.
+   *
+   * `data` events on one socket are delivered one after another, but this method
+   * awaits — zstd decompression runs on libuv's thread pool — and an `await`
+   * inside a handler that the event loop calls again is a re-entrant handler. Two
+   * chunks in flight meant two loops reading the same per-peer accumulation
+   * buffer: the second one took a frame the first had not finished with, decoded
+   * that frame ahead of its predecessor, and the run that produced the inversion
+   * in the CDC suite delivered 91 messages for the 40 that were sent.
+   *
+   * So the chunks of a peer are queued, and each one decodes only once the chunk
+   * before it is fully decoded. Peers stay independent: a slow decompression for
+   * one peer does not hold another peer's frames.
+   *
+   * Returns the promise for this chunk, so a caller that wants to know when the
+   * frame has been emitted still can.
+   */
+  private _processData(peerId: number, data: Buffer): Promise<void> {
+    const previous = this._processChains.get(peerId) ?? Promise.resolve();
+    const link = previous.then(() => this._drainFrames(peerId, data));
+    // The queue is stored already-settled so one undecodable chunk cannot stop
+    // the peer's stream, and the caller still receives the real rejection.
+    const settled = link.catch(() => undefined);
+    this._processChains.set(peerId, settled);
+    void settled.then(() => {
+      if (this._processChains.get(peerId) === settled) this._processChains.delete(peerId);
+    });
+    return link;
+  }
+
+  /** The body of one queue link: append the chunk, then decode every whole frame in it. */
+  private async _drainFrames(peerId: number, data: Buffer): Promise<void> {
     // Use a static buffer for accumulation
     const bufKey = `peer:${peerId}`;
     let accumulated = this._buffers.get(bufKey) || Buffer.alloc(0);
