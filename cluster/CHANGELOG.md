@@ -364,6 +364,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A frame could overtake the frame submitted before it.** `RaftTcpTransport` compresses payloads
+  over the threshold with zstd, which runs on libuv's thread pool, and it wrote each frame **inside
+  that compression callback** — so the socket received the frames in _completion_ order. Two frames
+  handed over back to back arrived as `1,2,3,5,4,6,7,…` on a loaded runner. The second cause was on
+  the receive side: `_processData` awaits a decompression, and the event loop calls it again for the
+  next chunk while it is awaiting, so two loops read the same per-peer accumulation buffer — the run
+  that produced the inversion delivered **91 messages for the 40 that were sent**. Both directions
+  are queued per peer now: compress and write in submission order on the way out, decode the next
+  chunk only after the previous one on the way in. A frame the compressor would pass through
+  untouched — compression off, or a payload under the threshold — takes no queue at all, so the fast
+  path is what it was. `RaftTcpTransport.ordering.test.ts` drives two transports over real mTLS with
+  one 300 KB frame followed by twenty just over the threshold, where the compressor's answer for the
+  first cannot arrive first: `2,3,4,5,6,7,8,1,…` with only the receive queue, `1,2,3,4,6,7,5,…` with
+  only the send queue, submission order with both.
 - **Two settings `init()` accepted and dropped.** Covered under Changed: `compression` and
   `tls.verify` never reached the transport.
 

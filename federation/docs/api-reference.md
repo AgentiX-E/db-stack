@@ -59,6 +59,16 @@ replication protocol actually asks — did the peer apply it — because a TCP w
 into a connection whose peer has gone is accepted by the local kernel. That is
 what `cdc_ack` is for.
 
+One thing `send()` does promise, and the CDC pipeline depends on it: **the frames
+of one peer reach `onMessage` in the order `send()` was called.** The pipeline
+keeps the outbox in FIFO order and its consumer applies changes in the order they
+arrive, so a frame that overtakes its predecessor is a change applied out of order
+in the other datacenter — and the outbox cannot see it, because both frames were
+delivered. An implementation that compresses, batches or hands frames to a worker
+pool has to keep that order itself; `TcpSecureTransport` inherits it from
+`RaftTcpTransport`, which queues compression per peer for exactly this reason
+(`@agentix-e/db-cluster` CHANGELOG, iteration 70).
+
 ```typescript
 interface ITransport {
   send(message: TransportMessage): Promise<boolean>;

@@ -1430,3 +1430,86 @@ the two differently: a duplicate is confirmed, an undecodable frame is refused w
 the receiver's reason and keeps being refused until the sender's own budget puts it
 in the dead-letter queue. `ACK.21` pins the first half; `ACK.4` already pinned what
 the sender does with a refusal.
+
+## A framed stream that reordered its own frames
+
+The acceptance run for iteration 69 failed three `e2e` cases, all in the CDC
+suites, all on the same assertion — the receiving datacenter had applied the
+changes in the wrong order:
+
+```
+FAIL tests/cdc-refusal.test.ts > AC-C20: the system is up and the first batch is applied in order
+AssertionError: expected [ 2, 3, 1, 4, 5, 6, 7, 8, 9, 10, …(2) ] to deeply equal [ 1, 2, 3, … ]
+```
+
+The three cases in that file were one failure, not three. `AC-C20` assigned the
+processes to the suite's shared `state` on its **last** line, after the assertion
+that failed, so `AC-C21` read an empty applied file (`expected +0 to be 12`) and
+`AC-C22` spawned a relay with no configuration (`CDC_RELAY_CONFIG missing`). The
+second file's failure was the same defect wearing a different number: `AC-C24`
+applied `1,3,4,5,2,6,…`.
+
+**The first two readings were wrong.** The acknowledgement protocol was a day old
+and it was in every one of those code paths, so the ack was the obvious suspect —
+but `cdc-ack`'s own case passed in the same run, and the pipeline marks an entry
+delivered only when the peer said so. The pump was the second suspect, and it was
+already strict: a cycle ends at the first entry the peer did not confirm. The
+order in the *applied file* was wrong, and that file is written by the receiver's
+`onMessage` handler, synchronously, with `fsync` — so the receiver had been handed
+the frames out of order. The wire did that, not the protocol.
+
+**Two queues were missing, one in each direction.**
+
+`RaftTcpTransport` compresses payloads over 1 024 bytes with zstd, which runs on
+libuv's thread pool: `compress()` resolves when a worker is free, not when it was
+asked. The frame was written **inside that callback**, so the socket received the
+frames in *completion* order. Twenty small frames submitted after a large one could
+reach the peer ahead of it.
+
+The receive side had the same shape for a different reason. `_processData` awaits
+a decompression, and the event loop calls it again for the next `data` event while
+it is awaiting — a re-entrant handler over a per-peer accumulation buffer. Two
+loops read the same buffer, and the run that produced the original report delivered
+**91 messages for the 40 that were sent**: frames decoded twice as well as out of
+order.
+
+Both are per-peer queues now. On the way out, one link per frame does both halves —
+compress, then write — because the write is the part that has to be ordered, and
+putting it in a second queue the compressor's callbacks enter in their own order is
+the bug again with extra steps. On the way in, a chunk decodes only after the chunk
+handed over before it. Peers never wait for each other: this is a queue per peer,
+not a lock.
+
+**The instrument is a size, not a coin toss.** The `e2e` suite was green in this
+sandbox three times before the fix and three times after it — on an idle machine
+the thread pool answers in submission order and the defect does not exist. An
+acceptance criterion that needs a loaded runner to fail is not an acceptance
+criterion, so `RaftTcpTransport.ordering.test.ts` builds the condition instead of
+waiting for it: one 300 KB frame followed by twenty just over the threshold, over
+real mTLS between two real transports. The compressor's answer for the first frame
+cannot arrive first, so the order that arrives is a fact about the code.
+
+| Configuration           | What arrived                                       |
+| ----------------------- | -------------------------------------------------- |
+| no queue on either side | `1,2,3,5,4,6,7,3,5,4,…` — reordered and duplicated |
+| receive queue only      | `2,3,4,5,6,7,8,1,9,…` — the slow frame last        |
+| send queue only         | `1,2,3,4,6,7,5,8,…` — one frame decoded late       |
+| both queues             | `1,2,3,…,21` — submission order                    |
+
+**The queue exists only where the defect was.** The first version of the fix put
+every frame through the chain, and two existing tests failed: they hand a frame to
+`_sendFrame` and then assert the write has happened, which was true and was no
+longer. That is the right kind of failure — a change that is observable where it
+should not be — so the fast path was restored: a frame the compressor would pass
+through untouched (compression off, or a payload under the threshold, which is most
+Raft frames) is written synchronously, exactly as before. What is queued is what is
+compressed, and what is compressed is the only place the order could be lost.
+
+**Raft was never broken by this, and that is not a defence.** The same run logged
+`Unexpected error during RPC` on an `AppendEntries` to node 3 and the cluster test
+passed anyway, because Raft is built to survive it: a follower that receives index
+five before three rejects it with a hint and the leader retries. The CDC consumer
+has no such repair, and "applied once, in write order" was a promise the pipeline
+made while standing on a transport that did not keep it. A layer cannot promise an
+order it does not own — or, as here, it can, until the day a compression callback
+takes longer than the one before it.
