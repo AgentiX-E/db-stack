@@ -1296,3 +1296,53 @@ rather than fixed here: `InMemoryBackupManager.createBackup()` never touches the
 answers `{ success: true }` without downloading anything, and `pitr()` answers
 success for a recovery point it invented. A real-process restore probe over that
 manager would be a test of a simulator.
+
+## A budget measured on a clock the test could not spend
+
+CI run `44999465716` came back red in three jobs, and none of the three was the
+code the run was about. That is the shape worth writing down: a suite that fails
+where nothing changed is a suite whose failures have to be read one at a time,
+because two of them were the tests and one was the harness.
+
+**`BM.26` measured the wrong step.** The case is about an upload that outlives
+its budget: capture is immediate, the bucket sleeps 40 ms, the budget is 1 ms.
+`createBackup` checked the deadline twice — once after the capture, once after the
+upload — against `Date.now()`. On a loaded runner the capture of one small file
+took longer than a millisecond, so the *capture* branch fired and the case failed
+with `the capture took longer than 1 ms` while asserting on the upload. The budget
+now comes from `this.clock()`, the same clock the manager stamps `createdAt` with,
+and `BM.10`/`BM.26` move that clock from inside the step under test. A budget is a
+comparison; a comparison a test cannot move is a measurement of the machine.
+
+**A removal that raced a compressor.** `FileAuditStore.degradation` deletes the
+audit directory between scheduling a compression and calling `close()`, to assert
+that a compressor whose source vanished cannot reject. The compressor's
+`open(…, 'wx')` runs on a libuv thread, so it can recreate a file between the
+`rmSync`'s `unlink` and its `rmdir` — `ENOTEMPTY`, an error about the removal
+standing in for the case about the compressor. The removal now retries
+(`maxRetries`), and the assertion is unchanged: what the case is about is a
+directory that is gone.
+
+**A port the kernel was still handing out.** The cross-cluster job failed with
+`EADDRINUSE: 127.0.0.1:38473` — 38473 is inside Linux's ephemeral range
+(32768–60999). The harness asked the kernel for port 0, read the number, closed
+the socket, and handed that number to a child that binds *later*; between the two
+any outbound connection on the runner may take it. `cluster` solved this for
+itself with a per-run lease (`AC 52.1`–`52.6`); the e2e harness now draws from its
+own window instead of the ephemeral pool: `PORT_BASE = 20000`, one 2000-port
+window per vitest worker, eight ports reserved per allocation, each probed before
+it is handed over. Two workers cannot overlap by construction, and no port the
+kernel hands out on its own is in the range. The window is arithmetic rather than
+an acceptance criterion, so what the harness contract asserts is the arithmetic
+(six allocations, six distinct ports, all below 32768) and the probe it rests on
+(a port another socket holds is `busy`, and `free` once it is released).
+
+**The one that is still unexplained.** The `Coverage (e2e harness)` job failed
+`AC-C15` on ordering — the peer applied `0/00000004` before `0/00000003`. The
+same suite passed on the next push and in three local runs, and the pump is
+sequential: it awaits each `send`, refuses at the head, and `pendingKey` is
+zero-padded precisely so the queue cannot be reordered. So the claim was split
+into the two it always was — the writer now reports every position it appends,
+the case asserts the log's order first and the reader's agreement with it second.
+A failure now says which side moved. Until one recurs, the mechanism is
+registered as `P3-68` rather than declared absent.
