@@ -95,12 +95,32 @@ function passthrough(overrides: Partial<IStorageBackend>): IStorageBackend {
   };
 }
 
-function manager(retention?: RetentionPolicy, source?: IBackupSource, backend?: IStorageBackend): BackupManager {
+/**
+ * A clock the test can spend.
+ *
+ * The two budget cases are about a comparison, not about how long a runner takes: with the
+ * wall clock, "the capture overran" was a claim about the machine — and on a loaded CI runner
+ * the capture of one small file took longer than the 1 ms budget, so the upload case measured
+ * the capture instead. `skewMs` is what the manager believes has passed, and the step under
+ * test is what moves it.
+ */
+function movableClock(): { skew: { ms: number }; clock: () => Date } {
+  const start = Date.parse('2026-01-01T00:00:00.000Z');
+  const skew = { ms: 0 };
+  return { skew, clock: () => new Date(start + skew.ms) };
+}
+
+function manager(
+  retention?: RetentionPolicy,
+  source?: IBackupSource,
+  backend?: IStorageBackend,
+  clock?: () => Date,
+): BackupManager {
   return new BackupManager(
     source ?? new DirectoryBackupSource(dataDir),
     backend ?? storage,
     new RetentionPolicyEvaluator(retention ?? { maxFullSnapshots: 100, maxTotalBytes: 0 }),
-    { workDir },
+    { workDir, clock },
   );
 }
 
@@ -229,21 +249,19 @@ describe('AC 95 — refusals', () => {
   });
 
   it('BM.10: a capture that outlives its budget is refused', async () => {
+    const { skew, clock } = movableClock();
     const slow: IBackupSource = {
       name: 'slow',
       async capture(destination: string): Promise<SnapshotCapture> {
-        const started = Date.now();
-        while (Date.now() - started < 30) {
-          // A short real wait rather than a fake clock: the budget is checked against
-          // the same clock the capture is measured by.
-          await new Promise((resolve) => setTimeout(resolve, 5));
-        }
+        // The capture is what spends the budget, and it spends exactly this much of it: a
+        // real wait would be a wait on the runner, which is what made this case a coin toss.
+        skew.ms = 30;
         writeFileSync(destination, 'x');
         return { bytes: 1, files: 1 };
       },
       async restore(): Promise<void> {},
     };
-    const result = await manager(undefined, slow).createBackup({ type: 'full', timeoutMs: 1 });
+    const result = await manager(undefined, slow, undefined, clock).createBackup({ type: 'full', timeoutMs: 1 });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/the capture took longer than 1 ms/);
   });
@@ -621,13 +639,14 @@ describe('AC 95 — the budget covers the upload too', () => {
     // The capture is immediate; the bucket is not. A budget that only covered the
     // capture would let a backup spend a minute in a slow bucket and still report
     // success, which is the one thing a timeout is for.
+    const { skew, clock } = movableClock();
     const slowBucket = passthrough({
       upload: async (sourcePath: string, destKey: string) => {
-        await new Promise((resolve) => setTimeout(resolve, 40));
+        skew.ms = 40;
         await storage.upload(sourcePath, destKey);
       },
     });
-    const result = await manager(undefined, undefined, slowBucket).createBackup({ type: 'full', timeoutMs: 1 });
+    const result = await manager(undefined, undefined, slowBucket, clock).createBackup({ type: 'full', timeoutMs: 1 });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/the upload finished after the 1 ms budget/);
   });

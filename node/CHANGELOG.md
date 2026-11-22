@@ -68,6 +68,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The backup budget is measured on the manager's clock.** `createBackup` compared `Date.now()`
+  against the deadline after the capture and again after the upload, so a budget was a measurement of
+  the machine: on a loaded CI runner the capture of one small file outlived a 1 ms budget, and the case
+  that is about a slow *upload* failed with `the capture took longer than 1 ms`. Both checks now read
+  `this.clock()` — the clock the manager already stamps `createdAt` with — so a test moves the budget
+  from inside the step it is about, and a caller that injects a clock gets one consistent notion of
+  time for the id, the timestamp and the budget.
 - **`verify()` no longer attests to a segment it could not read.** A segment whose bytes could not be
   recovered used to be folded into the empty string, so a trail consisting of one truncated archive
   verified as `ok: true, entries: 0` — a report of "intact" about evidence the store never saw. A read

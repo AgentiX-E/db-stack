@@ -591,7 +591,11 @@ export class BackupManager implements IBackupManager {
     const id = `snap-${this.clock().getTime().toString(36)}-${(sequence += 1).toString(36)}-${randomUUID().slice(0, 8)}`;
     const staging = join(this.workDir, `${id}.artifact`);
     const key = `${this.prefix}/${options.type}/${id}.artifact`;
-    const deadline = options.timeoutMs === undefined ? null : Date.now() + options.timeoutMs;
+    // The manager's own clock, like every other timestamp it writes. A budget measured on
+    // `Date.now()` is a budget a test cannot spend: the capture and the upload are timed by
+    // wall-clock reads this class does not own, so "the upload overran" was a claim about
+    // how loaded the runner was. With the clock injected, the test moves it.
+    const deadline = options.timeoutMs === undefined ? null : this.clock().getTime() + options.timeoutMs;
 
     const snapshot: BackupMetadata = {
       snapshotId: id,
@@ -616,7 +620,7 @@ export class BackupManager implements IBackupManager {
 
       await mkdir(this.workDir, { recursive: true });
       const capture = await this.source.capture(staging);
-      if (deadline !== null && Date.now() > deadline) {
+      if (deadline !== null && this.clock().getTime() > deadline) {
         throw new Error(`the capture took longer than ${options.timeoutMs} ms`);
       }
 
@@ -630,7 +634,7 @@ export class BackupManager implements IBackupManager {
       const { sha256 } = await hashFile(staging);
 
       await this.storage.upload(staging, key);
-      if (deadline !== null && Date.now() > deadline) {
+      if (deadline !== null && this.clock().getTime() > deadline) {
         throw new Error(`the upload finished after the ${options.timeoutMs} ms budget`);
       }
 
