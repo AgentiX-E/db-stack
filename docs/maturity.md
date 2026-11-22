@@ -1418,3 +1418,15 @@ window, and the receiver applies before it confirms. Those waits were rewritten 
 wait for the confirmation — the assertion that survived is stronger, because
 "delivered" and "applied" are now two processes' answers to the same question rather
 than one process's answer to itself.
+
+**A refusal has to say which refusal it is.** The acknowledgement work turned an
+old ambiguity into a defect: `processInbound()` answered `accepted: false` for both
+a duplicate and a payload that will never decode, and a caller that confirms
+duplicates — the correct thing to do for a real one — would then tell the sender a
+change had landed that never did. The reason is now part of the answer, the ring
+is the record of what has been *applied* (so an undecodable frame is removed from
+it, and its retry is judged again rather than suppressed), and the relay answers
+the two differently: a duplicate is confirmed, an undecodable frame is refused with
+the receiver's reason and keeps being refused until the sender's own budget puts it
+in the dead-letter queue. `ACK.21` pins the first half; `ACK.4` already pinned what
+the sender does with a refusal.

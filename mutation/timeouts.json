@@ -9,20 +9,7 @@
     "federation": {
       "capMs": 30000,
       "resolvedOn": "2026-11-18",
-      "entries": [
-        {
-          "file": "federation/src/transport/TcpSecureTransport.ts",
-          "line": 526,
-          "mutator": "EqualityOperator",
-          "replacement": "synthetic !== localId",
-          "reason": "Hit limit reached (4901/4900)",
-          "id": "218",
-          "verdict": "stuck",
-          "detail": "no test reported anything before the cap",
-          "evidence": "30088ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
-        }
-      ]
+      "entries": []
     },
     "node": {
       "capMs": 30000,
