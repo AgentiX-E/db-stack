@@ -199,6 +199,8 @@ describe('ExactlyOnceCDCPipeline — entries a producer wrote, not the ones it s
       transport: carrier,
       remoteNodeId: 'dc-b',
       pumpIntervalMs: 10,
+      // The carrier only records; the acknowledged path has its own suite.
+      acknowledgement: 'none',
     });
     cleanups.push(() => pipeline.cleanup());
 
@@ -237,6 +239,8 @@ describe('ExactlyOnceCDCPipeline — entries a producer wrote, not the ones it s
       transport: carrier,
       remoteNodeId: 'dc-b',
       pumpIntervalMs: 10,
+      // The carrier only records; the acknowledged path has its own suite.
+      acknowledgement: 'none',
     });
     cleanups.push(() => pipeline.cleanup());
 
@@ -300,6 +304,8 @@ describe('ExactlyOnceCDCPipeline — entries a producer wrote, not the ones it s
       transport: carrier,
       remoteNodeId: 'dc-b',
       pumpIntervalMs: 10,
+      // The carrier only records; the acknowledged path has its own suite.
+      acknowledgement: 'none',
     });
     cleanups.push(() => pipeline.cleanup());
 

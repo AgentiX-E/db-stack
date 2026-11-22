@@ -189,8 +189,20 @@ export function renderPipelineMetrics(metrics: CDCPipelineMetrics, labels: Metri
     ),
     ...counter(
       'cdc_pipeline_sent_total',
-      'Outbox entries the peer or the transport accepted',
+      'Outbox entries the peer confirmed (or the transport accepted, under acknowledgement=none)',
       metrics.outboxDelivered,
+      labels,
+    ),
+    ...counter(
+      'cdc_pipeline_acks_total',
+      'Confirmations received from the peer, applied or refused',
+      metrics.acksReceived,
+      labels,
+    ),
+    ...counter(
+      'cdc_pipeline_ack_timeouts_total',
+      'Frames a pump cycle stopped waiting for; the entry stays pending',
+      metrics.ackTimeouts,
       labels,
     ),
     ...counter(

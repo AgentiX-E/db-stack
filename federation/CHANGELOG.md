@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A change is delivered when the peer says it was applied.** `ITransport.send()` resolves `true`
+  when the local socket took the bytes, and a TCP write into a connection whose peer has gone is
+  accepted by the kernel — an acceptance run reported twenty changes delivered and thirteen applied,
+  with `refusals: 0` and `deadLetterCount: 0`, because nothing had failed as far as the sender could
+  tell. `ExactlyOnceCDCPipeline` now waits for a `cdc_ack` frame matched by message id and marks the
+  entry delivered only on that answer; a refusal fails it immediately with the peer's reason, a
+  silence fails it after `ackTimeoutMs`, and a stop releases the wait without charging an attempt.
+  `acknowledge(inbound, refusal?)` is called by the receiving node's caller **after** its own durable
+  write, because an ack sent before the apply is the same lie one layer up. `processInbound()` still
+  answers nothing. `acknowledgement: 'none'` keeps the old meaning for a peer that cannot answer.
+  `buildAckFrame`, `parseAck` and `CDC_ACK_TYPE` are exported so a peer can be written against this
+  package instead of re-deriving the frame.
+- **`CDCPipelineMetrics.acksReceived` / `ackTimeouts`**, exposed as
+  `db_federation_cdc_pipeline_acks_total` and `..._ack_timeouts_total`. A rising timeout count beside
+  a flat `sent` is a peer that is reachable and not applying, which no counter could say before.
+
+
 - **`@agentix-e/db-federation/testing`
   `CDCFailureInjector` implements `ICDCSink` and had no entry point and no production caller; it now
   ships from a subpath, because the delivery rules this package promises are only checkable by a
@@ -80,6 +97,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   317 type errors were sitting under it.
 
 ### Changed
+
+- **The outbox's retry budget is a window, not an attempt count.** A failed attempt now starts a
+  window measured from the *first* failure (default 60 s), retries inside it back off from
+  `retryBackoffMs` (default 50 ms) to `retryBackoffMaxMs` (default 2 s), and the head of the queue
+  waits for its turn instead of being retried on every pump tick. `maxRetries` keeps its meaning as
+  an optional hard cap and loses its default of 3 — at a 20 ms pump interval that default was sixty
+  milliseconds of outage before changes started moving to the dead-letter queue, and a peer that was
+  restarting came back to a queue of them.
+
 
 - **The documentation ships in the tarball.** `files` listed `dist`, `README.md` and
   `CHANGELOG.md`, so `docs/api-reference.md` and the new `docs/testing.md` were absent from

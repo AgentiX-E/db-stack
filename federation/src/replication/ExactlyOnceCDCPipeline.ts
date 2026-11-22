@@ -6,14 +6,17 @@
  *   [CDCEngine] ──(LSN-ordered)──→ [OutboxStore] ──(adapter)──→ [Transport]
  *                                         ↑                         ↓
  *                                   [CheckpointManager]      [DedupRing (rw)]
- *                                         ↑                    ↓ ack/noop
- *                                   [Durable LSN state]    [Consumer callback]
+ *                                         ↑                       ↓ event
+ *                                   [Durable LSN state]          [Consumer]
+ *                                         ↑                       ↓ apply
+ *                                         └────── ack ────────[acknowledge()]
  *
  * Guarantees:
  *   G1 — Each LSN is processed at least once (OutboxStore persistence)
  *   G2 — Each LSN is delivered at most once (DedupRing on receiver)
  *   G3 — No gaps: LSN checkpoint is monotonic and crash-recoverable
- *   G4 — Durable ack: consumer confirms before checkpoint advances
+ *   G4 — Durable ack: the receiving node confirms after its own apply, and the
+ *        sender's checkpoint advances only on that confirmation
  *   G5 — Backpressure via pending queue depth threshold
  *
  * CheckpointManager — Durable LSN tracking:
@@ -29,20 +32,23 @@
  *   4. For each entry:
  *      a. Serialize → TransportMessage
  *      b. Send via ITransport
- *      c. On acknowledgment: OutboxStore.markDelivered()
- *      d. Advance checkpoint to this LSN
+ *      c. Wait for the peer's `cdc_ack` (or a timeout)
+ *      d. On acknowledgement: OutboxStore.markDelivered() + advance checkpoint
+ *      e. On refusal or timeout: markFailed() and end the cycle at this entry
  *   5. Receiver side:
  *      a. DedupRing.contains(msgId) — skip if duplicate
- *      b. If not duplicate: deliver to consumer callback
- *      c. DedupRing.put(msgId) — mark seen
- *      d. Send ACK back
+ *      b. If not duplicate: hand the event to the consumer
+ *      c. Consumer applies it durably, then calls acknowledge(message)
+ *      d. The ack travels back as a `cdc_ack` frame on the same transport
  *
  * Recovery:
  *   - Sender restarts: OutboxStore.fetchOldestPending() → retry
  *   - Receiver restarts: DedupRing is empty (TTL-based), but OutboxStore
- *     on sender side knows which were delivered via markDelivered
+ *     on sender side knows which were acknowledged
  *   - Crash mid-send: entry stays pending → retry →
- *     receiver sees duplicate via DedupRing → noop → ACK
+ *     receiver sees duplicate via DedupRing → noop → acks again
+ *   - Acks lost in a partition: entry stays pending → retry → the receiver
+ *     deduplicates and answers again. A duplicate is recoverable; a gap is not.
  */
 
 import { CDCEngine, type CDCEngineConfig } from './CDCEngine';
@@ -55,6 +61,8 @@ import type { ITransport } from '../interfaces/transport/ITransport';
 import type { ICDCEngine, CDCChangeEvent } from '../interfaces/replication/ICDCManager';
 import { compareLsn, parseLsn } from '../interfaces/replication/IChangeLogReader';
 import type { TransportMessage } from '../interfaces/transport/TransportMessage';
+import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
+import { buildAckFrame, CDC_ACK_TYPE, parseAck, type CdcAckVerdict } from './cdcAck';
 
 // ── Constants ──────────────────────────────────────────────
 
@@ -95,6 +103,28 @@ export interface ExactlyOnceCDCPipelineConfig {
   pumpBatchSize?: number;
   /** Max pending entries before backpressure kicks in — default 10_000 */
   maxPending?: number;
+  /**
+   * What "delivered" means to this pipeline.
+   *
+   * - `'peer'` (default) — the receiving node confirmed it **applied** the
+   *   change, by sending a `cdc_ack` frame back. An entry stays pending until
+   *   that confirmation arrives, so the outbox cannot report a delivery that a
+   *   reset connection swallowed.
+   * - `'none'` — the transport took the frame. This is the weaker contract, and
+   *   it is a real one: a TCP write into a connection whose peer has gone is
+   *   accepted by the local kernel. It is here for a peer that cannot answer
+   *   (a write-only sink, a bridge to a system without a reply path), and a
+   *   deployment that chooses it is choosing "at-least-once onto the wire".
+   */
+  acknowledgement?: 'peer' | 'none';
+  /**
+   * How long to wait for one peer acknowledgement — default 5 000 ms.
+   *
+   * One clock for the whole in-flight batch: the frames of a cycle are sent in
+   * order and their acks arrive in order, so the wait is a round trip plus the
+   * receiver's apply, not a round trip per change.
+   */
+  ackTimeoutMs?: number;
 }
 
 /** Resolved config with all optional fields filled with defaults. */
@@ -110,6 +140,8 @@ type ResolvedCDCPipelineConfig = {
   pumpIntervalMs: number;
   pumpBatchSize: number;
   maxPending: number;
+  acknowledgement: 'peer' | 'none';
+  ackTimeoutMs: number;
 };
 
 export interface CDCCheckpoint {
@@ -145,6 +177,16 @@ export interface CDCPipelineMetrics {
   deadLetterCount: number;
   /** Pump active flag */
   pumpActive: boolean;
+  /**
+   * Confirmations this sender received.
+   *
+   * Not the same as `outboxDelivered`: an ack that refuses an entry, or one that
+   * arrives for a frame already retried, answers without delivering. It is the
+   * counter that makes "the peer is talking to me" measurable on its own.
+   */
+  acksReceived: number;
+  /** Frames a cycle stopped waiting for. The entry stays pending. */
+  ackTimeouts: number;
 }
 
 // ── Events ─────────────────────────────────────────────────
@@ -231,6 +273,28 @@ export class ExactlyOnceCDCPipeline {
   /** Why the last append failed, or null. Visible so a refusal is not silent. */
   private lastAppendError: string | null = null;
 
+  /**
+   * Frames sent and not yet answered, by message id.
+   *
+   * Registered *before* `send()` is awaited: an in-process transport delivers the
+   * peer's answer inside the same tick, and an ack that arrives before there is
+   * anything to match it against is a lost ack — the entry would then wait out the
+   * full timeout and be marked failed after the peer had applied it.
+   */
+  private readonly awaitingAck = new Map<
+    string,
+    { settle: (verdict: CdcAckVerdict) => void; timer: ReturnType<typeof setTimeout> }
+  >();
+
+  /** The transport subscription that carries acks back. Detached on `stop()`. */
+  private detachAcks: (() => void) | null = null;
+
+  /** The cycle in flight, so a stop can wait for it instead of racing it. */
+  private cycleInFlight: Promise<void> | null = null;
+
+  private acksReceived = 0;
+  private ackTimeouts = 0;
+
   // ── Constructor ──────────────────────────────────────────
 
   constructor(config: ExactlyOnceCDCPipelineConfig) {
@@ -250,6 +314,8 @@ export class ExactlyOnceCDCPipeline {
       pumpIntervalMs: config.pumpIntervalMs ?? 500,
       pumpBatchSize: config.pumpBatchSize ?? 100,
       maxPending: config.maxPending ?? 10_000,
+      acknowledgement: config.acknowledgement ?? 'peer',
+      ackTimeoutMs: config.ackTimeoutMs ?? 5_000,
     };
 
     this.cdc = this.config.engine ?? new CDCEngine(this.config.cdcConfig);
@@ -270,6 +336,15 @@ export class ExactlyOnceCDCPipeline {
       this.onCDCEvent(event);
     });
 
+    // Listen for the peer's confirmations before the first frame leaves, so a
+    // cycle that starts immediately cannot miss an ack that arrives immediately.
+    const transport = this.config.transport;
+    if (transport && this.config.acknowledgement === 'peer') {
+      this.detachAcks = transport.onMessage((message) => {
+        if (message.type === CDC_ACK_TYPE) this.onAckFrame(message);
+      });
+    }
+
     // Start CDC engine
     await this.cdc.start();
 
@@ -285,6 +360,13 @@ export class ExactlyOnceCDCPipeline {
 
   async stop(): Promise<void> {
     this.stopPump();
+    // Waiting is not failing. A cycle that is blocked on an ack is released with
+    // `aborted`, so the entry keeps its place and is not charged an attempt for
+    // the shutdown.
+    this.releaseAcks('the pipeline stopped before the peer acknowledged');
+    this.detachAcks?.();
+    this.detachAcks = null;
+    await this.cycleInFlight;
     await this.cdc.stop();
     // A graceful stop waits for the appends already accepted from the engine:
     // dropping them would lose changes the log still reports as produced.
@@ -334,6 +416,12 @@ export class ExactlyOnceCDCPipeline {
    * false if it was a duplicate (exactly-once guarantee).
    *
    * G2 — At-most-once delivery via DedupRing
+   *
+   * This does **not** acknowledge anything. An ack means "applied", and applying
+   * is the caller's next line. A pipeline that acked here would turn a crash
+   * between the callback and the caller's write into a silent lost change — the
+   * same defect this method's counterpart on the sender side was written to
+   * remove, moved one layer up where it is harder to see.
    */
   processInbound(message: TransportMessage): {
     accepted: boolean;
@@ -379,6 +467,96 @@ export class ExactlyOnceCDCPipeline {
       });
       return { accepted: false };
     }
+  }
+
+  // ── Acknowledgement (receiver side) ──────────────────────
+
+  /**
+   * Tell the sending node that this one applied the change.
+   *
+   * Call it **after** the apply is durable, for both outcomes of
+   * `processInbound`: an accepted change has just been written, and a duplicate
+   * has been written already — both are reasons the sender may stop retrying. If
+   * the apply fails, pass the reason and the sender fails the entry on the spot
+   * instead of waiting out a timeout for each attempt.
+   *
+   * Returns what the transport said about the ack itself: `false` means the
+   * confirmation did not reach the wire, and the sender will retry, which the
+   * dedup ring turns into a repeat rather than a second write.
+   *
+   * Throws when this pipeline has no transport. A node that cannot send cannot
+   * confirm, and answering `false` would look like a refusal rather than a
+   * misconfiguration.
+   */
+  async acknowledge(inbound: TransportMessage, refusal?: string): Promise<boolean> {
+    const transport = this.config.transport;
+    if (!transport) {
+      throw new Error(
+        `pipeline ${this.config.nodeId} has no transport, so it cannot confirm ` +
+          `${inbound.messageId} to ${inbound.sourcePeerId}`,
+      );
+    }
+    const frame = buildAckFrame(inbound, this.config.nodeId, new HLC(this.config.nodeId).now(), refusal);
+    return transport.send(frame);
+  }
+
+  /**
+   * Match an inbound confirmation to the frame it answers.
+   *
+   * An ack for an id nobody is waiting for is dropped, and that is not an error:
+   * a retry that timed out and was re-sent re-uses the message id — the id is the
+   * change's — so the late ack arrives after the wait it belonged to has ended.
+   */
+  private onAckFrame(message: TransportMessage): void {
+    const waiting = this.awaitingAck.get(message.messageId);
+    if (waiting === undefined) return;
+    this.awaitingAck.delete(message.messageId);
+    clearTimeout(waiting.timer);
+    this.acksReceived += 1;
+    waiting.settle(parseAck(message.payload, message.messageId));
+  }
+
+  /** Start waiting for the ack of one frame. */
+  private expectAck(msgId: string): Promise<CdcAckVerdict> {
+    return new Promise<CdcAckVerdict>((settle) => {
+      const timer = setTimeout(() => {
+        // The ack may have settled this while the timer was already queued.
+        if (this.awaitingAck.get(msgId)?.timer !== timer) return;
+        this.awaitingAck.delete(msgId);
+        this.ackTimeouts += 1;
+        settle({
+          ok: false,
+          error: `no acknowledgement for ${msgId} within ${this.config.ackTimeoutMs} ms`,
+        });
+      }, this.config.ackTimeoutMs);
+      // An unanswered frame must not keep a shutting-down process alive.
+      timer.unref?.();
+      this.awaitingAck.set(msgId, { settle, timer });
+    });
+  }
+
+  /**
+   * Stop waiting for every in-flight frame without learning anything.
+   *
+   * `aborted` rather than `ok: false`: the peer has not refused, and charging the
+   * entry an attempt for our own shutdown would spend a retry budget on a
+   * decision the peer never saw.
+   */
+  private releaseAcks(reason: string): void {
+    for (const [msgId, waiting] of [...this.awaitingAck]) {
+      this.awaitingAck.delete(msgId);
+      clearTimeout(waiting.timer);
+      waiting.settle({ ok: false, error: `${reason} (${msgId})`, aborted: true });
+    }
+  }
+
+  /** Abandon one frame: its send was refused or threw, so nothing will answer. */
+  private abandonAck(msgId: string, reason: string): void {
+    const waiting = this.awaitingAck.get(msgId);
+    if (waiting === undefined) return;
+    this.awaitingAck.delete(msgId);
+    clearTimeout(waiting.timer);
+    waiting.settle({ ok: false, error: reason, aborted: true });
   }
 
   // ── Checkpoint (G3: crash-recoverable LSN) ───────────────
@@ -475,6 +653,8 @@ export class ExactlyOnceCDCPipeline {
       checkpoints: { ...this.checkpoint.lastConfirmedLSN },
       deadLetterCount: this.outbox.getDeadLetterStats().count,
       pumpActive: this.pumpActive,
+      acksReceived: this.acksReceived,
+      ackTimeouts: this.ackTimeouts,
     };
   }
 
@@ -594,16 +774,28 @@ export class ExactlyOnceCDCPipeline {
     this.pumpActive = false;
   }
 
-  private async pumpCycle(): Promise<void> {
-    if (this.pumpActive) return;
+  /**
+   * One pump cycle, at most one at a time.
+   *
+   * The in-flight promise is kept so `stop()` can wait for a cycle that is
+   * blocked on a peer's answer instead of closing the outbox underneath it — with
+   * acknowledgements on, a cycle can be waiting for seconds, which is exactly
+   * when a caller decides to shut down.
+   */
+  private pumpCycle(): Promise<void> {
+    if (this.pumpActive) return this.cycleInFlight ?? Promise.resolve();
     this.pumpActive = true;
+    this.cycleInFlight = this.runPumpCycle().finally(() => {
+      this.pumpActive = false;
+      this.cycleInFlight = null;
+    });
+    return this.cycleInFlight;
+  }
 
+  private async runPumpCycle(): Promise<void> {
     try {
       const transport = this.config.transport;
-      if (!transport) {
-        this.pumpActive = false;
-        return;
-      }
+      if (!transport) return;
 
       // G5: Backpressure if pending exceeds maxPending
       const pendingCount = await this.outbox.getPendingCount();
@@ -618,97 +810,185 @@ export class ExactlyOnceCDCPipeline {
       // G1: Fetch oldest pending entries (FIFO order)
       const entries = await this.outbox.fetchOldestPending(this.config.pumpBatchSize);
 
-      for (const entry of entries) {
-        try {
-          // Build transport message matching TransportMessage interface.
-          //
-          // The id is the *message* id when the caller supplied one — the
-          // receiver deduplicates on it — and the store's local sequence only
-          // as a fallback for entries written without one.
-          const msg: TransportMessage = {
-            messageId: messageIdOf(entry),
-            sourcePeerId: this.config.nodeId,
-            targetPeerId: this.config.remoteNodeId ?? '',
-            payload: entry.payload,
-            timestamp: entry.timestamp,
-            createdAt: entry.createdAt,
-            type: `${CDC_TYPE_PREFIX}${lsnOf(entry)}`,
-          };
-
-          // G1: Send — if transport fails, entry stays pending (retry)
-          //
-          // The refusal has to be acted on here. `send()` returns false when the
-          // transport cannot reach the peer, and the previous code discarded
-          // that answer and marked the entry delivered anyway — the one comment
-          // in this file that promised at-least-once delivery sat directly above
-          // the line that turned it into at-most-once. A refused entry now goes
-          // to the catch below, which keeps it pending and retries it until the
-          // outbox moves it to the dead-letter queue.
-          const sent = await transport.send(msg);
-          if (!sent) {
-            throw new Error(`Transport refused message to ${msg.targetPeerId}`);
-          }
-
-          // G4: Mark delivered after successful transport
-          await this.outbox.markDelivered(entry.id);
-
-          // G3: Advance checkpoint — from the event's own LSN, decoded from the
-          // payload. This read `entry.id.split(':')[0]`, and `entry.id` is
-          // `entry:12`, so every checkpoint the pump wrote said `"entry"`: a
-          // position that is not one, equal to itself for ever, and therefore
-          // never advanced. `markDelivered` kept the outbox honest, but the
-          // resume point a restart relies on was a constant string.
-          try {
-            const decoder = new TextDecoder();
-            const event = JSON.parse(decoder.decode(entry.payload)) as CDCChangeEvent;
-            this.advanceCheckpoint(event.tableName, event.lsn);
-          } catch {
-            // Skip checkpoint advance if payload can't be decoded
-          }
-        } catch (err) {
-          const errorMsg = describeError(err);
-
-          // Mark as failed — OutboxStore handles maxRetries → dead letter
-          const movedToDLQ = this.outbox.markFailed(entry.id, errorMsg);
-
-          this.emit('pump_error', {
-            type: 'pump_error',
-            error: errorMsg,
-            msgId: messageIdOf(entry),
-            lsn: lsnOf(entry),
-            timestamp: Date.now(),
-          });
-
-          if (movedToDLQ) {
-            this.emit('event_failed', {
-              type: 'event_failed',
-              error: `Moved to dead letter after max retries`,
-              msgId: messageIdOf(entry),
-              timestamp: Date.now(),
-            });
-          } else {
-            // The head of the outbox is still pending, so the cycle ends here.
-            //
-            // This loop used to `markFailed` and keep walking: entry 4's send
-            // was refused, entries 5 and 6 were sent, and 4's retry landed after
-            // them. The outbox was FIFO and the wire was not, so the receiver —
-            // which appends in arrival order — recorded 1, 2, 3, 5, 6, 4. `e2e`
-            // AC-C15 saw it once on a loaded runner; AC 47.11 reproduces it with
-            // a transport that refuses exactly once. An entry that has moved to
-            // the dead letter is no longer at the head, which is why that branch
-            // above still continues.
-            break;
-          }
-        }
-      }
+      if (this.config.acknowledgement === 'peer') await this.pumpAcknowledged(transport, entries);
+      else await this.pumpUnacknowledged(transport, entries);
     } catch (err) {
       this.emit('pump_error', {
         type: 'pump_error',
         error: describeError(err),
         timestamp: Date.now(),
       });
-    } finally {
-      this.pumpActive = false;
+    }
+  }
+
+  /** The frame one outbox entry travels as. */
+  private frameOf(entry: OutboxEntry): TransportMessage {
+    // The id is the *message* id when the caller supplied one — the receiver
+    // deduplicates on it — and the store's local sequence only as a fallback for
+    // entries written without one.
+    return {
+      messageId: messageIdOf(entry),
+      sourcePeerId: this.config.nodeId,
+      targetPeerId: this.config.remoteNodeId ?? '',
+      payload: entry.payload,
+      timestamp: entry.timestamp,
+      createdAt: entry.createdAt,
+      type: `${CDC_TYPE_PREFIX}${lsnOf(entry)}`,
+    };
+  }
+
+  /**
+   * `acknowledgement: 'none'` — the transport's answer is the delivery.
+   *
+   * The weaker contract, chosen explicitly. It is still the right shape for a
+   * peer that cannot answer, and it is still at-least-once onto the wire: a
+   * refusal keeps the entry pending and ends the cycle.
+   */
+  private async pumpUnacknowledged(transport: ITransport, entries: OutboxEntry[]): Promise<void> {
+    for (const entry of entries) {
+      // A peer that cannot take the head cannot take what is behind it.
+      if (isWaitingOutBackoff(entry)) break;
+
+      try {
+        const msg = this.frameOf(entry);
+
+        // G1: Send — if transport fails, entry stays pending (retry)
+        //
+        // The refusal has to be acted on here. `send()` returns false when the
+        // transport cannot reach the peer, and the previous code discarded that
+        // answer and marked the entry delivered anyway — the one comment in this
+        // file that promised at-least-once delivery sat directly above the line
+        // that turned it into at-most-once.
+        const sent = await transport.send(msg);
+        if (!sent) {
+          throw new Error(`Transport refused message to ${msg.targetPeerId}`);
+        }
+
+        await this.outbox.markDelivered(entry.id);
+        this.advanceFromPayload(entry);
+      } catch (err) {
+        // Mark as failed. The outbox moves it to the dead letter when the retry
+        // budget is spent, and the cycle continues past it because it is no
+        // longer at the head; otherwise the cycle stops here, at the head.
+        //
+        // This loop used to `markFailed` and keep walking: entry 4's send was
+        // refused, entries 5 and 6 were sent, and 4's retry landed after them.
+        // The outbox was FIFO and the wire was not, so the receiver — which
+        // appends in arrival order — recorded 1, 2, 3, 5, 6, 4. `e2e` AC-C15 saw
+        // it once on a loaded runner; AC 47.11 reproduces it with a transport
+        // that refuses exactly once.
+        if (!this.failEntry(entry, describeError(err))) break;
+      }
+    }
+  }
+
+  /**
+   * `acknowledgement: 'peer'` — the peer's answer is the delivery.
+   *
+   * The frames of one cycle go out in order and are then awaited together: one
+   * connection, one round trip, and the receiver answers in the order it applied.
+   * An entry is marked delivered only when the peer said it did, which is the
+   * difference between this method and the one above — and the reason a frame
+   * written into a connection the peer had abandoned no longer counts as a
+   * delivery.
+   */
+  private async pumpAcknowledged(transport: ITransport, entries: OutboxEntry[]): Promise<void> {
+    const inFlight: Array<{ entry: OutboxEntry; verdict: Promise<CdcAckVerdict> }> = [];
+
+    for (const entry of entries) {
+      if (isWaitingOutBackoff(entry)) break;
+
+      const msg = this.frameOf(entry);
+      const verdict = this.expectAck(msg.messageId);
+
+      let accepted: boolean;
+      try {
+        accepted = await transport.send(msg);
+      } catch (err) {
+        const reason = describeError(err);
+        this.abandonAck(msg.messageId, reason);
+        this.failEntry(entry, reason);
+        return;
+      }
+      if (!accepted) {
+        const reason = `Transport refused message to ${msg.targetPeerId}`;
+        this.abandonAck(msg.messageId, reason);
+        this.failEntry(entry, reason);
+        return;
+      }
+
+      inFlight.push({ entry, verdict });
+    }
+
+    if (inFlight.length === 0) return;
+
+    const answered = await Promise.all(
+      inFlight.map(async (item) => ({ entry: item.entry, verdict: await item.verdict })),
+    );
+
+    for (const { entry, verdict } of answered) {
+      if (verdict.ok) {
+        await this.outbox.markDelivered(entry.id);
+        this.advanceFromPayload(entry);
+        continue;
+      }
+      // Waiting is not failing: a cycle cut short by `stop()` must not spend an
+      // attempt on a decision the peer never made.
+      if (verdict.aborted) return;
+
+      this.failEntry(entry, verdict.error ?? 'the peer did not confirm the change');
+      // Everything behind it was sent as well and stays pending. Those changes
+      // were very likely applied — the receiver deduplicates the repeat and
+      // answers it — but marking them delivered here would let the checkpoint
+      // move past an entry that is still owed. A duplicate is recoverable; a gap
+      // is not.
+      return;
+    }
+  }
+
+  /**
+   * Charge one failed attempt and say whether the entry left the queue.
+   *
+   * Extracted because the acknowledged and unacknowledged pumps both reach it,
+   * and two copies of "emit the error, then the dead-letter notice" is two
+   * chances for one of them to stop emitting.
+   */
+  private failEntry(entry: OutboxEntry, error: string): boolean {
+    const movedToDeadLetter = this.outbox.markFailed(entry.id, error);
+
+    this.emit('pump_error', {
+      type: 'pump_error',
+      error,
+      msgId: messageIdOf(entry),
+      lsn: lsnOf(entry),
+      timestamp: Date.now(),
+    });
+
+    if (movedToDeadLetter) {
+      this.emit('event_failed', {
+        type: 'event_failed',
+        error: 'Moved to dead letter after the retry budget was spent',
+        msgId: messageIdOf(entry),
+        timestamp: Date.now(),
+      });
+    }
+    return movedToDeadLetter;
+  }
+
+  /**
+   * G3: advance the checkpoint from the event's own LSN, decoded from the payload.
+   *
+   * This read `entry.id.split(':')[0]`, and `entry.id` is `entry:12`, so every
+   * checkpoint the pump wrote said `"entry"`: a position that is not one, equal
+   * to itself for ever, and therefore never advanced. `markDelivered` kept the
+   * outbox honest, but the resume point a restart relies on was a constant.
+   */
+  private advanceFromPayload(entry: OutboxEntry): void {
+    try {
+      const event = JSON.parse(new TextDecoder().decode(entry.payload)) as CDCChangeEvent;
+      this.advanceCheckpoint(event.tableName, event.lsn);
+    } catch {
+      // Skip checkpoint advance if payload can't be decoded
     }
   }
 
@@ -928,4 +1208,18 @@ function lsnOf(entry: { id: string; msgId?: string }): string {
 /** True when the engine is the simulator, which is the only one with `appendChange`. */
 export function isSimulatedEngine(engine: ICDCEngine): engine is CDCEngine {
   return engine instanceof CDCEngine;
+}
+
+/**
+ * True while an entry is inside its retry backoff.
+ *
+ * The cycle stops at such an entry rather than stepping over it. The outbox is
+ * ordered, so a peer that could not take entry 4 cannot take entry 5 either, and
+ * sending 5 first is precisely the disorder AC 47.11 was written for. Waiting is
+ * also the point of the backoff: at a 20 ms pump interval, a peer that is down
+ * for a second used to be asked fifty times.
+ */
+function isWaitingOutBackoff(entry: OutboxEntry): boolean {
+  const earliest = entry.nextAttemptAt;
+  return typeof earliest === 'number' && earliest > Date.now();
 }

@@ -108,6 +108,8 @@ describe('ExactlyOnceCDCPipeline — a real read end', () => {
       transport,
       remoteNodeId: 'remote-1',
       pumpIntervalMs: 10,
+      // The transport here only records; see the note in AC 47's config factory.
+      acknowledgement: 'none',
     });
     cleanups.push(() => pipeline.cleanup());
     await pipeline.start();
@@ -235,6 +237,7 @@ describe('ExactlyOnceCDCPipeline — a real read end', () => {
         },
         remoteNodeId: 'receiver',
         pumpIntervalMs: 10,
+        acknowledgement: 'none',
       });
       cleanups.push(() => sender.cleanup());
       await sender.start();
@@ -369,6 +372,8 @@ describe('ExactlyOnceCDCPipeline — a real read end', () => {
       transport,
       remoteNodeId: 'remote-1',
       pumpIntervalMs: 10,
+      // The transport here only records; see the note in AC 47's config factory.
+      acknowledgement: 'none',
     });
     cleanups.push(() => pipeline.cleanup());
     pipeline.onEvent(() => {

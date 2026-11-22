@@ -53,6 +53,12 @@ different qualities:
 The seam every other layer sends through. An implementation delivers
 `TransportMessage`s between nodes and reports its peers and counters.
 
+`send()` answers a question about **this** process: `true` means the frame
+reached a live socket, `false` means it did not. It cannot answer the question a
+replication protocol actually asks — did the peer apply it — because a TCP write
+into a connection whose peer has gone is accepted by the local kernel. That is
+what `cdc_ack` is for.
+
 ```typescript
 interface ITransport {
   send(message: TransportMessage): Promise<boolean>;
@@ -146,8 +152,8 @@ The LMDB-backed implementation. Every index — main entries, the pending queue,
 the delivery record, the sequence counter, the dead-letter queue and the
 `id`/`msgId` reverse index — lives in one environment, so an `add()` is a single
 transaction and a crash cannot leave an entry persisted but invisible to the
-delivery loop. Entries exceeding `maxRetries` move to the dead-letter queue
-instead of blocking the head of the queue.
+delivery loop. An entry that spends its retry budget moves to the dead-letter
+queue instead of blocking the head of the queue.
 
 ```typescript
 class OutboxStore implements IOutboxStore {
@@ -172,14 +178,26 @@ class OutboxStore implements IOutboxStore {
 ```
 
 `OutboxStoreConfig`: `dataDir` (required), `ttlMs?` (default 14 days),
-`maxRetries?` (default 3), `deadLetterTtlMs?` (default 7 days), `mapSize?`
-(default 1 GiB).
+`retryWindowMs?` (default 60 s), `maxRetries?` (no default — off), `retryBackoffMs?`
+(default 50 ms), `retryBackoffMaxMs?` (default 2 000 ms), `deadLetterTtlMs?`
+(default 7 days), `mapSize?` (default 1 GiB).
+
+**The retry budget is time, not attempts.** A failure starts a window that is
+measured from the *first* failure — an entry that waited a minute behind a busy
+peer has not spent that minute failing — and the entry is dead-lettered when the
+window is spent. Retries inside the window back off (doubling from
+`retryBackoffMs` to `retryBackoffMaxMs`), because a pump that retries the head of
+the queue once per tick asks a peer that is down fifty times a second. The
+previous default was `maxRetries: 3`, and at a 20 ms pump interval that was sixty
+milliseconds of outage before changes started moving to the dead-letter queue; an
+acceptance run lost nine changes to it. `maxRetries` still exists as an optional
+hard cap for a caller who wants three strikes on a fast link.
 
 `OutboxEntry` carries `id`, optional `msgId`, `targetPeerIds`, `payload`
 (`Uint8Array`), `timestamp` (an HLC), `type`, `status`
 (`'pending' | 'delivered' | 'failed'`) and attempt bookkeeping (`createdAt`,
-`lastAttemptAt`, `attemptCount`, `lastError`). `OutboxEntryInput` is that shape
-minus the fields the store owns.
+`lastAttemptAt`, `attemptCount`, `lastError`, `firstFailedAt`, `nextAttemptAt`).
+`OutboxEntryInput` is that shape minus the fields the store owns.
 
 ## Hybrid logical clock
 
@@ -600,30 +618,43 @@ const pump = new CDCSubscriptionPump({
 ### `ExactlyOnceCDCPipeline`
 
 Exactly-once delivery on top of an at-least-once transport. Outbound, a change is
-appended to the outbox before it is sent and the checkpoint advances only after the
-**transport accepts the frame**; inbound, the dedup ring rejects replays and the
-checkpoint file makes a restart resume instead of re-send.
+appended to the outbox before it is sent, and it is marked delivered only when the
+receiving node **confirms it applied the change**; inbound, the dedup ring rejects
+replays and the checkpoint file makes a restart resume instead of re-send.
 
-Two limits follow from that wording, and they are stated here because a deployment
-plans around them rather than discovering them:
+**Delivered means the peer said so.** `send()` answers `true` when the local socket
+took the bytes, and a TCP write into a connection whose peer has gone is accepted by
+the kernel — an acceptance run measured the gap: twenty changes reported delivered,
+thirteen applied, `refusals: 0`, `deadLetterCount: 0`. The pipeline now waits for a
+`cdc_ack` frame from the peer, matched by message id, and treats the four answers
+differently:
 
-- **An accepted frame is not an applied frame.** `send()` resolves `true` when the
-  local socket took the bytes, and a TCP write into a connection whose peer has gone
-  is accepted by the kernel. A reset therefore loses whatever was in flight while the
-  outbox records it delivered. Closing that gap needs the receiver to confirm — an ack,
-  not a write — which the transport does not have yet.
-- **A refused send costs one retry.** `OutboxStore` counts it as an attempt, and the
-  default `maxRetries` is 3, so at a 20 ms pump interval roughly 60 ms of peer absence
-  moves a change to the dead-letter queue. Raise `maxRetries` to the outage a
-  deployment intends to survive, or read the dead-letter queue as part of the recovery
-  procedure.
+| The peer's answer | What the pump does |
+|---|---|
+| applied | `markDelivered`, advance the checkpoint |
+| refused (`{ok:false, error}`) | `markFailed` at once, with the peer's reason in `lastError` |
+| silent past `ackTimeoutMs` | `markFailed`; the entry stays pending and its retry backs off |
+| nothing (the pipeline stopped waiting) | nothing — the entry keeps its place and is not charged an attempt |
 
-One ordering rule is part of the contract: **a pump cycle ends at the first send
-the transport refuses.** The outbox returns entries oldest-first, but a loop that
-keeps walking after a refusal sends the entries behind it, and the refused one's
-retry then lands after them — so a receiver that appends in arrival order records
-`5, 6, 4`. An entry that has exhausted its retries and moved to the dead letter is
-no longer at the head, so that case continues the cycle.
+An ack is sent by the **receiver's caller**, after its own durable write:
+`processInbound()` returns the event and does not answer anything, because an ack
+that leaves before the apply is the same lie one layer up. A duplicate is answered
+too — it was applied the first time, and the sender must be allowed to stop
+retrying it.
+
+One ordering rule is part of the contract: **a pump cycle ends at the first entry
+the peer did not confirm.** The outbox returns entries oldest-first, but a loop
+that keeps walking after a refusal sends the entries behind it, and the refused
+one's retry then lands after them — so a receiver that appends in arrival order
+records `5, 6, 4`. Entries sent behind an unconfirmed one are *not* marked
+delivered even when their own acks arrived: marking them would let the checkpoint
+move past an entry that is still owed, and a duplicate is recoverable while a gap
+is not.
+
+`acknowledgement: 'none'` is the weaker contract, chosen explicitly: `send()`'s
+`true` is the delivery. It exists for a peer that cannot answer (a write-only sink,
+a bridge into a system without a reply path), and a deployment that selects it is
+choosing "at-least-once onto the wire".
 
 ```typescript
 class ExactlyOnceCDCPipeline {
@@ -635,6 +666,7 @@ class ExactlyOnceCDCPipeline {
   getWatchedTables(): string[];
   appendChange(change: Omit<CDCChangeEvent, 'lsn' | 'timestamp' | 'txId'>): CDCChangeEvent;
   processInbound(message: TransportMessage): { accepted: boolean; event?: CDCChangeEvent };
+  acknowledge(inbound: TransportMessage, refusal?: string): Promise<boolean>;
   advanceCheckpoint(tableName: string, lsn: string): void;
   getCheckpoint(): CDCCheckpoint;
   getLastConfirmedLSN(tableName: string): string | null;
@@ -648,8 +680,31 @@ class ExactlyOnceCDCPipeline {
 ```
 
 `ExactlyOnceCDCPipelineConfig`: `nodeId`, `cdcConfig`, `outboxConfig`,
-`dedupTtlMs?` (default 10 min), `transport?`, `remoteNodeId?`, plus the
+`dedupTtlMs?` (default 10 min), `transport?`, `remoteNodeId?`,
+`acknowledgement?` (default `'peer'`), `ackTimeoutMs?` (default 5 000 ms), plus the
 checkpoint path.
+
+The two halves of the frame a receiver sends back — `buildAckFrame` and `parseAck` —
+are exported, together with the frame type `CDC_ACK_TYPE`, so a peer written
+against this package does not have to re-derive them:
+
+```typescript
+const CDC_ACK_TYPE: 'cdc_ack';
+function buildAckFrame(
+  acked: TransportMessage,
+  fromNodeId: string,
+  timestamp: IHLCTimestamp,
+  refusal?: string,
+): TransportMessage;
+function parseAck(payload: Uint8Array, messageId: string): { ok: boolean; error?: string };
+```
+
+An empty payload is a confirmation — a peer that answered at all, on the frame it
+was asked about, has said the only thing the sender needs. A body has to be JSON,
+and only an explicit `ok: false` is a refusal: treating a chatty acknowledgement as
+a failure would re-send a change that was already applied. A body that does not
+parse *is* a refusal, because taking an unreadable answer as a yes is how a lost
+change becomes an invisible one.
 
 ### The read end of the change stream
 
@@ -841,6 +896,15 @@ specially (backslash, double quote, newline), and `MetricLabels` is the label
 map. For the pipeline the identity is over the outbox:
 `produced = pending + sent + deadLettered`, with `preExisting` passed in when
 the outbox was not empty at start.
+
+`sent` counts what the peer confirmed, so an entry in flight is still `pending` and
+the identity keeps holding across the confirmation round trip — that is the reason
+the ack is a counter of its own rather than a subtraction. `CDCPipelineMetrics`
+adds `acksReceived` (confirmations that matched an in-flight frame, applied or
+refused) and `ackTimeouts` (frames a cycle stopped waiting for), exposed as
+`db_federation_cdc_pipeline_acks_total` and
+`db_federation_cdc_pipeline_ack_timeouts_total`. A rising `ack_timeouts` with a
+flat `sent` is the signature of a peer that is reachable and not applying.
 
 ## Conflict resolution
 

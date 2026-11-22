@@ -105,6 +105,11 @@ function makePipelineConfig(overrides?: Partial<ExactlyOnceCDCPipelineConfig>): 
     pumpBatchSize: 100,
     maxPending: 1000,
     dedupTtlMs: 10_000,
+    // These cases are about the outbox, the pump and the checkpoint. They use a
+    // transport that never answers, so they run under the weaker contract on
+    // purpose: `ACK 47.12+` (the acknowledged path) has its own suite, and `e2e`
+    // proves it between two real processes.
+    acknowledgement: 'none',
     ...overrides,
   };
 }

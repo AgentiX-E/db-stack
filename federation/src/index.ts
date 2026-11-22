@@ -96,6 +96,11 @@ export type {
   CDCPipelineEventType,
   CDCPipelineEventHandler,
 } from './replication/ExactlyOnceCDCPipeline';
+// The confirmation a receiving node sends back. Exported because the *other*
+// side of the wire has to be able to send one: a peer implemented against this
+// package would otherwise have to re-derive the frame type and its body.
+export { buildAckFrame, CDC_ACK_TYPE, parseAck } from './replication/cdcAck';
+export type { CdcAckVerdict } from './replication/cdcAck';
 
 // CDC sinks. None of these were exported, so no consumer could implement a sink
 // or reach the retry/batching wrapper: the interface, the in-memory sink and the

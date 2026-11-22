@@ -44,6 +44,8 @@ const metrics = (overrides: Partial<CDCPipelineMetrics> = {}): CDCPipelineMetric
   checkpoints: {},
   deadLetterCount: 1,
   pumpActive: false,
+  acksReceived: 4,
+  ackTimeouts: 0,
   ...overrides,
 });
 
