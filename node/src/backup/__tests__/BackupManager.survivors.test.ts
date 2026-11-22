@@ -14,7 +14,10 @@
  * hand-written comparator the two halves were sorted with went with them: the default
  * comparator is code-unit order — the same on every machine and in every locale, which
  * `localeCompare` is not — and it is a line that cannot be wrong about ties. The file
- * measures **96.63 %** (458 killed, 1 timeout, 16 survived, none uncovered).
+ * measures **96.63 %** locally (458 killed, 1 timeout, 16 survived, none uncovered) and **97.47 %** on
+ * CI run 44983761954 (462 killed, 1 timeout, 12 survived), the four-mutant difference being the same
+ * attribution that depends on the order the runner visits the suites. The arguments below are written
+ * for the local sixteen; the four CI does not see are a subset of them.
  *
  * Killed here:
  *
