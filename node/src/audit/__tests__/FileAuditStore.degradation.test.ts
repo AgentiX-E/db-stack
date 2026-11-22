@@ -159,7 +159,14 @@ describe('FileAuditStore — degraded directory', () => {
     store = new FileAuditStore(makeConfig({ maxAgeMs: 0 }));
     await store.write(ENTRY);
     await store.write(ENTRY); // rotates 0001 and schedules its compressor
-    rmSync(TEST_DIR, { recursive: true, force: true });
+
+    // The removal races the compressor's own `open(…, 'wx')`, which runs on a libuv
+    // thread and can recreate the directory between this call's `unlink` and its
+    // `rmdir` — which is how this case failed on a loaded CI runner with ENOTEMPTY,
+    // an error about the *removal* standing in for the case about the compressor.
+    // `maxRetries` is the kernel-race retry `fs.rmSync` exists for; the assertion
+    // below is unchanged, and it is still about a directory that is gone.
+    rmSync(TEST_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
 
     await expect(store.close()).resolves.toBeUndefined();
     store = undefined;
