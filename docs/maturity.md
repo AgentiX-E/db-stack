@@ -1482,7 +1482,10 @@ not a lock.
 
 **The instrument is a size, not a coin toss.** The `e2e` suite was green in this
 sandbox three times before the fix and three times after it — on an idle machine
-the thread pool answers in submission order and the defect does not exist. An
+the thread pool answers in submission order and the defect does not exist — and
+the commit that failed that run passed the next one (`45024073958`), which is what
+a defect with a load in its trigger looks like and the reason it cannot be the
+acceptance criterion. An
 acceptance criterion that needs a loaded runner to fail is not an acceptance
 criterion, so `RaftTcpTransport.ordering.test.ts` builds the condition instead of
 waiting for it: one 300 KB frame followed by twenty just over the threshold, over
