@@ -642,6 +642,15 @@ that leaves before the apply is the same lie one layer up. A duplicate is answer
 too — it was applied the first time, and the sender must be allowed to stop
 retrying it.
 
+`processInbound()` refuses two things, and `reason` says which: `'duplicate'` (a
+confirmation is the right answer) and `'undecodable'` (it is not). An undecodable
+frame is also removed from the dedup ring, because the ring records what has been
+*applied* and this was not — left in it, the retry would look like a duplicate and a
+caller that confirms duplicates would turn the refusal into a confirmation. A
+receiver answers an undecodable frame with `acknowledge(message, reason)`, which the
+sender treats as a refusal: the entry fails at once with the receiver's reason, and
+the frame keeps failing until the retry budget puts it in the dead-letter queue.
+
 One ordering rule is part of the contract: **a pump cycle ends at the first entry
 the peer did not confirm.** The outbox returns entries oldest-first, but a loop
 that keeps walking after a refusal sends the entries behind it, and the refused
@@ -665,7 +674,11 @@ class ExactlyOnceCDCPipeline {
   unwatchTable(tableName: string): void;
   getWatchedTables(): string[];
   appendChange(change: Omit<CDCChangeEvent, 'lsn' | 'timestamp' | 'txId'>): CDCChangeEvent;
-  processInbound(message: TransportMessage): { accepted: boolean; event?: CDCChangeEvent };
+  processInbound(message: TransportMessage): {
+    accepted: boolean;
+    event?: CDCChangeEvent;
+    reason?: 'duplicate' | 'undecodable';
+  };
   acknowledge(inbound: TransportMessage, refusal?: string): Promise<boolean>;
   advanceCheckpoint(tableName: string, lsn: string): void;
   getCheckpoint(): CDCCheckpoint;
