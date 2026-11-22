@@ -413,7 +413,8 @@ export class ExactlyOnceCDCPipeline {
   /**
    * Process an inbound CDC transport message.
    * Returns true if the message was accepted (first-time delivery),
-   * false if it was a duplicate (exactly-once guarantee).
+   * false if it was a duplicate (exactly-once guarantee) or undecodable —
+   * `reason` says which.
    *
    * G2 — At-most-once delivery via DedupRing
    *
@@ -422,10 +423,17 @@ export class ExactlyOnceCDCPipeline {
    * between the callback and the caller's write into a silent lost change — the
    * same defect this method's counterpart on the sender side was written to
    * remove, moved one layer up where it is harder to see.
+   *
+   * `reason` exists because the caller has to answer the sender, and the two
+   * refusals need different answers: a duplicate was applied the first time and
+   * should be confirmed, while a payload that cannot be decoded was never applied
+   * and never will be, so confirming it would tell the sender to stop retrying a
+   * change that does not exist on this side.
    */
   processInbound(message: TransportMessage): {
     accepted: boolean;
     event?: CDCChangeEvent;
+    reason?: 'duplicate' | 'undecodable';
   } {
     const msgId = message.messageId;
 
@@ -437,7 +445,7 @@ export class ExactlyOnceCDCPipeline {
         msgId,
         timestamp: Date.now(),
       });
-      return { accepted: false };
+      return { accepted: false, reason: 'duplicate' };
     }
 
     // Mark as seen (before processing: crash-during-delivery = noop on retry)
@@ -458,14 +466,21 @@ export class ExactlyOnceCDCPipeline {
       this.totalDelivered++;
       return { accepted: true, event };
     } catch (err) {
-      // Payload is not a valid CDCChangeEvent
+      // The ring is the record of what has been *applied*, and this was not. Left
+      // in it, the next delivery of the same message would be reported as a
+      // duplicate — and a caller that confirms duplicates would then tell the
+      // sender a change had landed that never did. Removing it means the retry is
+      // judged on its own, fails again, and is refused again until the sender's own
+      // budget puts the frame in the dead-letter queue with a reason.
+      this.dedup.delete(msgId);
+
       this.emit('event_failed', {
         type: 'event_failed',
         error: `Failed to decode CDC payload: ${describeError(err)}`,
         msgId,
         timestamp: Date.now(),
       });
-      return { accepted: false };
+      return { accepted: false, reason: 'undecodable' };
     }
   }
 

@@ -31,6 +31,7 @@
  *   ACK.18 the acknowledgment carries the acker's own timestamp
  *   ACK.19 a refused send fails the entry without waiting for an answer
  *   ACK.20 a transport that throws fails the entry with the thrown reason
+ *   ACK.21 a payload that cannot be decoded is refused, and is not remembered as applied
  *
  * One mutant survives in `cdcAck.ts`, and it is equivalent rather than untested:
  * dropping `typeof body === 'object'` from the refusal guard leaves `body.ok` to be
@@ -613,6 +614,37 @@ describe('ExactlyOnceCDCPipeline — a delivery is the peer’s answer', () => {
     await waitFor(() => errors.length > 0);
     expect(errors[0]).toBe('socket closed while writing');
     expect((await pipeline.getMetrics()).ackTimeouts).toBe(0);
+  });
+
+  it('ACK.21: a payload that cannot be decoded is refused, and is not remembered as applied', async () => {
+    // The ring is the record of what has been *applied*. A frame that failed to
+    // decode was not, so leaving its id there would make the next delivery look
+    // like a duplicate — and a caller that confirms duplicates (the correct thing
+    // to do for a real one) would then tell the sender a change had landed that
+    // never did. The retry has to be judged on its own and refused again.
+    const pipeline = new ExactlyOnceCDCPipeline(config(makeDir()));
+    cleanups.push(() => pipeline.cleanup());
+    await pipeline.start();
+
+    const frame: TransportMessage = {
+      messageId: '0/77:1',
+      sourcePeerId: 'dc-a',
+      targetPeerId: 'dc-b',
+      payload: new TextEncoder().encode('not a change event'),
+      timestamp: makeHLC(1n, 0, 'dc-a'),
+      createdAt: Date.now(),
+      type: 'cdc_event:0/00000077',
+    };
+
+    const first = pipeline.processInbound(frame);
+    expect(first).toMatchObject({ accepted: false, reason: 'undecodable' });
+    // Not a duplicate: the same frame, offered again, is judged again.
+    const retry = pipeline.processInbound(frame);
+    expect(retry).toMatchObject({ accepted: false, reason: 'undecodable' });
+
+    const metrics = await pipeline.getMetrics();
+    expect(metrics.totalDeduped).toBe(0);
+    expect(metrics.totalDelivered).toBe(0);
   });
 
   it('ACK.18: the acknowledgment carries the acker’s own timestamp', async () => {

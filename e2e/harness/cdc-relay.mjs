@@ -139,11 +139,21 @@ async function startReceiver() {
       return;
     }
     const result = pipeline.processInbound(message);
-    if (result.event) appendApplied(result.event);
-    // After `appendApplied`, which fsyncs: the confirmation says *applied*, and a
-    // duplicate is answered too — it was applied on the first attempt, and the
-    // sender must be allowed to stop retrying it.
-    void pipeline.acknowledge(message);
+    if (result.event) {
+      appendApplied(result.event);
+      // After `appendApplied`, which fsyncs: the confirmation says *applied*.
+      void pipeline.acknowledge(message);
+    } else if (result.reason === 'duplicate') {
+      // Also applied — on the first attempt — and the sender has to be allowed to
+      // stop retrying it.
+      void pipeline.acknowledge(message);
+    } else {
+      // A payload this node cannot decode was never applied and never will be.
+      // Confirming it would tell the sender to stop retrying a change that does
+      // not exist here; the refusal carries the reason instead.
+      stage(`undecodable frame ${message.messageId}`);
+      void pipeline.acknowledge(message, 'the change could not be decoded');
+    }
   });
   stage('transport-start');
   await transport.start();
