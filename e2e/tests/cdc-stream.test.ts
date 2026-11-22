@@ -193,9 +193,22 @@ describe('CDC over a real log, TLS and an HTTP sink', () => {
     expect(applied).toHaveLength(FIRST_BURST);
     const lsns = applied.map((row) => row.lsn);
     expect(new Set(lsns).size).toBe(FIRST_BURST);
-    // The order the writer assigned is the order the reader saw and the order
-    // the peer committed — the whole point of a single-cursor tail.
-    expect([...lsns].sort()).toEqual(lsns);
+
+    // Two claims, checked separately, because they fail in different places.
+    //
+    // The writer reports the position of every record as it appends it, so this is the
+    // order the *log* assigned — the first claim, and the one the reader cannot be
+    // blamed for. A single assertion against `sort()` said "somebody reordered these"
+    // and nothing about which side; this run had to be re-read from a CI log to find out.
+    const assigned = state.writer.messages
+      .filter((message) => message.type === 'written')
+      .map((message) => (message.data as { lsn: string }).lsn);
+    expect(assigned).toHaveLength(FIRST_BURST);
+    expect([...assigned].sort()).toEqual(assigned);
+
+    // The second claim: the order the writer assigned is the order the reader saw and
+    // the order the peer committed — the whole point of a single-cursor tail.
+    expect(lsns).toEqual(assigned);
     expect(applied[0]).toMatchObject({ table: TABLE, operation: 'insert' });
     expect(applied[0]!.values?.id).toBe(1);
     expect(applied.at(-1)!.values?.id).toBe(FIRST_BURST);
