@@ -5,7 +5,9 @@
  *   1. Entries are written BEFORE returning to caller (crash-safe, WAL consistency)
  *   2. O(1) ACK/delivery tracking via msgId → index in separate databases
  *   3. At-least-once delivery: retry with dedup on the receiving side
- *   4. Dead letter queue: entries exceeding maxRetries (default: 3)
+ *   4. Dead letter queue: entries that spend their retry budget (a time window,
+ *      default 60 s from the first failure, with exponential backoff) move there
+ *      instead of blocking the head of the queue
  *   5. Backpressure detection via LMDB map utilization (>80% triggers warning)
  *
  * Storage layout
@@ -72,8 +74,30 @@ export interface OutboxStoreConfig {
   dataDir: string;
   /** Entry TTL (ms) before auto-housekeeping — default 14 days */
   ttlMs?: number;
-  /** Max retries before moving to dead letter queue — default 3 */
+  /**
+   * How long an entry may keep failing before the store gives up on it.
+   * Default 60 000 ms, measured from its **first failure**.
+   *
+   * This is the budget that matters. The count below used to be the only one,
+   * and a count is a time budget in disguise: with the pipeline's default 20 ms
+   * pump interval, `maxRetries: 3` gave a peer **sixty milliseconds** of absence
+   * before changes started moving to the dead-letter queue. Sixty milliseconds
+   * is not an outage, it is a garbage-collection pause — an acceptance run lost
+   * nine changes to one.
+   */
+  retryWindowMs?: number;
+  /**
+   * An optional hard cap on failed attempts.
+   *
+   * Off by default, and it stays useful for a caller that wants "three strikes"
+   * semantics on a fast link — but it is no longer how an outage is survived,
+   * because a count cannot know how much time the failures represent.
+   */
   maxRetries?: number;
+  /** First backoff after a failure — default 50 ms. `0` retries every tick. */
+  retryBackoffMs?: number;
+  /** Ceiling on the backoff — default 2 000 ms. */
+  retryBackoffMaxMs?: number;
   /** Dead letter TTL (ms) before auto-cleanup — default 7 days */
   deadLetterTtlMs?: number;
   /** Main LMDB map size — default 1GB */
@@ -99,13 +123,22 @@ export class OutboxStore implements IOutboxStore {
   private readonly msgIdToSeqDb: Database<number, string>;
 
   private readonly ttlMs: number;
-  private readonly maxRetries: number;
+  /** `null` means "no attempt cap": the retry window decides. */
+  private readonly maxRetries: number | null;
+  private readonly retryWindowMs: number;
+  private readonly retryBackoffMs: number;
+  private readonly retryBackoffMaxMs: number;
   private readonly deadLetterTtlMs: number;
   private readonly mapSize: number;
 
   constructor(config: OutboxStoreConfig) {
     this.ttlMs = config.ttlMs ?? 14 * 24 * 60 * 60 * 1000;
-    this.maxRetries = config.maxRetries ?? 3;
+    // Not `?? 3`. A default cap of three attempts, on a pump that retries the head
+    // of the queue once per cycle, is a default of "sixty milliseconds of outage".
+    this.maxRetries = config.maxRetries ?? null;
+    this.retryWindowMs = config.retryWindowMs ?? 60_000;
+    this.retryBackoffMs = config.retryBackoffMs ?? 50;
+    this.retryBackoffMaxMs = config.retryBackoffMaxMs ?? 2_000;
     this.deadLetterTtlMs = config.deadLetterTtlMs ?? 7 * 24 * 60 * 60 * 1000;
     this.mapSize = config.mapSize ?? 1024 * 1024 * 1024;
 
@@ -155,6 +188,8 @@ export class OutboxStore implements IOutboxStore {
           lastAttemptAt: null,
           attemptCount: 0,
           lastError: null,
+          firstFailedAt: null,
+          nextAttemptAt: null,
         };
 
         this.mainDb.putSync(id, full);
@@ -382,8 +417,17 @@ export class OutboxStore implements IOutboxStore {
 
   /**
    * Mark an entry delivery attempt as failed.
-   * Increments retry count. If maxRetries exceeded, moves to dead letter queue.
+   * Increments retry count. If the retry budget is spent, moves to dead letter queue.
    * Returns true if the entry was moved to dead letter, false otherwise.
+   *
+   * The budget is **time**, not attempts. `maxRetries` used to be the only unit,
+   * with a default of 3, and the pipeline retries the head of the queue once per
+   * pump cycle — so the default budget was three cycles, sixty milliseconds at the
+   * default 20 ms interval. A peer that was restarting came back to a dead-letter
+   * queue. The window is measured from the first failure, and `nextAttemptAt`
+   * makes the retries exponential rather than one per tick, because a hot loop is
+   * not a retry policy either: fifty connection attempts a second at a peer that
+   * is down is load, not persistence.
    */
   markFailed(entryId: string, error?: string): boolean {
     const seq = this.msgIdToSeqDb.get(entryId) as number | undefined;
@@ -409,16 +453,23 @@ export class OutboxStore implements IOutboxStore {
   }
 
   private _markFailed(entry: OutboxEntry, entryKey: string, error?: string): boolean {
+    const now = Date.now();
     entry.attemptCount = (entry.attemptCount ?? 0) + 1;
-    entry.lastAttemptAt = Date.now();
+    entry.lastAttemptAt = now;
     entry.lastError = error ?? null;
+    entry.firstFailedAt = entry.firstFailedAt ?? now;
 
-    if (entry.attemptCount >= this.maxRetries) {
+    // Two units of budget, and only one of them is a count.
+    const spentMs = now - entry.firstFailedAt;
+    const outOfTime = spentMs >= this.retryWindowMs;
+    const outOfAttempts = this.maxRetries !== null && entry.attemptCount >= this.maxRetries;
+
+    if (outOfTime || outOfAttempts) {
       // Move to dead letter queue
       this.deadLetterDb.putSync(`dlq:${entry.id}`, {
         ...entry,
         status: 'failed' as OutboxStatus,
-        deadAt: Date.now(),
+        deadAt: now,
       });
       // Remove from main + pending + reverse index
       this.mainDb.removeSync(entryKey);
@@ -431,9 +482,25 @@ export class OutboxStore implements IOutboxStore {
       return true; // moved to dead letter
     }
 
-    // Update in place
+    // Still pending: it keeps its place at the head of the queue, and the queue
+    // waits for it. The backoff is what stops the wait from being a busy loop.
+    entry.nextAttemptAt = now + this.backoffFor(entry.attemptCount);
     this.mainDb.putSync(entryKey, entry);
     return false; // still pending
+  }
+
+  /**
+   * How long to wait before the next attempt, given how many have failed.
+   *
+   * Doubling from `retryBackoffMs`, capped at `retryBackoffMaxMs`. The exponent is
+   * clamped at 20 because `2 ** 1000` is `Infinity` and the cap would then be the
+   * only thing standing between the arithmetic and a `NaN` — and the clamp is
+   * cheaper to reason about than the overflow, however large the attempt count.
+   */
+  private backoffFor(attemptCount: number): number {
+    if (this.retryBackoffMs <= 0) return 0;
+    const doublings = Math.min(attemptCount - 1, 20);
+    return Math.min(this.retryBackoffMaxMs, this.retryBackoffMs * 2 ** doublings);
   }
 
   /**
@@ -455,6 +522,11 @@ export class OutboxStore implements IOutboxStore {
         attemptCount: 0,
         lastAttemptAt: null,
         lastError: null,
+        // A revived entry gets a fresh budget. Carrying `firstFailedAt` over would
+        // dead-letter it again on its very first new failure, which would make the
+        // one recovery path an operator has refuse to work.
+        firstFailedAt: null,
+        nextAttemptAt: null,
         createdAt: Date.now(),
       };
 

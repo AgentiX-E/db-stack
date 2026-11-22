@@ -179,10 +179,18 @@ describe('OutboxStore — dead letter stats & edge paths', () => {
 });
 
 describe('OutboxStore — nullish defaults', () => {
-  it('falls back to default maxRetries when config omits it', () => {
+  it('has no attempt cap and a one-minute window when the config omits both', () => {
+    // The default used to be `maxRetries: 3`, and three attempts on a pump that
+    // retries the head once per 20 ms cycle is sixty milliseconds of outage
+    // before changes start moving to the dead-letter queue. An acceptance run
+    // lost nine changes to exactly that. A count cannot know how much time it
+    // represents, so the default is no count at all and a window instead.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-nullish-'));
-    const s = new OutboxStore({ dataDir: tmp }); // no maxRetries → ?? 3
-    expect(s['maxRetries']).toBe(3);
+    const s = new OutboxStore({ dataDir: tmp });
+    expect(s['maxRetries']).toBeNull();
+    expect(s['retryWindowMs']).toBe(60_000);
+    expect(s['retryBackoffMs']).toBe(50);
+    expect(s['retryBackoffMaxMs']).toBe(2_000);
     s.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
