@@ -155,6 +155,12 @@ describe('CDC delivery is the peer’s answer', () => {
     );
     await sender.waitForType('ready', 40_000);
 
+    // Handed to the next case *before* any assertion can throw. A fixture assigned on
+    // the last line of a case belongs to the case, not to the suite: the run that
+    // produced iteration 70's report failed here on an ordering assertion, and the two
+    // cases behind it failed on `undefined` instead of on what they are about.
+    Object.assign(state, { sender, receiver, appliedFile });
+
     writer.send({ cmd: 'write', records: BATCH });
     await writer.waitFor((m) => m.type === 'done', 60_000, `the batch of ${BATCH} written`);
 
@@ -214,8 +220,6 @@ describe('CDC delivery is the peer’s answer', () => {
     // count them as.
     expect(receiverStatus.held).toBeGreaterThan(0);
     expect(receiverStatus.deduped).toBe(0);
-
-    Object.assign(state, { sender, receiver, appliedFile });
   }, 240_000);
 
   it('AC-C24: released, every change is applied once, in write order', async () => {

@@ -179,6 +179,11 @@ describe('CDC across a refused send and a returning peer', () => {
     const senderReady = await sender.waitForType('ready', 40_000);
     expect(senderReady.data).toMatchObject({ resumeFrom: null });
 
+    // Handed to the next case *before* any assertion can throw, for the reason
+    // `cdc-ack.test.ts` states: a fixture assigned on a case's last line turns that
+    // case's one failure into three, and the three do not look like one defect.
+    Object.assign(state, { writer, sender, receiver, appliedFile, receiverConfig });
+
     await writeBatch(writer, FIRST_BATCH, FIRST_BATCH);
     await waitUntil(
       async () => readJsonl<AppliedRow>(appliedFile).length >= FIRST_BATCH,
@@ -192,8 +197,6 @@ describe('CDC across a refused send and a returning peer', () => {
       Array.from({ length: FIRST_BATCH }, (_, i) => i + 1),
     );
     expect((await sender.status<SenderStatus>()).refusals).toBe(0);
-
-    Object.assign(state, { writer, sender, receiver, appliedFile, receiverConfig });
   }, 180_000);
 
   it('AC-C21: with the receiver stopped the next batch stays pending, and nothing is applied', async () => {
