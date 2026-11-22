@@ -1640,8 +1640,10 @@ whose absence cannot be observed before the next `start()` repopulates the maps.
 No `// Stryker disable` was added: a survivor with a reason in prose is a fact
 about the code, and a suppressed one is a fact about the gate.
 
-**The CI budget moved with the gate.** Local, this target alone costs twelve
-minutes; the three targets together were thirty-one minutes before it was added.
-The job's cap went from sixty to ninety, derived from that measurement rather than
-guessed, because a job killed at its cap reports nothing about the mutants it had
-not reached — and a gate whose budget is a guess fails on the day it matters.
+**The CI budget moved with the gate, and the measurement is in the commit.** Local,
+this target alone costs twelve minutes; the job that runs all three measured 31
+minutes before the addition and 36 after it (`45053900655`). Sixty would still have
+passed. The cap went to ninety anyway, and the reason is not the number measured
+today: this job grows every time a file enters a target, the runner's speed is not
+ours, and a job killed at its cap reports nothing about the mutants it had not
+reached — the failure names the clock rather than a survivor.

@@ -471,14 +471,17 @@ jobs:
   mutation:
     name: Mutation (node + cluster + federation)
     runs-on: ubuntu-latest
-    # Ninety, not sixty. The cluster target gained `RaftTcpTransport.ts` in
-    # iteration 71 — 548 mutants across six suites, one of which drives two real
-    # transports over mTLS — and a local run of it alone costs twelve minutes on an
-    # idle machine. The three targets together were thirty-one minutes before that
-    # addition, so sixty left a margin measured against a suite that no longer
-    # exists. A job killed at its cap reports nothing about the mutants it had not
-    # reached, and a gate whose budget is a guess is a gate that fails on the day it
-    # matters.
+    # Ninety, not sixty, and the measurement is why the number is not a guess.
+    #
+    # The cluster target gained `RaftTcpTransport.ts` in iteration 71 — 548 mutants
+    # across six suites, one of which drives two real transports over mTLS — and
+    # this job measured 31 minutes before the addition and 36 after it (CI
+    # 45053900655). Sixty would still have passed. It is nonetheless the wrong cap:
+    # the margin that matters is not the one measured today, because this job grows
+    # every time a file enters a target, and the runner's speed is not ours to
+    # control. A job killed at its cap reports nothing about the mutants it had not
+    # reached — the failure names the clock, not a survivor — so the cap is set for
+    # the next two additions rather than for this one.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
