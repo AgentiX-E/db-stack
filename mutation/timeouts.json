@@ -2,9 +2,94 @@
   "note": "Every Timeout in reports/mutation/<target>.json, re-run against the tests the report attributed to it (scripts/resolve-timeouts.mjs). \"failed\" means vitest reported a failing test; \"stuck\" means the attributed tests reported nothing and the run did not finish. The gate requires this list and the report to agree in both directions.",
   "targets": {
     "cluster": {
-      "entries": [],
-      "resolvedOn": "2026-11-20",
-      "capMs": 30000
+      "capMs": 30000,
+      "resolvedOn": "2026-11-22",
+      "entries": [
+        {
+          "file": "cluster/src/consensus/transport/RaftTcpTransport.ts",
+          "line": 214,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "reason": "Hit limit reached (901/900)",
+          "id": "45",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30027ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/cluster"
+        },
+        {
+          "file": "cluster/src/consensus/transport/RaftTcpTransport.ts",
+          "line": 222,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "reason": "Hit limit reached (601/600)",
+          "id": "51",
+          "verdict": "failed",
+          "detail": "a test exceeded 15000ms — and the run never exited",
+          "evidence": "30022ms",
+          "tail": "↓ RaftTcpTransport — what send() addresses, and what stop() releases > decodes an uncompressed frame when compression is disabled ⏎ ↓ RaftTcpTransport — what send() addresses, and what stop() releases > reports an undecodable frame with the peer it came from and the error ⏎ ↓ RaftTcpTransport — what send() addresses, and what stop() releases > a frame handed over before start names the mistake"
+        },
+        {
+          "file": "cluster/src/consensus/transport/RaftTcpTransport.ts",
+          "line": 222,
+          "mutator": "EqualityOperator",
+          "replacement": "Date.now() < deadline",
+          "reason": "Hit limit reached (601/600)",
+          "id": "53",
+          "verdict": "failed",
+          "detail": "a test exceeded 15000ms",
+          "evidence": "15636ms",
+          "tail": "Tests  3 failed | 107 skipped (110) ⏎ Start at  01:43:33 ⏎ Duration  15.43s (transform 155ms, setup 27ms, collect 197ms, tests 15.02s, environment 0ms, prepare 66ms)"
+        },
+        {
+          "file": "cluster/src/consensus/transport/RaftTcpTransport.ts",
+          "line": 287,
+          "mutator": "CallExpression",
+          "replacement": ";",
+          "reason": "",
+          "id": "143",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30013ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/cluster"
+        },
+        {
+          "file": "cluster/src/consensus/transport/RaftTcpTransport.ts",
+          "line": 422,
+          "mutator": "ArrowFunction",
+          "replacement": "() => undefined",
+          "reason": "",
+          "id": "216",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30017ms",
+          "tail": "✓ RaftTcpTransport — frame order > O2: no frame is delivered twice  4586ms ⏎ ✓ RaftTcpTransport — frame order > O3: order holds when both peers dial, which is the shape a cluster runs in  4585ms ⏎ ✓ RaftTcpTransport — frame order > O4: with compression off the order is the submission order as well  4566ms"
+        },
+        {
+          "file": "cluster/src/consensus/transport/RaftTcpTransport.ts",
+          "line": 976,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "reason": "Hit limit reached (20721/20700)",
+          "id": "556",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30034ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/cluster ⏎ (node:47210) [DEP0123] DeprecationWarning: Setting the TLS ServerName to an IP address is not permitted by RFC 6066. This will be ignored in a future version. ⏎ (Use `node --trace-deprecation ...` to show where the warning was created)"
+        },
+        {
+          "file": "cluster/src/consensus/transport/RaftTcpTransport.ts",
+          "line": 980,
+          "mutator": "ArithmeticOperator",
+          "replacement": "4 - payloadLen",
+          "reason": "Hit limit reached (12201/12200)",
+          "id": "561",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30033ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/cluster ⏎ (node:47252) [DEP0123] DeprecationWarning: Setting the TLS ServerName to an IP address is not permitted by RFC 6066. This will be ignored in a future version. ⏎ (Use `node --trace-deprecation ...` to show where the warning was created)"
+        }
+      ]
     },
     "federation": {
       "capMs": 30000,

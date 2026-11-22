@@ -471,7 +471,15 @@ jobs:
   mutation:
     name: Mutation (node + cluster + federation)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Ninety, not sixty. The cluster target gained `RaftTcpTransport.ts` in
+    # iteration 71 — 548 mutants across six suites, one of which drives two real
+    # transports over mTLS — and a local run of it alone costs twelve minutes on an
+    # idle machine. The three targets together were thirty-one minutes before that
+    # addition, so sixty left a margin measured against a suite that no longer
+    # exists. A job killed at its cap reports nothing about the mutants it had not
+    # reached, and a gate whose budget is a guess is a gate that fails on the day it
+    # matters.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

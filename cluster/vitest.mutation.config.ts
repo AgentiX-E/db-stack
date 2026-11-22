@@ -39,6 +39,16 @@ export default defineConfig({
       'src/__tests__/unit/SqliteStorage.handle-lifecycle.test.ts',
       'src/__tests__/unit/SqliteStorage.durability.test.ts',
       'src/__tests__/unit/SqliteNodeStorage.test.ts',
+      // The transport. Five suites under a mocked pool and one over real mTLS
+      // between two real transports — the one that fails on purpose, because the
+      // ordering defect it was written for needs a loaded machine to appear
+      // otherwise (`RaftTcpTransport.ordering.test.ts`, iteration 70).
+      'src/__tests__/unit/RaftTcpTransport.test.ts',
+      'src/__tests__/unit/RaftTcpTransport.start.test.ts',
+      'src/__tests__/unit/RaftTcpTransport.buffering.test.ts',
+      'src/__tests__/unit/RaftTcpTransport.socket.test.ts',
+      'src/__tests__/unit/RaftTcpTransport.storm.test.ts',
+      'src/__tests__/unit/RaftTcpTransport.ordering.test.ts',
       // The assemblers: which member leaves, which batch runs, which transport is
       // told to drop traffic. A mutant there is not a wrong number on a graph — it
       // is a group that loses quorum or a partition that only exists on one side.

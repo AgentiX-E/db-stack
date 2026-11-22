@@ -90,6 +90,14 @@ export const TARGETS = {
     // one side.
     mutate: [
       "cluster/src/consensus/storage/SqliteStorage.ts",
+      // The wire. `RaftTcpTransport.ts` is the component every ordering claim in
+      // this repository stands on: the log's order, the CDC consumer's write order,
+      // and the acknowledgement protocol all assume that the frames of one peer
+      // arrive in the order they were submitted. Iteration 70 found two ways it did
+      // not — a compression callback on the way out, a re-entrant decoder on the
+      // way in — and the suite that catches them is not the suite that was judging
+      // any other file here.
+      "cluster/src/consensus/transport/RaftTcpTransport.ts",
       "cluster/src/assemblers/membership/quorum.ts",
       "cluster/src/assemblers/scaling/ClusterScalingExecutor.ts",
       "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
