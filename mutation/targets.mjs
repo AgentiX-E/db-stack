@@ -106,8 +106,12 @@ export const TARGETS = {
     thresholds: { high: 92, low: 88, break: 86 },
   },
   federation: {
-    // The transport is where a refusal and a failure look alike from the outside.
-    mutate: ["federation/src/transport/TcpSecureTransport.ts"],
+    // The transport is where a refusal and a failure look alike from the outside,
+    // and the confirmation frame is the only thing that can tell them apart.
+    mutate: [
+      "federation/src/transport/TcpSecureTransport.ts",
+      "federation/src/replication/cdcAck.ts",
+    ],
     testConfig: "federation/vitest.mutation.config.ts",
     concurrency: 2,
     thresholds: { high: 85, low: 75, break: 70 },

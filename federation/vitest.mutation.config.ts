@@ -19,11 +19,15 @@ export default defineConfig({
   ...(baseConfig as Record<string, unknown>),
   test: {
     ...base.test,
+    // The last file is the acknowledged-delivery suite: the confirmation frame is
+    // the other half of "did it arrive", so its cases judge the transport's mutant
+    // neighbours as well as their own.
     include: [
       'src/transport/TcpSecureTransport.test.ts',
       'src/transport/TcpSecureTransport.lifecycle.test.ts',
       'src/transport/TcpSecureTransport.delivery.test.ts',
       'src/__tests__/chaos/tls-fault-injection.test.ts',
+      'src/replication/ExactlyOnceCDCPipeline.ack.test.ts',
     ],
     exclude: [],
     // Derived from this suite's own measurement (2026-11-18): 90 cases in four
