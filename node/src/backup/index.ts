@@ -32,7 +32,14 @@ export type {
 } from './interfaces/index.js';
 
 export { BackupManager, compareLsn, expandDeletions, reason, removeQuietly } from './impl/BackupManager.js';
-export type { BackupManagerOptions, InventoryProblem } from './impl/BackupManager.js';
+export type {
+  BackupManagerOptions,
+  InventoryProblem,
+  MissingArtefact,
+  OrphanArtifact,
+  ReconcileOptions,
+  ReconcileReport,
+} from './impl/BackupManager.js';
 export {
   INVENTORY_FORMAT,
   InventoryRecordError,
