@@ -1346,3 +1346,75 @@ into the two it always was — the writer now reports every position it appends,
 the case asserts the log's order first and the reader's agreement with it second.
 A failure now says which side moved. Until one recurs, the mechanism is
 registered as `P3-68` rather than declared absent.
+
+## A delivery nobody confirmed
+
+`docs/api-reference.md` carried two limits under `ExactlyOnceCDCPipeline`,
+written down because a deployment plans around them rather than discovering them:
+an accepted frame is not an applied frame, and a refused send costs one retry out
+of three. Both were this iteration's work, and both were the same kind of defect —
+a number that meant something other than what its name said.
+
+**`send()` answers a question about this process.** It resolves `true` when the
+bytes reached a socket. A TCP write into a connection whose peer has gone is
+accepted by the local kernel, so the sender learned "enqueued" while the receiver
+learned nothing. An acceptance run measured it precisely: twenty changes reported
+delivered, thirteen applied, `refusals: 0`, `deadLetterCount: 0`. The outbox was
+perfectly consistent about a delivery that had not happened, which is worse than
+inconsistent — there was nothing to see.
+
+The instrument that can close that gap is the peer, because the peer is the party
+the claim was about. `ExactlyOnceCDCPipeline` now sends a `cdc_ack` frame back and
+waits for it, matched by message id:
+
+| The peer's answer | What the pump does |
+|---|---|
+| applied | `markDelivered`, advance the checkpoint |
+| refused — `{ok:false, error}` | `markFailed` at once, the peer's reason in `lastError` |
+| silent past `ackTimeoutMs` | `markFailed`; the entry stays pending |
+| nothing — the pipeline stopped waiting | nothing; the entry keeps its place, no attempt charged |
+
+Three decisions were not obvious and are worth stating:
+
+1. **`processInbound()` does not ack.** An ack means *applied*, and applying is the
+   caller's next line. A pipeline that confirmed inside `processInbound` would turn
+   a crash between the callback and the caller's write into a silent lost change —
+   the same defect, one layer up, where it is harder to see. The caller calls
+   `acknowledge()` after its own durable write, and answers duplicates too, because
+   a duplicate was applied the first time and the sender has to be allowed to stop.
+2. **The wait is registered before the send.** An in-process transport delivers the
+   answer inside the same tick, so a registration after `await send()` misses it —
+   and a missed ack is a timeout, a failed attempt and a re-send of a change the
+   peer had already applied.
+3. **A cycle ends at the first entry the peer did not confirm.** The entries behind
+   it were sent and probably applied, and marking them delivered would let the
+   checkpoint move past an entry still owed. They stay pending; the retry is
+   deduplicated and answered again. A duplicate is recoverable, a gap is not.
+
+**Three attempts is sixty milliseconds.** `OutboxStore` dead-lettered an entry after
+`maxRetries` failures, default 3, and the pump retries the head of the queue once per
+cycle — 20 ms by default. A peer that was restarting came back to a dead-letter
+queue, and an acceptance run lost nine changes to a one-second outage. A count
+cannot know how much time it represents, so the budget is a window now, measured
+from the *first* failure (an entry that waited a minute behind a busy peer has not
+spent that minute failing), with exponential backoff inside it (50 ms doubling to a
+2 s ceiling) because a hot loop is not a retry policy either. `maxRetries` survives
+as an optional hard cap and loses its default.
+
+**The instrument was checked against the defect.** `e2e` `AC-C23` holds the receiving
+relay at `applyLimit` — thirteen of twenty frames are dropped **before** the dedup
+ring, which is exactly what "accepted here, never arrived there" looks like from the
+far end — and asserts that the sender's delivered count equals the receiver's applied
+count. With the pump reverted to `acknowledgement: 'none'` the case fails in 660 ms
+with `expected 20 to be 13`: the defect's own numbers, named by an assertion rather
+than by a timeout. `AC-C24` releases the receiver and checks all twenty are applied
+once, in write order, with the sender's count catching up to the receiver's.
+
+**What the change broke, and why that was the change working.** Three `e2e` cases
+compared the tail's read position with the checkpoint, and one compared the outbox's
+pending count with the applied file, at moments when the two were no longer the same
+number: the tail legitimately reads ahead of the confirmed position by the in-flight
+window, and the receiver applies before it confirms. Those waits were rewritten to
+wait for the confirmation — the assertion that survived is stronger, because
+"delivered" and "applied" are now two processes' answers to the same question rather
+than one process's answer to itself.
