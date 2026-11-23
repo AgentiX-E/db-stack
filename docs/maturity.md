@@ -1969,3 +1969,56 @@ replaced it drives the clock: `Date.now` is replaced for the duration, `lint` is
 charged 4 200 ms against `typecheck`'s 7 ms, and the summary must name `lint`.
 Reverting the comparator to `a` fails it with `preflight: 2 steps passed
 (slowest: typecheck).`
+
+## A cache that erases the evidence
+
+The gate that measures the gates reported three files under the branch floor on
+CI — `check-hooks.mjs` 94.12 %, `install-hooks.mjs` 93.55 %, `preflight.mjs`
+94.12 % — and 100.00 % for all three on the machine the change was written on.
+Same commit, same Node (`v22.13.1`), same command.
+
+The difference is one environment variable. `NODE_COMPILE_CACHE` was set in the
+sandbox; a GitHub runner does not set it. Measured both ways from one tree:
+
+| Variable | `check-doc-examples.mjs` | `install-hooks.mjs` | `preflight.mjs` |
+|---|---|---|---|
+| `NODE_COMPILE_CACHE` set | 100.00 lines / 97.40 branches | 100.00 / 100.00 | 100.00 / 100.00 |
+| unset | 99.56 lines / 95.00 branches, `457-458` uncovered | 100.00 / 93.55 | 100.00 / 94.12 |
+
+A script compiled from cached bytecode loses block ranges in V8's precise
+coverage, and a range nobody reports is a range nobody can fail. The variable is
+invisible in the number it moves: nothing in `100.00 %` says "this was measured
+with a warm cache". So the measurement was not of this repository — it was of
+this repository plus whatever a previous process had left in
+`~/.cache/v8-compile-cache`.
+
+`measure()` now strips `NODE_COMPILE_CACHE` from the run it starts, beside
+`NODE_TEST_CONTEXT` and `NODE_V8_COVERAGE`, which are there for the same reason:
+a number that belongs to the caller is not a measurement of the code. The case
+that asserts it names the table above.
+
+What the honest number then showed was real debt, of the kind this page keeps
+finding: `install-hooks.mjs`'s `process.exit(main())` had never run in any case —
+the suite imports the module, so `process.argv[1]` is always a test file, and the
+program path a contributor takes was the one path nothing exercised. Three
+scripts had the same hole, because they shared the same two lines:
+
+```js
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  process.exit(main());
+}
+```
+
+Naming the check — `isEntryPoint(process.argv[1])`, the shape
+`check-script-coverage.mjs` already used — turned the untaken half into a case,
+and the command line of each script into a case that runs the file as a program.
+All three read 100.00 % on all three dimensions in the full suite. Measured
+alone, `install-hooks.mjs` reads 97.14 % branches, because one arm of `rootArg`
+is taken by a case in a neighbouring file: a file's percentage belongs to the
+run it was taken from, which is the same lesson as the cache, one turn of the
+screw further in.
+
+The general lesson is the page's oldest one in a new costume: **a green number
+is a claim about an instrument**. A Node version was already named as part of
+that ruler; a cache directory was not part of it, and it moved the reading by
+five points while looking like nothing at all.

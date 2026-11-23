@@ -19,8 +19,15 @@
  * the second net — the hook is for the machine where git push is the path.
  *
  * Usage:
- *   pnpm install-hooks           # set core.hooksPath, make the hooks executable
- *   pnpm install-hooks --check   # exit 1 unless core.hooksPath already points here
+ *   pnpm install-hooks                    # set core.hooksPath, make the hooks executable
+ *   pnpm install-hooks --check            # exit 1 unless core.hooksPath already points here
+ *   pnpm install-hooks --check --root DIR # answer for another checkout
+ *
+ * `--root` exists because the script acts on the tree it was found in, and a
+ * command whose only reachable state is "this machine's" is a command a test can
+ * only half exercise: the branch that says what is wrong was reachable on an
+ * unconfigured clone and nowhere else. Naming the tree makes both answers
+ * reachable from any machine, which is what a gate over this file needs.
  */
 
 import { chmodSync, existsSync, readdirSync, statSync } from "node:fs";
@@ -59,6 +66,20 @@ export function configuredHooksPath(git) {
   } catch {
     return "";
   }
+}
+
+/**
+ * The `--root` the caller named, this repository, or `null` when the flag has no
+ * value.
+ *
+ * `null` rather than a throw: the one caller that can get this wrong is a person,
+ * and a stack trace is not an answer about a flag.
+ */
+export function rootArg(argv, fallback = ROOT) {
+  const at = argv.indexOf("--root");
+  if (at === -1) return fallback;
+  const value = argv[at + 1];
+  return value ? resolve(value) : null;
 }
 
 /**
@@ -136,13 +157,16 @@ export function repoGit(root) {
  * @param {string} root
  * @param {(args: string[]) => string} git  injected so a test does not need a repository
  */
-export function main(
-  argv = process.argv.slice(2),
-  root = ROOT,
-  git = repoGit(root),
-) {
+export function main(argv = process.argv.slice(2), root = null, git = null) {
+  const target = root ?? rootArg(argv);
+  if (!target) {
+    console.error("install-hooks: --root needs a directory");
+    return 1;
+  }
+  const run = git ?? repoGit(target);
+
   if (argv.includes("--check")) {
-    const verdict = check(root, configuredHooksPath(git));
+    const verdict = check(target, configuredHooksPath(run));
     if (!verdict.ok) {
       console.error(
         `install-hooks: ${verdict.problem}. Run \`pnpm install-hooks\`.`,
@@ -155,13 +179,26 @@ export function main(
     return 0;
   }
 
-  const done = install(root, git);
+  const done = install(target, run);
   console.log(
     `install-hooks: core.hooksPath=${done.hooksPath}, executable: ${done.hooks.join(", ")}`,
   );
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+/**
+ * Whether this module was started as the program.
+ *
+ * A function rather than an inline comparison at the bottom of the file, for the
+ * reason `check-script-coverage.mjs` gives: the comparison contains a branch for
+ * `argv[1]` being absent, and a script's last two lines are the ones no test can
+ * reach — the suite imports the module, so `process.argv[1]` is always the test
+ * file. With the check named, the missing half is a case instead of a blind spot.
+ */
+export function isEntryPoint(entry, moduleUrl = import.meta.url) {
+  return entry ? moduleUrl === pathToFileURL(entry).href : false;
+}
+
+if (isEntryPoint(process.argv[1])) {
   process.exit(main());
 }

@@ -83,6 +83,14 @@ when its input disappears — `check:gates` refuses a `vitest run` filter naming
 directory that does not exist, `check:script-coverage` refuses a script no test loads,
 and `coverage:gate` refuses a package missing from the coverage report.
 
+One environment variable belongs to the ruler rather than to the code: if
+`NODE_COMPILE_CACHE` is set, scripts compiled from cached bytecode lose block ranges in
+V8's coverage, and a range nobody reports cannot fail. From one tree, `check-doc-examples.mjs`
+read 100.00 % lines with the variable set and 99.56 % with `457-458` uncovered without it.
+`check:script-coverage` strips it from the run it starts; unset it yourself before reading
+`pnpm coverage` numbers by hand, and never treat two figures taken with different settings
+as a comparison.
+
 ## Before You Push
 
 ```bash

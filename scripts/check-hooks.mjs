@@ -127,6 +127,19 @@ export function main(root = ROOT) {
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+/**
+ * Whether this module was started as the program.
+ *
+ * A function rather than an inline comparison at the bottom of the file, for the
+ * reason `check-script-coverage.mjs` gives: the comparison contains a branch for
+ * `argv[1]` being absent, and a script's last two lines are the ones no test can
+ * reach — the suite imports the module, so `process.argv[1]` is always the test
+ * file. With the check named, the missing half is a case instead of a blind spot.
+ */
+export function isEntryPoint(entry, moduleUrl = import.meta.url) {
+  return entry ? moduleUrl === pathToFileURL(entry).href : false;
+}
+
+if (isEntryPoint(process.argv[1])) {
   process.exit(main());
 }

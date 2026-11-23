@@ -19,7 +19,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { REQUIRED_STEPS, audit, facts, main } from "./check-hooks.mjs";
+import {
+  REQUIRED_STEPS,
+  audit,
+  facts,
+  isEntryPoint,
+  main,
+} from "./check-hooks.mjs";
 import { STEPS } from "./preflight.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -144,4 +150,19 @@ test("the gate passes on the real repository", () => {
     console.error = originalError;
   }
   assert.equal(exitCode, 0);
+});
+
+test("the entry check answers false when there is no program path", () => {
+  // `process.argv[1]` is always a test file in this suite, so the half of the guard
+  // that matters to a script imported as a module — no path at all — used to be an
+  // untaken branch on the file's last line. Naming the check made it a case: with
+  // the compile cache stripped, these three scripts read 94.12 % / 93.55 % / 94.12 %
+  // branches and the only missing arm was `process.argv[1] ?? ""`.
+  assert.equal(isEntryPoint(undefined), false);
+  assert.equal(isEntryPoint(""), false);
+  assert.equal(isEntryPoint("/nowhere/else.mjs"), false);
+  assert.equal(
+    isEntryPoint(resolve(import.meta.dirname, "check-hooks.mjs")),
+    true,
+  );
 });

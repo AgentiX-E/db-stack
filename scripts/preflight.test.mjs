@@ -15,11 +15,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 import {
   STEPS,
   failureHint,
+  isEntryPoint,
   main,
   runScript,
   runSteps,
@@ -240,6 +242,25 @@ test("runScript answers false for a non-zero status and for a child killed by a 
   );
 });
 
+test("the command line lists the steps it would run", () => {
+  // The one path an in-process case cannot take: the file as a program. It is also
+  // the path `check:hooks` compares the hook against, so a `--list` that drifted
+  // from `STEPS` would let a hook run a shorter preflight and still pass.
+  // Measured with the compile cache stripped, `preflight.mjs` read 98.96 % lines
+  // with 191-192 uncovered — `process.exit(main())` — until this case existed.
+  const child = spawnSync(
+    process.execPath,
+    [resolve(ROOT, "scripts/preflight.mjs"), "--list"],
+    { encoding: "utf8" },
+  );
+
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(
+    child.stdout.trim().split("\n"),
+    STEPS.map((step) => step.script),
+  );
+});
+
 test("the default reporter writes the step names to stdout", () => {
   const original = console.log;
   const printed = [];
@@ -265,4 +286,19 @@ test("the gate that guards the loop is the first thing the loop checks", () => {
   // `check:hooks` verifies that the hook runs *this* command; if preflight did not
   // include it, the hook would be checked by nothing that runs on a push.
   assert.ok(STEPS.some((step) => step.script === "check:hooks"));
+});
+
+test("the entry check answers false when there is no program path", () => {
+  // `process.argv[1]` is always a test file in this suite, so the half of the guard
+  // that matters to a script imported as a module — no path at all — used to be an
+  // untaken branch on the file's last line. Naming the check made it a case: with
+  // the compile cache stripped, these three scripts read 94.12 % / 93.55 % / 94.12 %
+  // branches and the only missing arm was `process.argv[1] ?? ""`.
+  assert.equal(isEntryPoint(undefined), false);
+  assert.equal(isEntryPoint(""), false);
+  assert.equal(isEntryPoint("/nowhere/else.mjs"), false);
+  assert.equal(
+    isEntryPoint(resolve(import.meta.dirname, "preflight.mjs")),
+    true,
+  );
 });

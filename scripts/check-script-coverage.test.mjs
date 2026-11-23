@@ -456,8 +456,10 @@ test("run measures when no output is handed to it, and the measurement is isolat
     // merge of two runs instead of a measurement of one.
     const before = process.env.NODE_TEST_CONTEXT;
     const beforeCoverage = process.env.NODE_V8_COVERAGE;
+    const beforeCache = process.env.NODE_COMPILE_CACHE;
     process.env.NODE_TEST_CONTEXT = "child";
     process.env.NODE_V8_COVERAGE = "/tmp/ancestor-run-coverage";
+    process.env.NODE_COMPILE_CACHE = "/tmp/ancestor-run-compile-cache";
     const lines = [];
     let code;
     try {
@@ -477,6 +479,8 @@ test("run measures when no output is handed to it, and the measurement is isolat
       else process.env.NODE_TEST_CONTEXT = before;
       if (beforeCoverage === undefined) delete process.env.NODE_V8_COVERAGE;
       else process.env.NODE_V8_COVERAGE = beforeCoverage;
+      if (beforeCache === undefined) delete process.env.NODE_COMPILE_CACHE;
+      else process.env.NODE_COMPILE_CACHE = beforeCache;
     }
 
     assert.equal(code, 0);
@@ -494,6 +498,10 @@ test("run measures when no output is handed to it, and the measurement is isolat
     assert.equal(calls[0].options.env[NESTED], "1");
     assert.equal("NODE_TEST_CONTEXT" in calls[0].options.env, false);
     assert.equal("NODE_V8_COVERAGE" in calls[0].options.env, false);
+    // A compile cache hides executed blocks from V8's coverage: the same commit
+    // read `check-doc-examples.mjs` at 100.00 % lines with the cache and 99.56 %
+    // with 457-458 uncovered without it. The measured run must not inherit it.
+    assert.equal("NODE_COMPILE_CACHE" in calls[0].options.env, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

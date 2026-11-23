@@ -13,7 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -32,8 +32,10 @@ import {
   configuredHooksPath,
   hookNames,
   hooksPath,
+  isEntryPoint,
   install,
   main,
+  rootArg,
 } from "./install-hooks.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -205,6 +207,50 @@ test("the real git path configures a real repository", () => {
   }
 });
 
+test("the command line answers a repository it is pointed at, installed or not", () => {
+  // The path every contributor takes and no in-process case can: the file as a
+  // program. `--root` is what makes both answers reachable — without it, the
+  // branch that reports "not set" exists only on a clone that has not installed
+  // the hooks, which is a coverage figure that depends on the machine: 98.80 %
+  // lines with 166-167 uncovered here, 100 % on a fresh one.
+  const dir = tree(["pre-push"], 0o755);
+  const script = resolve(ROOT, "scripts/install-hooks.mjs");
+  const run = (...argv) =>
+    spawnSync(process.execPath, [script, ...argv], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+  try {
+    execFileSync("git", ["-C", dir, "init", "-q"]);
+
+    // Not installed yet: the CLI names what is wrong and exits 1.
+    const before = run("--check", "--root", dir);
+    assert.equal(before.status, 1);
+    assert.match(before.stderr, /core\.hooksPath is not set/);
+
+    // Installed by the same command line, then asked again.
+    const installed = run("--root", dir);
+    assert.equal(installed.status, 0, installed.stderr);
+    assert.match(installed.stdout, /core\.hooksPath=\.githooks/);
+
+    const after = run("--check", "--root", dir);
+    assert.equal(after.status, 0, after.stderr);
+    assert.match(after.stdout, /install-hooks: pre-push via \.githooks/);
+    assert.equal(
+      repoGit(dir)(["config", "--get", "core.hooksPath"]).trim(),
+      HOOKS_DIR,
+    );
+
+    // A flag with no directory is answered, not thrown: the only caller that can
+    // get this wrong is a person.
+    const bare = run("--root");
+    assert.equal(bare.status, 1);
+    assert.match(bare.stderr, /--root needs a directory/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the real repository ships a hook, and this script is what installs it", () => {
   // A gate over zero hooks passes for any tree; this asserts the tree this
   // repository actually pushes from has one.
@@ -212,4 +258,31 @@ test("the real repository ships a hook, and this script is what installs it", ()
   assert.equal(hooksPath(), HOOKS_DIR);
   const hook = readFileSync(resolve(ROOT, HOOKS_DIR, "pre-push"), "utf8");
   assert.match(hook, /pnpm preflight/);
+});
+
+test("the entry check answers false when there is no program path", () => {
+  // `process.argv[1]` is always a test file in this suite, so the half of the guard
+  // that matters to a script imported as a module — no path at all — used to be an
+  // untaken branch on the file's last line. Naming the check made it a case: with
+  // the compile cache stripped, these three scripts read 94.12 % / 93.55 % / 94.12 %
+  // branches and the only missing arm was `process.argv[1] ?? ""`.
+  assert.equal(isEntryPoint(undefined), false);
+  assert.equal(isEntryPoint(""), false);
+  assert.equal(isEntryPoint("/nowhere/else.mjs"), false);
+  assert.equal(
+    isEntryPoint(resolve(import.meta.dirname, "install-hooks.mjs")),
+    true,
+  );
+});
+
+test("--root names the tree, and its absence means this one", () => {
+  // `main` short-circuits on its own `root` argument, so the flag path is only
+  // reached from a command line — the branch that returns the default was the one
+  // arm of this file no case took.
+  assert.equal(rootArg(["--check"]), ROOT);
+  assert.equal(
+    rootArg(["--check", "--root", "/tmp/elsewhere"]),
+    "/tmp/elsewhere",
+  );
+  assert.equal(rootArg(["--root"]), null);
 });

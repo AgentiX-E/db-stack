@@ -237,6 +237,15 @@ export function measure(root = ROOT, options = {}) {
   // read `replay-mutant.mjs` at 94.74 % in CI and 96.36 % locally, and one of the two
   // was a merge. Stripping the variable makes both of them answer for themselves.
   delete env.NODE_V8_COVERAGE;
+  // And the compile cache, which changes which block ranges V8 reports at all.
+  // Measured on 2026-11-23 from one commit: with an ambient
+  // `NODE_COMPILE_CACHE` the suite read `check-hooks.mjs` at 100.00 % branches,
+  // `install-hooks.mjs` at 100.00 % and `preflight.mjs` at 100.00 %; with the
+  // variable unset, the same command read 94.12 %, 93.55 % and 94.12 % — below
+  // the floor, and the three findings CI job 45115601356 reported. A percentage
+  // that depends on what a previous process left in a cache directory is not a
+  // measurement of this code, and the cache is invisible in the number it moves.
+  delete env.NODE_COMPILE_CACHE;
 
   try {
     return exec(
