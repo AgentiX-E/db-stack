@@ -52,18 +52,28 @@ export function newestCompletedSnapshot(inventory: readonly BackupMetadata[]): B
  */
 export function dependentsOf(inventory: readonly BackupMetadata[], snapshotId: string): string[] {
   const dependents: string[] = [];
-  const pending: string[] = [snapshotId];
+  const reached = new Set<string>([snapshotId]);
 
-  while (pending.length > 0) {
-    const current = pending.shift()!;
+  // One pass per snapshot the inventory holds, and no more: a chain cannot be
+  // deeper than the inventory it is drawn from, so `inventory` is the bound. The
+  // walk used to be a worklist (`while (pending.length > 0) { …; pending.push(…) }`),
+  // where an edit that empties the body or flips the condition is a loop no timer
+  // can interrupt rather than a wrong answer — the mutation run recorded those as
+  // abandoned runs and counted them as detections (P3-18). Rounds over a list have
+  // no counter to mutate, and each round propagates exactly one level, which is
+  // also the order this function has always returned: breadth first.
+  for (const _round of inventory) {
     for (const snapshot of inventory) {
-      const namesCurrent = snapshot.parentSnapshotId === current;
-      if (!namesCurrent) continue;
-      const isTheSnapshotItself = snapshot.snapshotId === snapshotId;
-      const alreadyCollected = dependents.includes(snapshot.snapshotId);
-      if (isTheSnapshotItself || alreadyCollected) continue;
+      const parentId = snapshot.parentSnapshotId;
+      const hasReachedParent = parentId !== undefined && reached.has(parentId);
+      // `reached` starts with the target's own id, so a snapshot that names itself
+      // as its parent finds itself reached here and is skipped: the cascade never
+      // deletes its target twice. An explicit "is this the target" test would be a
+      // second opinion that always agrees with this one, and a mutation of it
+      // could not be told apart from the original — the reason it is not written.
+      if (!hasReachedParent || reached.has(snapshot.snapshotId)) continue;
+      reached.add(snapshot.snapshotId);
       dependents.push(snapshot.snapshotId);
-      pending.push(snapshot.snapshotId);
     }
   }
 
@@ -106,7 +116,16 @@ export function resolveChain(
 
   const refuse = (reason: string): ChainResolution => ({ chain: [], reason });
 
-  for (;;) {
+  // One step per stored snapshot, plus one for the snapshot the caller passed —
+  // it need not be in the inventory, and the walk still has to reach its base.
+  // Bounded on purpose: `for (;;)` is correct only while every branch returns or
+  // advances, and a mutation that empties a branch or drops `seen.add` turns it
+  // into a loop no timer can interrupt, which the mutation run recorded as an
+  // abandoned run and counted as a detection (P3-18). A list cannot diverge: the
+  // worst an edit does is end the walk early, and that is the refusal below —
+  // a failed assertion with a name.
+  const steps = [...inventory.values(), undefined];
+  for (const _step of steps) {
     const parentId: string | undefined = current.parentSnapshotId;
     if (parentId === undefined) {
       const isBase = current.type !== 'incremental';
@@ -126,6 +145,12 @@ export function resolveChain(
     walked.push(parent);
     current = parent;
   }
+
+  // Unreachable in a correct walk: the last step is the base, and an inventory
+  // that runs out first would have revisited an id. It is the answer a walk that
+  // stopped advancing deserves, and it is what makes that failure a refusal
+  // rather than an abandoned run.
+  return refuse(`parent chain of snapshot ${snapshot.snapshotId} is longer than the inventory that holds it`);
 }
 
 /**

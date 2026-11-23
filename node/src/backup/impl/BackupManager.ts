@@ -273,13 +273,17 @@ export interface ReconcileOptions {
  * download does not hold up the next batch: the pool stays full until the work runs out.
  */
 async function eachLimited<T>(items: readonly T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
-  let cursor = 0;
+  // One shared cursor, as an iterator rather than an index: two workers taking the
+  // next item from the same generator is one item each, and there is no counter to
+  // mutate. `while (cursor < items.length) { …; cursor += 1 }` was a loop whose
+  // exit a mutation could remove — an emptied body leaves the cursor where it was,
+  // and the pool spins on a promise the event loop cannot interrupt in time to
+  // report it (P3-18).
+  const queue = (function* (): Generator<T> {
+    yield* items;
+  })();
   const worker = async (): Promise<void> => {
-    while (cursor < items.length) {
-      const item = items[cursor];
-      cursor += 1;
-      await run(item as T);
-    }
+    for (const item of queue) await run(item);
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }

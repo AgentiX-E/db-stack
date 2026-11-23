@@ -257,11 +257,24 @@ export class AuditLogManager implements IAuditLogger {
    * timestamp therefore stops the scan — it never causes a hole.
    */
   private _pruneOlderThan(cutoff: number): number {
-    let leading = 0;
-    while (leading < this.events.length && this.events[leading]!.timestamp < cutoff) {
-      leading += 1;
-    }
-    return this._dropLeading(leading);
+    return this._dropLeading(this._leadingOlderThan(cutoff));
+  }
+
+  /**
+   * How many leading events are older than `cutoff`.
+   *
+   * The prefix is a search, and `findIndex` is that search over a list instead of a
+   * `while` whose body advances an index: emptying such a body leaves an index that
+   * never moves, which is a loop no timer can interrupt — JavaScript cannot
+   * preëmpt synchronous code, so the case running it never reports and a mutation
+   * run records an abandoned run rather than a failing test (P3-18).
+   *
+   * `findIndex` answers `-1` when nothing is kept, which is every event: the whole
+   * list is the prefix.
+   */
+  private _leadingOlderThan(cutoff: number): number {
+    const firstKept = this.events.findIndex((event) => !(event.timestamp < cutoff));
+    return firstKept === -1 ? this.events.length : firstKept;
   }
 
   /** Everything the retention policy says about the current window. */
@@ -271,10 +284,7 @@ export class AuditLogManager implements IAuditLogger {
 
     let drop = 0;
     if (maxAgeMs > 0) {
-      const cutoff = now - maxAgeMs;
-      while (drop < this.events.length && this.events[drop]!.timestamp < cutoff) {
-        drop += 1;
-      }
+      drop = this._leadingOlderThan(now - maxAgeMs);
     }
     // The count ceiling can force a bigger prefix than the age rule did, but it can
     // never remove events the age rule would have kept inside the window: the

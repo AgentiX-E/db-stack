@@ -461,11 +461,16 @@ export class KeyManager {
     this.derivations++;
     this.kekCache.set(cacheKey, derived);
     // FIFO: `Map` iterates in insertion order, and the oldest entry is the one a
-    // working set is least likely to ask for again.
-    while (this.kekCache.size > MAX_CACHED_KEKS) {
-      const oldest = this.kekCache.keys().next().value as string;
-      this.kekCache.get(oldest)?.fill(0);
-      this.kekCache.delete(oldest);
+    // working set is least likely to ask for again. The excess is a slice of the
+    // cache's own entries — a list that cannot change while it is being walked —
+    // rather than a `while (size > MAX)` whose body shrinks the cache, because
+    // emptying that body is a loop no timer can interrupt (P3-18). `Math.max`
+    // clamps the slice end: a negative end would count from the newest entry and
+    // evict the wrong ones.
+    const entries = [...this.kekCache.entries()];
+    for (const [key, value] of entries.slice(0, Math.max(entries.length - MAX_CACHED_KEKS, 0))) {
+      value.fill(0);
+      this.kekCache.delete(key);
     }
 
     return derived;

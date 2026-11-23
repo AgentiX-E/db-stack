@@ -1060,9 +1060,13 @@ export class FileAuditStore implements IAuditStore {
    * bound is there because a loop that cannot terminate is not a retry policy: eight
    * refusals mean eight other writers named a segment in the same millisecond, which
    * is a deployment that needs its writers to stop sharing a directory.
+   *
+   * Eight attempts as a list rather than as a counter. `attempt++` mutated to
+   * `attempt--` is not a wrong answer, it is a scan that never ends, and no timer
+   * can interrupt it (P3-18).
    */
   private claimNewSegmentPath(): string {
-    for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt++) {
+    for (const attempt of Array.from({ length: CLAIM_ATTEMPTS }, (_, index) => index)) {
       const path = this.generateFilePath();
       if (claimSegment(path, this.claim)) return path;
     }
@@ -1419,9 +1423,17 @@ export class FileAuditStore implements IAuditStore {
    */
   async close(): Promise<void> {
     this.flush();
-    while (this.pendingCompressions.size > 0) {
-      await Promise.allSettled([...this.pendingCompressions]);
-    }
+    // One pass over a snapshot, not a fixpoint. Every compression is scheduled by
+    // a rotation, and `flush()` has already drained the writes that rotate — so the
+    // set below is every job this store will ever have. The `while (size > 0)` that
+    // used to be here re-tested the same set after waiting for it, which is a loop
+    // whose exit condition a mutation can remove (`> 0` → `>= 0`, or an emptied
+    // body): with an empty set `Promise.allSettled([])` resolves immediately, so
+    // the loop spun on microtasks and no timer could ever report it (P3-18).
+    //
+    // A job removes itself in `finally` before `allSettled` resumes, because the
+    // deletion is registered first, so the set is empty when this returns.
+    await Promise.allSettled([...this.pendingCompressions]);
   }
 
   /**

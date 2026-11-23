@@ -1,6 +1,6 @@
 # @agentix-e/db-node
 
-**Everything a single database node needs — 20 modules, 3 168 test cases in 156 files, every
+**Everything a single database node needs — 20 modules, 3 174 test cases in 157 files, every
 coverage dimension at or above 95 %.**
 
 Twenty modules that operate on **one node**, in one package. A probe probes its own
@@ -29,13 +29,13 @@ node.health.HealthOrchestrator;
 | [`auth`](./src/auth/) | Authentication interfaces. Interfaces only — `security` implements them. | 32 |
 | [`autoscaler`](./src/autoscaler/) | Scaling decisions from multi-dimensional metrics. | 167 |
 | [`autotuner`](./src/autotuner/) | Tuning recommendations for engine parameters. | 27 |
-| [`backup`](./src/backup/) | Real capture, digests, bucket confirmation, a durable inventory, chains, PITR. | 315 |
+| [`backup`](./src/backup/) | Real capture, digests, bucket confirmation, a durable inventory, chains, PITR. | 316 |
 | [`chaosengine`](./src/chaosengine/) | Fault definitions and the scenario runner. | 128 |
 | [`circuitbreaker`](./src/circuitbreaker/) | Breaker state per call site. | 15 |
 | [`configwatcher`](./src/configwatcher/) | Configuration watching and change notification. | 107 |
 | [`health`](./src/health/) | Liveness, readiness and startup probes. | 78 |
 | [`logger`](./src/logger/) | The `ILogger` port and an in-memory implementation. | 55 |
-| [`maintenance`](./src/maintenance/) | VACUUM / ANALYZE / REINDEX scheduling. | 382 |
+| [`maintenance`](./src/maintenance/) | VACUUM / ANALYZE / REINDEX scheduling. | 387 |
 | [`memoryguard`](./src/memoryguard/) | Heap-pressure guard. | 13 |
 | [`metrics`](./src/metrics/) | Counters, gauges and histograms. | 38 |
 | [`monitor`](./src/monitor/) | Slow-query, connection-pool and deadlock detection. | 129 |
@@ -45,8 +45,8 @@ node.health.HealthOrchestrator;
 | [`security`](./src/security/) | TLS, RBAC and encryption at rest — the implementation of `auth`. | 629 |
 | [`slacollector`](./src/slacollector/) | SLA event collection. | 13 |
 
-**Total: `pnpm coverage` reports 156 files and 3 168 tests, 0 failures** (`test:unit`: 137 files /
-2 836; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
+**Total: `pnpm coverage` reports 157 files and 3 174 tests, 0 failures** (`test:unit`: 138 files /
+2 842; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
 column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
 any of these numbers disagrees with it — a number in prose has no compiler, so this gate is that
 compiler.
@@ -97,7 +97,7 @@ the one to read first: it states what the module decides and what it deliberatel
 does not.
 
 ```bash
-npm test              # 156 files, 3 168 tests
+npm test              # 157 files, 3 174 tests
 npm run coverage      # writes coverage/test-report.json, the file check:test-counts reads
 ```
 

@@ -404,6 +404,16 @@ describe('AC 59 — the store keeps chains intact', () => {
     // cascade delete the target twice and inflate the count.
     const selfReferencing = [snapshot({ id: 'alone', type: 'incremental', parent: 'alone' })];
     expect(dependentsOf(selfReferencing, 'alone')).toEqual([]);
+
+    // A second base in the same inventory is not a dependent of the first. It
+    // names no parent, so nothing reaches it — the property a `while` worklist was
+    // free to get wrong and a round-based walk has to state (AC 103).
+    const twoBases = [
+      snapshot({ id: 'first-base' }),
+      snapshot({ id: 'second-base' }),
+      snapshot({ id: 'first-base-inc', type: 'incremental', parent: 'first-base' }),
+    ];
+    expect(dependentsOf(twoBases, 'first-base')).toEqual(['first-base-inc']);
   });
 
   it('AC 59.19: newestCompletedSnapshot ignores snapshots that never finished', () => {
@@ -469,6 +479,26 @@ describe('AC 59 — the store keeps chains intact', () => {
     );
 
     expect(unrestorableReason(inventory, inventory.get('a')!)).toBe('parent chain of snapshot a is cyclic at b');
+  });
+
+  it('AC 59.24: a set built from a cycle lists each snapshot once', () => {
+    // `a -> b -> a` is malformed metadata, and a retention pass still has to
+    // answer for it: the pair is one set, it is reclaimed whole, and a snapshot
+    // that appeared in it twice would be deleted twice and counted twice against
+    // the byte ceiling. This is the property the visited set buys, and the reason
+    // the walk keeps one.
+    const evaluator = new RetentionPolicyEvaluator({ maxFullSnapshots: 0, maxTotalBytes: 0 });
+    const inventory = [
+      snapshot({ id: 'cycle-a', type: 'incremental', parent: 'cycle-b', ageMs: 2 * DAY_MS }),
+      snapshot({ id: 'cycle-b', type: 'incremental', parent: 'cycle-a', ageMs: 3 * DAY_MS }),
+    ];
+
+    expect(
+      evaluator
+        .evaluate(inventory)
+        .map((s) => s.snapshotId)
+        .sort(),
+    ).toEqual(['cycle-a', 'cycle-b']);
   });
 
   it('AC 59.23: a removed set is listed oldest member first', () => {

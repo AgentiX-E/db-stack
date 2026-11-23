@@ -43,7 +43,7 @@ export interface CronSchedule {
  *     exist;
  *   - `*\/n`, `a/n`, `a-b/n` — a range walked by `n`, clamped the same way. A
  *     step that is not a positive number names nothing: `*\/0` is not "every
- *     minute", it is a typo, and iterating it would never terminate.
+ *     minute", it is a typo, and the span divided by it is infinite.
  *
  * Comma-separated lists combine any of the above.
  */
@@ -52,7 +52,7 @@ export function parseCronField(field: string, min: number, max: number): Set<num
 
   for (const part of field.split(',')) {
     if (part === '*') {
-      for (let value = min; value <= max; value++) values.add(value);
+      for (const value of valuesBetween(min, max)) values.add(value);
       continue;
     }
 
@@ -86,15 +86,49 @@ export function parseCronField(field: string, min: number, max: number): Set<num
 }
 
 /**
+ * Every integer in `low..high`, inclusive — the list a field's values are drawn
+ * from.
+ *
+ * A list rather than a counted loop, and the difference is the reason this
+ * function exists. `for (let value = low; value <= high; value++)` is a promise
+ * that the update expression goes the way its guard expects, and a mutation of
+ * either one produces a loop no timer can interrupt: JavaScript cannot preëmpt
+ * synchronous code, so the suite never gets to report the hang and the mutation
+ * run records an abandoned run instead of a failing test. An array has no
+ * counter to mutate — the worst an edit here can do is name the wrong values,
+ * and a wrong value is an assertion with a name.
+ *
+ * `Array.from` clamps a negative or `NaN` length to zero, so an inverted range
+ * is the empty list without a branch of its own.
+ */
+function valuesBetween(low: number, high: number): number[] {
+  return Array.from({ length: high - low + 1 }, (_, offset) => low + offset);
+}
+
+/**
+ * The values a stepped range names: `low`, `low + step`, `low + 2 × step`, …
+ * while they are at most `high`.
+ *
+ * The count is arithmetic, so the walk is an array: a step that is not positive
+ * divides the span into infinitely many values, and `Array.from` refuses that by
+ * throwing rather than by looping — the guard below is what keeps a typo from
+ * reaching it.
+ */
+function steppedValues(low: number, high: number, step: number): number[] {
+  const count = Math.floor((high - low) / step) + 1;
+  return Array.from({ length: count }, (_, index) => low + index * step);
+}
+
+/**
  * Add `low-high` to `target`, clamped to the field's real range.
  *
- * A bound that is not a number leaves the loop empty rather than throwing:
+ * A bound that is not a number leaves the list empty rather than throwing:
  * `"-5"` names no range, and a schedule that names nothing is inert.
  */
 function addRange(target: Set<number>, lowSpec: string, highSpec: string, min: number, max: number): void {
   const low = Math.max(Number.parseInt(lowSpec, 10), min);
   const high = Math.min(Number.parseInt(highSpec, 10), max);
-  for (let value = low; value <= high; value++) target.add(value);
+  for (const value of valuesBetween(low, high)) target.add(value);
 }
 
 /**
@@ -106,7 +140,11 @@ function addRange(target: Set<number>, lowSpec: string, highSpec: string, min: n
  */
 function addStepped(target: Set<number>, rangeSpec: string, stepSpec: string, min: number, max: number): void {
   const step = Number.parseInt(stepSpec, 10);
-  if (!Number.isFinite(step) || step <= 0) return;
+  // One comparison, written so that every mutation of it is observable: `>=`
+  // lets a zero step through, and a zero step is a division by zero rather than
+  // a schedule, which `steppedValues` answers with the empty list. `NaN` fails
+  // this comparison too, so a step that is not a number names nothing either.
+  if (!(step > 0)) return;
 
   let low = min;
   let high = max;
@@ -118,7 +156,7 @@ function addStepped(target: Set<number>, rangeSpec: string, stepSpec: string, mi
     if (highParts.length) high = Number.parseInt(highParts.join('-'), 10);
   }
 
-  for (let value = low; value <= high; value += step) {
+  for (const value of steppedValues(low, high, step)) {
     if (value >= min && value <= max) target.add(value);
   }
 }

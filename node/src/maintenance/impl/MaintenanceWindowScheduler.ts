@@ -48,6 +48,43 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
 /**
+ * The most instants one projection returns — the bound that used to be a loop
+ * counter.
+ *
+ * A range that spans years would otherwise cost a list nothing can afford, and
+ * every projection here is a search rather than a computation: past a hundred
+ * thousand instants the answer is "this window's occurrences are beyond what one
+ * projection returns", which is what the counter said too. It is also what keeps
+ * an arithmetic edit in `instantsBetween` a wrong answer rather than a run that
+ * allocates tens of millions of numbers before anyone can report it.
+ */
+const MAX_PROJECTED_INSTANTS = 100_000;
+
+/**
+ * The instants in `[fromMs, toMs)` spaced `stepMs` apart, at most `limit` of them.
+ * The default is the projection bound, so an arithmetic edit that inflates the
+ * span produces a hundred thousand wrong instants — an assertion with a name —
+ * rather than a list that takes longer to build than the runner waits.
+ *
+ * A list, not a counted loop, because that is the difference between a bound and
+ * a promise. `while (cursor < toMs) { …; cursor += step }` is correct only while
+ * the body keeps advancing the cursor and the update expression keeps its sign;
+ * a mutation of either does not produce a wrong answer, it produces a loop no
+ * timer can interrupt — JavaScript cannot preëmpt synchronous code, so the case
+ * running it never reports and the mutation run records an abandoned run instead
+ * of a failing test (P3-18). Here the length is arithmetic: the worst an edit can
+ * do is name the wrong instants, and wrong instants are a failed assertion with a
+ * name.
+ *
+ * `Math.ceil` of a negative or `NaN` span is `≤ 0`, which `Array.from` clamps to
+ * the empty list — an inverted range needs no branch of its own.
+ */
+function instantsBetween(fromMs: number, toMs: number, stepMs: number, limit = MAX_PROJECTED_INSTANTS): number[] {
+  const count = Math.min(Math.ceil((toMs - fromMs) / stepMs), limit);
+  return Array.from({ length: count }, (_, index) => fromMs + index * stepMs);
+}
+
+/**
  * Parse a `HH:MM` start time, or `null` when the value cannot name a time of day.
  *
  * `Number('25')` is 25 rather than `NaN`, and `setUTCHours(25, 0)` rolls over to
@@ -462,11 +499,12 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       cursor = new Date(nextDayMs);
     }
 
-    // Iterate while inside the window range, advancing one day per step
-    let currentMs = cursor.getTime();
-    while (currentMs < toMs) {
+    // Every instant in the range, one day apart. A list rather than a `while`
+    // whose body advances the cursor: a mutation that empties the body or flips
+    // the day it adds leaves a loop no timer can interrupt, and a synchronous
+    // loop cannot be reported by the case running it (P3-18, `AC 103`).
+    for (const currentMs of instantsBetween(cursor.getTime(), toMs, DAY_MS)) {
       out.push(this._makeOccurrence(win, currentMs));
-      currentMs += DAY_MS;
     }
   }
 
@@ -491,14 +529,13 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
       cursorMs = cursorMs + DAY_MS;
     }
 
-    while (cursorMs < toMs) {
-      const cursorDate = new Date(cursorMs);
+    for (const at of instantsBetween(cursorMs, toMs, DAY_MS)) {
+      const cursorDate = new Date(at);
       const dayOfWeek = cursorDate.getUTCDay();
       const matchesDay = targetDays.has(dayOfWeek);
       if (matchesDay) {
-        out.push(this._makeOccurrence(win, cursorMs));
+        out.push(this._makeOccurrence(win, at));
       }
-      cursorMs = cursorMs + DAY_MS;
     }
   }
 
@@ -511,15 +548,29 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
     // window with no valid day should give.
     const targetDays = validDaysOfMonth(win.daysOfMonth!);
 
-    let cursor = new Date(fromMs);
-    cursor.setUTCHours(start.hour, start.minute, 0, 0);
-    cursor.setUTCDate(1);
+    // The month the range starts in, and the month it ends in. Only the year and
+    // the month are read, so the anchor's hour is not set here: it is applied once
+    // per month below, where it decides the instant the occurrence starts at.
+    const first = new Date(fromMs);
+    const firstYear = first.getUTCFullYear();
+    const firstMonth = first.getUTCMonth();
+    const last = new Date(toMs);
+    const monthsFollowed = (last.getUTCFullYear() - firstYear) * 12 + (last.getUTCMonth() - firstMonth);
 
-    let cursorMs = cursor.getTime();
-    while (cursorMs < toMs) {
+    // The first instant of every month the range touches, built as a list:
+    // `Date.UTC` normalises a month index past 11 into the next year, so the
+    // rollover arithmetic that used to advance a cursor is gone with the counter
+    // it advanced — and with it the loop a mutation could make endless. A month
+    // that begins after the range contributes nothing: its candidates fail the
+    // same interval test as any other instant outside `[fromMs, toMs)`.
+    const monthStarts = Array.from({ length: Math.min(monthsFollowed + 1, MAX_PROJECTED_INSTANTS) }, (_, offset) =>
+      Date.UTC(firstYear, firstMonth + offset, 1, start.hour, start.minute, 0, 0),
+    );
+
+    for (const cursorMs of monthStarts) {
       const seen = new Set<number>();
-      const year = cursor.getUTCFullYear();
-      const month = cursor.getUTCMonth();
+      const year = new Date(cursorMs).getUTCFullYear();
+      const month = new Date(cursorMs).getUTCMonth();
       // Last day of current month: day 0 of next month.
       // Must use Date.UTC (not local `new Date`) so the day is correct in any
       // host timezone — a local-time construction read via getUTCDate() is off
@@ -541,33 +592,25 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
           }
         }
       }
-
-      // Advance to next month: month+1, handle year rollover
-      const newMonth = month + 1;
-      const rolloverYear = newMonth > 11 ? year + 1 : year;
-      const rolledMonth = newMonth > 11 ? newMonth - 12 : newMonth;
-      cursor = new Date(Date.UTC(rolloverYear, rolledMonth, 1, start.hour, start.minute, 0, 0));
-      cursorMs = cursor.getTime();
     }
   }
 
   private _projectCron(win: MaintenanceWindow, out: WindowOccurrence[], fromMs: number, toMs: number): void {
     const cron = parseCron(win.cronExpression!);
 
-    let cursor = new Date(fromMs);
+    const cursor = new Date(fromMs);
     cursor.setUTCSeconds(0, 0);
 
-    // Scan minute by minute within range (bounded to ~100k iterations to prevent hang)
-    const maxIterations = 100_000;
-    let iterations = 0;
-
-    while (cursor.getTime() < toMs && iterations < maxIterations) {
-      iterations++;
-      const min = cursor.getUTCMinutes();
-      const hour = cursor.getUTCHours();
-      const dom = cursor.getUTCDate();
-      const mon = cursor.getUTCMonth() + 1;
-      const dow = cursor.getUTCDay();
+    // Minute by minute within the range, bounded so that a range which spans
+    // years costs a bounded list rather than a bounded number of iterations of a
+    // loop whose exit a mutation could remove.
+    for (const at of instantsBetween(cursor.getTime(), toMs, MINUTE_MS)) {
+      const moment = new Date(at);
+      const min = moment.getUTCMinutes();
+      const hour = moment.getUTCHours();
+      const dom = moment.getUTCDate();
+      const mon = moment.getUTCMonth() + 1;
+      const dow = moment.getUTCDay();
 
       if (
         cron.minutes.has(min) &&
@@ -576,12 +619,10 @@ export class MaintenanceWindowScheduler implements IMaintenanceScheduler {
         cron.months.has(mon) &&
         cron.daysOfWeek.has(dow)
       ) {
-        if (cursor.getTime() >= fromMs) {
-          out.push(this._makeOccurrence(win, cursor.getTime()));
+        if (at >= fromMs) {
+          out.push(this._makeOccurrence(win, at));
         }
       }
-
-      cursor = new Date(cursor.getTime() + MINUTE_MS);
     }
   }
 

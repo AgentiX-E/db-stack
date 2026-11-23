@@ -126,14 +126,22 @@ function buildBackupSets(snapshots: BackupMetadata[]): BackupSet[] {
   const visited = new Set<string>();
   const collect = (base: BackupMetadata): BackupSet => {
     const members: BackupMetadata[] = [];
-    const queue: BackupMetadata[] = [base];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      if (visited.has(current.snapshotId)) continue;
-      visited.add(current.snapshotId);
-      members.push(current);
-      const descendants = children.get(current.snapshotId) ?? [];
-      for (const descendant of descendants) queue.push(descendant);
+    let frontier: BackupMetadata[] = [base];
+    // Breadth first, one round per level. The queue used to be a worklist whose
+    // body pushed onto it; emptying that body or flipping its condition is a loop
+    // no timer can interrupt, which is how four of these aborts were recorded as
+    // detections nobody made (P3-18). A round expands only what it discovered, so
+    // the walk keeps the original's rule that a snapshot visited for an earlier set
+    // is not walked again — and the inventory bounds the rounds.
+    for (const _round of snapshots) {
+      const discovered: BackupMetadata[] = [];
+      for (const current of frontier) {
+        if (visited.has(current.snapshotId)) continue;
+        visited.add(current.snapshotId);
+        members.push(current);
+        discovered.push(current);
+      }
+      frontier = discovered.flatMap((current) => children.get(current.snapshotId) ?? []);
     }
     return { base, members };
   };
