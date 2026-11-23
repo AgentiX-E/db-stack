@@ -25,11 +25,13 @@ import {
   NESTED,
   UNMEASURED,
   check,
+  coverageBlock,
   isEntryPoint,
   measure,
   parseTable,
   run,
   scripts,
+  tableLines,
 } from "./check-script-coverage.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -75,6 +77,69 @@ test("the table Node prints is read, and everything else in its output is not", 
   assert.deepEqual(rows.get("check-docs-api.mjs"), row(98.81, 95.33, 97.37));
   assert.equal(rows.has("scripts"), false, "the group heading is not a file");
   assert.equal(rows.has("all files"), false, "the totals are not a file");
+});
+
+test("a failure carries the runner's own table, uncovered lines included", () => {
+  // The column `parseTable` drops is the one that names the branch nobody forced.
+  // The separator, the directory row and the totals row are not rows about a script.
+  const output = [
+    "# Subtest: something",
+    "# file       | line % | branch % | funcs % | uncovered lines",
+    "# ---------------------------------------------------------------",
+    "# scripts    |        |          |         |",
+    "#  gate.mjs  | 100.00 |   94.12 |  100.00 | 165, 170-171",
+    "# all files  | 100.00 |   94.12 |  100.00 |",
+  ].join("\n");
+
+  assert.deepEqual(coverageBlock(output), [
+    "# file       | line % | branch % | funcs % | uncovered lines",
+    "#  gate.mjs  | 100.00 |   94.12 |  100.00 | 165, 170-171",
+  ]);
+});
+
+test("a gate that fails prints what it measured on the sink the verdict used", () => {
+  const dir = mkdtempSync(join(tmpdir(), "script-coverage-"));
+  try {
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    writeFileSync(join(dir, "scripts", "gate.mjs"), "");
+    const errors = [];
+    const code = run({
+      root: dir,
+      output:
+        "#  gate.mjs  | 100.00 |   94.12 |  100.00 | 165\n# all files | 100.00 | 94.12 | 100.00 |\n",
+      unmeasured: [],
+      belowFloor: [],
+      log: () => {},
+      error: (line) => errors.push(line),
+    });
+
+    assert.equal(code, 1);
+    // A caller capturing stderr alone now reads the row, not just the verdict.
+    assert.ok(
+      errors.some(
+        (line) => line.includes("gate.mjs") && line.includes("94.12"),
+      ),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the table a failing gate prints is the table it measured", () => {
+  // Both sinks render the same lines: a caller that captures stderr — every test
+  // that spawns the gate does — must see the rows behind a percentage, or a
+  // failure says "94.12 %" about a file and nothing about the other twenty.
+  const lines = tableLines(
+    ["measured.mjs", "unmeasured.mjs"],
+    new Map([["measured.mjs", row(99.5, 94.12, 100)]]),
+  );
+
+  assert.deepEqual(lines, [
+    "| Script | Lines | Branches | Functions |",
+    "|---|---:|---:|---:|",
+    "| `measured.mjs` | 99.50 | 94.12 | 100.00 |",
+    "| `unmeasured.mjs` | — | — | — |",
+  ]);
 });
 
 test("a script no test loads is a finding that says so", () => {
@@ -539,7 +604,15 @@ test(
       },
     );
 
-    assert.equal(child.status, 0, child.stderr.slice(-4000));
+    // Both streams, because the verdict and the numbers behind it are on
+    // different ones: the gate logs its table to stdout and its findings to
+    // stderr, and a message that shows only the second is a message that says
+    // "94.12 %" without saying of what.
+    assert.equal(
+      child.status,
+      0,
+      `${child.stdout.slice(-6000)}\n${child.stderr.slice(-3000)}`,
+    );
     assert.match(child.stdout, /✓ script-coverage: \d+ scripts accounted for/);
   },
 );

@@ -271,6 +271,44 @@ export function isEntryPoint(entry, moduleUrl = import.meta.url) {
 }
 
 /**
+ * The coverage table out of the runner's output, verbatim.
+ *
+ * Verbatim because the column that matters when a file is under the floor is the
+ * one `parseTable` throws away: `uncovered lines`. A verdict of "branches 94.12 %"
+ * names a percentage; "94.12 % — line 165" names the branch nobody forced.
+ */
+export function coverageBlock(output) {
+  return output
+    .split("\n")
+    .filter((line) => /^#\s+(file\b|\S+\.mjs\s+\|)/.test(line));
+}
+
+/**
+ * The table, as lines, so both sinks can print the same thing.
+ *
+ * A failing gate used to print the table only to stdout and the findings to stderr,
+ * which meant that a caller capturing one stream saw the verdict and not the numbers
+ * behind it — CI job 45115601356 named three files at 94.12 %, 93.55 % and 94.12 %
+ * and gave no way to see the rest of the row. A measurement that cannot be read
+ * from the log it produced is a measurement somebody has to reproduce by hand.
+ */
+export function tableLines(files, rows) {
+  const lines = [
+    "| Script | Lines | Branches | Functions |",
+    "|---|---:|---:|---:|",
+  ];
+  for (const file of files) {
+    const row = rows.get(file);
+    lines.push(
+      row
+        ? `| \`${file}\` | ${row.lines.toFixed(2)} | ${row.branches.toFixed(2)} | ${row.functions.toFixed(2)} |`
+        : `| \`${file}\` | — | — | — |`,
+    );
+  }
+  return lines;
+}
+
+/**
  * Judge one run and say so.
  *
  * The two sinks are parameters, not defaults. A gate that hides `console` behind
@@ -305,16 +343,7 @@ export function run(options) {
     `Script coverage on ${process.version} — floor ${options.floor ?? FLOOR}% on ${DIMENSIONS.join(" / ")}, ${files.length} script(s)`,
   );
   log("");
-  log("| Script | Lines | Branches | Functions |");
-  log("|---|---:|---:|---:|");
-  for (const file of files) {
-    const row = rows.get(file);
-    log(
-      row
-        ? `| \`${file}\` | ${row.lines.toFixed(2)} | ${row.branches.toFixed(2)} | ${row.functions.toFixed(2)} |`
-        : `| \`${file}\` | — | — | — |`,
-    );
-  }
+  for (const line of tableLines(files, rows)) log(line);
 
   if (debt.length > 0) {
     log("");
@@ -329,6 +358,17 @@ export function run(options) {
       "\nA gate is an instrument, and an unmeasured instrument is a claim. Test it, or list it " +
         "with a reason and a roadmap id — silence is the one answer this gate does not accept.",
     );
+    // The runner's own table, on the stream the verdict went to. Every test that
+    // spawns this script captures stderr and drops stdout, so a percentage used to
+    // arrive with no row beside it — and no file, no uncovered line, and no way to
+    // tell a missing test from a missing branch. CI job 45115601356 is that shape:
+    // three files under the floor, 94.12 % / 93.55 % / 94.12 %, and nothing in the
+    // log that says which lines were not exercised.
+    const measured = coverageBlock(output);
+    if (measured.length > 0) {
+      error("");
+      for (const line of measured) error(line);
+    }
     return 1;
   }
 
