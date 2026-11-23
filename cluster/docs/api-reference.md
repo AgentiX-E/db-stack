@@ -50,7 +50,11 @@ class RaftAdapter {
     tcpConfig?: RaftTcpTransportConfig,
     sharedTransport?: SharedTransport,
   ): Promise<void>;
-  setApplicationSnapshotHandlers(handlers: { takeSnapshot?; installSnapshot? }): void;
+  setApplicationSnapshotHandlers(handlers: {
+    takeSnapshot?: (boundaryIndex: number) => Buffer | Promise<Buffer>;
+    installSnapshot?: (data: Buffer) => void | Promise<void>;
+    appliedIndex?: () => number | Promise<number>;
+  }): void;
   propose(data: string): Promise<{ index: string; term: string }>;
   proposeAndWait(data: string): Promise<{ index: string; term: string }>;
   isLeader(): Promise<boolean>;
@@ -79,6 +83,19 @@ class RaftAdapter {
 lower bound, returns an empty slice past the head, and returns an empty slice
 rather than throwing when compaction lands mid-read — a learner pulling entries
 must be able to tell "nothing there yet" from "I lost the race".
+
+`init()` ends with a check the adapter can only make with the application's help:
+that the engine's state is where Raft says the node is. The optional
+`appliedIndex` provider is what makes it possible. A node whose engine is behind
+the log is refused with `FAILED_PRECONDITION`, naming both positions and the width
+of the hole, because the entries in it are applied without reaching the
+application and are already compacted out of the log — the node would answer reads
+out of a hole, and no later replay could fill it. Without a provider the check
+covers the one case the handler table decides on its own: a snapshot exists in
+storage, the application registered `takeSnapshot`, and no `installSnapshot` was
+registered to receive the state. `getStatus()` reports `applicationApplied` and
+`appliedGap` for monitoring; both are `null` when no provider is registered,
+because "not published" is not "zero".
 
 ### Where a quorum's member set comes from
 

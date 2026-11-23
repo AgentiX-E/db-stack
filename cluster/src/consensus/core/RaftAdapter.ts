@@ -331,6 +331,7 @@ export class RaftAdapter {
   private applicationSnapshotHandlers: {
     takeSnapshot?: (boundaryIndex: number) => Buffer | Promise<Buffer>;
     installSnapshot?: (data: Buffer) => void | Promise<void>;
+    appliedIndex?: () => number | Promise<number>;
   } = {};
 
   /**
@@ -685,6 +686,10 @@ export class RaftAdapter {
       this._appliedIndex = raftNode.getLastApplied();
       // A restarted node already owns a snapshot; read it before anyone asks.
       await this.refreshSnapshotMeta();
+      // raft has just declared a position for this node. Whether the engine is
+      // actually at that position is a different question, and the only one that
+      // decides whether this node may serve.
+      await this.verifyApplicationState();
 
       logger.info({ nodeId: this.config.id }, '[RaftAdapter] Initialized with @maboke123/raft-core');
     } catch (err: unknown) {
@@ -692,12 +697,109 @@ export class RaftAdapter {
       // caller only sees a rejected promise and has no handle on the storage or
       // the listener that a half-finished init already opened.
       await this.releaseResources();
+      // A diagnosis made by this adapter is already the precise one. Wrapping it
+      // would prefix a dependency's name to a message that is not about the
+      // dependency and rewrite FAILED_PRECONDITION to INTERNAL, which is the
+      // difference between "your engine is behind your log" and "something broke".
+      if (err instanceof SqlVecError) throw err;
       throw new SqlVecError(
         `Failed to initialize @maboke123/raft-core: ${getErrorMessage(err)}`,
         SqlVecErrorCode.INTERNAL_ERROR,
         { cause: err },
       );
     }
+  }
+
+  /**
+   * Check that the application's state is where Raft says the node is.
+   *
+   * Raft reaches its starting position by two routes, and only one of them tells
+   * the application:
+   *
+   * - it installs the persisted snapshot, calling `installSnapshot` — the engine
+   *   is brought to `lastIncludedIndex` and both sides agree;
+   * - it finds no snapshot and starts from an empty log — both sides are at 0.
+   *
+   * `applyCommittedEntries` has a third: when its `nextIndex` is at or below the
+   * log's snapshot index it sets `lastApplied` to that index and continues without
+   * calling the application. That branch exists for entries the snapshot already
+   * covers *and the application therefore already has*. A node whose engine is
+   * behind its log — a restored older backup, a durable engine the operator
+   * swapped, an `installSnapshot` handler that quietly did nothing — lands in it
+   * with a hole exactly as wide as the difference, and nothing in the log says so:
+   * raft reports the snapshot index, the engine answers fewer keys, and the missing
+   * writes are no longer in the log to be replayed.
+   *
+   * The adapter cannot see the engine, so it asks the application: an
+   * `appliedIndex` provider states where the engine is. A provider that reports a
+   * position behind `lastApplied` is refused outright — starting would serve reads
+   * out of a hole, and the two honest recoveries (resync this node from a leader,
+   * or restore the engine from a snapshot at or above the boundary) are decisions
+   * the operator has to make, not something to do behind their back. Without a
+   * provider the check degrades to the one case that is decidable from the
+   * handlers alone: a snapshot exists, the application owns state, and no
+   * `installSnapshot` was registered to receive it.
+   */
+  private async verifyApplicationState(): Promise<void> {
+    const node = this.node;
+    if (!node) return;
+    const raftApplied = node.getLastApplied();
+    const snapshotIndex = this._snapshotMeta?.lastIncludedIndex ?? 0;
+    const { takeSnapshot, installSnapshot } = this.applicationSnapshotHandlers;
+    const ownsState = Boolean(takeSnapshot);
+
+    const applicationApplied = await this.readApplicationApplied();
+    if (applicationApplied !== null) {
+      if (applicationApplied < raftApplied) {
+        throw new SqlVecError(
+          `application state is behind the Raft position: this node's log is applied to index ${raftApplied} ` +
+            `(snapshot ${snapshotIndex === 0 ? 'none' : snapshotIndex}) but the application reports ${applicationApplied}. ` +
+            `The ${raftApplied - applicationApplied} entries in between were applied without reaching the application ` +
+            'and are no longer in the log, so serving this node would answer reads with a hole in them. ' +
+            'Restore the application from a snapshot at or above index ' +
+            `${snapshotIndex} or resync this node from a leader.`,
+          SqlVecErrorCode.FAILED_PRECONDITION,
+        );
+      }
+      return;
+    }
+
+    if (ownsState && snapshotIndex > 0 && !installSnapshot) {
+      // No provider, so the engine's position is unknown; this configuration is the
+      // one that is knowably wrong. A group that owns no state is not affected:
+      // its snapshots are empty by design, and there is nothing to restore.
+      throw new SqlVecError(
+        `this node's Raft storage holds a snapshot at index ${snapshotIndex}, it registers takeSnapshot ` +
+          '(so the application owns state), and it registers no installSnapshot to receive that state. ' +
+          'raft-core restores the snapshot during start() by calling installSnapshot, so with no handler the ' +
+          `application is never told about indices up to ${snapshotIndex} while the node reports them as applied. ` +
+          'Register installSnapshot (EngineBackedReplica exposes restore), register an appliedIndex provider ' +
+          "so the position can be checked instead, or delete this node's Raft storage so it resyncs from a leader.",
+        SqlVecErrorCode.FAILED_PRECONDITION,
+      );
+    }
+  }
+
+  /**
+   * The application's published position, or `null` when it publishes none.
+   *
+   * A provider that answers with something that is not a non-negative integer is
+   * a broken wiring, not a position: treating it as 0 would report a node at
+   * index 0 as caught up with a log at index 500, which is the silent failure this
+   * check exists to prevent.
+   */
+  private async readApplicationApplied(): Promise<number | null> {
+    const provider = this.applicationSnapshotHandlers.appliedIndex;
+    if (!provider) return null;
+    const value = await provider();
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new SqlVecError(
+        `the appliedIndex provider returned ${String(value)}; it must return the non-negative log index ` +
+          "the application's state reflects",
+        SqlVecErrorCode.INVALID_ARGUMENT,
+      );
+    }
+    return value;
   }
 
   // The shared-transport bridge is `SharedBatchedTransport`, built in `init()`.
@@ -724,6 +826,23 @@ export class RaftAdapter {
      */
     takeSnapshot?: (boundaryIndex: number) => Buffer | Promise<Buffer>;
     installSnapshot?: (data: Buffer) => void | Promise<void>;
+    /**
+     * Report the log index the application's own state reflects.
+     *
+     * Optional, and the only way this adapter can check the claim it is asked to
+     * believe. Raft reaches its starting position by installing the persisted
+     * snapshot *through this handler table*; when that does not happen — a durable
+     * engine the operator restored from an older backup, an `installSnapshot` that
+     * quietly does nothing — the node reports the snapshot index while the engine
+     * is behind it, and the difference is already compacted out of the log. A
+     * provider that disagrees with Raft's position makes `init()` refuse to start
+     * the node instead of letting it answer reads out of the hole.
+     *
+     * Return the same number a snapshot envelope records: the index of the last
+     * entry the engine applied. `EngineBackedReplica.lastAppliedIndex()` is that
+     * number.
+     */
+    appliedIndex?: () => number | Promise<number>;
   }): void {
     this.applicationSnapshotHandlers = handlers;
   }
@@ -1318,6 +1437,15 @@ export class RaftAdapter {
     if (!this.node) return null;
     try {
       const snapshot = await this.refreshSnapshotMeta();
+      // A provider that answers with something other than a position must not take
+      // the whole status down with it: a status that disappears because one field
+      // could not be read is worse than a field that says "not published".
+      let applicationApplied: number | null = null;
+      try {
+        applicationApplied = await this.readApplicationApplied();
+      } catch {
+        applicationApplied = null;
+      }
       return {
         role: this.node.getState(),
         term: this.node.getCurrentTerm(),
@@ -1325,6 +1453,15 @@ export class RaftAdapter {
         lastApplied: this.node.getLastApplied(),
         lastLogIndex: this.node.getLastLogIndex(),
         leader: this.node.getLeaderId(),
+        // Where the application says its state is, and how far that is from the
+        // position raft declares. Both are `null` when no `appliedIndex` provider
+        // is registered: "not published" is not "zero", and reporting 0 for an
+        // unknown position would look exactly like the defect this field exists to
+        // expose. A non-zero gap means the node is answering from a position it
+        // never applied — `init()` refuses to start in that state, so a live gap
+        // is a provider that drifts during the run, which is also worth seeing.
+        applicationApplied,
+        appliedGap: applicationApplied === null ? null : this.node.getLastApplied() - applicationApplied,
         snapshot: snapshot
           ? { lastIncludedIndex: snapshot.lastIncludedIndex, lastIncludedTerm: snapshot.lastIncludedTerm }
           : null,

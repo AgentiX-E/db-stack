@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accepted. `interfaces/types.ts`'s copy is gone, the codec's is exported under that name.
 - **`OutboundMessage`** — the envelope `ConnectionPool.broadcast()/sendTo()` stamp numeric peer ids
   onto, named so it cannot be confused with the wire type above.
+- **`appliedIndex` on `setApplicationSnapshotHandlers`** — the application's own log position. Optional,
+  and the only way the adapter can tell a node whose engine is current from one whose engine is behind
+  a log nobody can replay. `EngineBackedReplica.lastAppliedIndex()` is what to return.
 
 - **Membership changes over a live cluster** — `RaftAdapter.addServer(nodeId, address, asLearner)`,
   `promoteServer(nodeId)`, `removeServer(nodeId)`, `getMembership()` and `refreshMembership()`.
@@ -364,6 +367,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A one-voter group never took office, and could not commit if it had.** Two defects in
+  `@maboke123/raft-core` 0.2.1 that a three-node cluster cannot reach. (1) A candidate collected its
+  own vote, computed `votesNeeded`, and then waited for `RequestVoteResponse`s — which a group with no
+  peers never receives. Measured: `role: Candidate`, term climbing 1 → 11 in four seconds, no entry
+  ever committed. The pre-vote path checked the quorum before becoming a candidate; the candidate path
+  did not. (2) The only caller of `tryAdvanceCommitIndex` was the `AppendEntriesResponse` handler, so
+  even with (1) fixed every `propose()` answered `Failed to commit command within timeout` while
+  `commitIndex` stayed at 0 — the entry was in the leader's own majority and was never counted.
+  Both are patched (`patches/@maboke123__raft-core@0.2.1.patch`), and `RaftAdapter.single-voter.test.ts`
+  guards them together with the control that keeps the fix honest: a two-voter group whose peer is
+  unreachable still never takes office, and its term does not move, because the election ends in
+  pre-vote.
+- **A node could start with an engine that was behind the position Raft declared, and answer reads
+  out of the hole.** `applyCommittedEntries` treats `nextIndex <= snapshotIndex` by setting
+  `lastApplied` to the snapshot index and continuing — the application is never called, and the
+  entries in that interval are already compacted out of the log. Reached by an engine restored from an
+  older backup, by an `installSnapshot` that writes nowhere, or by registering `takeSnapshot` without
+  `installSnapshot` at all. Measured before the fix, on a real restart: `commitIndex 4`,
+  `lastApplied 4`, `snapshot.lastIncludedIndex 4`, application handed **zero** commands. `init()` now
+  refuses both decidable cases with `FAILED_PRECONDITION`, naming the indexes and the width of the
+  hole, and `getStatus()` reports `applicationApplied` / `appliedGap`.
 - **A frame could overtake the frame submitted before it.** `RaftTcpTransport` compresses payloads
   over the threshold with zstd, which runs on libuv's thread pool, and it wrote each frame **inside
   that compression callback** — so the socket received the frames in _completion_ order. Two frames

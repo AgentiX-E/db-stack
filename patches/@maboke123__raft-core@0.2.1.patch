@@ -1,3 +1,45 @@
+diff --git a/dist/core/StateMachine.js b/dist/core/StateMachine.js
+index 8385f3869265612f03061ae801bcced3fe05fae3..aa1b9f1b15c17f2ed0113add41a1729686200fe1 100644
+--- a/dist/core/StateMachine.js
++++ b/dist/core/StateMachine.js
+@@ -540,6 +540,18 @@ class StateMachine {
+         }
+         this.votesNeeded = this.configManager.getQuorumSize();
+         this.logger.info(`Node ${this.nodeId} became Candidate for term ${newTerm}, votes needed: ${this.votesNeeded}`);
++        // PATCH(db-stack): a candidate that already holds a quorum has won it.
++        // With a single voter the self-vote *is* the majority, and waiting for a
++        // RequestVoteResponse that no peer will ever send leaves the group in
++        // Candidate for as long as it runs (measured on a one-voter group: the term
++        // climbed 1 -> 11 in four seconds and no entry ever committed). The
++        // pre-vote path above already makes this check before becoming a candidate;
++        // the candidate path does not, which is why every suite in this repository
++        // uses three nodes and none of them noticed.
++        if (this.votesReceived.size >= this.votesNeeded) {
++            await this.becomeLeaderUnlocked();
++            return;
++        }
+         this.timerManager.startElectionTimer(() => this.handleElectionTimeoutlocked());
+         await this.requestVotes();
+     }
+@@ -756,6 +768,18 @@ class StateMachine {
+         for (const peer of allPeers) {
+             this.sendAppendEntries(peer);
+         }
++        // PATCH(db-stack): a leader with no other voters is its own majority, and
++        // nothing else in this class advances the commit index for it — the only
++        // caller of tryAdvanceCommitIndex is the AppendEntriesResponse handler, and
++        // a one-voter group has no responses to receive. Measured before this
++        // patch: the node won the election, appended its no-op at index 1, and then
++        // every propose() reported "Failed to commit command within timeout" while
++        // commitIndex stayed at 0 forever. calculateCommitIndex already counts the
++        // leader's own last index, so it returns the right answer here; it simply
++        // was never asked.
++        if (allPeers.length === 0) {
++            await this.tryAdvanceCommitIndex();
++        }
+     }
+     /**
+      * Sends AppendEntries to one peer, falling back to snapshot transfer when needed.
 diff --git a/dist/state/LeaderState.js b/dist/state/LeaderState.js
 index efcf7e85ffb00db410638acbafb8cf9ca2562778..42e3b9e3c87136f8f81231592d102b19cd71b055 100644
 --- a/dist/state/LeaderState.js

@@ -282,6 +282,12 @@ jobs:
       # sibling processes were live rather than on the code.
       - name: Engine durability across restart (AC-C7..C9)
         run: pnpm --filter @agentix-e/db-stack-e2e run test:engine
+      # The same three processes again, driven through a *scaling* plan rather than
+      # a write: the member set an executor reads is the committed configuration,
+      # and a suite that no job invoked would have been green in the coverage run
+      # and absent from every job that keeps its own logs.
+      - name: Shard scaling against a committed configuration (AC-C25..C27)
+        run: pnpm --filter @agentix-e/db-stack-e2e run test:scaling
       # The three published features that once shipped green while broken (a
       # `require` in an ESM artefact, a trace id lost across an async boundary, a
       # subscription pump that delivered to no sink). They used to live inside the

@@ -104,8 +104,16 @@ async function main() {
 
   // The engine's applied state, not the log, is what has to survive a restart.
   adapter.setApplicationSnapshotHandlers({
-    takeSnapshot: () => replica.snapshot(),
+    // The boundary is Raft's log position, not the engine's watermark: the two
+    // differ by every CONFIG/NOOP entry Raft applied without calling the
+    // application, and an envelope stamped below the snapshot's own boundary makes
+    // the first post-restore apply look like a jump.
+    takeSnapshot: (boundaryIndex) => replica.snapshot(boundaryIndex),
     installSnapshot: (data) => replica.restore(data),
+    // The engine's own position. The adapter compares it with Raft's at startup and
+    // refuses the node when the engine is behind the log: those entries are already
+    // compacted away, so a node that starts anyway answers reads out of a hole.
+    appliedIndex: () => replica.lastAppliedIndex(),
   });
 
   await adapter.init(
@@ -175,6 +183,12 @@ async function main() {
             stateSize: keys.length,
             keys,
             appliedIndex: replica.lastAppliedIndex(),
+            // The pair the adapter checks at startup and reports on every status:
+            // where the application says its state is, and how far that is from the
+            // position Raft declares. A non-zero gap means the writes in between are
+            // not in the engine and are no longer in the log.
+            applicationApplied: raftStatus?.applicationApplied ?? null,
+            appliedGap: raftStatus?.appliedGap ?? null,
             engineName: engine.name,
             // The engine's own record of which index it was handed each command
             // at. Comparing it with `applied` separates "raft never gave the

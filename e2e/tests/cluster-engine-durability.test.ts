@@ -67,6 +67,10 @@ interface NodeStatus {
   /** The engine's key set — a count cannot say which write went missing. */
   keys: string[];
   appliedIndex: number;
+  /** Where the adapter says the application's state is (null: not published). */
+  applicationApplied: number | null;
+  /** Raft's applied position minus the application's — the width of a hole. */
+  appliedGap: number | null;
   engineName: string;
   /** Indexes the engine was actually handed a command at, in order. */
   engineIndexes: number[];
@@ -105,7 +109,8 @@ async function describeDivergence(): Promise<string> {
           `${node.label}: stateSize=${s.stateSize} applied=${s.raftApplied} commit=${s.commitIndex} ` +
           `lastLog=${s.lastLogIndex} snapshot=${s.snapshot?.lastIncludedIndex ?? 'none'} ` +
           `engineApplies=${s.engineIndexes.length}/${s.appliedCount} skipped=${s.skippedReplays} ` +
-          `jumps=${s.forwardJumps}${s.restoreFailure === null ? '' : ` restoreFailure=${s.restoreFailure}`}` +
+          `jumps=${s.forwardJumps} gap=${s.appliedGap ?? 'unpublished'}` +
+          `${s.restoreFailure === null ? '' : ` restoreFailure=${s.restoreFailure}`}` +
           `${missing.length === 0 ? '' : ` missing=[${missing.join(',')}]`}`
         );
       } catch (err) {
@@ -252,6 +257,11 @@ describe('engine SPI on a real cluster (mTLS, separate processes)', () => {
       // appended on election: the engine's position is the last *command*.
       expect(status.appliedIndex).toBeGreaterThanOrEqual(status.raftApplied - 1);
       expect(status.appliedIndex).toBeLessThanOrEqual(status.raftApplied);
+      // The adapter and this harness compute the same difference from opposite
+      // ends — one from the application's provider, one from the replica's own
+      // watermark. Disagreeing numbers would mean the instrument is the thing that
+      // is broken, which is the one outcome a diagnostic must not have.
+      expect(status.appliedGap).toBe(status.raftApplied - status.appliedIndex);
     }
   }, 90_000);
 
@@ -336,6 +346,13 @@ describe('engine SPI on a real cluster (mTLS, separate processes)', () => {
     for (const status of revived) {
       expect(status.stateSize).toBe(written.length);
       expect(status.appliedIndex).toBeGreaterThanOrEqual(lastAppliedBefore - 1);
+      // The number this defect never had. A node that restored its snapshot is at
+      // the boundary raft declares; the only legitimate difference is a trailing
+      // NOOP, which raft applies without calling the application. Anything wider is
+      // a hole — the writes in it are not in the engine and no longer in the log.
+      expect(status.appliedGap).not.toBeNull();
+      expect(status.appliedGap!).toBeGreaterThanOrEqual(0);
+      expect(status.appliedGap!).toBeLessThanOrEqual(1);
     }
     const probe = nodes[0]!;
     for (const key of [written[0]!, written[Math.floor(written.length / 2)]!, written.at(-1)!]) {

@@ -298,15 +298,42 @@ adapter.setApplicationSnapshotHandlers({
   // Replace the engine's state with the transferred bytes. Must be atomic: Raft has
   // already discarded the log this snapshot replaces.
   installSnapshot: (data) => engine.importState(data),
+  // Where the engine says its own state is. Optional — and the only way the adapter can
+  // check the claim it is asked to believe. See "The position a node claims" below.
+  appliedIndex: () => engine.lastAppliedIndex(),
 });
 
 await adapter.init(apply);
 ```
 
-An application that owns no state may omit both handlers; its snapshots are then empty,
+An application that owns no state may omit both snapshot hooks; its snapshots are then empty,
 which is correct for a log-only group. A replica that fails to import a snapshot refuses to
 apply anything further rather than reporting the leader's index over an engine that never
 received it.
+
+#### The position a node claims
+
+Raft reaches its starting position one of two ways: it installs the persisted snapshot
+(through `installSnapshot`, so the engine moves with it), or it starts from an empty log. There
+is a third state, and it is silent — a node whose engine is *behind* the log. The entries
+between the engine and the log are applied by Raft without reaching the application, and they
+are already compacted out of the log, so nothing in the node's own record says they are
+missing. It answers reads with a hole in them.
+
+Two configurations produce it, and `init()` refuses both:
+
+- **`takeSnapshot` without `installSnapshot`.** The application owns state, Raft loads a
+  snapshot during `start()`, and no handler is there to receive it. Refused by name, with the
+  snapshot index in the message, because the handler table alone is enough to decide it.
+- **An `appliedIndex` that reports a position behind Raft's.** The handler exists but the
+  engine is behind — an older backup, an `installSnapshot` that quietly writes nowhere. The
+  refusal names both indexes and the width of the hole.
+
+The second check is why `appliedIndex` is worth registering even when everything works: it is
+the difference between "the engine is behind" and "the engine is where the log says", and only
+the application knows which. `getStatus()` reports the pair as `applicationApplied` and
+`appliedGap`, with `null` for both when no provider is registered — "not published" is not
+"zero".
 
 ### HA Failover
 

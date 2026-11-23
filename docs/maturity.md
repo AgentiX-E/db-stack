@@ -1647,3 +1647,128 @@ passed. The cap went to ninety anyway, and the reason is not the number measured
 today: this job grows every time a file enters a target, the runner's speed is not
 ours, and a job killed at its cap reports nothing about the mutants it had not
 reached — the failure names the clock rather than a survivor.
+
+## A group of one
+
+Every acceptance suite in this repository runs three nodes or more, which is the
+right default: a majority is the whole point of Raft, and three is the smallest
+number that has one to lose. The cost of that default is that a group of one is
+never exercised — and a group of one is not a hypothetical. It is the development
+deployment, the edge site, the shard that has not been given replicas yet, and it
+is described in `cluster/docs/api-reference.md` in as many words: *"its committed
+configuration names one voter, one answer is a majority, and `hasQuorum` is `true`
+because it has to be."*
+
+Iteration 72 wrote the first test that starts a one-voter group. It did not elect
+a leader. Two independent defects in `@maboke123/raft-core` 0.2.1, neither reachable
+with a peer:
+
+| # | Mechanism | Measurement before the patch |
+|---|---|---|
+| 1 | `becomeCandidateUnlocked` collects the self-vote, sets `votesNeeded`, then waits for `RequestVoteResponse`s. With no peers there are none. The pre-vote path *does* check the quorum before becoming a candidate; the candidate path does not | `role: Candidate`, term 1 → 11 in four seconds, `commitIndex` 0 |
+| 2 | The only caller of `tryAdvanceCommitIndex` is the `AppendEntriesResponse` handler. With no followers there are no responses, so nothing ever counts the leader's own log as a majority | `RaftApiError: Raft propose failed: Failed to commit command within timeout`, entry appended, never committed |
+
+Neither is a misreading of Raft: the algorithm says a candidate holding a majority
+has won, and that a leader's own log counts toward the majority that commits an
+entry. Both patches are four lines, both carry the measurement in the comment, and
+both live in `patches/@maboke123__raft-core@0.2.1.patch` beside the two that were
+already there.
+
+The interesting part of the fix is the control. "A candidate that holds a quorum
+wins" is one line away from "a candidate wins", and a patch that made every
+candidate a leader would pass the one-voter test and break every cluster that ever
+lost a majority. `AC 72.9` is a two-voter group whose peer is unreachable: it must
+never take office, and — the sharper half — its **term must not move**. An
+unreachable peer means every election ends in pre-vote, and pre-vote is the loop
+that deliberately does not increment the term. A climbing term there would mean the
+patch had made campaigning unconditional.
+
+The failure evidence is on the record, taken by reverting one hunk at a time:
+
+```
+× AC 72.6  → timed out after 15000ms waiting for the single voter to lead
+× AC 72.7  → Raft propose failed: Failed to commit command within timeout
+✓ AC 72.9  (the control passes both before and after — it is the one case that must not change)
+```
+
+## The position a node claims
+
+`AC-C7` — a full-cluster restart after compaction keeps every write — once failed
+with one node's engine holding one key fewer than the cluster had acknowledged. No
+snapshot was installed, no restore failed, no apply raised, and the log entries were
+identical on all three nodes. The only mechanism that produces that shape is a node
+that was handed a *position* without being handed the *state*, and raft-core has
+exactly one place that does it:
+
+```js
+if (nextIndex <= snapshotIndex) {
+  this.volatileState.setLastApplied(snapshotIndex);   // the log moves
+  continue;                                            // the application is never called
+}
+```
+
+The branch is correct for entries the snapshot covers *and the application already
+has*. It is a silent hole for a node whose engine is behind the log, and there are
+three ways to be that node: an engine restored from an older backup than the log, an
+`installSnapshot` that writes nowhere, or `takeSnapshot` registered without
+`installSnapshot` at all. The last one is a configuration, not an accident — the
+class doc for the handler table has warned about it since the hooks were added, in
+prose, which is the form of warning nothing enforces.
+
+Measured, on a real restart over real SQLite storage, with the guard removed:
+
+```json
+{ "snapshot": { "lastIncludedIndex": 4 }, "commitIndex": 4, "lastApplied": 4,
+  "appliedAfterRestart": [] }
+```
+
+The node reports index 4 on both counters, and the application was handed nothing.
+Three of the four writes were in the snapshot; the fourth was in the log and would
+replay. Restore nothing and the engine answers three keys where the cluster
+acknowledged four — the failure that took a twelve-minute investigation to describe
+and had never had a name.
+
+The adapter cannot see the engine, so the fix has two halves and the application
+supplies one of them:
+
+| Configuration | Decided by | Result |
+|---|---|---|
+| `takeSnapshot`, no `installSnapshot`, a snapshot in storage | the handler table | refused at `init()`, naming the snapshot index |
+| `appliedIndex` reports a position behind `lastApplied` | the application | refused at `init()`, naming both indexes and the width of the hole |
+| no provider, no snapshot in storage | nothing to decide | starts; `getStatus()` reports `applicationApplied: null`, `appliedGap: null` |
+
+`null` is not zero. A status field that reads `0` for "this node has not published a
+position" is indistinguishable from the defect it exists to expose, so the pair is
+`null` together — and an `appliedIndex` that answers with something that is not an
+index (`undefined` from a forgetful arrow function, `NaN` from arithmetic on a
+missing field) is refused as a wiring error rather than read as "caught up".
+
+What that buys the e2e suite is a number in the divergence line: `gap=0` on a
+healthy node, and on a node with a hole, the width of it in the first line of the
+timeout instead of a key count that differs by one. `AC-C7` asserts the pair and its
+own consistency — the adapter computes `raftApplied - applicationApplied`, the
+harness computes `raftApplied - appliedIndex` from the replica's watermark, and
+`AC-C10` requires the two to agree, because a diagnostic that disagrees with itself
+is the one failure a diagnostic must not have.
+
+## A suite that no job invoked
+
+Iteration 71 added `e2e/tests/cluster-scaling.test.ts` and recorded that `pnpm e2e` ran
+"69 cases / 11 files — `cluster-scaling` is the eleventh". The next iteration ran
+`pnpm e2e` and counted 66 across 10; the file had no script of its own and no CI
+step, and the only reason it had ever run is that the coverage job invokes the
+whole directory.
+
+The suite was green the entire time. Nothing about it was wrong. What was wrong was
+the *path*: a dedicated job that uploads its logs on failure is how a red e2e run
+gets diagnosed, and a suite outside every such job fails in one place only — the
+coverage job — where the report is a percentage rather than a failing case name.
+
+It is the third instance in this repository of the same shape: a gate that reads
+less than the reader assumes (P3-43, the format gate covering four packages), a job
+whose budget was measured on a suite that no longer existed (iteration 71's cap),
+and now a suite absent from the job that keeps its logs. The general form is worth
+stating once: **the set of tests that run is not the set of tests that exist**, and
+the only defence is arithmetic — count what the runner produced, compare it with
+what the page says, and treat a difference of three as a defect rather than a
+rounding.
