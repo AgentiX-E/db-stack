@@ -567,9 +567,9 @@ describe('Raft Chaos Suite', () => {
     CHAOS_TIMEOUT,
   );
 
-  // ── 13. Raft with no pre-vote — term still monotonic ──────
+  // ── 13. preVote: false is refused, and a crash still leaves a monotonic term ──
   it(
-    'should maintain monotonic term even without pre-vote',
+    'should record a refused preVote setting and keep the term monotonic across a leader crash',
     async () => {
       const cluster = new ChaosCluster({ nodeCount: 3, preVote: false, seed: 1300 });
       try {
@@ -577,9 +577,17 @@ describe('Raft Chaos Suite', () => {
         const leader = await waitForLeader(cluster);
         const term1 = await cluster.nodes.find((n) => n.id === leader)!.adapter.getTerm();
 
-        // Crash leader to force election without pre-vote
-        // (term WILL go up — that's normal Raft behavior)
-        // We just verify it doesn't jump erratically
+        // This case used to claim it forced an election *without* pre-vote. It cannot:
+        // raft-core runs a pre-vote phase on every election timeout and exposes no flag
+        // to skip it, so what `preVote: false` does is get refused — loudly, and in a
+        // list a deployment can assert against. That refusal is the assertion here,
+        // because the alternative is a test that documents a behaviour the library
+        // does not have (P3-22).
+        const recorded = cluster.nodes[0]!.adapter.getIgnoredSettings();
+        expect(recorded).toContainEqual({ setting: 'preVote', reason: expect.stringContaining('unconditionally') });
+
+        // Crash the leader. The term will rise — that is Raft — and the invariant is
+        // that it rises monotonically rather than jumping.
         await cluster.injectFault('crash', [leader]);
         await new Promise((r) => setTimeout(r, 4000));
         await cluster.recoverFaults();
@@ -588,7 +596,9 @@ describe('Raft Chaos Suite', () => {
         const newLeader = await waitForLeader(cluster);
         const term2 = await cluster.nodes.find((n) => n.id === newLeader)!.adapter.getTerm();
 
-        // Term must monotonically increase
+        // A pre-vote round keeps the term from climbing while a leader is merely slow,
+        // which is the property the refused setting was asking for and the library
+        // already provides.
         expect(term2).toBeGreaterThanOrEqual(term1);
 
         const after = await cluster.verifyInvariants();
