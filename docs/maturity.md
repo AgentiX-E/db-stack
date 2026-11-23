@@ -2121,3 +2121,44 @@ Five seconds is fifty times the measured process start (0.09–0.25 s), a third 
 the mutation suite's 15 s case budget, and a sixth of Stryker's 30 s cap — so the
 same edit is a _failed test_ in both instruments, which is the difference between a
 verdict and a silence.
+
+## Two writers released before either had read the directory
+
+The acceptance run for this iteration failed one case, and the case was right:
+`AC 86 TW.2` reported `audit-20261123-0001.ndjson holds lines from proc-2715,
+proc-2716`. Two processes were supposed to write to their own segments, and one
+segment held both.
+
+The product was not at fault. A store that is constructed while another's segment is
+open **adopts** it — that is what makes a restart a continuation rather than a new
+file — and three store calls reproduce the state the case forbids:
+
+```ts
+const a = new FileAuditStore({ dataDir });
+await a.write(entry);
+const b = new FileAuditStore({ dataDir });
+await b.write(entry);
+// audit-20261123-0001.ndjson holds ["proc-a","proc-b"]
+```
+
+What was wrong was the premise of the case: it released both children as soon as it
+had _spawned_ them. On a quiet machine both construct before the release, so the
+window never opened; on a runner busy enough that `tsx` takes a moment to compile,
+the faster child appends first and the slower one adopts. A pause that is usually
+long enough, on the one day it is not, reads as a product bug.
+
+```
+let release;                       // before: a pause
+writeFileSync(releaseFile, '');
+// after: a handshake
+process.stdout.write('READY\n');    // in the child, after construction
+await Promise.all(children.map((c) => c.ready));
+writeFileSync(releaseFile, '');
+```
+
+Measured both ways: with the second child started 400 ms late, the handshake passes
+and the immediate release hands that child a segment holding another process's
+lines. Five consecutive runs of the file after the fix: 5 × 2 cases, 0.4–0.6 s. The
+lesson is this page's oldest one again — a test that depends on being fast enough is
+a test of the machine — and the answer is the same as for the coverage instrument: a
+bound on a property, never a pause.
