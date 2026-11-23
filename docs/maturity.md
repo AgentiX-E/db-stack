@@ -1847,3 +1847,56 @@ Three of these are about order and one is about loss, and the loss one is the
 reason this is not only a `federation` concern: a dropped AppendEntries is a
 leader re-sending, but a dropped `cdc_ack` is a replication window that never
 closes.
+
+## A gate that nothing runs
+
+`pnpm verify` has existed since the first iteration and is documented in
+`CONTRIBUTING.md` as the thing to run before asking for review. It runs nineteen
+steps: every package's compiler, the suite, coverage in four dimensions, the gate
+self-tests and the e2e harness. It takes tens of minutes.
+
+It ran before a push exactly as often as someone remembered to type it, which is
+to say never. The repository had no hooks at all. Iteration 25 landed a file that
+`format:check` rejects and learned about it from CI — a runner spent fifteen
+minutes and an author spent a context switch, on a check that takes one command
+locally and one second to run.
+
+The gap was not a missing gate. It was a missing *trigger*, and the interesting
+part is how many ways the trigger can fail silently:
+
+| Failure | What git does |
+|---|---|
+| `.git/hooks` is not versioned | every clone has different hooks, and review sees none of them |
+| a hook file without the execute bit | skipped, with no message |
+| `core.hooksPath` pointing at a directory that moved | skipped, with no message |
+| a hook written as if run from `.githooks/` | fails on the first push, for a path reason |
+| pushing through the Git Data API | no client hook exists to run |
+
+Every row is a push that was not checked, and every one of them looks exactly like
+a push that passed. That is the same shape as the gates themselves —
+`check:script-coverage` exists because a gate over zero files reports perfect
+compliance — one level up: a *chain* over zero executions reports perfect
+compliance.
+
+The answer is three files and the rule that binds them:
+
+- `.githooks/pre-push` — one line: `exec pnpm preflight`. Versioned, so the hook
+  git runs is the hook review read.
+- `scripts/install-hooks.mjs` — sets `core.hooksPath` and the execute bit, and
+  refuses a tree with no hooks rather than configuring an empty directory.
+  `--check` answers "is this clone configured" for a machine; CI cannot answer it
+  and does not pretend to.
+- `scripts/preflight.mjs` — the fast end of `verify`: seventeen steps, ordered to
+  fail fastest, stopping at the first failure so the message read is the cause
+  rather than the cascade.
+
+`check:hooks` reads the repository side of the chain — the hook exists, is
+executable, runs *that* command, and `prepare` installs it — because the remote
+side cannot be read by a gate that runs on a fresh checkout. The two halves
+together are the whole chain, and each says which half it is.
+
+One honesty note that is also a decision: **a passing preflight is not a green
+build.** CI runs what needs a runner — the suites, the coverage gate, the e2e
+harness, the mutation targets, the benchmark. Preflight buys the absence of the
+failures that are cheapest to catch where they were introduced, and the command
+prints that sentence on success so nobody has to remember it.

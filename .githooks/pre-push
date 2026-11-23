@@ -1,0 +1,12 @@
+#!/bin/sh
+# pre-push — run the gate before git hands the objects to the remote.
+#
+# `pnpm preflight` is the fast end of `pnpm verify`: it compiles the sources and
+# the tests, lints, checks formatting and runs the gates that read the tree. It is
+# not the acceptance run — CI runs the suites, the coverage gate, the e2e harness
+# and the benchmark — it is the set of failures that are cheapest to catch here.
+#
+# Installed by `pnpm install-hooks` (which sets core.hooksPath to this directory)
+# and run from the repository root, which is where git runs hooks from.
+set -e
+exec pnpm preflight

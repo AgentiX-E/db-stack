@@ -84,6 +84,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Structural gate check (no orphan configs, no scripts pointing at air)
         run: pnpm check:gates
+      - name: The pre-push hook exists, is executable, and runs the gate
+        run: pnpm check:hooks
       - name: Gate self-tests (a gate that is not tested is a script that prints "passed")
         run: pnpm test:scripts
       - name: The gate self-tests cover the gates

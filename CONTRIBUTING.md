@@ -83,6 +83,33 @@ when its input disappears — `check:gates` refuses a `vitest run` filter naming
 directory that does not exist, `check:script-coverage` refuses a script no test loads,
 and `coverage:gate` refuses a package missing from the coverage report.
 
+## Before You Push
+
+```bash
+pnpm install-hooks    # once per clone: point git at .githooks/
+pnpm preflight        # what the hook runs, and what to run if you have no hook
+```
+
+`pnpm install-hooks` sets `core.hooksPath` to the versioned `.githooks/` directory and
+makes its hooks executable. Hooks live in the repository rather than in `.git/hooks` so
+that the one git runs is the one review sees — a hook that exists on one machine only is
+a hook nobody reviewed.
+
+`pnpm preflight` is the fast end of `pnpm verify`: it compiles the sources and the
+tests, lints, checks formatting, and runs the gates that read the tree. It stops at the
+first failure, so the message you read is the cause rather than the cascade. It takes a
+couple of minutes; `pnpm verify` takes tens and needs the e2e harness, which is why the
+latter is CI's job rather than a push's.
+
+> A passing preflight is not a green build. CI runs the suites, the coverage gate, the
+> e2e harness, the mutation targets and the benchmark. What preflight buys is the
+> absence of the failures that are cheapest to catch where they were introduced.
+
+Pushes made through the GitHub Git Data API — the path used by automation in an
+environment whose proxy allows only `api.github.com` — cannot run a client hook at all.
+There, `pnpm preflight` is the command, and `check:hooks` is what keeps the hook from
+rotting unnoticed.
+
 ## Pull Request Guidelines
 
 - Keep PRs focused on a single concern — split unrelated changes.

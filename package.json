@@ -24,10 +24,11 @@
     "coverage:gate": "node scripts/coverage-gate.mjs",
     "e2e": "pnpm --filter @agentix-e/db-stack-e2e run test:harness && pnpm --filter @agentix-e/db-stack-e2e run test:artefact && pnpm --filter @agentix-e/db-stack-e2e run test:cluster && pnpm --filter @agentix-e/db-stack-e2e run test:membership && pnpm --filter @agentix-e/db-stack-e2e run test:engine && pnpm --filter @agentix-e/db-stack-e2e run test:scaling && pnpm --filter @agentix-e/db-stack-e2e run test:federation && pnpm --filter @agentix-e/db-stack-e2e run test:cdc && pnpm --filter @agentix-e/db-stack-e2e run test:operations",
     "bench": "turbo run bench",
-    "verify": "pnpm check:gates && pnpm check:english && pnpm check:esm-require && pnpm check:docs-api && pnpm check:doc-examples && pnpm check:public-types && pnpm check:script-bins && pnpm test:scripts && pnpm lint && pnpm format:check && pnpm format:check:repo && pnpm typecheck && pnpm typecheck:tests && pnpm coverage:all && pnpm coverage:gate && pnpm check:test-counts && pnpm check:script-coverage && pnpm check:legacy-names && pnpm e2e",
+    "verify": "pnpm check:gates && pnpm check:hooks && pnpm check:english && pnpm check:esm-require && pnpm check:docs-api && pnpm check:doc-examples && pnpm check:public-types && pnpm check:script-bins && pnpm test:scripts && pnpm lint && pnpm format:check && pnpm format:check:repo && pnpm typecheck && pnpm typecheck:tests && pnpm coverage:all && pnpm coverage:gate && pnpm check:test-counts && pnpm check:script-coverage && pnpm check:legacy-names && pnpm e2e",
     "bench:real": "pnpm --filter @agentix-e/db-stack-e2e run bench",
     "check:package": "node scripts/check-package.mjs",
     "check:gates": "node scripts/check-gates.mjs",
+    "check:hooks": "node scripts/check-hooks.mjs",
     "check:english": "node scripts/check-english.mjs",
     "check:esm-require": "node scripts/check-esm-require.mjs",
     "check:docs-api": "node scripts/check-docs-api.mjs",
@@ -46,7 +47,10 @@
     "check:mutation-timeouts": "node scripts/resolve-timeouts.mjs --check --all",
     "check:public-types": "node scripts/check-public-types.mjs",
     "check:script-bins": "node scripts/check-script-bins.mjs",
-    "test:mutation:node": "node scripts/mutation.mjs node"
+    "test:mutation:node": "node scripts/mutation.mjs node",
+    "install-hooks": "node scripts/install-hooks.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "prepare": "node scripts/install-hooks.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
