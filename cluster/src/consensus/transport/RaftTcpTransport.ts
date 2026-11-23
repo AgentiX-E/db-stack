@@ -826,15 +826,17 @@ export class RaftTcpTransport extends EventEmitter {
   }
 
   /**
-   * Whether a frame submitted now has to queue behind something older.
+   * Whether a frame submitted now has a queued predecessor to wait for.
    *
-   * Two older things are possible: a frame still in the queue (being compressed),
-   * and a batch sitting in the pending buffer (waiting for a connection). Either
-   * one makes a direct write a frame ahead of its predecessor, so the frame joins
-   * the queue instead.
+   * Only the queue is asked. A backlog in the buffer needs no gate here, because
+   * the write path itself refuses to overtake one: `_doSendFrame` appends to the
+   * buffer whenever it finds frames in it, and a frame appended at the tail is
+   * behind everything already there by construction. The queue is the one thing
+   * that cannot be ordered by appending — its head is a frame that has not been
+   * written yet but was submitted earlier.
    */
   private _mustQueue(peerId: number): boolean {
-    return this._sendChains.has(peerId) || (this._pendingMessages.get(peerId)?.length ?? 0) > 0;
+    return this._sendChains.has(peerId);
   }
 
   /**

@@ -358,6 +358,75 @@ describe('RaftTcpTransport — one order per peer', () => {
     await t.stop();
   });
 
+  it('AC 73.11: a small frame behind a buffered backlog takes its place in the queue, not the fast path', async () => {
+    const t = new RaftTcpTransport(validConfig());
+    await t.start();
+    const pool = freshPool();
+    const written: string[] = [];
+    const conn = recordingConn(written);
+    pool.tryGetConnection.mockReturnValue(conn);
+
+    // A backlog with no queue behind it: nothing is being compressed, so the only
+    // thing standing between this frame and the socket is the buffer. Writing it
+    // now would put it in front of a frame that was submitted first.
+    priv(t)._pendingMessages.set(2, [Buffer.from('older')]);
+    priv(t)._sendFrame(2, framed(0x59, 16), false);
+
+    // Nothing on the socket yet: the frame joined the queue instead of taking the
+    // fast path past the backlog.
+    expect(written).toEqual([]);
+
+    // And the backlog drains in submission order once the queue reaches it.
+    await vi.waitFor(() => expect(written).toHaveLength(2));
+    expect(written.map((body) => body.charCodeAt(0))).toEqual(['o'.charCodeAt(0), 0x59]);
+    await t.stop();
+  });
+
+  it('AC 73.12: a queued frame that does not need compressing is not compressed', async () => {
+    const t = new RaftTcpTransport(validConfig());
+    await t.start();
+    const pool = freshPool();
+    const written: string[] = [];
+    const conn = recordingConn(written);
+    pool.tryGetConnection.mockReturnValue(conn);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const compress = vi.spyOn(priv(t)._compressor, 'compress').mockImplementation(async (...args: unknown[]) => {
+      await gate;
+      return args[0] as Buffer;
+    });
+
+    priv(t)._sendFrame(2, framed(0x41), false); // over the threshold: compresses
+    priv(t)._sendFrame(2, framed(0x59, 16), false); // queued for order only
+
+    release();
+    await vi.waitFor(() => expect(written).toHaveLength(2));
+
+    // One call for one frame. The small one is in the queue because something
+    // older was in flight, not because of its size; compressing it would make the
+    // queue longer without making the wire smaller.
+    expect(compress).toHaveBeenCalledTimes(1);
+    expect(written.map((body) => body.charCodeAt(0))).toEqual([0x41, 0x59]);
+    await t.stop();
+  });
+
+  it('AC 73.13: without a pool the batch goes out over the socket it was handed', async () => {
+    const t = new RaftTcpTransport(validConfig());
+    // No `start()`: there is no pool and no other socket in existence, so the
+    // connection the caller passed is the only possible destination.
+    const written: string[] = [];
+    const conn = recordingConn(written);
+    priv(t)._pendingMessages.set(2, [Buffer.from('only')]);
+
+    priv(t)._flushPending(2, conn);
+
+    await vi.waitFor(() => expect(written).toEqual(['only']));
+    expect(priv(t)._pendingMessages.has(2)).toBe(false);
+  });
+
   it('AC 73.7: a flush whose connection is gone by the time it runs puts the batch back', async () => {
     const t = new RaftTcpTransport(validConfig());
     await t.start();
