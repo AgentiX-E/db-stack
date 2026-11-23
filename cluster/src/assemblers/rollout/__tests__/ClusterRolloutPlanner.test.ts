@@ -387,4 +387,43 @@ describe('ClusterRolloutPlanner — strategies and stale plans', () => {
     expect(negative.requestedBatchSize).toBe(1);
     expect(negative.effectiveBatchSize).toBe(1);
   });
+
+  it('AC-CL4.21 a size below one is one node, not a length that cannot be divided', () => {
+    // `Math.floor(0.5)` is 0, and a batch of zero nodes is a plan whose count is
+    // `ceil(length / 0)` — `Infinity`, which `Array.from` refuses by throwing. The
+    // strategies clamp before the split, and this is the case that says so: half a
+    // node is one node.
+    const plan = planner.plan({
+      nodes: ['n2', 'n3'],
+      members: members(['n1', 'leader'], ['n2', 'follower'], ['n3', 'follower'], ['n4', 'follower']),
+      batchStrategy: 'fixed_size',
+      batchSize: 0.5,
+    });
+
+    expect(plan.requestedBatchSize).toBe(1);
+    expect(plan.effectiveBatchSize).toBe(1);
+    expect(plan.batches.map((batch) => batch.nodes)).toEqual([['n2'], ['n3']]);
+  });
+
+  it('AC-CL4.22 a zone with fewer nodes does not leave holes in the sequence', () => {
+    // The interleave walks round by round, and a round only has a member for a
+    // queue that is still deep enough. One node in zone-a and three in zone-b is
+    // the shape where round 2 has nothing to take from zone-a: the round ends with
+    // that queue's absence *omitted*, not carried as an empty entry — an empty entry
+    // is a batch holding `undefined`, which is a plan that fails when it is run.
+    const plan = planner.plan({
+      nodes: ['a1', 'b1', 'b2', 'b3', 'l1'],
+      members: members(
+        ['a1', 'follower', 'zone-a'],
+        ['b1', 'follower', 'zone-b'],
+        ['b2', 'follower', 'zone-b'],
+        ['b3', 'follower', 'zone-b'],
+        ['l1', 'leader', 'zone-a'],
+      ),
+      batchStrategy: 'one_by_one',
+    });
+
+    expect(plan.batches.map((batch) => batch.nodes)).toEqual([['a1'], ['b1'], ['b2'], ['b3'], ['l1']]);
+    expect(plan.batches.flatMap((batch) => batch.nodes)).not.toContain(undefined);
+  });
 });

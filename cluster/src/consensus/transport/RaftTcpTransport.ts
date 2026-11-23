@@ -91,6 +91,15 @@ const MAX_PENDING_FRAMES_PER_PEER = 1024;
  */
 const MAX_FLUSH_ATTEMPTS = 3;
 
+/**
+ * Bytes in front of every payload: the big-endian length the frame was cut to.
+ *
+ * Named because it is the one number in the reader that is not the data's: it is
+ * what makes a buffer of `n` bytes hold at most `n / 4` frames, which is the bound
+ * {@link splitFrames} walks to.
+ */
+const FRAME_HEADER_BYTES = 4;
+
 /** Emitted when frames are discarded because they could not be delivered. */
 export interface FramesDroppedEvent {
   peerId: number;
@@ -221,18 +230,32 @@ export class RaftTcpTransport extends EventEmitter {
    */
   async awaitPeerConnection(peerId: number, timeoutMs: number): Promise<boolean> {
     if (!this.pool) return false;
-    const deadline = Date.now() + Math.max(0, timeoutMs);
-    for (;;) {
-      try {
-        const conn = await this.pool.getConnection(peerId);
-        if (conn.connected) return true;
-      } catch {
-        // Refused, timed out, or circuit-open: all mean "no socket yet", and the
-        // next iteration is the retry the budget allows.
-      }
-      if (Date.now() >= deadline) return false;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(1, deadline - Date.now()))));
+    return this._awaitConnection(peerId, Date.now() + Math.max(0, timeoutMs));
+  }
+
+  /**
+   * One attempt to dial `peerId`, then a sleep for what is left of the budget.
+   *
+   * One deadline serves every attempt, and each step either answers or moves it
+   * closer — the step is data (the clock) rather than a counter, so there is no
+   * update expression for an edit to reverse. That is the difference from the
+   * `for (;;)` this replaces, whose emptied body spun the process with no timer
+   * left to interrupt it (P3-75). A stopped transport answers `false` on the next
+   * step rather than sleeping through a budget it can no longer spend.
+   */
+  private async _awaitConnection(peerId: number, deadline: number): Promise<boolean> {
+    const pool = this.pool;
+    if (!pool || this._stopped) return false;
+    try {
+      const conn = await pool.getConnection(peerId);
+      if (conn.connected) return true;
+    } catch {
+      // Refused, timed out, or circuit-open: all mean "no socket yet", and the
+      // next step is the retry the budget allows.
     }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(1, deadline - Date.now()))));
+    return this._awaitConnection(peerId, deadline);
   }
 
   /**
@@ -1106,23 +1129,15 @@ export class RaftTcpTransport extends EventEmitter {
   private async _drainFrames(peerId: number, data: Buffer): Promise<void> {
     // Use a static buffer for accumulation
     const bufKey = `peer:${peerId}`;
-    let accumulated = this._buffers.get(bufKey) || Buffer.alloc(0);
-    accumulated = Buffer.concat([accumulated, data]);
-    this._buffers.set(bufKey, accumulated);
+    const accumulated = Buffer.concat([this._buffers.get(bufKey) || Buffer.alloc(0), data]);
+    // The split happens before the first decode, and the remainder is stored before
+    // it too: a frame whose payload fails to decode is still consumed, which is
+    // what the loop this replaces did — it advanced the buffer and then decoded.
+    const { frames, rest } = splitFrames(accumulated);
+    this._buffers.set(bufKey, rest);
 
-    // Try to read frames
-    while (true) {
-      if (accumulated.length < 4) break; // Not enough for header
-
-      const payloadLen = accumulated.readUInt32BE(0);
-      const frameLen = 4 + payloadLen;
-
-      if (accumulated.length < frameLen) break; // Need more data
-
-      // Extract complete frame
-      const frame = accumulated.subarray(0, frameLen);
-      accumulated = accumulated.subarray(frameLen);
-      this._buffers.set(bufKey, accumulated);
+    for (const frame of frames) {
+      const payloadLen = frame.length - FRAME_HEADER_BYTES;
 
       // Special: empty frame (heartbeat)
       if (payloadLen === 0) {
@@ -1132,7 +1147,7 @@ export class RaftTcpTransport extends EventEmitter {
 
       // Decode message
       try {
-        let payload = frame.subarray(4);
+        let payload = frame.subarray(FRAME_HEADER_BYTES);
 
         // D2: Decompress the payload if compressed
         if (this._compressionEnabled) {
@@ -1150,4 +1165,33 @@ export class RaftTcpTransport extends EventEmitter {
       }
     }
   }
+}
+
+/**
+ * The whole frames at the head of `buffer`, and the bytes that are not one yet.
+ *
+ * The walk is bounded by the bytes rather than by a cursor: a frame carries at
+ * least its four-byte header, so a buffer of `n` bytes holds at most `n / 4` of
+ * them, and that count is arithmetic — it is known before the first frame is
+ * read and cannot be moved by anything the walk does. What this replaces was
+ * `while (true) { … accumulated = accumulated.subarray(frameLen); }`, where the
+ * two halves of that step are each other's only check: `4 - payloadLen` makes
+ * `subarray` clamp to zero for any payload longer than three bytes, so the buffer
+ * never shrinks and the loop never ends — a synchronous spin inside a socket
+ * handler, which is a silence in the report rather than a failed test (P3-75).
+ *
+ * Past the point where the work is done the slots are no-ops, so a buffer holding
+ * one 64 kB frame pays sixteen thousand empty calls, not sixteen thousand slices.
+ */
+function splitFrames(buffer: Buffer): { frames: Buffer[]; rest: Buffer } {
+  const frames: Buffer[] = [];
+  let offset = 0;
+  Array.from({ length: Math.floor(buffer.length / FRAME_HEADER_BYTES) }, () => {
+    if (offset + FRAME_HEADER_BYTES > buffer.length) return;
+    const frameLen = FRAME_HEADER_BYTES + buffer.readUInt32BE(offset);
+    if (offset + frameLen > buffer.length) return;
+    frames.push(buffer.subarray(offset, offset + frameLen));
+    offset += frameLen;
+  });
+  return { frames, rest: buffer.subarray(offset) };
 }

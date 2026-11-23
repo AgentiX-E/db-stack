@@ -69,6 +69,18 @@ vi.mock('../../consensus/transport/ConnectionPool', () => ({
 
 import { RaftTcpTransport } from '../../consensus/transport/RaftTcpTransport';
 import type { FramesDroppedEvent } from '../../consensus/transport/RaftTcpTransport';
+import { bounded } from '../support/awaitBound';
+
+/**
+ * Start and stop, bounded — see `../support/awaitBound`.
+ *
+ * Both are promises the product resolves, so both are promises a mutation can
+ * leave unresolved; a case that waits on one of those is a case the runner has to
+ * time out instead of one that fails, and this file's cases carry a 180 s budget
+ * of their own that no mutation cap is going to wait for.
+ */
+const startWithin = (t: RaftTcpTransport) => bounded(t.start(), 'transport.start()');
+const stopWithin = (t: RaftTcpTransport) => bounded(t.stop(), 'transport.stop()');
 
 const CAP = 1024;
 
@@ -116,7 +128,7 @@ afterEach(() => {
 /** A started transport whose pool never reports a live connection. */
 async function transport(): Promise<RaftTcpTransport> {
   const t = new RaftTcpTransport(validConfig());
-  await t.start();
+  await startWithin(t);
   // The pool's default answer is `null` — nothing is connected — which is the
   // state every buffering case below starts from.
   return t;
@@ -156,7 +168,7 @@ describe('AC 34.72: the buffer is bounded per peer', () => {
     // One `count` per eviction, not one per frame in the batch.
     expect(dropped.reduce((sum, e) => sum + e.count, 0)).toBe(overflow);
 
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('keeps one peer’s overflow from touching another peer’s buffer', async () => {
@@ -169,7 +181,7 @@ describe('AC 34.72: the buffer is bounded per peer', () => {
     expect(t.getStatus().bufferedFrames).toEqual({ 2: CAP, 3: 1 });
     expect(priv(t)._pendingMessages.get(3)![0]).toEqual(frame('only'));
 
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -185,14 +197,14 @@ describe('AC 34.73: which frames survive the cap', () => {
     expect(kept[0]).toEqual(frame('f3'));
     expect(kept[CAP - 1]).toEqual(frame(`f${CAP + 2}`));
 
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('never buffers a heartbeat — a dropped one is retried by the next tick', async () => {
     const t = await transport();
     priv(t)._doSendFrame(2, frame('hb'), true);
     expect(priv(t)._pendingMessages.has(2)).toBe(false);
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -212,7 +224,7 @@ describe('AC 34.74: a flush that works', () => {
     expect(conn.close).not.toHaveBeenCalled();
     expect(t.getStatus().droppedFrames).toBe(0);
 
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('does nothing when the peer has no buffered frames', async () => {
@@ -220,7 +232,7 @@ describe('AC 34.74: a flush that works', () => {
     const conn = live(t, connection());
     priv(t)._flushPending(2, conn);
     expect(conn.write).not.toHaveBeenCalled();
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -247,7 +259,7 @@ describe('AC 34.75: a flush that fails keeps the frames', () => {
     expect(t.getStatus().droppedFrames).toBe(0);
     expect(t.getStatus().bufferedFrames[2]).toBe(2);
 
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('records one verdict per batch even when every write rejects', async () => {
@@ -271,7 +283,7 @@ describe('AC 34.75: a flush that fails keeps the frames', () => {
         .map((b: Buffer) => b.toString()),
     ).toEqual(['a', 'b', 'c']);
 
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -302,7 +314,7 @@ describe('AC 34.76: retries are bounded', () => {
     // The counter resets, so the peer's next batch starts with a clean slate.
     expect(priv(t)._flushAttempts.has(2)).toBe(false);
 
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('a success between failures resets the count, so a flaky peer is not dropped', async () => {
@@ -332,7 +344,7 @@ describe('AC 34.76: retries are bounded', () => {
     priv(t)._flushPending(2, failing);
     await vi.waitFor(() => expect(priv(t)._flushAttempts.get(2)).toBe(1));
 
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -378,7 +390,7 @@ describe('AC 34.77: re-buffering obeys the cap', () => {
     for (const event of dropped) expect(event).toMatchObject({ count: 1, reason: 'buffer-full' });
     expect(t.getStatus().droppedFrames).toBe(2);
 
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -402,7 +414,7 @@ describe('AC 34.78: the counters are published', () => {
     await vi.waitFor(() => expect(t.getStatus().bufferedFrames).toEqual({ 3: 1 }));
     expect(t.getStatus().droppedFrames).toBe(3);
 
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -428,7 +440,7 @@ describe('AC 34.79: the failure paths around delivery are reported, not swallowe
     await vi.waitFor(() => expect(errors).toHaveLength(1));
     expect(errors[0]!.peerId).toBe(2);
 
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('reports connect-error when the first dial to a peer throws', async () => {
@@ -439,19 +451,19 @@ describe('AC 34.79: the failure paths around delivery are reported, not swallowe
     // left as an unhandled rejection inside start()'s loop.
     vi.spyOn(priv(t), '_initiateConnection').mockRejectedValue(new Error('dial refused'));
 
-    await t.start();
+    await startWithin(t);
 
     await vi.waitFor(() => expect(errors.length).toBe(2));
     expect(errors.map((e) => e.peerId).sort()).toEqual([2, 3]);
 
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('the health check retries a peer with no live connection, and says so when the retry fails', async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     priv(t).pool.tryGetConnection = vi.fn(() => null);
     const dial = vi.spyOn(priv(t), '_initiateConnection').mockRejectedValue(new Error('still refused'));
 
@@ -464,7 +476,7 @@ describe('AC 34.79: the failure paths around delivery are reported, not swallowe
 
     vi.useRealTimers();
     warn.mockRestore();
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -476,7 +488,7 @@ describe('AC 34.80: a stop releases what it can no longer deliver', () => {
     }
     priv(t)._flushAttempts.set(3, 2);
 
-    await t.stop();
+    await stopWithin(t);
 
     expect(priv(t)._pendingMessages.size).toBe(0);
     expect(priv(t)._flushAttempts.size).toBe(0);
@@ -494,6 +506,6 @@ describe('AC 34.80: a stop releases what it can no longer deliver', () => {
     expect(priv(t)._flushAttempts.has(3)).toBe(false);
     expect(priv(t)._pendingMessages.has(3)).toBe(false);
 
-    await t.stop();
+    await stopWithin(t);
   });
 });

@@ -29,6 +29,18 @@ import type { RaftMessage } from '../../consensus/transport/MessageCodec';
 import type { CompressionConfig } from '../../interfaces/types';
 import { RaftTcpTransport } from '../../consensus/transport/RaftTcpTransport';
 import { generateClusterCerts, type TestClusterCerts } from '../../testing/test-certs';
+import { bounded } from '../support/awaitBound';
+
+/**
+ * Start and stop, bounded — see `../support/awaitBound`.
+ *
+ * Both are promises the product resolves, so both are promises a mutation can
+ * leave unresolved; a case that waits on one of those is a case the runner has to
+ * time out instead of one that fails, and this file's cases carry a 180 s budget
+ * of their own that no mutation cap is going to wait for.
+ */
+const startWithin = (t: RaftTcpTransport) => bounded(t.start(), 'transport.start()');
+const stopWithin = (t: RaftTcpTransport) => bounded(t.stop(), 'transport.stop()');
 
 /** The frame that takes the compressor the longest — sent first, so it must arrive first. */
 const SLOW_BYTES = 300_000;
@@ -79,7 +91,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitFor(predicate: () => boolean, what: string, timeoutMs = 20_000): Promise<void> {
+/**
+ * Wait for `predicate`, and stop waiting when it is clear it will not become true.
+ *
+ * Five seconds is a hundred times the slowest delivery this file measures (a
+ * compressed frame on a loopback pair, ~600 ms for the whole case) and a sixth of
+ * the 180 s budget the cases declare — which matters to more than this file: a
+ * mutant that stops the frames arriving at all leaves every case in here waiting
+ * out its own budget, and a suite that spends a hundred seconds per mutant is a
+ * suite the gate abandons (P3-75).
+ */
+async function waitFor(predicate: () => boolean, what: string, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
@@ -105,8 +127,8 @@ interface Burst {
 async function burst({ compression, bothWays }: Burst): Promise<number[]> {
   const sender = transportFor(1, compression);
   const receiver = transportFor(2, compression);
-  await sender.start();
-  await receiver.start();
+  await startWithin(sender);
+  await startWithin(receiver);
   sender.register({ id: 2, host: '127.0.0.1', port: receiver.getBoundPort() });
   if (bothWays) receiver.register({ id: 1, host: '127.0.0.1', port: sender.getBoundPort() });
 
@@ -131,8 +153,8 @@ async function burst({ compression, bothWays }: Burst): Promise<number[]> {
   // stream time to go quiet before deciding.
   await waitFor(() => seen.length >= COUNT, `${COUNT} frames to arrive`, 30_000).catch(() => undefined);
   await sleep(300);
-  await sender.stop();
-  await receiver.stop();
+  await stopWithin(sender);
+  await stopWithin(receiver);
   return seen;
 }
 
@@ -143,7 +165,7 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-  for (const transport of transports) await transport.stop();
+  for (const transport of transports) await stopWithin(transport);
 });
 
 describe('RaftTcpTransport — frame order', () => {
@@ -171,8 +193,8 @@ describe('RaftTcpTransport — frame order', () => {
   it('O5: frames handed over before the connection exists keep their order when it arrives', async () => {
     const sender = transportFor(1, COMPRESSED);
     const receiver = transportFor(2, COMPRESSED);
-    await sender.start();
-    await receiver.start();
+    await startWithin(sender);
+    await startWithin(receiver);
     const seen: number[] = [];
     receiver.on('message', (msg: RaftMessage) => {
       seen.push(Number(msg.index));
@@ -191,7 +213,7 @@ describe('RaftTcpTransport — frame order', () => {
     await waitFor(() => seen.length >= 2, 'both frames to arrive', 30_000);
     await sleep(300);
     expect(seen).toEqual([1, 2]);
-    await sender.stop();
-    await receiver.stop();
+    await stopWithin(sender);
+    await stopWithin(receiver);
   }, 120_000);
 });

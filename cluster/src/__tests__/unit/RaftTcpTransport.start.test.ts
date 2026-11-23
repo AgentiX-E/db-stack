@@ -94,6 +94,18 @@ vi.mock('../../consensus/transport/ConnectionPool', () => ({
 import { RaftTcpTransport, type RaftNodeConfig } from '../../consensus/transport/RaftTcpTransport';
 import { MessageCodec } from '../../consensus/transport/MessageCodec';
 import { MessageCompressor } from '../../consensus/helpers/MessageCompressor';
+import { bounded } from '../support/awaitBound';
+
+/**
+ * Start and stop, bounded.
+ *
+ * Both are promises the product resolves, which means both are promises a mutation
+ * can leave unresolved — and a case that waits on one of those is a case the runner
+ * has to time out instead of one that fails. `bounded` makes the difference visible
+ * (see `../support/awaitBound`).
+ */
+const startWithin = (t: RaftTcpTransport) => bounded(t.start(), 'transport.start()');
+const stopWithin = (t: RaftTcpTransport) => bounded(t.stop(), 'transport.stop()');
 
 function validConfig(overrides: any = {}): any {
   return {
@@ -137,38 +149,38 @@ describe('RaftTcpTransport — start() lifecycle', () => {
     const t = new RaftTcpTransport(validConfig());
     expect(t.getStatus().totalPeers).toBe(2);
 
-    await t.start();
+    await startWithin(t);
 
     expect(mocks.servers.length).toBe(1);
     expect(mocks.poolCtor).toHaveBeenCalledTimes(1);
     expect(t.getStatus().started).toBe(true);
 
-    await t.stop();
+    await stopWithin(t);
     expect(t.getStatus().started).toBe(false);
   });
 
   it('start is idempotent (second call returns early)', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const poolCount = mocks.poolCtor.mock.calls.length;
-    await t.start();
+    await startWithin(t);
     expect(mocks.poolCtor.mock.calls.length).toBe(poolCount);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('start uses default connect timeout/retry when config omits them', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const opts = mocks.poolCtor.mock.calls[0]![0];
     expect(opts.connectTimeoutMs).toBe(5000);
     expect(opts.initialRetryMs).toBe(100);
     expect(opts.maxRetryMs).toBe(30000);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('onConnectionCreated clears stale frame buffer and flushes pending', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
 
     // Capture the registered callback via addNode? The callback is assigned
@@ -189,18 +201,18 @@ describe('RaftTcpTransport — onMessage / getters', () => {
 
   it('getCircuitBreakerMetrics returns pool metrics when pool exists', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.getCircuitBreakerMetrics.mockReturnValue([{ name: 'p2', failures: 0, state: 'closed' }]);
     expect(t.getCircuitBreakerMetrics()).toHaveLength(1);
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
 describe('RaftTcpTransport — send() routing', () => {
   it('routes messages to peers and skips self', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.tryGetConnection.mockReturnValue(null);
 
@@ -213,20 +225,20 @@ describe('RaftTcpTransport — send() routing', () => {
     // Both peers 2 and 3 should have pending messages buffered (no connection).
     expect(priv(t)._pendingMessages.has(2)).toBe(true);
     expect(priv(t)._pendingMessages.has(3)).toBe(true);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('skips messages for unregistered peers', async () => {
     const t = new RaftTcpTransport(validConfig({ peers: [] }));
-    await t.start();
+    await startWithin(t);
     await t.send(1, [{ msgType: 0, from: '1', to: '99', term: '1' }]);
     expect(priv(t)._pendingMessages.size).toBe(0);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('classifies msgType 8/9 as heartbeat and drops when disconnected', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.tryGetConnection.mockReturnValue(null);
 
@@ -236,26 +248,26 @@ describe('RaftTcpTransport — send() routing', () => {
     ]);
 
     expect(priv(t)._pendingMessages.has(2)).toBe(false);
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
 describe('RaftTcpTransport — _doSendFrame', () => {
   it('writes to a live connection', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const conn = { write: vi.fn(async () => {}) };
     pool.tryGetConnection.mockReturnValue(conn);
 
     priv(t)._doSendFrame(2, Buffer.from('frame'), false);
     expect(conn.write).toHaveBeenCalledTimes(1);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('buffers critical messages and dedups reconnect when disconnected', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.tryGetConnection.mockReturnValue(null);
     pool.getConnection.mockImplementation(async () => ({ write: vi.fn() }));
@@ -269,7 +281,7 @@ describe('RaftTcpTransport — _doSendFrame', () => {
     expect(priv(t)._pendingMessages.get(2)).toHaveLength(2);
     // Reconnect should be initiated only once (dedup via _outstandingReconnects).
     expect(pool.getConnection.mock.calls.length).toBe(1);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('drains pending and returns when pool is gone', async () => {
@@ -290,7 +302,7 @@ describe('RaftTcpTransport — _sendFrame compression', () => {
 
   it('sends via the uncompressed path when compression disabled', async () => {
     const t = new RaftTcpTransport(validConfig({ compression: { enabled: false } }));
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const conn = { write: vi.fn(async () => {}) };
     pool.tryGetConnection.mockReturnValue(conn);
@@ -304,7 +316,7 @@ describe('RaftTcpTransport — _sendFrame compression', () => {
     priv(t)._sendFrame(2, frame, false);
     // Synchronous uncompressed path delegates to _doSendFrame immediately.
     expect(conn.write).toHaveBeenCalled();
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -346,7 +358,7 @@ describe('RaftTcpTransport — _handleIncoming', () => {
 
   it('routes an authorized peer into the pool via onIncoming', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const conn = { write: vi.fn() };
     pool.onIncoming.mockResolvedValue(conn);
@@ -354,7 +366,7 @@ describe('RaftTcpTransport — _handleIncoming', () => {
 
     priv(t)._handleIncoming(sock);
     await vi.waitFor(() => expect(pool.onIncoming).toHaveBeenCalledWith(2, sock));
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('buffers data when pool is not ready yet', () => {
@@ -474,39 +486,39 @@ describe('RaftTcpTransport — _processData', () => {
 describe('RaftTcpTransport — waitForConnections', () => {
   it('returns immediately when there are no peers', async () => {
     const t = new RaftTcpTransport(validConfig({ peers: [] }));
-    await t.start();
+    await startWithin(t);
     await expect(t.waitForConnections()).resolves.toBeUndefined();
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('waits for all peer connections, swallowing failures', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.getConnection.mockImplementation(async (id: number) => {
       if (id === 3) throw new Error('unreachable');
       return { write: vi.fn() };
     });
     await expect(t.waitForConnections()).resolves.toBeUndefined();
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
 describe('RaftTcpTransport — register() with live pool', () => {
   it('adds a node to the running pool', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     t.register({ id: 7, host: '10.0.0.7', port: 9007 });
     expect(pool.addNode).toHaveBeenCalledWith({ id: 7, host: '10.0.0.7', port: 9007 });
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
 describe('RaftTcpTransport — onConnectionCreated callback', () => {
   it('clears stale buffer, wires data listener, and flushes pending messages', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const cb = pool.onConnectionCreated;
     expect(cb).toBeTruthy();
@@ -531,12 +543,12 @@ describe('RaftTcpTransport — onConnectionCreated callback', () => {
     // Pending messages flushed and cleared.
     expect(priv(t)._pendingMessages.has(2)).toBe(false);
     await vi.waitFor(() => expect(conn.write).toHaveBeenCalledTimes(2));
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('writes flushed pending and closes on write failure', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const cb = pool.onConnectionCreated;
 
@@ -554,28 +566,28 @@ describe('RaftTcpTransport — onConnectionCreated callback', () => {
     cb(2, conn);
 
     await vi.waitFor(() => expect(conn.close).toHaveBeenCalled());
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
 describe('RaftTcpTransport — sendToPeer live path', () => {
   it('sends a frame when pool is live', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const conn = { write: vi.fn(async () => {}) };
     pool.tryGetConnection.mockReturnValue(conn);
     // sendToPeer → _sendFrame (uncompressed) → _doSendFrame → conn.write
     t.sendToPeer(2, Buffer.from('abcd'));
     await vi.waitFor(() => expect(conn.write).toHaveBeenCalled());
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
 describe('RaftTcpTransport — compression path', () => {
   it('compresses large payloads and delivers via connection', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const conn = { write: vi.fn(async () => {}) };
     pool.tryGetConnection.mockReturnValue(conn);
@@ -587,12 +599,12 @@ describe('RaftTcpTransport — compression path', () => {
 
     priv(t)._sendFrame(2, frame, false);
     await vi.waitFor(() => expect(conn.write).toHaveBeenCalled());
-    await t.stop();
+    await stopWithin(t);
   });
 
   it("writes a peer's frames in the order they were submitted, not the order they compress", async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     /** First byte of each frame's payload, in the order the connection wrote them. */
     const written: number[] = [];
@@ -625,12 +637,12 @@ describe('RaftTcpTransport — compression path', () => {
 
     await vi.waitFor(() => expect(written).toHaveLength(2));
     expect(written).toEqual([0x41, 0x42]);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('falls back to uncompressed on compression failure', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const conn = { write: vi.fn(async () => {}) };
     pool.tryGetConnection.mockReturnValue(conn);
@@ -645,12 +657,12 @@ describe('RaftTcpTransport — compression path', () => {
 
     priv(t)._sendFrame(2, frame, false);
     await vi.waitFor(() => expect(conn.write).toHaveBeenCalled());
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('drains pending when pool disappears during async compression', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     priv(t)._pendingMessages.set(2, [Buffer.from('x')]);
 
     const body = Buffer.alloc(5000, 0x43);
@@ -674,7 +686,7 @@ describe('RaftTcpTransport — compression path', () => {
 describe('RaftTcpTransport — write failure', () => {
   it('keeps the frame when a live connection write rejects, and says so', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const conn = {
       write: vi.fn(async () => {
@@ -694,7 +706,7 @@ describe('RaftTcpTransport — write failure', () => {
     // is the one case where a warning alone leaves Raft waiting for an answer that
     // cannot come.
     expect(priv(t)._pendingMessages.get(2)![0]!.toString()).toBe('frame');
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -714,26 +726,26 @@ describe('RaftTcpTransport — _handleIncoming pool branches', () => {
 
   it('destroys socket when onIncoming resolves null', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.onIncoming.mockResolvedValue(null);
     const sock = mockSocket();
 
     priv(t)._handleIncoming(sock);
     await vi.waitFor(() => expect(sock.destroy).toHaveBeenCalled());
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('destroys socket when onIncoming rejects', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.onIncoming.mockRejectedValue(new Error('pool too busy'));
     const sock = mockSocket();
 
     priv(t)._handleIncoming(sock);
     await vi.waitFor(() => expect(sock.destroy).toHaveBeenCalled());
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('cleans up the buffer on close when pool is not ready', () => {
@@ -770,7 +782,7 @@ describe('RaftTcpTransport — server callback wiring', () => {
 
   it('routes secureConnection events to _handleIncoming', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const server = mocks.servers[0];
     const pool = freshPool();
     pool.onIncoming.mockResolvedValue({ write: vi.fn() });
@@ -778,7 +790,7 @@ describe('RaftTcpTransport — server callback wiring', () => {
     const sock = mockSocket();
     server.handlers.secureConnection(sock);
     await vi.waitFor(() => expect(pool.onIncoming).toHaveBeenCalledWith(2, sock));
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('emits error on server error event', async () => {
@@ -786,11 +798,11 @@ describe('RaftTcpTransport — server callback wiring', () => {
     const errHandler = vi.fn();
     t.on('error', errHandler);
 
-    await t.start();
+    await startWithin(t);
     const server = mocks.servers[0];
     server.handlers.error(new Error('bind failed'));
     expect(errHandler).toHaveBeenCalled();
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -803,26 +815,26 @@ describe('RaftTcpTransport — _initiateConnection guards', () => {
 
   it('returns early when stopped', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     priv(t)._stopped = true;
     await expect(priv(t)._initiateConnection(2)).resolves.toBeUndefined();
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('swallows connection failures for a later retry', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.getConnection.mockRejectedValue(new Error('tls handshake failed'));
     await expect(priv(t)._initiateConnection(2)).resolves.toBeUndefined();
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
 describe('RaftTcpTransport — data listener decode-error', () => {
   it('emits decode-error when a received data chunk fails to process', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const cb = pool.onConnectionCreated;
 
@@ -846,7 +858,7 @@ describe('RaftTcpTransport — data listener decode-error', () => {
     dataHandler(Buffer.concat([header, body]));
 
     await vi.waitFor(() => expect(errHandler).toHaveBeenCalled());
-    await t.stop();
+    await stopWithin(t);
   });
 });
 
@@ -855,7 +867,7 @@ describe('RaftTcpTransport — health-check timer', () => {
     vi.useFakeTimers();
     try {
       const t = new RaftTcpTransport(validConfig());
-      await t.start();
+      await startWithin(t);
       const pool = freshPool();
 
       // No live connection → health check kicks off reconnect.
@@ -866,7 +878,7 @@ describe('RaftTcpTransport — health-check timer', () => {
       await vi.advanceTimersByTimeAsync(500);
       await vi.waitFor(() => expect(pool.getConnection).toHaveBeenCalled());
 
-      await t.stop();
+      await stopWithin(t);
     } finally {
       vi.useRealTimers();
     }
@@ -876,7 +888,7 @@ describe('RaftTcpTransport — health-check timer', () => {
     vi.useFakeTimers();
     try {
       const t = new RaftTcpTransport(validConfig());
-      await t.start();
+      await startWithin(t);
       const pool = freshPool();
       priv(t)._stopped = true;
       pool.tryGetConnection.mockReturnValue(null);
@@ -885,7 +897,7 @@ describe('RaftTcpTransport — health-check timer', () => {
       await vi.advanceTimersByTimeAsync(500);
       expect(pool.getConnection).not.toHaveBeenCalled();
 
-      await t.stop();
+      await stopWithin(t);
     } finally {
       vi.useRealTimers();
     }
@@ -901,7 +913,7 @@ describe('RaftTcpTransport — remaining branch coverage', () => {
 
   it('_handleIncoming accepts an array-form CN', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.onIncoming.mockResolvedValue({ write: vi.fn() });
 
@@ -916,7 +928,7 @@ describe('RaftTcpTransport — remaining branch coverage', () => {
     };
     priv(t)._handleIncoming(sock);
     await vi.waitFor(() => expect(pool.onIncoming).toHaveBeenCalledWith(2, sock));
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('_processData leaves a present non-zero from field untouched', async () => {
@@ -960,7 +972,7 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
       // One start per instance: the second call would return early because the
       // first set `_started`, and a promise that has already rejected resolves to
       // `undefined` when awaited again.
-      const error = await t.start().then(
+      const error = await startWithin(t).then(
         () => null,
         (cause: Error) => cause,
       );
@@ -982,7 +994,7 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
 
   it('negotiates only TLS 1.3, with the three suites and two curves it advertises', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
 
     // Asserted as a whole rather than field by field: "TLS 1.3 only" is a security
     // claim, and a claim that survives one field being dropped is not the claim.
@@ -995,7 +1007,7 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
       requestCert: true,
       rejectUnauthorized: true,
     });
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('falls back to the compression defaults when a caller sets only `enabled`', async () => {
@@ -1009,7 +1021,7 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
 
   it('unregister forgets a peer everywhere it was remembered, and refuses self', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     priv(t)._buffers.set('peer:2', Buffer.from([1, 2, 3]));
     priv(t)._pendingMessages.set(2, [Buffer.from([9])]);
@@ -1027,7 +1039,7 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
     t.unregister(1);
     expect(priv(t)._registeredNodes.has(1)).toBe(true);
 
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('unregister before start does not throw for want of a pool', async () => {
@@ -1039,23 +1051,30 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
   it('awaitPeerConnection answers false without a pool, and true only for a connected socket', async () => {
     const t = new RaftTcpTransport(validConfig());
     // No pool: nothing can be reached, and the caller is told so instead of waiting.
-    await expect(t.awaitPeerConnection(2, 50)).resolves.toBe(false);
+    await expect(bounded(t.awaitPeerConnection(2, 50), 'awaitPeerConnection')).resolves.toBe(false);
 
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
-    pool.getConnection.mockResolvedValue({ connected: true });
-    await expect(t.awaitPeerConnection(2, 50)).resolves.toBe(true);
+    try {
+      pool.getConnection.mockResolvedValue({ connected: true });
+      await expect(bounded(t.awaitPeerConnection(2, 50), 'awaitPeerConnection')).resolves.toBe(true);
 
-    pool.getConnection.mockResolvedValue({ connected: false });
-    // The budget is spent the moment it is asked for zero milliseconds: one
-    // attempt, one answer, no sleep.
-    await expect(t.awaitPeerConnection(2, 0)).resolves.toBe(false);
-    await t.stop();
+      pool.getConnection.mockResolvedValue({ connected: false });
+      // The budget is spent the moment it is asked for zero milliseconds: one
+      // attempt, one answer, no sleep.
+      await expect(bounded(t.awaitPeerConnection(2, 0), 'awaitPeerConnection')).resolves.toBe(false);
+    } finally {
+      // A wait whose step is a timer holds the event loop, so the transport is ended
+      // whether the case passed or failed: a mutant that keeps the retry alive past
+      // its budget leaves a chain nothing owns, and the run then outlives the case
+      // that caught it (P3-75). `_stopped` is what ends a step.
+      await stopWithin(t);
+    }
   });
 
   it('awaitPeerConnection retries a refused dial inside its budget', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     let calls = 0;
     pool.getConnection.mockImplementation(async () => {
@@ -1064,14 +1083,17 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
       return { connected: true };
     });
 
-    await expect(t.awaitPeerConnection(2, 500)).resolves.toBe(true);
-    expect(calls).toBe(3);
-    await t.stop();
+    try {
+      await expect(bounded(t.awaitPeerConnection(2, 500), 'awaitPeerConnection')).resolves.toBe(true);
+      expect(calls).toBe(3);
+    } finally {
+      await stopWithin(t);
+    }
   });
 
   it('drops a peer\u2019s send queue once it has drained', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.tryGetConnection.mockReturnValue({ write: vi.fn(async () => {}) });
 
@@ -1084,7 +1106,7 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
     // The queue exists while the frame is in it and is gone when it is not: a map
     // entry per peer that is never removed is a leak that only shows under churn.
     await vi.waitFor(() => expect(priv(t)._sendChains.has(2)).toBe(false));
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('drops a peer\u2019s receive queue once the chunk has been decoded', async () => {
@@ -1111,10 +1133,10 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
 
   it('waitForConnections survives a peer that refuses the dial', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     freshPool().getConnection.mockRejectedValue(new Error('EHOSTUNREACH'));
     await expect(t.waitForConnections()).resolves.toBeUndefined();
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('rebuffering past the cap keeps the newest frames and reports the evicted ones', async () => {
@@ -1137,7 +1159,7 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
 
   it('canReach refuses a socket that is destroyed, unwritable or unauthorized', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const socket = { destroyed: false, writable: true, authorized: true };
     pool.tryGetConnection.mockReturnValue({ connected: true, destroyed: false, socket });
@@ -1154,7 +1176,7 @@ describe('RaftTcpTransport — the contracts it publishes', () => {
     socket.destroyed = true;
     expect(t.canReach(2)).toBe(false);
 
-    await t.stop();
+    await stopWithin(t);
     expect(t.canReach(2)).toBe(false);
   });
 });
@@ -1233,7 +1255,7 @@ describe('RaftTcpTransport — inbound sockets, buffers and the frame path', () 
     const t = new RaftTcpTransport(
       validConfig({ tls: { ...validConfig().tls, verify: { allowedCNPrefixes: ['db-'] } } }) as any,
     );
-    await t.start();
+    await startWithin(t);
     freshPool().onIncoming.mockResolvedValue({});
 
     const socket = fakeSocket({ subject: 'db-7' });
@@ -1245,12 +1267,12 @@ describe('RaftTcpTransport — inbound sockets, buffers and the frame path', () 
     const impostor = fakeSocket({ subject: 'raft-node-8' });
     priv(t)._handleIncoming(impostor);
     expect(impostor.destroyed).toBe(true);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('hands an inbound socket to the pool, and destroys it when the pool refuses it', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
 
     pool.onIncoming.mockResolvedValue(null);
@@ -1265,7 +1287,7 @@ describe('RaftTcpTransport — inbound sockets, buffers and the frame path', () 
     const failed = fakeSocket({ remotePort: 41001 });
     priv(t)._handleIncoming(failed);
     await vi.waitFor(() => expect(failed.destroyed).toBe(true));
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('accumulates an inbound socket\u2019s bytes while the pool is not ready, and forgets them on close', () => {
@@ -1288,10 +1310,10 @@ describe('RaftTcpTransport — inbound sockets, buffers and the frame path', () 
 
   it('canReach refuses a connection that carries no socket at all', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     freshPool().tryGetConnection.mockReturnValue({ connected: true, destroyed: false, socket: null });
     expect(t.canReach(2)).toBe(false);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('evicts the oldest buffered frame when a peer\u2019s queue is full, and says so', () => {
@@ -1358,7 +1380,7 @@ describe('RaftTcpTransport — inbound sockets, buffers and the frame path', () 
 
   it('queues a payload of exactly the threshold, and writes one byte less synchronously', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.tryGetConnection.mockReturnValue({ write: vi.fn(async () => {}) });
     const threshold = priv(t)._compressor.getThreshold();
@@ -1382,17 +1404,17 @@ describe('RaftTcpTransport — inbound sockets, buffers and the frame path', () 
     priv(t)._sendFrame(2, framed(threshold - 1), false);
     expect(write.mock.calls.length).toBe(before + 1);
     expect(priv(t)._sendChains.has(2)).toBe(false);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('a frame that reaches the queue with no pool drains the peer\u2019s buffer instead of writing', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     priv(t)._pendingMessages.set(2, [Buffer.from([1])]);
     // The transport stops while a compression is in flight; the link finds no pool
     // and the frames it was holding are gone for good. Draining is the only way
     // that memory is ever released.
-    await t.stop();
+    await stopWithin(t);
     priv(t)._pendingMessages.set(2, [Buffer.from([1])]);
     priv(t)._writeFrame(2, Buffer.from([0x41]), false);
     expect(priv(t)._pendingMessages.has(2)).toBe(false);
@@ -1400,10 +1422,10 @@ describe('RaftTcpTransport — inbound sockets, buffers and the frame path', () 
 
   it('stop clears the health-check timer, and a second stop is harmless', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     expect(priv(t)._healthCheckTimer).not.toBeNull();
 
-    await t.stop();
+    await stopWithin(t);
     expect(priv(t)._healthCheckTimer).toBeNull();
     await expect(t.stop()).resolves.toBeUndefined();
   });
@@ -1412,20 +1434,20 @@ describe('RaftTcpTransport — inbound sockets, buffers and the frame path', () 
 describe('RaftTcpTransport — the port it binds, the peers it dials, the frames it reads', () => {
   it('records the port the kernel assigned, so a follower can be told where to dial', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     // `port: 0` is how a deployment asks the kernel for a port. The address it got
     // is the only thing that can be published to the rest of the cluster, and a
     // node that kept the zero it was configured with advertises a port it is not
     // listening on.
     expect(priv(t).config.node.port).toBe(9001);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('the health check dials a peer whose connection has gone', async () => {
     vi.useFakeTimers();
     try {
       const t = new RaftTcpTransport(validConfig());
-      await t.start();
+      await startWithin(t);
       const pool = freshPool();
       pool.tryGetConnection.mockReturnValue(null);
       pool.getConnection.mockRejectedValue(new Error('ECONNREFUSED'));
@@ -1436,7 +1458,7 @@ describe('RaftTcpTransport — the port it binds, the peers it dials, the frames
       expect(pool.getConnection).toHaveBeenCalledWith(2);
       expect(pool.getConnection).toHaveBeenCalledWith(3);
 
-      await t.stop();
+      await stopWithin(t);
     } finally {
       vi.useRealTimers();
     }
@@ -1446,12 +1468,12 @@ describe('RaftTcpTransport — the port it binds, the peers it dials, the frames
     vi.useFakeTimers();
     try {
       const t = new RaftTcpTransport(validConfig());
-      await t.start();
+      await startWithin(t);
       const pool = freshPool();
       pool.tryGetConnection.mockReturnValue(null);
       pool.getConnection.mockRejectedValue(new Error('ECONNREFUSED'));
 
-      await t.stop();
+      await stopWithin(t);
       const after = pool.getConnection.mock.calls.length;
       await vi.advanceTimersByTimeAsync(2_000);
       // The timer is cleared by `stop()`; this asserts the guard as well, because
@@ -1518,7 +1540,7 @@ describe('RaftTcpTransport — what send() addresses, and what stop() releases',
 
   it('send() never queues a message addressed to the sender', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     freshPool().tryGetConnection.mockReturnValue(null);
 
     await t.send(1, [
@@ -1531,12 +1553,12 @@ describe('RaftTcpTransport — what send() addresses, and what stop() releases',
     // for a link that will never be dialled.
     expect(priv(t)._pendingMessages.has(1)).toBe(false);
     expect(priv(t)._pendingMessages.has(2)).toBe(true);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('send() keeps every message of a peer in one batch', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.tryGetConnection.mockReturnValue(null);
 
@@ -1558,14 +1580,14 @@ describe('RaftTcpTransport — what send() addresses, and what stop() releases',
         ._pendingMessages.get(2)!
         .map((frame: Buffer) => frame.toString('utf-8').length),
     ).toHaveLength(3);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('stop() closes the TLS listener', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const server = mocks.servers[0]!;
-    await t.stop();
+    await stopWithin(t);
     // A listener that outlives `stop()` keeps the port bound and the process alive;
     // a restart then fails with EADDRINUSE against itself.
     expect(server.close).toHaveBeenCalled();
@@ -1575,7 +1597,7 @@ describe('RaftTcpTransport — what send() addresses, and what stop() releases',
     vi.useFakeTimers();
     try {
       const t = new RaftTcpTransport(validConfig());
-      await t.start();
+      await startWithin(t);
       mocks.servers[0]!.close.mockImplementation(() => {
         /* a socket that refuses to go away */
       });
@@ -1587,10 +1609,14 @@ describe('RaftTcpTransport — what send() addresses, and what stop() releases',
       await vi.advanceTimersByTimeAsync(1_999);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(2);
-      await stopped;
       // The two-second fallback is the only thing that ends this: without it a
-      // shutdown waits on a callback the operating system may never send.
+      // shutdown waits on a callback the operating system may never send. The
+      // observation is asserted before the promise is awaited, because awaiting it
+      // first is the hang itself — under fake timers no deadline the test owns can
+      // fire, so the flag is the verdict and the await is only there to surface a
+      // rejection.
       expect(settled).toBe(true);
+      await stopped;
     } finally {
       vi.useRealTimers();
     }
@@ -1598,13 +1624,13 @@ describe('RaftTcpTransport — what send() addresses, and what stop() releases',
 
   it('stop() releases every per-peer queue', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     priv(t)._pendingMessages.set(2, [frame(1)]);
     priv(t)._flushAttempts.set(2, 1);
     priv(t)._sendChains.set(2, Promise.resolve());
     priv(t)._processChains.set(2, Promise.resolve());
 
-    await t.stop();
+    await stopWithin(t);
 
     // Held memory with no schedule left to release it: a transport that stops and
     // starts under a membership change would accumulate one queue per peer per
@@ -1617,8 +1643,8 @@ describe('RaftTcpTransport — what send() addresses, and what stop() releases',
 
   it('a dial attempted after stop resolves instead of dereferencing a dead pool', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
-    await t.stop();
+    await startWithin(t);
+    await stopWithin(t);
     await expect(priv(t)._initiateConnection(2)).resolves.toBeUndefined();
   });
 

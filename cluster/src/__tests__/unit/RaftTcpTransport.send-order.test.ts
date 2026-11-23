@@ -70,6 +70,18 @@ vi.mock('node:tls', () => ({ default: { createServer: mocks.tlsState.createServe
 vi.mock('../../consensus/transport/ConnectionPool', () => ({ ConnectionPool: mocks.poolCtor }));
 
 import { RaftTcpTransport } from '../../consensus/transport/RaftTcpTransport';
+import { bounded } from '../support/awaitBound';
+
+/**
+ * Start and stop, bounded.
+ *
+ * Both are promises the product resolves, which means both are promises a mutation
+ * can leave unresolved — and a case that waits on one of those is a case the runner
+ * has to time out instead of one that fails. `bounded` makes the difference visible
+ * (see `../support/awaitBound`).
+ */
+const startWithin = (t: RaftTcpTransport) => bounded(t.start(), 'transport.start()');
+const stopWithin = (t: RaftTcpTransport) => bounded(t.stop(), 'transport.stop()');
 
 function validConfig(overrides: any = {}): any {
   return {
@@ -123,7 +135,7 @@ afterEach(() => {
 describe('RaftTcpTransport — one order per peer', () => {
   it('AC 73.1: a compressed frame in flight is not overtaken by a frame buffered while the peer was down', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     pool.tryGetConnection.mockReturnValue(null);
 
@@ -157,12 +169,12 @@ describe('RaftTcpTransport — one order per peer', () => {
     await vi.waitFor(() => expect(written).toHaveLength(2));
 
     expect(written.map((body) => body.charCodeAt(0))).toEqual([0x41, 0x59]);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.2: a batch that failed to flush is not overtaken by a frame submitted after it', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
 
     const dead = {
@@ -189,12 +201,12 @@ describe('RaftTcpTransport — one order per peer', () => {
 
     await vi.waitFor(() => expect(written).toHaveLength(2));
     expect(written).toEqual(['old', 'new']);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.3: a write that fails on a live connection is re-buffered, and still precedes anything newer', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
 
     const failing = {
@@ -220,12 +232,12 @@ describe('RaftTcpTransport — one order per peer', () => {
 
     await vi.waitFor(() => expect(written).toHaveLength(2));
     expect(written).toEqual(['first', 'second']);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.4: an idle peer keeps the synchronous fast path', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const written: string[] = [];
     const conn = recordingConn(written);
@@ -240,12 +252,12 @@ describe('RaftTcpTransport — one order per peer', () => {
     expect(written).toHaveLength(1);
     expect(priv(t)._sendChains.size).toBe(0);
     expect(priv(t)._pendingMessages.size).toBe(0);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.5: a heartbeat with a backlog behind it is dropped, not appended', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const written: string[] = [];
     const conn = recordingConn(written);
@@ -259,12 +271,12 @@ describe('RaftTcpTransport — one order per peer', () => {
     // that the entries behind it need.
     expect(priv(t)._pendingMessages.get(2)).toHaveLength(1);
     expect(written).toEqual([]);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.6: queues drain to empty once the frames are delivered', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const written: string[] = [];
     const conn = recordingConn(written);
@@ -278,12 +290,12 @@ describe('RaftTcpTransport — one order per peer', () => {
     await vi.waitFor(() => expect(priv(t)._sendChains.size).toBe(0));
     expect(priv(t)._pendingMessages.size).toBe(0);
     expect(written.map((body) => body.slice(0, 1))).toEqual(['a', 'b', 'C']);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.8: a flush that reaches the front after the transport stopped drops what it can no longer deliver', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const written: string[] = [];
     const conn = recordingConn(written);
@@ -304,7 +316,7 @@ describe('RaftTcpTransport — one order per peer', () => {
 
   it('AC 73.9: a heartbeat whose write fails is dropped, not re-buffered', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const failing = {
       write: vi.fn(async () => {
@@ -323,12 +335,12 @@ describe('RaftTcpTransport — one order per peer', () => {
     // A heartbeat is state: the next one carries a newer commit index, so putting
     // this one back would spend the cap that the entries behind it need.
     expect(priv(t)._pendingMessages.has(2)).toBe(false);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.10: two frames behind one backlog ask for one flush, and are written in order', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const failing = {
       write: vi.fn(async () => {
@@ -355,12 +367,12 @@ describe('RaftTcpTransport — one order per peer', () => {
     const live = recordingConn(written);
     pool.tryGetConnection.mockReturnValue(live);
     await vi.waitFor(() => expect(written).toEqual(['old', 'a', 'b']));
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.11: a small frame behind a buffered backlog takes its place in the queue, not the fast path', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const written: string[] = [];
     const conn = recordingConn(written);
@@ -379,12 +391,12 @@ describe('RaftTcpTransport — one order per peer', () => {
     // And the backlog drains in submission order once the queue reaches it.
     await vi.waitFor(() => expect(written).toHaveLength(2));
     expect(written.map((body) => body.charCodeAt(0))).toEqual(['o'.charCodeAt(0), 0x59]);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.12: a queued frame that does not need compressing is not compressed', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
     const written: string[] = [];
     const conn = recordingConn(written);
@@ -410,7 +422,7 @@ describe('RaftTcpTransport — one order per peer', () => {
     // queue longer without making the wire smaller.
     expect(compress).toHaveBeenCalledTimes(1);
     expect(written.map((body) => body.charCodeAt(0))).toEqual([0x41, 0x59]);
-    await t.stop();
+    await stopWithin(t);
   });
 
   it('AC 73.13: without a pool the batch goes out over the socket it was handed', async () => {
@@ -429,7 +441,7 @@ describe('RaftTcpTransport — one order per peer', () => {
 
   it('AC 73.7: a flush whose connection is gone by the time it runs puts the batch back', async () => {
     const t = new RaftTcpTransport(validConfig());
-    await t.start();
+    await startWithin(t);
     const pool = freshPool();
 
     priv(t)._pendingMessages.set(2, [Buffer.from('kept')]);
@@ -446,6 +458,6 @@ describe('RaftTcpTransport — one order per peer', () => {
 
     await vi.waitFor(() => expect(priv(t)._pendingMessages.get(2)).toHaveLength(1));
     expect(abandoned.write).not.toHaveBeenCalled();
-    await t.stop();
+    await stopWithin(t);
   });
 });

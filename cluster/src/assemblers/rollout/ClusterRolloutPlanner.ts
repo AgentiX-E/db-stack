@@ -131,29 +131,32 @@ export class ClusterRolloutPlanner {
       };
     }
 
-    // The loop advances by `effectiveBatchSize`, so a size that is not at least
-    // one would be an infinite loop — a rollout plan that hangs the process that
-    // asked for it. `requestedSize` cannot answer zero today; the floor is here so
-    // that a strategy added later cannot turn a wrong plan into a hang.
-    const capped = Math.min(requestedBatchSize, budget);
-    const effectiveBatchSize = Number.isFinite(capped) && capped >= 1 ? Math.floor(capped) : 1;
-    const batches: RolloutBatch[] = [];
-    let cursor = 0;
-
-    while (cursor < ordered.length) {
-      const slice = ordered.slice(cursor, cursor + effectiveBatchSize);
-      cursor += slice.length;
-      const votersDown = votersOf(slice).length;
-      batches.push({
-        index: batches.length + 1,
-        nodes: slice.map((member) => member.id),
-        // Per batch, not cumulative: batches are sequential and a batch is back up
-        // before the next one drains. Summing across them would describe a
-        // rollout that takes every batch down at once.
-        votersDown,
-        zones: zonesOf(slice),
-      });
-    }
+    // The split is a chunking, so its size is division rather than a cursor: a
+    // count that is arithmetic cannot be left un-advanced by an edit, and a
+    // rollout plan that spins is a process that never answers the operator who
+    // asked for it (P3-75).
+    //
+    // No second clamp. `requestedSize` already answers a whole number of at least
+    // one on every strategy — including the ones a caller misuses (`-5`, `0`, `2.7`)
+    // — and `budget` is at least one here, since zero returned above. A floor on top
+    // of that was four mutants no input could distinguish: a branch nothing can take
+    // is a line the gate is right to refuse to believe.
+    const effectiveBatchSize = Math.min(requestedBatchSize, budget);
+    const batches: RolloutBatch[] = Array.from(
+      { length: Math.ceil(ordered.length / effectiveBatchSize) },
+      (_, offset) => {
+        const slice = ordered.slice(offset * effectiveBatchSize, (offset + 1) * effectiveBatchSize);
+        return {
+          index: offset + 1,
+          nodes: slice.map((member) => member.id),
+          // Per batch, not cumulative: batches are sequential and a batch is back up
+          // before the next one drains. Summing across them would describe a
+          // rollout that takes every batch down at once.
+          votersDown: votersOf(slice).length,
+          zones: zonesOf(slice),
+        };
+      },
+    );
 
     return {
       batches,
@@ -234,17 +237,12 @@ function interleaveByZone(members: readonly ClusterMember[]): ClusterMember[] {
   }
 
   const queues = [...groups.values()];
-  const result: ClusterMember[] = [];
-  let emitted = true;
-  while (emitted) {
-    emitted = false;
-    for (const queue of queues) {
-      const member = queue.shift();
-      if (member) {
-        result.push(member);
-        emitted = true;
-      }
-    }
-  }
-  return result;
+  // One round per member of the longest queue, and round `r` takes the `r`-th
+  // member of every queue: the round robin the shifting loop performed, with the
+  // number of rounds computed before the walk instead of by it. A flag that the
+  // walk sets to keep itself going is a promise the walk can break (P3-75).
+  const rounds = queues.reduce((longest, queue) => Math.max(longest, queue.length), 0);
+  return Array.from({ length: rounds }, (_, round) =>
+    queues.map((queue) => queue[round]).filter((member): member is ClusterMember => member !== undefined),
+  ).flat();
 }

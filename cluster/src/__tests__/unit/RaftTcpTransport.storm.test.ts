@@ -18,6 +18,17 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RaftTcpTransport, type RaftTcpTransportConfig } from '../../consensus/transport/RaftTcpTransport';
 import type { RaftMessage } from '../../consensus/transport/MessageCodec';
+import { bounded } from '../support/awaitBound';
+
+/**
+ * Stop, bounded — see `../support/awaitBound`.
+ *
+ * The suite's own budget is 180 s (vitest.config.ts), which is six times the
+ * mutation gate's abandonment: a case that waits on a promise the product stopped
+ * resolving is recorded there as a timeout whatever this file says. Three seconds
+ * is a hundred times the measured cost of a stop and a tenth of that budget.
+ */
+const stopWithin = (t: RaftTcpTransport) => bounded(t.stop(), 'transport.stop()');
 
 /**
  * send() takes encoded RaftMessage batches. These tests only care that a send
@@ -152,7 +163,7 @@ describe('RaftTcpTransport Storm (TST)', () => {
 
       // Give sends a tick to start, then stop
       await new Promise((r) => setTimeout(r, 5));
-      await t.stop();
+      await stopWithin(t);
       await Promise.all(sends);
 
       // Verify no pending messages leaked

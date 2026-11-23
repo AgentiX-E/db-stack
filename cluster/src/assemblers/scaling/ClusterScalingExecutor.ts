@@ -123,12 +123,20 @@ export class ClusterScalingExecutor {
     const skipped: SkippedItem[] = [];
     const taken = new Set(members.map((member) => member.id));
 
-    for (let index = 0; index < wanted; index += 1) {
+    // Every id is minted before the first attempt, in one pass, so the number of
+    // attempts is the length of a list rather than a counter whose step an edit can
+    // reverse (P3-75). `mintId` does not record what it hands out — recording is the
+    // caller's job below — so the mapper records it: taken before the attempt, not
+    // after, because a refused join that is not remembered is minted again on the
+    // next pass, and one failing id would turn a three-node scale-up into three
+    // attempts at the same failing node.
+    const ids = Array.from({ length: wanted }, () => {
       const id = this.mintId(taken);
-      // Taken before the attempt, not after: a refused join that is not remembered
-      // is minted again on the next pass, so one failing id turns a three-node
-      // scale-up into three attempts at the same failing node.
       taken.add(id);
+      return id;
+    });
+
+    for (const id of ids) {
       try {
         await this.topology.addNode(id);
         applied.push(id);
@@ -246,11 +254,12 @@ export class ClusterScalingExecutor {
 
   /** The first `<prefix>-<n>` id that the current member set does not use. */
   private mintId(taken: ReadonlySet<string>): string {
-    let index = 1;
-    // A `while` rather than `for (;;)`: the exit is the interesting branch, and a
-    // loop whose only exit is a `return` has a branch no test can take.
-    while (taken.has(`${this.idPrefix}-${index}`)) index += 1;
-    return `${this.idPrefix}-${index}`;
+    // At most `taken.size` of these names can be taken, so one of the first
+    // `taken.size + 1` of them is free — a pigeonhole, not a search. The walk this
+    // replaces incremented an index until a name was free, which is a loop a
+    // reversed step leaves turning forever (P3-75).
+    const candidates = Array.from({ length: taken.size + 1 }, (_, offset) => `${this.idPrefix}-${offset + 1}`);
+    return candidates.find((id) => !taken.has(id))!;
   }
 }
 

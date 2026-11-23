@@ -14,6 +14,18 @@ import { MessageCodec } from '../../consensus/transport/MessageCodec';
 import { RaftTcpTransport } from '../../consensus/transport/RaftTcpTransport';
 import type { RaftMessage } from '../../consensus/transport/MessageCodec';
 import { generateClusterCerts, type TestClusterCerts } from '../../testing/test-certs';
+import { bounded } from '../support/awaitBound';
+
+/**
+ * Start and stop, bounded.
+ *
+ * Both are promises the product resolves, which means both are promises a mutation
+ * can leave unresolved — and a case that waits on one of those is a case the runner
+ * has to time out instead of one that fails. `bounded` makes the difference visible
+ * (see `../support/awaitBound`).
+ */
+const startWithin = (t: RaftTcpTransport) => bounded(t.start(), 'transport.start()');
+const stopWithin = (t: RaftTcpTransport) => bounded(t.stop(), 'transport.stop()');
 
 const RECEIVE_TIMEOUT_MS = 20_000;
 
@@ -51,8 +63,8 @@ beforeAll(async () => {
   // or another agent's test run. The resolved port is read back below.
   first = transportFor(1, 0);
   second = transportFor(2, 0);
-  await first.start();
-  await second.start();
+  await startWithin(first);
+  await startWithin(second);
 
   // Both sides dial, which is what start() does for every configured peer in a
   // real cluster: a pair that only ever connects one way is not the shape the
@@ -68,7 +80,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  for (const transport of transports) await transport.stop();
+  for (const transport of transports) await stopWithin(transport);
 });
 
 describe('RaftTcpTransport — bound port', () => {
@@ -102,7 +114,7 @@ describe('RaftTcpTransport — a port that is taken', () => {
     });
 
     await expect(taken.start()).rejects.toMatchObject({ code: 'EADDRINUSE' });
-    await taken.stop();
+    await stopWithin(taken);
   });
 });
 
@@ -135,8 +147,8 @@ describe('RaftTcpTransport — reachability', () => {
     expect(fresh.canReach(4)).toBe(false);
 
     const live = transportFor(5, 0);
-    await live.start();
-    await live.stop();
+    await startWithin(live);
+    await stopWithin(live);
     expect(live.canReach(1)).toBe(false);
   });
 });
