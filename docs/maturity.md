@@ -221,19 +221,21 @@ would have pasted and watched fail. See §4.1 for what that found.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-All four rows are from a green run of this repository, after `operations/` was dissolved and
-the four assembler modules moved from the operations target into `cluster`: `node`
-(99.45/99.45/99.87/98.49), `cluster` with the assemblers in it (99.45/99.45/99.71/98.23) and
-`federation` with the query and schema modules it absorbed (99.63/99.63/100/98.67). The gate
-covers four packages, not three: the end-to-end harness is measured as well, because a harness bug
-produces confident, meaningless acceptance passes.
+All four rows are from CI run `45130956709`, the run that accepted iteration 75: `node`
+(99.51/99.51/99.87/98.73 over 62 files), `cluster` with the assemblers in it
+(99.46/99.46/99.72/98.33 over 65) and `federation` with the query and schema modules it absorbed
+(99.64/99.64/100/98.58 over 38). The gate covers four packages, not three: the end-to-end harness is
+measured as well (99.44/99.44/100/96.47), because a harness bug produces confident, meaningless
+acceptance passes. That last row read 100 % on all four dimensions when this page was first
+written and reads 99.44 / 100 / 96.47 now; the number moved because the harness gained code, and
+the row is reported as measured rather than as remembered.
 
 | Package         | Lines  | Statements | Functions | Branches |
 | --------------- | ------ | ---------- | --------- | -------- |
-| `cluster`       | 99.45% | 99.45%     | 99.71%    | 98.23%   |
-| `federation`    | 99.63% | 99.63%     | 100%      | 98.67%   |
-| `node`          | 99.45% | 99.45%     | 99.87%    | 98.49%   |
-| `e2e` (harness) | 100 %  | 100 %      | 100 %     | 100 %    |
+| `cluster`       | 99.46% | 99.46%     | 99.72%    | 98.33%   |
+| `federation`    | 99.64% | 99.64%     | 100%      | 98.58%   |
+| `node`          | 99.51% | 99.51%     | 99.87%    | 98.73%   |
+| `e2e` (harness) | 99.44% | 99.44%     | 100%      | 96.47%   |
 
 The `e2e` row covers the TypeScript harness — `support.ts` (process supervision, IPC, port
 allocation, log capture) and `published-artefact.ts` (the runner for the published-behaviour
@@ -2017,6 +2019,15 @@ alone, `install-hooks.mjs` reads 97.14 % branches, because one arm of `rootArg`
 is taken by a case in a neighbouring file: a file's percentage belongs to the
 run it was taken from, which is the same lesson as the cache, one turn of the
 screw further in.
+
+The boundary of that was measured rather than assumed, because the next obvious
+question is whether the other coverage instrument in this repository reads the
+same cache. It does not: `vitest run --coverage` over
+`RaftJointConsensusEngine.test.ts` returns `All files 3.2 / 93.62 / 98.9` with
+`NODE_COMPILE_CACHE` set and the same three numbers without it. Vitest transforms
+modules itself and runs them through its own runner, so V8 never compiles the
+source as a module and never consults the cache. The inflation belongs to Node's
+own collector, which is what `check:script-coverage` starts.
 
 The general lesson is the page's oldest one in a new costume: **a green number
 is a claim about an instrument**. A Node version was already named as part of
