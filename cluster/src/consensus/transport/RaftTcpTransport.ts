@@ -122,6 +122,17 @@ export class RaftTcpTransport extends EventEmitter {
   /** Consecutive failed flush attempts per peer; reset by a write that succeeds. */
   private _flushAttempts: Map<number, number> = new Map();
   /**
+   * Peers that already have a flush link waiting on their send queue.
+   *
+   * A backlog can be created from three places — a frame that arrives with no
+   * connection, a frame that must wait behind a backlog, and a batch whose socket
+   * died — and each of them wants the backlog drained as soon as a connection is
+   * there. Without this set, one frame behind a full queue would add one flush
+   * link, and a thousand frames would add a thousand links that each find nothing
+   * to write. See {@link _scheduleFlush}.
+   */
+  private _flushScheduled: Set<number> = new Set();
+  /**
    * The tail of each peer's send queue: frames are compressed and written one at
    * a time, in the order they were submitted. See {@link _sendFrame}.
    */
@@ -402,6 +413,7 @@ export class RaftTcpTransport extends EventEmitter {
     // are a record of what happened, not state to resume from.
     this._pendingMessages.clear();
     this._flushAttempts.clear();
+    this._flushScheduled.clear();
     // Queued links still run; they find no pool and drop their frame, which is
     // the same answer every other path gives once the transport is stopped.
     this._sendChains.clear();
@@ -670,45 +682,74 @@ export class RaftTcpTransport extends EventEmitter {
   }
 
   /**
-   * Write a peer's buffered frames to a freshly available connection.
+   * Take a peer's buffered frames and hand them to the peer's queue.
    *
-   * A rejection here used to destroy the frames: the buffer was deleted at the
-   * top of the loop, so a write failure closed the socket and the entries the
-   * leader had proposed before the handshake completed were gone with no record.
-   * Re-buffering them and closing the socket turns that into a retry — the pool's
-   * close handler schedules the dial, `onConnectionCreated` fires again, and the
-   * batch goes out over the new socket. Retries are bounded by
+   * The batch is taken and cleared synchronously and *written* later, on its turn
+   * in the queue — a flush used to write inline from `onConnectionCreated`, which
+   * put it in front of a frame that was still waiting for the compressor. Taking
+   * the frames now and writing them later is what lets a frame submitted after
+   * this point wait behind them.
+   *
+   * A rejection during the write used to destroy the frames: the buffer was
+   * deleted before the loop, so a write failure closed the socket and the entries
+   * the leader had proposed before the handshake completed were gone with no
+   * record. Re-buffering them and closing the socket turns that into a retry — the
+   * pool's close handler schedules the dial, `onConnectionCreated` fires again,
+   * and the batch goes out over the new socket. Retries are bounded by
    * {@link MAX_FLUSH_ATTEMPTS} so a peer that accepts dials and refuses writes
-   * cannot pin one victim's frames forever.
+   * cannot pin one victim's frames forever. See {@link _writeBatch}.
+   */
+  private _flushPending(peerId: number, conn: PeerConnection | null = null): void {
+    const queued = this._pendingMessages.get(peerId);
+    if (!queued || queued.length === 0) return;
+    // Taken and cleared synchronously: from here the batch belongs to one link of
+    // the peer's queue, and a frame submitted after this point has to wait behind
+    // it. Clearing later would let the buffer be appended to while the batch was
+    // being written, which is the same overtake in a smaller window.
+    this._pendingMessages.delete(peerId);
+    this._enqueueSend(peerId, () => this._writeBatch(peerId, queued, conn));
+  }
+
+  /**
+   * Write one batch of buffered frames to the peer's current connection.
+   *
+   * The connection is resolved when the batch's turn comes, not when the flush was
+   * requested: between the two a replacement can land, and the socket this batch
+   * was handed may be the one the pool just closed. Writing to that one is the
+   * failure a transport cannot see afterwards — the kernel accepts the bytes and
+   * the peer never reads them — so a batch whose connection is gone goes back to
+   * the front of the buffer and waits for the next connection to be announced.
    *
    * Writes are issued in order and the first rejection ends the batch: once a
    * socket rejects one write the frames after it would land on the same dead
-   * socket, so they are re-buffered rather than written and lost.
+   * socket, so they are re-buffered rather than written and lost. The failure
+   * budget is per batch, not per frame: it is cleared only when every frame of one
+   * batch reached the socket. Clearing it on the first successful write let a peer
+   * that fails every other frame retry forever.
    */
-  private _flushPending(peerId: number, conn: PeerConnection): void {
-    const queued = this._pendingMessages.get(peerId);
-    if (!queued || queued.length === 0) return;
-    this._pendingMessages.delete(peerId);
+  private async _writeBatch(peerId: number, batch: Buffer[], fallback: PeerConnection | null): Promise<void> {
+    const conn = this._resolveWriteConnection(peerId, fallback);
+    if (!conn) {
+      this._prependFrames(peerId, batch);
+      return;
+    }
 
     let failed = false;
     let settled = 0;
-    // The failure budget is per batch, not per frame: it is cleared only when
-    // every frame of one batch reached the socket. Clearing it on the first
-    // successful write let a peer that fails every other frame retry forever.
     const onWritten = (): void => {
       settled += 1;
-      if (settled === queued.length && !failed) this._flushAttempts.delete(peerId);
+      if (settled === batch.length && !failed) this._flushAttempts.delete(peerId);
     };
-    queued.forEach((frame, index) => {
-      conn.write(frame).then(onWritten, (err: unknown) => {
+    batch.forEach((frame, index) => {
+      void conn.write(frame).then(onWritten, (err: unknown) => {
         settled += 1;
         if (failed) return; // One verdict per batch.
         failed = true;
         const attempts = (this._flushAttempts.get(peerId) ?? 0) + 1;
         this._flushAttempts.set(peerId, attempts);
-        const undelivered = queued.slice(index);
+        const undelivered = batch.slice(index);
         logger.warn(
-          `[RaftTcpTransport] Flush to peer ${peerId} failed at frame ${index}/${queued.length} ` +
+          `[RaftTcpTransport] Flush to peer ${peerId} failed at frame ${index}/${batch.length} ` +
             `(attempt ${attempts}/${MAX_FLUSH_ATTEMPTS}): ${String(err)}`,
         );
         if (attempts >= MAX_FLUSH_ATTEMPTS) {
@@ -720,6 +761,80 @@ export class RaftTcpTransport extends EventEmitter {
         conn.close();
       });
     });
+  }
+
+  /**
+   * The socket a batch should be written to right now.
+   *
+   * With a pool, the pool's answer is the only one that counts: a connection the
+   * pool has replaced is a connection whose writes the peer may never read, and
+   * `null` means "wait for the next announcement" rather than "use the one you
+   * were given". Without a pool there is nothing to resolve — the caller's socket
+   * is the only one in existence (the shutdown and unit paths).
+   */
+  private _resolveWriteConnection(peerId: number, fallback: PeerConnection | null): PeerConnection | null {
+    if (!this.pool) return fallback;
+    return this.pool.tryGetConnection(peerId);
+  }
+
+  /**
+   * Ask for the peer's buffer to be drained as soon as its queue reaches the front.
+   *
+   * The flush is a link in the same per-peer queue every frame goes through, so
+   * the frames buffered before it are written before it and the frames submitted
+   * after it are written after it. Doing the flush inline — which is what the
+   * buffer used to do — put it in front of a frame that was still being
+   * compressed, and that frame then arrived last.
+   */
+  private _scheduleFlush(peerId: number): void {
+    if (this._flushScheduled.has(peerId)) return;
+    this._flushScheduled.add(peerId);
+    this._enqueueSend(peerId, () => {
+      this._flushScheduled.delete(peerId);
+      if (!this.pool) {
+        this._drainPending(peerId);
+        return;
+      }
+      // The batch resolves its own connection when its turn comes; the pool's
+      // answer here would be a snapshot of it.
+      this._flushPending(peerId);
+    });
+  }
+
+  /**
+   * Append a link to a peer's send queue.
+   *
+   * Every write this class performs for a peer goes through here once it has a
+   * reason to be ordered — a frame in flight, or a backlog. Links run one at a
+   * time in the order they were appended. The tail is stored already-settled: a
+   * rejection would leave every later frame for this peer unwritten. Neither half
+   * rejects — a failed compression falls back to the uncompressed payload and a
+   * failed write is re-buffered — but a queue that can be poisoned by one frame is
+   * a queue that will be.
+   *
+   * One entry per peer, dropped once its queue drains, so a transport that talked
+   * to a thousand peers and then to none holds no frames.
+   */
+  private _enqueueSend(peerId: number, task: () => Promise<void> | void): void {
+    const previous = this._sendChains.get(peerId) ?? Promise.resolve();
+    const link = previous.then(task);
+    const settled = link.catch(() => undefined);
+    this._sendChains.set(peerId, settled);
+    void settled.then(() => {
+      if (this._sendChains.get(peerId) === settled) this._sendChains.delete(peerId);
+    });
+  }
+
+  /**
+   * Whether a frame submitted now has to queue behind something older.
+   *
+   * Two older things are possible: a frame still in the queue (being compressed),
+   * and a batch sitting in the pending buffer (waiting for a connection). Either
+   * one makes a direct write a frame ahead of its predecessor, so the frame joins
+   * the queue instead.
+   */
+  private _mustQueue(peerId: number): boolean {
+    return this._sendChains.has(peerId) || (this._pendingMessages.get(peerId)?.length ?? 0) > 0;
   }
 
   /**
@@ -746,49 +861,52 @@ export class RaftTcpTransport extends EventEmitter {
    * other — this is a per-peer queue, not a global lock.
    *
    * A frame the compressor would pass through untouched — compression off, or a
-   * payload under the threshold, which is most Raft frames — takes no queue at
-   * all: there is no async step to reorder anything, so the write stays exactly
-   * where it was. The queue exists for the defect and is absent everywhere the
-   * defect could not be.
+   * payload under the threshold, which is most Raft frames — and that has nothing
+   * older to wait behind takes no queue at all: there is no async step to reorder
+   * anything and no predecessor to overtake, so the write stays exactly where it
+   * was. The queue exists for the defect and is absent everywhere the defect
+   * could not be. {@link _mustQueue} is the other half of that sentence: a frame
+   * with a reason to be ordered joins the queue even when its payload is small,
+   * because the frame it would overtake is not the one being compressed.
    */
   private _sendFrame(peerId: number, frame: Buffer, isHeartbeat: boolean): void {
     if (!this.pool) throw new Error('Transport not started');
 
     const payload = frame.subarray(4); // Strip 4-byte length header for compression
+    const needsCompression = this._compressionEnabled && payload.length >= this._compressor.getThreshold();
 
-    if (!this._compressionEnabled || payload.length < this._compressor.getThreshold()) {
+    if (!needsCompression && !this._mustQueue(peerId)) {
       this._writeFrame(peerId, payload, isHeartbeat);
       return;
     }
 
-    const previous = this._sendChains.get(peerId) ?? Promise.resolve();
-    const link = previous.then(() => this._compressAndWrite(peerId, payload, isHeartbeat));
-
-    // Stored already-settled: a rejection here would leave every later frame for
-    // this peer unwritten. Neither half rejects — a failed compression falls back
-    // to the uncompressed payload and `_doSendFrame` reports its own failures —
-    // but a queue that can be poisoned by one frame is a queue that will be.
-    const settled = link.catch(() => undefined);
-    this._sendChains.set(peerId, settled);
-
-    // One entry per peer, dropped once its queue drains, so a transport that
-    // talked to a thousand peers and then to none holds no frames.
-    void settled.then(() => {
-      if (this._sendChains.get(peerId) === settled) this._sendChains.delete(peerId);
-    });
+    this._enqueueSend(peerId, () => this._compressAndWrite(peerId, payload, isHeartbeat, needsCompression));
   }
 
-  /** One link of a peer's send queue: compress, then write, in that order. */
-  private async _compressAndWrite(peerId: number, payload: Buffer, isHeartbeat: boolean): Promise<void> {
-    let compressedPayload: Buffer;
-    try {
-      compressedPayload = await this._compressor.compress(payload);
-    } catch (err: unknown) {
-      // The frame still has to go out: the peer decides whether it is compressed
-      // from the magic bytes rather than from a flag the two sides have to agree
-      // on, so an uncompressed frame is a frame the peer understands.
-      console.warn('[RaftTcpTransport] Compression failed, sending uncompressed:', err);
-      compressedPayload = payload;
+  /**
+   * One link of a peer's send queue: compress if the payload needs it, then write.
+   *
+   * A frame that joined the queue for order alone skips the compression step. It
+   * is here because something older was in flight, not because of its size, and
+   * compressing it would make the queue longer without making the wire smaller.
+   */
+  private async _compressAndWrite(
+    peerId: number,
+    payload: Buffer,
+    isHeartbeat: boolean,
+    needsCompression: boolean,
+  ): Promise<void> {
+    let compressedPayload: Buffer = payload;
+    if (needsCompression) {
+      try {
+        compressedPayload = await this._compressor.compress(payload);
+      } catch (err: unknown) {
+        // The frame still has to go out: the peer decides whether it is compressed
+        // from the magic bytes rather than from a flag the two sides have to agree
+        // on, so an uncompressed frame is a frame the peer understands.
+        console.warn('[RaftTcpTransport] Compression failed, sending uncompressed:', err);
+        compressedPayload = payload;
+      }
     }
     this._writeFrame(peerId, compressedPayload, isHeartbeat);
   }
@@ -821,6 +939,17 @@ export class RaftTcpTransport extends EventEmitter {
       return;
     }
 
+    // An older frame is still waiting for delivery. Writing this one now would put
+    // it in the peer's hands before its predecessor, and everything above this
+    // layer acts on arrival order, so it takes its place in the buffer instead and
+    // the buffer is drained first.
+    if ((this._pendingMessages.get(peerId)?.length ?? 0) > 0) {
+      if (isHeartbeat) return; // State, not an event; the next one is newer.
+      this._bufferFrame(peerId, frame);
+      this._scheduleFlush(peerId);
+      return;
+    }
+
     const conn = this.pool.tryGetConnection(peerId);
     if (!conn) {
       if (isHeartbeat) return; // Idempotent — drop.
@@ -838,11 +967,18 @@ export class RaftTcpTransport extends EventEmitter {
     }
 
     conn.write(frame).catch((err: unknown) => {
-      // Write failed — socket's own close/error events handle cleanup
-      // (_onDisconnect → _scheduleRetry).  Never force-close here: it
-      // triggers a cascade where both sides simultaneously destroy the
-      // same socket, duplicating reconnection effort.
-      console.warn('[RaftTcpTransport] Frame write failed:', err);
+      // The frame did not reach the peer. A warning and nothing else is the one
+      // recovery that cannot work: the entry is in the leader's log, its
+      // predecessor is on the wire, and the follower will never be told about it.
+      // It goes back to the front of the buffer — older than anything buffered
+      // since — and the next connection drains it in order. The socket's own
+      // close/error events handle cleanup (_onDisconnect → _scheduleRetry); this
+      // path never force-closes, because that triggers a cascade where both sides
+      // destroy the same socket at once.
+      console.warn('[RaftTcpTransport] Frame write failed, re-buffering:', err);
+      if (isHeartbeat) return;
+      this._prependFrames(peerId, [frame]);
+      this._scheduleFlush(peerId);
     });
   }
 

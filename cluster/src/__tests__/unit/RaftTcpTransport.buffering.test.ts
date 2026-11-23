@@ -91,6 +91,14 @@ function frame(label: string): Buffer {
   return Buffer.from(label, 'utf-8');
 }
 
+/** A frame in the wire shape `_sendFrame` expects: 4-byte length, then the body. */
+function wire(label: string): Buffer {
+  const body = frame(label);
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(body.length, 0);
+  return Buffer.concat([header, body]);
+}
+
 /** A connection double that records the order of its writes. */
 function connection(write: (data: Buffer) => Promise<void> = async () => {}): any {
   return { write: vi.fn(write), close: vi.fn() };
@@ -109,8 +117,23 @@ afterEach(() => {
 async function transport(): Promise<RaftTcpTransport> {
   const t = new RaftTcpTransport(validConfig());
   await t.start();
-  priv(t).pool.tryGetConnection = vi.fn(() => null);
+  // The pool's default answer is `null` — nothing is connected — which is the
+  // state every buffering case below starts from.
   return t;
+}
+
+/**
+ * Announce `conn` as the peer's live connection.
+ *
+ * A flush resolves the socket when its turn comes, not when it was requested,
+ * and takes the pool's answer: the pool is the only thing that knows which socket
+ * the peer is still reading. These cases used to hand the connection to
+ * `_flushPending` alone, which described a pool that announces a socket and then
+ * denies having it.
+ */
+function live(t: RaftTcpTransport, conn: any): any {
+  priv(t).pool.tryGetConnection.mockReturnValue(conn);
+  return conn;
 }
 
 describe('AC 34.72: the buffer is bounded per peer', () => {
@@ -178,7 +201,7 @@ describe('AC 34.74: a flush that works', () => {
     const t = await transport();
     priv(t)._pendingMessages.set(2, [frame('a'), frame('b'), frame('c')]);
     priv(t)._flushAttempts.set(2, 2);
-    const conn = connection();
+    const conn = live(t, connection());
 
     priv(t)._flushPending(2, conn);
 
@@ -194,7 +217,7 @@ describe('AC 34.74: a flush that works', () => {
 
   it('does nothing when the peer has no buffered frames', async () => {
     const t = await transport();
-    const conn = connection();
+    const conn = live(t, connection());
     priv(t)._flushPending(2, conn);
     expect(conn.write).not.toHaveBeenCalled();
     await t.stop();
@@ -206,10 +229,13 @@ describe('AC 34.75: a flush that fails keeps the frames', () => {
     const t = await transport();
     priv(t)._pendingMessages.set(2, [frame('a'), frame('b'), frame('c')]);
     let calls = 0;
-    const conn = connection(async () => {
-      calls += 1;
-      if (calls === 2) throw new Error('socket gone');
-    });
+    const conn = live(
+      t,
+      connection(async () => {
+        calls += 1;
+        if (calls === 2) throw new Error('socket gone');
+      }),
+    );
 
     priv(t)._flushPending(2, conn);
 
@@ -227,9 +253,12 @@ describe('AC 34.75: a flush that fails keeps the frames', () => {
   it('records one verdict per batch even when every write rejects', async () => {
     const t = await transport();
     priv(t)._pendingMessages.set(2, [frame('a'), frame('b'), frame('c')]);
-    const conn = connection(async () => {
-      throw new Error('socket gone');
-    });
+    const conn = live(
+      t,
+      connection(async () => {
+        throw new Error('socket gone');
+      }),
+    );
 
     priv(t)._flushPending(2, conn);
 
@@ -252,9 +281,12 @@ describe('AC 34.76: retries are bounded', () => {
     const dropped: FramesDroppedEvent[] = [];
     t.on('frames-dropped', (e: FramesDroppedEvent) => dropped.push(e));
 
-    const failing = connection(async () => {
-      throw new Error('socket gone');
-    });
+    const failing = live(
+      t,
+      connection(async () => {
+        throw new Error('socket gone');
+      }),
+    );
     priv(t)._pendingMessages.set(2, [frame('a')]);
 
     // Attempt 1 and 2 put the batch back; attempt 3 gives up on it.
@@ -275,9 +307,12 @@ describe('AC 34.76: retries are bounded', () => {
 
   it('a success between failures resets the count, so a flaky peer is not dropped', async () => {
     const t = await transport();
-    const failing = connection(async () => {
-      throw new Error('socket gone');
-    });
+    const failing = live(
+      t,
+      connection(async () => {
+        throw new Error('socket gone');
+      }),
+    );
 
     priv(t)._pendingMessages.set(2, [frame('a')]);
     priv(t)._flushPending(2, failing);
@@ -286,13 +321,14 @@ describe('AC 34.76: retries are bounded', () => {
     await vi.waitFor(() => expect(failing.close).toHaveBeenCalledTimes(2));
     expect(priv(t)._flushAttempts.get(2)).toBe(2);
 
-    const working = connection();
+    const working = live(t, connection());
     priv(t)._flushPending(2, working);
     await vi.waitFor(() => expect(priv(t)._flushAttempts.has(2)).toBe(false));
     expect(t.getStatus().droppedFrames).toBe(0);
 
     // Two more failures would have exhausted the budget had the success not counted.
     priv(t)._pendingMessages.set(2, [frame('b')]);
+    live(t, failing);
     priv(t)._flushPending(2, failing);
     await vi.waitFor(() => expect(priv(t)._flushAttempts.get(2)).toBe(1));
 
@@ -309,26 +345,37 @@ describe('AC 34.77: re-buffering obeys the cap', () => {
     for (let i = 0; i < CAP; i++) {
       priv(t)._doSendFrame(2, frame(`f${i}`), false);
     }
-    const conn = connection(async () => {
-      throw new Error('socket gone');
-    });
+    const conn = live(
+      t,
+      connection(async () => {
+        throw new Error('socket gone');
+      }),
+    );
 
     // The flush drains the buffer and issues its writes; a live leader keeps
     // proposing in the same tick, so the fresh buffer already has frames in it
-    // by the time the rejection arrives.
+    // by the time the rejection arrives. The frames go through `_sendFrame` — the
+    // entry point that sees an in-flight batch and queues behind it — rather than
+    // straight to `_doSendFrame`, which is only ever reached from a queue link or
+    // from a peer with nothing in flight.
     priv(t)._flushPending(2, conn);
-    priv(t)._doSendFrame(2, frame('n0'), false);
-    priv(t)._doSendFrame(2, frame('n1'), false);
+    priv(t)._sendFrame(2, wire('n0'), false);
+    priv(t)._sendFrame(2, wire('n1'), false);
 
-    await vi.waitFor(() => expect(conn.close).toHaveBeenCalledTimes(1));
+    // The batch's socket is closed, and the flush the two queued frames asked for
+    // finds the same dead socket — in production the pool would have dialled a new
+    // one — and closes it again. What matters is that neither attempt lost a frame
+    // and that the buffer stayed inside its bound.
+    await vi.waitFor(() => expect(conn.close).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(priv(t)._pendingMessages.get(2)).toHaveLength(CAP));
 
     const kept = priv(t)._pendingMessages.get(2)!;
-    expect(kept).toHaveLength(CAP);
-    // The cap kept the newest, so the two oldest of the failed batch went.
+    // The cap kept the newest, so the two oldest of the failed batch went — one
+    // per frame that arrived while the batch was in flight.
     expect(kept[0]).toEqual(frame('f2'));
-    expect(kept[CAP - 1]).toEqual(frame('n1'));
-    expect(dropped).toHaveLength(1);
-    expect(dropped[0]).toMatchObject({ count: 2, reason: 'buffer-full' });
+    expect(kept[CAP - 1]!.subarray(4)).toEqual(frame('n1'));
+    expect(dropped).toHaveLength(2);
+    for (const event of dropped) expect(event).toMatchObject({ count: 1, reason: 'buffer-full' });
     expect(t.getStatus().droppedFrames).toBe(2);
 
     await t.stop();
@@ -351,7 +398,7 @@ describe('AC 34.78: the counters are published', () => {
     expect(t.getStatus()).toMatchObject({ bufferedFrames: { 2: CAP, 3: 1 }, droppedFrames: 3 });
 
     // Discards are not undone by a later flush: the count is a record, not a gauge.
-    priv(t)._flushPending(2, connection());
+    priv(t)._flushPending(2, live(t, connection()));
     await vi.waitFor(() => expect(t.getStatus().bufferedFrames).toEqual({ 3: 1 }));
     expect(t.getStatus().droppedFrames).toBe(3);
 

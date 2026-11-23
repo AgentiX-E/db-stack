@@ -367,6 +367,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A peer had three ways to write and one promise about order.** Iteration 70 queued the compression step
+  per peer, so two compressed frames could not reach the socket out of submission order. Two other routes
+  kept writing straight through: the uncompressed fast path (most Raft frames) and the pending buffer that
+  receives frames while the peer has no connection. Both crossings were reachable and both inverted:
+  - a compressed frame awaiting the compressor was overtaken by a later small frame, which the fast path
+    buffered and the connection's arrival flushed — measured on real mTLS sockets as `[2, 1]`;
+  - a batch whose flush failed was re-buffered, and a frame submitted afterwards was written straight to the
+    replacement connection, ahead of it — measured as `['new', 'old']`.
+
+  A frame now joins the peer's queue whenever anything older is in flight or buffered (`_mustQueue`), the
+  flush is itself a link in that queue instead of writing inline, and a frame whose write fails is put back
+  at the head of the buffer instead of being warned about and lost. The buffer is also never overtaken by a
+  new frame, and a flush resolves its socket when its turn comes rather than when it was requested — a
+  connection the pool has replaced is one whose writes the peer may never read.
 - **A one-voter group never took office, and could not commit if it had.** Two defects in
   `@maboke123/raft-core` 0.2.1 that a three-node cluster cannot reach. (1) A candidate collected its
   own vote, computed `votesNeeded`, and then waited for `RequestVoteResponse`s — which a group with no

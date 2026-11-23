@@ -520,6 +520,9 @@ describe('RaftTcpTransport — onConnectionCreated callback', () => {
       on: vi.fn(),
       write: vi.fn(async () => {}),
     };
+    // A pool that announces a connection is a pool that names it: the flush
+    // resolves the socket when its batch's turn comes and takes the pool's answer.
+    pool.tryGetConnection.mockReturnValue(conn);
     cb(2, conn);
 
     expect(conn.removeAllListeners).toHaveBeenCalledWith('data');
@@ -547,6 +550,7 @@ describe('RaftTcpTransport — onConnectionCreated callback', () => {
       }),
       close: vi.fn(),
     };
+    pool.tryGetConnection.mockReturnValue(conn);
     cb(2, conn);
 
     await vi.waitFor(() => expect(conn.close).toHaveBeenCalled());
@@ -668,7 +672,7 @@ describe('RaftTcpTransport — compression path', () => {
 });
 
 describe('RaftTcpTransport — write failure', () => {
-  it('logs a warning when a live connection write rejects', async () => {
+  it('keeps the frame when a live connection write rejects, and says so', async () => {
     const t = new RaftTcpTransport(validConfig());
     await t.start();
     const pool = freshPool();
@@ -676,13 +680,20 @@ describe('RaftTcpTransport — write failure', () => {
       write: vi.fn(async () => {
         throw new Error('socket write failed');
       }),
+      close: vi.fn(),
     };
     pool.tryGetConnection.mockReturnValue(conn);
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     priv(t)._doSendFrame(2, Buffer.from('frame'), false);
     // fire-and-forget catch; give it a tick.
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 20));
     expect(conn.write).toHaveBeenCalled();
+    expect(warn.mock.calls.some((args: unknown[]) => String(args[0]).includes('re-buffering'))).toBe(true);
+    // The frame is not lost: a failed write on a socket the pool still calls live
+    // is the one case where a warning alone leaves Raft waiting for an answer that
+    // cannot come.
+    expect(priv(t)._pendingMessages.get(2)![0]!.toString()).toBe('frame');
     await t.stop();
   });
 });
@@ -1538,7 +1549,15 @@ describe('RaftTcpTransport — what send() addresses, and what stop() releases',
     // Three frames, in order, for one peer. A grouping that re-initialised the
     // array per message would leave the last one and drop the two before it — the
     // failure mode of `if (!byPeer.has(peerId))` inverted.
-    expect(priv(t)._pendingMessages.get(2)).toHaveLength(3);
+    // Frames beyond the first join the send queue (the first one is buffered and
+    // gives the following two something to be ordered against), and each link
+    // appends its frame to the same buffer once it finds no connection.
+    await vi.waitFor(() => expect(priv(t)._pendingMessages.get(2)).toHaveLength(3));
+    expect(
+      priv(t)
+        ._pendingMessages.get(2)!
+        .map((frame: Buffer) => frame.toString('utf-8').length),
+    ).toHaveLength(3);
     await t.stop();
   });
 

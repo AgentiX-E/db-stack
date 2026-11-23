@@ -67,7 +67,14 @@ in the other datacenter — and the outbox cannot see it, because both frames we
 delivered. An implementation that compresses, batches or hands frames to a worker
 pool has to keep that order itself; `TcpSecureTransport` inherits it from
 `RaftTcpTransport`, which queues compression per peer for exactly this reason
-(`@agentix-e/db-cluster` CHANGELOG, iteration 70).
+(`@agentix-e/db-cluster` CHANGELOG, iterations 70 and 73).
+
+The promise covers the whole path, not just the compression step. A frame handed
+over while the peer has no connection is buffered and flushed when one appears; a
+frame whose write fails is put back rather than dropped; and a frame handed over
+while either of those is pending takes its place in the queue instead of writing
+past it. One order per peer, whichever of the three routes the frame takes — a
+transport that promises it on one route and not the others has not promised it.
 
 ```typescript
 interface ITransport {

@@ -1772,3 +1772,78 @@ stating once: **the set of tests that run is not the set of tests that exist**, 
 the only defence is arithmetic — count what the runner produced, compare it with
 what the page says, and treat a difference of three as a defect rather than a
 rounding.
+
+## Three ways to write
+
+Iteration 70 fixed a real reordering: `_sendFrame` wrote the frame inside the
+compressor's `.then()`, and zstd runs on libuv's pool, so the wire order became the
+completion order. The fix — one promise chain per peer, each link doing
+compress-then-write — is correct for the route it covers. The contract that was
+written down afterwards, in `federation/docs/api-reference.md`, is broader than the
+route: *the frames of one peer reach `onMessage` in the order `send()` was called.*
+
+By the end of iteration 72 that class had three routes to the socket:
+
+| Route | Taken when | Ordered in 70? |
+|---|---|---|
+| Queue link | payload over the compression threshold | yes — the chain |
+| Fast path | compression off, or payload under the threshold (most Raft frames) | no — written inline |
+| Buffered flush | no connection when the frame arrived | no — written inline on connect |
+
+Two crossings between them were reachable, and both inverted:
+
+```
+AC 73.1  a compressed frame in flight, then a small one buffered, then the
+         connection arrives        →  [0x59, 0x41]   (submitted 0x41 first; on real
+                                                        mTLS sockets: [2, 1])
+AC 73.2  a batch's flush fails, a frame arrives before the redial
+                                   →  ['new', 'old']
+```
+
+The mechanism in both is the same sentence: **a queue that only some writes enter
+is not a queue.** A frame can only be ordered against frames that pass through the
+same gate, so the gate has to be at the one place every write goes through, or the
+promise has to be narrowed to the frames that do. Narrowing it would have been
+honest and useless — the CDC consumer and Raft's `prevLogIndex` both need the
+whole stream in order.
+
+So the writes were moved onto one gate rather than a second gate being added:
+
+- a frame joins the peer's queue whenever anything older is in flight **or
+  buffered** (`_mustQueue`), not only when its payload needs compressing;
+- the flush is a link in that queue, taken from the buffer synchronously and
+  written when its turn comes, instead of writing inline from
+  `onConnectionCreated`;
+- a new frame never overtakes a buffered backlog — it appends, and the backlog is
+  drained first;
+- a write that fails is put back at the head of the buffer instead of being
+  warned about and lost. That one is not an ordering fix; it is the same defect
+  class from the other end. `AC 73.3` measured an empty buffer after a failed
+  write: the entry was in the leader's log, its predecessor was on the wire, and
+  the follower was never told.
+
+The invariant that makes the failure path's `_prependFrames` correct is worth
+stating because it is not local: a frame takes the fast path only when the peer's
+queue is empty *and* its buffer is empty, so anything that enters the buffer while
+that write is in flight was submitted later. Prepending on failure therefore
+restores the submission order rather than asserting it — and `AC 34.77`, which
+called `_doSendFrame` directly while a batch was in flight, described a state
+`_sendFrame` cannot produce. That test now enters through `_sendFrame` and its
+expectations changed with the mechanism: two frames arriving during the batch's
+flight each evict one from the cap, instead of one batch re-buffer evicting two.
+
+The evidence, each on its own mechanism:
+
+```
+no gate at all           AC 73.1 [89, 65]   AC 73.2 ['new','old']   AC 73.3 frame lost
+                         AC 73.5 heartbeat written ahead of backlog
+                         AC 73.7 batch written to the abandoned socket
+                         O5 (real sockets) [2, 1]
+gate on the fast path removed only (the flush still chained):
+                         O5 [2, 1]                    ← the real-socket proof is O5
+```
+
+Three of these are about order and one is about loss, and the loss one is the
+reason this is not only a `federation` concern: a dropped AppendEntries is a
+leader re-sending, but a dropped `cdc_ack` is a replication window that never
+closes.

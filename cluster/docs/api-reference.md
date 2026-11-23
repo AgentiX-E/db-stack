@@ -493,6 +493,19 @@ new socket rejects is put back and the socket closed, up to three attempts;
 after that the frames are dropped, counted in `getStatus().droppedFrames` and
 reported through the `frames-dropped` event.
 
+Frames for one peer reach the socket in the order `send()` was given them,
+whichever path they take. Three exist — a compressed frame's queue link, the
+uncompressed fast path, and the buffer that holds frames for a peer with no
+connection — and they meet in one gate per peer: a frame joins the queue when
+anything older is still in flight or buffered, the flush is a link in that queue
+rather than a write from the connection callback, a new frame never overtakes a
+buffered backlog, and a write that fails is put back at the head of the buffer
+instead of being logged and lost. Heartbeats are the exception in one direction
+only: they are dropped rather than queued when the peer is behind, because the
+next one carries a newer commit index. A flush resolves its socket when its turn
+comes, not when it was requested — a connection the pool has replaced is one whose
+writes the peer may never read.
+
 ```typescript
 class RaftTcpTransport {
   constructor(config: RaftTcpTransportConfig);

@@ -49,6 +49,7 @@ export default defineConfig({
       'src/__tests__/unit/RaftTcpTransport.socket.test.ts',
       'src/__tests__/unit/RaftTcpTransport.storm.test.ts',
       'src/__tests__/unit/RaftTcpTransport.ordering.test.ts',
+      'src/__tests__/unit/RaftTcpTransport.send-order.test.ts',
       // The assemblers: which member leaves, which batch runs, which transport is
       // told to drop traffic. A mutant there is not a wrong number on a graph — it
       // is a group that loses quorum or a partition that only exists on one side.

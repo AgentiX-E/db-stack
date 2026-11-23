@@ -167,4 +167,31 @@ describe('RaftTcpTransport — frame order', () => {
   it('O4: with compression off the order is the submission order as well', async () => {
     expect(await burst({ compression: PLAIN, bothWays: false })).toEqual(SUBMISSION_ORDER);
   }, 180_000);
+
+  it('O5: frames handed over before the connection exists keep their order when it arrives', async () => {
+    const sender = transportFor(1, COMPRESSED);
+    const receiver = transportFor(2, COMPRESSED);
+    await sender.start();
+    await receiver.start();
+    const seen: number[] = [];
+    receiver.on('message', (msg: RaftMessage) => {
+      seen.push(Number(msg.index));
+    });
+
+    // Registered and used in the same tick: the TLS handshake cannot have
+    // finished, so both frames are handed over with no connection to write to.
+    // The first needs the compressor and the second does not, which is the pair
+    // that used to invert — the small frame took the fast path, found no socket,
+    // and was flushed the instant one appeared, ahead of the frame submitted
+    // first and still waiting for a compression worker.
+    sender.register({ id: 2, host: '127.0.0.1', port: receiver.getBoundPort() });
+    await sender.send(1, [message(1, 2, 1, SLOW_BYTES)]);
+    await sender.send(1, [message(1, 2, 2, 16)]);
+
+    await waitFor(() => seen.length >= 2, 'both frames to arrive', 30_000);
+    await sleep(300);
+    expect(seen).toEqual([1, 2]);
+    await sender.stop();
+    await receiver.stop();
+  }, 120_000);
 });
