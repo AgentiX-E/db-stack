@@ -138,10 +138,17 @@ export function selectSteps(argv) {
  * `stdio: 'inherit'` rather than a captured buffer — the compiler's own message,
  * with its file and column, is the thing a contributor acts on, and a summary of
  * it is a summary of the one detail that matters.
+ *
+ * `spawn` is injected for the same reason `runSteps` takes an `execute`, and it
+ * took a red CI run to learn it. The only way to get a non-zero status out of
+ * pnpm is to ask it for a script that does not exist — and that also fails the
+ * command running the test, because the failing process is pnpm, inside pnpm.
+ * CI job 45108062128 is that shape: 535 green assertions and a failed step.
+ * The real spawn still runs, on the passing side, one case below.
  */
-export function runScript(script) {
+export function runScript(script, spawn = spawnSync) {
   return (
-    spawnSync("pnpm", [script], { cwd: ROOT, stdio: "inherit", shell: false })
+    spawn("pnpm", [script], { cwd: ROOT, stdio: "inherit", shell: false })
       .status === 0
   );
 }

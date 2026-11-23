@@ -129,6 +129,32 @@ test("a clean run says so, and says what it is not", () => {
   assert.match(printed.at(-1), /not the acceptance run/);
 });
 
+test("the summary names the step that actually took longest", () => {
+  // The first step is what a `reduce` without a real comparison reports — it
+  // returns the accumulator it was handed and never looks at the candidate. The
+  // clock here is driven, because on a fast machine every step measures 0 ms and
+  // the answer would be a property of the hardware rather than of the code.
+  const real = Date.now;
+  let clock = 1_000;
+  Date.now = () => clock;
+  const printed = [];
+  try {
+    const code = main(
+      ["--only", "lint,typecheck"],
+      (script) => {
+        clock += script === "lint" ? 4_200 : 7;
+        return true;
+      },
+      (line) => printed.push(line),
+    );
+    assert.equal(code, 0);
+  } finally {
+    Date.now = real;
+  }
+  // Declared order, so `lint` is the second step taken and the slowest one seen.
+  assert.equal(printed.at(-2), "preflight: 2 steps passed (slowest: lint).");
+});
+
 test("a failing run exits 1 and runs no further step", () => {
   const ran = [];
   const printed = [];
@@ -179,7 +205,39 @@ test("runScript runs a real pnpm script and answers with its exit status", () =>
   // through pnpm rather than by calling the gate directly, because the thing under
   // test is the spawn — the one line a fake executor cannot cover.
   assert.equal(runScript("check:hooks"), true);
-  assert.equal(runScript("no-such-script-name"), false);
+});
+
+test("runScript answers false for a non-zero status and for a child killed by a signal", () => {
+  // The failure case is injected rather than spawned. Asking pnpm for a script it
+  // does not define does fail it — and it fails the command that hosts this test
+  // too, because the process reporting the error is pnpm, inside pnpm. CI job
+  // 45108062128 is exactly that: every assertion green, the step red.
+  const calls = [];
+  const spawn = (command, args, options) => {
+    calls.push({ command, args, options });
+    return { status: 2 };
+  };
+  assert.equal(runScript("lint", spawn), false);
+  // And the shape of the real spawn, asserted instead of assumed: pnpm, the
+  // script name alone, in the repository root, terminal attached — a captured
+  // buffer would summarize away the file and column a contributor acts on.
+  assert.deepEqual(calls, [
+    {
+      command: "pnpm",
+      args: ["lint"],
+      options: { cwd: ROOT, stdio: "inherit", shell: false },
+    },
+  ]);
+  // A child killed by a signal has no status at all. `null === 0` is false, which
+  // is the answer that matters — a killed step is not a passed step.
+  assert.equal(
+    runScript("lint", () => ({ status: null })),
+    false,
+  );
+  assert.equal(
+    runScript("lint", () => ({ status: 0 })),
+    true,
+  );
 });
 
 test("the default reporter writes the step names to stdout", () => {

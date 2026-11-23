@@ -110,6 +110,13 @@ environment whose proxy allows only `api.github.com` — cannot run a client hoo
 There, `pnpm preflight` is the command, and `check:hooks` is what keeps the hook from
 rotting unnoticed.
 
+One trap worth knowing before you add a case to `scripts/*.test.mjs`: do not produce a
+failing answer by asking pnpm for a script it does not define. The child fails, and it
+also fails `pnpm test:scripts` — the process reporting the error is pnpm, inside pnpm —
+so a suite whose assertions are all green exits 1. The executors in those scripts take
+an injected `execute`/`spawn` for exactly this: state the failure, run the real thing on
+the passing side.
+
 ## Pull Request Guidelines
 
 - Keep PRs focused on a single concern — split unrelated changes.

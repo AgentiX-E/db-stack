@@ -1900,3 +1900,72 @@ build.** CI runs what needs a runner — the suites, the coverage gate, the e2e
 harness, the mutation targets, the benchmark. Preflight buys the absence of the
 failures that are cheapest to catch where they were introduced, and the command
 prints that sentence on success so nobody has to remember it.
+
+## The test that failed the runner it ran under
+
+Iteration 74 added `scripts/preflight.mjs` and one case to prove its executor
+answers with the step's exit status. The second assertion asked pnpm for a script
+that does not exist — the cheapest way to get a non-zero status out of the single
+line under test:
+
+```js
+assert.equal(runScript("check:hooks"), true);
+assert.equal(runScript("no-such-script-name"), false);
+```
+
+Locally it did exactly what it says: pnpm refused, the status was 1, `runScript`
+answered `false`. CI job `45108062128` disagreed. Every assertion in the suite
+passed and the `Quality` step failed, with the annotation naming the fixture:
+
+```
+#  ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command "no-such-script-name" not found
+##[error]Process completed with exit code 1.
+```
+
+The test's input was a failure of pnpm, and the process running the test was
+pnpm. Spawned with `stdio: 'inherit'`, the child reports through the chain that
+hosts it, and that chain reports the failure as its own: `pnpm test:scripts`
+exited 1 for a suite in which nothing failed.
+
+There are three instruments on this page with the same defect, and the defect is
+that the answer arrives from somewhere other than the code under test:
+
+| Instrument | What it accepted as an answer |
+|---|---|
+| a gate over zero files | "no violations" from a file list nobody computed — `check:script-coverage` |
+| a chain nothing executes | "checked" from a hook git skipped without a word — `check:hooks` |
+| a test whose input is the tool's failure | "false" from a process that also failed its caller |
+
+The repair is one parameter — `runScript(script, spawn = spawnSync)`, the same
+injection `runSteps` already takes as `execute`. The real spawn still runs, on the
+passing side; the failure side states a status, and the case asserts the argv and
+options the real call uses instead of assuming them:
+
+```js
+runScript("lint", spawnThatExits(2)); // false, and pnpm was asked for ["lint"] in the repo root
+runScript("lint", () => ({ status: null })); // a killed child is not a passed step
+```
+
+### A branch that was covered by the clock
+
+Removing the nested pnpm call cost `preflight.mjs` three and a half points of
+branch coverage: 100 % → 96.55 %. The uncovered arm was the one that names the
+slowest step.
+
+```js
+const slowest = executed.results.reduce((a, b) => (b.ms > a.ms ? b : a));
+```
+
+`? b` was never taken, because every passing run in the suite injected an executor
+that returns instantly: each step measured `Date.now() - Date.now()` — zero — and
+the first step always won. The arm had been covered exactly as long as two clock
+reads straddled a millisecond. Eight runs of the pre-fix suite: seven at 100.00 %,
+one at 98.96 %.
+
+A coverage figure that depends on how slow the machine is, is a figure that would
+have gone red on faster hardware with no change to the code — the same class of
+failure as a threshold pinned to a Node version, one level down. The case that
+replaced it drives the clock: `Date.now` is replaced for the duration, `lint` is
+charged 4 200 ms against `typecheck`'s 7 ms, and the summary must name `lint`.
+Reverting the comparator to `a` fails it with `preflight: 2 steps passed
+(slowest: typecheck).`
