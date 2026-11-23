@@ -221,21 +221,29 @@ would have pasted and watched fail. See §4.1 for what that found.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-All four rows are from CI run `45130956709`, the run that accepted iteration 75: `node`
-(99.51/99.51/99.87/98.73 over 62 files), `cluster` with the assemblers in it
-(99.46/99.46/99.72/98.33 over 65) and `federation` with the query and schema modules it absorbed
-(99.64/99.64/100/98.58 over 38). The gate covers four packages, not three: the end-to-end harness is
+Three rows are from CI run `45130956709`, the run that accepted iteration 75: `cluster` with the
+assemblers in it (99.46/99.46/99.72/98.33 over 65) and `federation` with the query and schema modules
+it absorbed (99.64/99.64/100/98.58 over 38). The `node` row is iteration 76's local run of the tree it
+ships (99.49/98.67/99.87/99.49 over 157 files), because that iteration changed twenty lines of
+loop-shaped code and the figure it published has to be the figure it measured; the CI run that accepts
+it restates the row or corrects it. The gate covers four packages, not three: the end-to-end harness is
 measured as well (99.44/99.44/100/96.47), because a harness bug produces confident, meaningless
 acceptance passes. That last row read 100 % on all four dimensions when this page was first
 written and reads 99.44 / 100 / 96.47 now; the number moved because the harness gained code, and
 the row is reported as measured rather than as remembered.
 
-| Package         | Lines  | Statements | Functions | Branches |
-| --------------- | ------ | ---------- | --------- | -------- |
-| `cluster`       | 99.46% | 99.46%     | 99.72%    | 98.33%   |
-| `federation`    | 99.64% | 99.64%     | 100%      | 98.58%   |
-| `node`          | 99.51% | 99.51%     | 99.87%    | 98.73%   |
-| `e2e` (harness) | 99.44% | 99.44%     | 100%      | 96.47%   |
+| Package         | Statements | Branches | Functions | Lines  |
+| --------------- | ---------- | -------- | --------- | ------ |
+| `cluster`       | 99.46%     | 98.33%   | 99.72%    | 99.46% |
+| `federation`    | 99.64%     | 98.58%   | 100%      | 99.64% |
+| `node`          | 99.49%     | 98.67%   | 99.87%    | 99.49% |
+| `e2e` (harness) | 99.44%     | 96.47%   | 100%      | 99.44% |
+
+The rows are in the order the tool prints them — statements, branches, functions, lines. The first
+two columns had been labelled the other way round since this table was written, which is how a
+swapped pair can sit in a page for six iterations: both numbers were plausible, and neither label had
+a compiler until a run was read against the raw `coverage-summary.json` (`e2e`: 99.44 statements,
+96.47 branches, 100 functions, 99.44 lines).
 
 The `e2e` row covers the TypeScript harness — `support.ts` (process supervision, IPC, port
 allocation, log capture) and `published-artefact.ts` (the runner for the published-behaviour
@@ -375,14 +383,14 @@ rule that never fires.
 
 ## 5. What is **not** covered
 
-| Area                                                     | Status                           | Why it matters to you                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| -------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Per-file coverage floor**                              | Gated (from iteration 25)        | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)           | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **Node process-level acceptance**                        | Partially covered (iteration 35) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. Batching did not widen that gap: a burst of concurrent writes is acknowledged by **one** sync, and `GC.8` pins the case with one caller at a time to the same one-sync-per-write it always paid, so the throughput gain is concurrency and not a weaker promise. No other node module has an out-of-process case yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **Mutation testing over the rest of node**               | Partially covered                | All three packages are gated by Stryker in CI — `node` **98.15 %**, `cluster` **95.78 %**, `federation` **94.10 %** — with the break thresholds at 86, 86 and 70. The `node` figure is iteration 67's local run of the tree it ships (4 113 judged: 3 995 killed, 42 timeout, 76 survived, 3 with no coverage) and the other two are 44962687038's. The population has moved twice without the percentage moving with it: 3 753 judged at 98.03 %, 4 060 at 98.15 % after iteration 66 added two audit files and a prune, 4 113 at 98.15 % after iteration 67 added a chain walk — so the figure is only a comparison when the denominator travels beside it. What the flat score hides is where the new mutants went: `backupChain.ts` now measures 100.00 % over 76 mutants, because `resolveChain` replaced a function whose survivors were equivalences with a walk that has no equivalent arms left. In `node` seventeen files across four of the twenty _modules_ are mutated — `backup`, `audit`, `security` and `maintenance` — chosen by the selection rule _mutate what decides deletion, durability, or when work runs_; the other sixteen modules have unit, integration and coverage gates but no mutant measures their assertions. The `cluster` package contributes four more — `quorum.ts`, `ClusterScalingExecutor`, `ClusterRolloutPlanner`, `RaftFaultTranslator` — because a scale-down that removes one node too many and a partition that emits one direction are failures a green suite can be green about. In the `cluster` and `federation` _engines_ one module each is mutated — the SQLite log and the TLS wire — because those are the two places a green suite can be green for the wrong reason. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. Iteration 52 hand-checked `CDCSubscriptionPump` against five mutations — the queue cap, the retry budget, the operation filter, the table filter, and the post-close accounting — and every one of them failed at least one named case, so it is the next entry in that queue. Iteration 53 did the same to `CDCFailureInjector`: a global instead of a per-entry budget (two cases), no duplicate-entry check, no injection-point filter, a swallowed disconnect, and a budget spent by a fault that could not fire — five edits, five named failures. |
-| **TLA+ model checking**                                  | Manual                           | The specs exist and run locally; they are not part of CI.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| **Dependency advisories**                                | Covered                          | `pnpm audit:policy` holds the _production_ tree to zero high and critical advisories with no allowlist that can reach it, and requires a named, dated entry for anything in the dev tree — the test toolchain, which cannot always be fixed on the day an advisory lands because a transitive dependency may have no patched release. An entry that matches no advisory fails the gate, so the list cannot rot into an exemption nobody re-read; the two failure modes were checked by removing the entry and by adding a bogus one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Area                                                     | Status                           | Why it matters to you                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Per-file coverage floor**                              | Gated (from iteration 25)        | The gate enforces the package total and every individual file; a single file below 95 % fails the build. The entry here used to say "partially gated… around a dozen files sit below 95 %" — that described an older gate and had been false since the per-file check was added.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Federation cross-DC fault injection at the TLS layer** | Covered (iteration 24)           | `chaos/tls-fault-injection.test.ts` drives a real listener with real certificates: an untrusted CA is refused, a peer that stops is noticed within a bounded time, a peer that resets is reported, a peer that accepts but never reads cannot hang `send()`, and twenty reconnects leave no timer behind (AC 43.1–43.11). **Not** covered: an active proxy in the middle of an established stream.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Node process-level acceptance**                        | Partially covered (iteration 35) | The audit write path is now killed for real: `AC81` starts a second process, waits for 120 acknowledgements, sends `SIGKILL`, and every acknowledged entry is readable afterwards; two processes appending to one trail lose nothing (`OS.1`). **Not** covered: a **power cut** — `SIGKILL` leaves the page cache intact, so it proves the line is in the file and cannot prove it reached the medium. The `fsync` half is asserted by order and by failure propagation in-process (`AC80`), and that limit is stated in the user guide rather than implied. Batching did not widen that gap: a burst of concurrent writes is acknowledged by **one** sync, and `GC.8` pins the case with one caller at a time to the same one-sync-per-write it always paid, so the throughput gain is concurrency and not a weaker promise. No other node module has an out-of-process case yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Mutation testing over the rest of node**               | Partially covered                | All three packages are gated by Stryker in CI — `node` **97.96 %**, `cluster` **95.78 %**, `federation` **94.10 %** — with the break thresholds at 86, 86 and 70. The `node` figure is iteration 76's local run of the tree it ships (4 152 judged: 3 994 killed, **1 timeout**, 79 survived, 4 with no coverage) and the other two are 44962687038's. The percentage is lower than the 98.15 % this table carried for three iterations, and that is the finding rather than a regression: forty-one of the verdicts behind the old number were abandoned runs, and iteration 76 removed the loops that produced them instead of counting them (see _An edit that cannot be interrupted is not a detection_). The population has moved twice without the percentage moving with it: 3 753 judged at 98.03 %, 4 060 at 98.15 % after iteration 66 added two audit files and a prune, 4 113 at 98.15 % after iteration 67 added a chain walk — so the figure is only a comparison when the denominator travels beside it. What the flat score hides is where the mutants went: `backupChain.ts` measured 100.00 % over 76 mutants after iteration 67, and measures **97.18 %** over 71 now, because `resolveChain`'s `for (;;)` became a walk bounded by the inventory and the bound's own refusal is a line no correct walk reaches — the one `NoCoverage` in that file is that line, and it is the answer a stopped walk deserves. In `node` seventeen files across four of the twenty _modules_ are mutated — `backup`, `audit`, `security` and `maintenance` — chosen by the selection rule _mutate what decides deletion, durability, or when work runs_; the other sixteen modules have unit, integration and coverage gates but no mutant measures their assertions. The `cluster` package contributes four more — `quorum.ts`, `ClusterScalingExecutor`, `ClusterRolloutPlanner`, `RaftFaultTranslator` — because a scale-down that removes one node too many and a partition that emits one direction are failures a green suite can be green about. In the `cluster` and `federation` _engines_ one module each is mutated — the SQLite log and the TLS wire — because those are the two places a green suite can be green for the wrong reason. The rule is published in the roadmap (P2-14), so the next module is a decision rather than a preference. Iteration 52 hand-checked `CDCSubscriptionPump` against five mutations — the queue cap, the retry budget, the operation filter, the table filter, and the post-close accounting — and every one of them failed at least one named case, so it is the next entry in that queue. Iteration 53 did the same to `CDCFailureInjector`: a global instead of a per-entry budget (two cases), no duplicate-entry check, no injection-point filter, a swallowed disconnect, and a budget spent by a fault that could not fire — five edits, five named failures. |
+| **TLA+ model checking**                                  | Manual                           | The specs exist and run locally; they are not part of CI.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Dependency advisories**                                | Covered                          | `pnpm audit:policy` holds the _production_ tree to zero high and critical advisories with no allowlist that can reach it, and requires a named, dated entry for anything in the dev tree — the test toolchain, which cannot always be fixed on the day an advisory lands because a transitive dependency may have no patched release. An entry that matches no advisory fails the gate, so the list cannot rot into an exemption nobody re-read; the two failure modes were checked by removing the entry and by adding a bogus one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 | **Cross-version upgrade path** | Partially covered | `AC 38.7` opens a database written before the `checksum` column existed, lets `open()` run the migration, and appends and verifies an entry afterwards — the schema half of an N-1 → N upgrade, with real bytes on disk. **Not** covered: a full N-1 → N upgrade crossing the wire and snapshot **formats**, which are versioned but never exercised across versions. |
 | **Sustained soak beyond CI limits** | Scheduled only | Multi-hour runs exist (`test:soak`) but do not gate a pull request. |
@@ -1310,7 +1318,7 @@ because two of them were the tests and one was the harness.
 its budget: capture is immediate, the bucket sleeps 40 ms, the budget is 1 ms.
 `createBackup` checked the deadline twice — once after the capture, once after the
 upload — against `Date.now()`. On a loaded runner the capture of one small file
-took longer than a millisecond, so the *capture* branch fired and the case failed
+took longer than a millisecond, so the _capture_ branch fired and the case failed
 with `the capture took longer than 1 ms` while asserting on the upload. The budget
 now comes from `this.clock()`, the same clock the manager stamps `createdAt` with,
 and `BM.10`/`BM.26` move that clock from inside the step under test. A budget is a
@@ -1328,7 +1336,7 @@ directory that is gone.
 **A port the kernel was still handing out.** The cross-cluster job failed with
 `EADDRINUSE: 127.0.0.1:38473` — 38473 is inside Linux's ephemeral range
 (32768–60999). The harness asked the kernel for port 0, read the number, closed
-the socket, and handed that number to a child that binds *later*; between the two
+the socket, and handed that number to a child that binds _later_; between the two
 any outbound connection on the runner may take it. `cluster` solved this for
 itself with a per-run lease (`AC 52.1`–`52.6`); the e2e harness now draws from its
 own window instead of the ephemeral pool: `PORT_BASE = 20000`, one 2000-port
@@ -1369,16 +1377,16 @@ The instrument that can close that gap is the peer, because the peer is the part
 the claim was about. `ExactlyOnceCDCPipeline` now sends a `cdc_ack` frame back and
 waits for it, matched by message id:
 
-| The peer's answer | What the pump does |
-|---|---|
-| applied | `markDelivered`, advance the checkpoint |
-| refused — `{ok:false, error}` | `markFailed` at once, the peer's reason in `lastError` |
-| silent past `ackTimeoutMs` | `markFailed`; the entry stays pending |
+| The peer's answer                      | What the pump does                                     |
+| -------------------------------------- | ------------------------------------------------------ |
+| applied                                | `markDelivered`, advance the checkpoint                |
+| refused — `{ok:false, error}`          | `markFailed` at once, the peer's reason in `lastError` |
+| silent past `ackTimeoutMs`             | `markFailed`; the entry stays pending                  |
 | nothing — the pipeline stopped waiting | nothing; the entry keeps its place, no attempt charged |
 
 Three decisions were not obvious and are worth stating:
 
-1. **`processInbound()` does not ack.** An ack means *applied*, and applying is the
+1. **`processInbound()` does not ack.** An ack means _applied_, and applying is the
    caller's next line. A pipeline that confirmed inside `processInbound` would turn
    a crash between the callback and the caller's write into a silent lost change —
    the same defect, one layer up, where it is harder to see. The caller calls
@@ -1398,7 +1406,7 @@ Three decisions were not obvious and are worth stating:
 cycle — 20 ms by default. A peer that was restarting came back to a dead-letter
 queue, and an acceptance run lost nine changes to a one-second outage. A count
 cannot know how much time it represents, so the budget is a window now, measured
-from the *first* failure (an entry that waited a minute behind a busy peer has not
+from the _first_ failure (an entry that waited a minute behind a busy peer has not
 spent that minute failing), with exponential backoff inside it (50 ms doubling to a
 2 s ceiling) because a hot loop is not a retry policy either. `maxRetries` survives
 as an optional hard cap and loses its default.
@@ -1426,7 +1434,7 @@ old ambiguity into a defect: `processInbound()` answered `accepted: false` for b
 a duplicate and a payload that will never decode, and a caller that confirms
 duplicates — the correct thing to do for a real one — would then tell the sender a
 change had landed that never did. The reason is now part of the answer, the ring
-is the record of what has been *applied* (so an undecodable frame is removed from
+is the record of what has been _applied_ (so an undecodable frame is removed from
 it, and its retry is judged again rather than suppressed), and the relay answers
 the two differently: a duplicate is confirmed, an undecodable frame is refused with
 the receiver's reason and keeps being refused until the sender's own budget puts it
@@ -1456,7 +1464,7 @@ and it was in every one of those code paths, so the ack was the obvious suspect 
 but `cdc-ack`'s own case passed in the same run, and the pipeline marks an entry
 delivered only when the peer said so. The pump was the second suspect, and it was
 already strict: a cycle ends at the first entry the peer did not confirm. The
-order in the *applied file* was wrong, and that file is written by the receiver's
+order in the _applied file_ was wrong, and that file is written by the receiver's
 `onMessage` handler, synchronously, with `fsync` — so the receiver had been handed
 the frames out of order. The wire did that, not the protocol.
 
@@ -1465,7 +1473,7 @@ the frames out of order. The wire did that, not the protocol.
 `RaftTcpTransport` compresses payloads over 1 024 bytes with zstd, which runs on
 libuv's thread pool: `compress()` resolves when a worker is free, not when it was
 asked. The frame was written **inside that callback**, so the socket received the
-frames in *completion* order. Twenty small frames submitted after a large one could
+frames in _completion_ order. Twenty small frames submitted after a large one could
 reach the peer ahead of it.
 
 The receive side had the same shape for a different reason. `_processData` awaits
@@ -1529,7 +1537,7 @@ executors and tested by the same suite.
 
 Iteration 71 wrote the second one. `e2e/tests/cluster-scaling.test.ts` starts
 three real Raft processes over mTLS, wraps them in an `IMemberSet`, and runs
-`ClusterScalingExecutor` against what the *processes* answer.
+`ClusterScalingExecutor` against what the _processes_ answer.
 
 Two things the port turned out to require that the reference implementation had
 never had to express:
@@ -1575,7 +1583,7 @@ A scale-up through it would be a member that exists in the member set and nowher
 in the cluster — the exact state the executor's own notes warn about.
 
 **One semantic worth writing down.** In the scale-down path `targetCount` reports
-the member count that *is*, not the target that was asked for, and `AC-C27` pins
+the member count that _is_, not the target that was asked for, and `AC-C27` pins
 it at two while the policy says three. That is not a rounding of the target: the
 executor was asked to shrink, it shrank nothing, and the gap between the policy and
 the group is the operator's to resolve. An outcome that reported three would be
@@ -1592,13 +1600,13 @@ twenty behaviours no test named.
 
 Five rounds, each one reading the survivors and asking what each of them said:
 
-| Round | Score | Survivors | What the round added |
-|---|---:|---:|---|
-| first measurement | 77.68 % | 120 | nothing — the baseline |
-| mTLS material, TLS parameters, queue cleanup | 85.06 % | 81 | 14 cases |
-| inbound sockets, buffers, the frame path | 87.45 % | 68 | 14 cases |
-| bound port, health check, zero-length frames | 87.64 % | 67 | 6 cases |
-| what `send()` addresses, what `stop()` releases | **89.11 %** | 59 | 10 cases |
+| Round                                           |       Score | Survivors | What the round added   |
+| ----------------------------------------------- | ----------: | --------: | ---------------------- |
+| first measurement                               |     77.68 % |       120 | nothing — the baseline |
+| mTLS material, TLS parameters, queue cleanup    |     85.06 % |        81 | 14 cases               |
+| inbound sockets, buffers, the frame path        |     87.45 % |        68 | 14 cases               |
+| bound port, health check, zero-length frames    |     87.64 % |        67 | 6 cases                |
+| what `send()` addresses, what `stop()` releases | **89.11 %** |        59 | 10 cases               |
 
 The third round moved the score by 0.19 and was not wasted: it converted two
 timeouts into failures, and a timeout is not a verdict — it says the runner
@@ -1657,18 +1665,18 @@ right default: a majority is the whole point of Raft, and three is the smallest
 number that has one to lose. The cost of that default is that a group of one is
 never exercised — and a group of one is not a hypothetical. It is the development
 deployment, the edge site, the shard that has not been given replicas yet, and it
-is described in `cluster/docs/api-reference.md` in as many words: *"its committed
+is described in `cluster/docs/api-reference.md` in as many words: _"its committed
 configuration names one voter, one answer is a majority, and `hasQuorum` is `true`
-because it has to be."*
+because it has to be."_
 
 Iteration 72 wrote the first test that starts a one-voter group. It did not elect
 a leader. Two independent defects in `@maboke123/raft-core` 0.2.1, neither reachable
 with a peer:
 
-| # | Mechanism | Measurement before the patch |
-|---|---|---|
-| 1 | `becomeCandidateUnlocked` collects the self-vote, sets `votesNeeded`, then waits for `RequestVoteResponse`s. With no peers there are none. The pre-vote path *does* check the quorum before becoming a candidate; the candidate path does not | `role: Candidate`, term 1 → 11 in four seconds, `commitIndex` 0 |
-| 2 | The only caller of `tryAdvanceCommitIndex` is the `AppendEntriesResponse` handler. With no followers there are no responses, so nothing ever counts the leader's own log as a majority | `RaftApiError: Raft propose failed: Failed to commit command within timeout`, entry appended, never committed |
+| #   | Mechanism                                                                                                                                                                                                                                     | Measurement before the patch                                                                                  |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 1   | `becomeCandidateUnlocked` collects the self-vote, sets `votesNeeded`, then waits for `RequestVoteResponse`s. With no peers there are none. The pre-vote path _does_ check the quorum before becoming a candidate; the candidate path does not | `role: Candidate`, term 1 → 11 in four seconds, `commitIndex` 0                                               |
+| 2   | The only caller of `tryAdvanceCommitIndex` is the `AppendEntriesResponse` handler. With no followers there are no responses, so nothing ever counts the leader's own log as a majority                                                        | `RaftApiError: Raft propose failed: Failed to commit command within timeout`, entry appended, never committed |
 
 Neither is a misreading of Raft: the algorithm says a candidate holding a majority
 has won, and that a leader's own log counts toward the majority that commits an
@@ -1699,18 +1707,18 @@ The failure evidence is on the record, taken by reverting one hunk at a time:
 with one node's engine holding one key fewer than the cluster had acknowledged. No
 snapshot was installed, no restore failed, no apply raised, and the log entries were
 identical on all three nodes. The only mechanism that produces that shape is a node
-that was handed a *position* without being handed the *state*, and raft-core has
+that was handed a _position_ without being handed the _state_, and raft-core has
 exactly one place that does it:
 
 ```js
 if (nextIndex <= snapshotIndex) {
-  this.volatileState.setLastApplied(snapshotIndex);   // the log moves
-  continue;                                            // the application is never called
+  this.volatileState.setLastApplied(snapshotIndex); // the log moves
+  continue; // the application is never called
 }
 ```
 
-The branch is correct for entries the snapshot covers *and the application already
-has*. It is a silent hole for a node whose engine is behind the log, and there are
+The branch is correct for entries the snapshot covers _and the application already
+has_. It is a silent hole for a node whose engine is behind the log, and there are
 three ways to be that node: an engine restored from an older backup than the log, an
 `installSnapshot` that writes nowhere, or `takeSnapshot` registered without
 `installSnapshot` at all. The last one is a configuration, not an accident — the
@@ -1720,8 +1728,12 @@ prose, which is the form of warning nothing enforces.
 Measured, on a real restart over real SQLite storage, with the guard removed:
 
 ```json
-{ "snapshot": { "lastIncludedIndex": 4 }, "commitIndex": 4, "lastApplied": 4,
-  "appliedAfterRestart": [] }
+{
+  "snapshot": { "lastIncludedIndex": 4 },
+  "commitIndex": 4,
+  "lastApplied": 4,
+  "appliedAfterRestart": []
+}
 ```
 
 The node reports index 4 on both counters, and the application was handed nothing.
@@ -1733,11 +1745,11 @@ and had never had a name.
 The adapter cannot see the engine, so the fix has two halves and the application
 supplies one of them:
 
-| Configuration | Decided by | Result |
-|---|---|---|
-| `takeSnapshot`, no `installSnapshot`, a snapshot in storage | the handler table | refused at `init()`, naming the snapshot index |
-| `appliedIndex` reports a position behind `lastApplied` | the application | refused at `init()`, naming both indexes and the width of the hole |
-| no provider, no snapshot in storage | nothing to decide | starts; `getStatus()` reports `applicationApplied: null`, `appliedGap: null` |
+| Configuration                                               | Decided by        | Result                                                                       |
+| ----------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------- |
+| `takeSnapshot`, no `installSnapshot`, a snapshot in storage | the handler table | refused at `init()`, naming the snapshot index                               |
+| `appliedIndex` reports a position behind `lastApplied`      | the application   | refused at `init()`, naming both indexes and the width of the hole           |
+| no provider, no snapshot in storage                         | nothing to decide | starts; `getStatus()` reports `applicationApplied: null`, `appliedGap: null` |
 
 `null` is not zero. A status field that reads `0` for "this node has not published a
 position" is indistinguishable from the defect it exists to expose, so the pair is
@@ -1762,7 +1774,7 @@ step, and the only reason it had ever run is that the coverage job invokes the
 whole directory.
 
 The suite was green the entire time. Nothing about it was wrong. What was wrong was
-the *path*: a dedicated job that uploads its logs on failure is how a red e2e run
+the _path_: a dedicated job that uploads its logs on failure is how a red e2e run
 gets diagnosed, and a suite outside every such job fails in one place only — the
 coverage job — where the report is a percentage rather than a failing case name.
 
@@ -1782,15 +1794,15 @@ compressor's `.then()`, and zstd runs on libuv's pool, so the wire order became 
 completion order. The fix — one promise chain per peer, each link doing
 compress-then-write — is correct for the route it covers. The contract that was
 written down afterwards, in `federation/docs/api-reference.md`, is broader than the
-route: *the frames of one peer reach `onMessage` in the order `send()` was called.*
+route: _the frames of one peer reach `onMessage` in the order `send()` was called._
 
 By the end of iteration 72 that class had three routes to the socket:
 
-| Route | Taken when | Ordered in 70? |
-|---|---|---|
-| Queue link | payload over the compression threshold | yes — the chain |
-| Fast path | compression off, or payload under the threshold (most Raft frames) | no — written inline |
-| Buffered flush | no connection when the frame arrived | no — written inline on connect |
+| Route          | Taken when                                                         | Ordered in 70?                 |
+| -------------- | ------------------------------------------------------------------ | ------------------------------ |
+| Queue link     | payload over the compression threshold                             | yes — the chain                |
+| Fast path      | compression off, or payload under the threshold (most Raft frames) | no — written inline            |
+| Buffered flush | no connection when the frame arrived                               | no — written inline on connect |
 
 Two crossings between them were reachable, and both inverted:
 
@@ -1826,7 +1838,7 @@ So the writes were moved onto one gate rather than a second gate being added:
 
 The invariant that makes the failure path's `_prependFrames` correct is worth
 stating because it is not local: a frame takes the fast path only when the peer's
-queue is empty *and* its buffer is empty, so anything that enters the buffer while
+queue is empty _and_ its buffer is empty, so anything that enters the buffer while
 that write is in flight was submitted later. Prepending on failure therefore
 restores the submission order rather than asserting it — and `AC 34.77`, which
 called `_doSendFrame` directly while a batch was in flight, described a state
@@ -1863,21 +1875,21 @@ to say never. The repository had no hooks at all. Iteration 25 landed a file tha
 minutes and an author spent a context switch, on a check that takes one command
 locally and one second to run.
 
-The gap was not a missing gate. It was a missing *trigger*, and the interesting
+The gap was not a missing gate. It was a missing _trigger_, and the interesting
 part is how many ways the trigger can fail silently:
 
-| Failure | What git does |
-|---|---|
-| `.git/hooks` is not versioned | every clone has different hooks, and review sees none of them |
-| a hook file without the execute bit | skipped, with no message |
-| `core.hooksPath` pointing at a directory that moved | skipped, with no message |
-| a hook written as if run from `.githooks/` | fails on the first push, for a path reason |
-| pushing through the Git Data API | no client hook exists to run |
+| Failure                                             | What git does                                                 |
+| --------------------------------------------------- | ------------------------------------------------------------- |
+| `.git/hooks` is not versioned                       | every clone has different hooks, and review sees none of them |
+| a hook file without the execute bit                 | skipped, with no message                                      |
+| `core.hooksPath` pointing at a directory that moved | skipped, with no message                                      |
+| a hook written as if run from `.githooks/`          | fails on the first push, for a path reason                    |
+| pushing through the Git Data API                    | no client hook exists to run                                  |
 
 Every row is a push that was not checked, and every one of them looks exactly like
 a push that passed. That is the same shape as the gates themselves —
 `check:script-coverage` exists because a gate over zero files reports perfect
-compliance — one level up: a *chain* over zero executions reports perfect
+compliance — one level up: a _chain_ over zero executions reports perfect
 compliance.
 
 The answer is three files and the rule that binds them:
@@ -1893,7 +1905,7 @@ The answer is three files and the rule that binds them:
   rather than the cascade.
 
 `check:hooks` reads the repository side of the chain — the hook exists, is
-executable, runs *that* command, and `prepare` installs it — because the remote
+executable, runs _that_ command, and `prepare` installs it — because the remote
 side cannot be read by a gate that runs on a fresh checkout. The two halves
 together are the whole chain, and each says which half it is.
 
@@ -1932,11 +1944,11 @@ exited 1 for a suite in which nothing failed.
 There are three instruments on this page with the same defect, and the defect is
 that the answer arrives from somewhere other than the code under test:
 
-| Instrument | What it accepted as an answer |
-|---|---|
-| a gate over zero files | "no violations" from a file list nobody computed — `check:script-coverage` |
-| a chain nothing executes | "checked" from a hook git skipped without a word — `check:hooks` |
-| a test whose input is the tool's failure | "false" from a process that also failed its caller |
+| Instrument                               | What it accepted as an answer                                              |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| a gate over zero files                   | "no violations" from a file list nobody computed — `check:script-coverage` |
+| a chain nothing executes                 | "checked" from a hook git skipped without a word — `check:hooks`           |
+| a test whose input is the tool's failure | "false" from a process that also failed its caller                         |
 
 The repair is one parameter — `runScript(script, spawn = spawnSync)`, the same
 injection `runSteps` already takes as `execute`. The real spawn still runs, on the
@@ -1982,10 +1994,10 @@ Same commit, same Node (`v22.13.1`), same command.
 The difference is one environment variable. `NODE_COMPILE_CACHE` was set in the
 sandbox; a GitHub runner does not set it. Measured both ways from one tree:
 
-| Variable | `check-doc-examples.mjs` | `install-hooks.mjs` | `preflight.mjs` |
-|---|---|---|---|
-| `NODE_COMPILE_CACHE` set | 100.00 lines / 97.40 branches | 100.00 / 100.00 | 100.00 / 100.00 |
-| unset | 99.56 lines / 95.00 branches, `457-458` uncovered | 100.00 / 93.55 | 100.00 / 94.12 |
+| Variable                 | `check-doc-examples.mjs`                          | `install-hooks.mjs` | `preflight.mjs` |
+| ------------------------ | ------------------------------------------------- | ------------------- | --------------- |
+| `NODE_COMPILE_CACHE` set | 100.00 lines / 97.40 branches                     | 100.00 / 100.00     | 100.00 / 100.00 |
+| unset                    | 99.56 lines / 95.00 branches, `457-458` uncovered | 100.00 / 93.55      | 100.00 / 94.12  |
 
 A script compiled from cached bytecode loses block ranges in V8's precise
 coverage, and a range nobody reports is a range nobody can fail. The variable is
@@ -2033,3 +2045,79 @@ The general lesson is the page's oldest one in a new costume: **a green number
 is a claim about an instrument**. A Node version was already named as part of
 that ruler; a cache directory was not part of it, and it moved the reading by
 five points while looking like nothing at all.
+
+## An edit that cannot be interrupted is not a detection
+
+The mutation report carried forty-two `Timeout` verdicts against `node`, and
+thirty-six of them were `stuck`: the attributed tests reported nothing and the run
+never finished. A timeout is not a verdict — it says the runner stopped — but the
+score treats it as one, so those thirty-six were counted as thirty-six detections.
+
+Every one of them was the same shape:
+
+```ts
+while (pending.length > 0) { …; pending.push(snapshot.snapshotId); }
+for (let value = low; value <= high; value += step) { … }
+for (;;) { …; if (seen.has(parentId)) return refuse(…); … }
+while (this.pendingCompressions.size > 0) { await Promise.allSettled([...]); }
+```
+
+A counted loop is a promise about its own update expression. Mutate it — `value++`
+to `value--`, a body emptied to `{}`, a `> 0` to `>= 0` — and the result is not a
+wrong answer but a loop that never ends. JavaScript cannot preëmpt synchronous
+code, so the case running it never gets to fail: it wedges its worker, Stryker
+abandons the mutant at its cap, and the abandonment is filed as a kill. The score
+was paying the same credit for _the tests objected_ and _the tests never got a
+chance to_.
+
+The child-process remedy the roadmap had registered is real but insufficient, and
+the reason is mechanical: to be **attributed** to a mutant a test must execute the
+mutated line, and the process that executes it is the worker that cannot report.
+A deadline in a child observes a hang; it does not prevent the case that hangs.
+So the loops were removed instead:
+
+| Where                      | Was                                      | Is                                                                                                                |
+| -------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `cron.ts`                  | three counted walks                      | `valuesBetween` / `steppedValues`: the length is arithmetic, and `Array.from` refuses an infinite one by throwing |
+| scheduler                  | four `while (cursor < toMs)`             | `instantsBetween`: `[from, to)` at a step, capped by `MAX_PROJECTED_INSTANTS`                                     |
+| `backupChain.ts`           | a worklist, and `for (;;)`               | rounds over the inventory; one step per stored snapshot plus one                                                  |
+| `RetentionPolicyEvaluator` | a worklist queue                         | one round per level, bounded by the inventory                                                                     |
+| `BackupManager`            | a cursor two workers shared              | one generator two workers consume                                                                                 |
+| `FileAuditStore.close()`   | `while (size > 0) { await … }`           | one `allSettled` over a snapshot                                                                                  |
+| `AuditLogManager`          | `while (i < n && events[i].ts < cutoff)` | `findIndex`                                                                                                       |
+| `KeyManager`               | `while (cache.size > MAX)`               | a slice of the cache's own entries                                                                                |
+
+Measured on the node target, 4 190 → 4 152 mutants: **timeouts 42 → 1**, survivors
+76 → 79, and the score **98.15 % → 97.96 %**. The drop is the deliverable. Thirty-
+nine credits that had never been earned left the numerator, and a gate that reports
+a higher number for a suite that cannot object is the instrument lying.
+
+Two details keep the number from being a different kind of lie.
+
+**The bound is a length, not a counter.** `instantsBetween` computes
+`Math.ceil((toMs - fromMs) / stepMs)` and caps it. Without the cap, one mutation of
+the subtraction — `-` to `+` — produced a count of nine million and a run that
+allocated until the cap: the one mutant that stayed a timeout after every loop was
+gone. With the cap the same edit names a hundred thousand wrong instants, and an
+assertion fails in milliseconds.
+
+**The one that remains is not a silence.** `FileAuditStore.ts:926` sets a
+"flushed" flag to `true`; with it mutated, a case reports `Test timed out in
+15000ms` (`AC 87 EX.3`) and the run still never exits, because a second case in the
+same worker never drains. The objection was made and the trial was not finished,
+which is a different instrument's job — a worker that cannot be reclaimed — and it
+is registered as such rather than folded into this one.
+
+And the child with a deadline still exists, for the loop nobody has written yet.
+`AC 103` runs `parseCronField` in a process the test owns, with a 5 s deadline;
+with `valuesBetween` replaced by `for (;;) { }` it fails at 5 017 ms:
+
+```
+parseCronField("*") did not return within 5000 ms — the process was killed,
+so a loop in it never ended. stderr: (empty): expected 'SIGKILL' to be null
+```
+
+Five seconds is fifty times the measured process start (0.09–0.25 s), a third of
+the mutation suite's 15 s case budget, and a sixth of Stryker's 30 s cap — so the
+same edit is a _failed test_ in both instruments, which is the difference between a
+verdict and a silence.
