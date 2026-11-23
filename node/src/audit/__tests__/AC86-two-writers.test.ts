@@ -33,6 +33,8 @@ interface Child {
   acked: string[];
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   stderr(): string;
+  /** Resolves when the child says it has constructed its store. */
+  ready: Promise<void>;
 }
 
 /** Start a rotating child that waits for `release` before its first write. */
@@ -46,6 +48,10 @@ function startReleasedChild(dataDir: string, count: number, release: string): Ch
   const acked: string[] = [];
   let buffered = '';
   let stderr = '';
+  let announceReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    announceReady = resolve;
+  });
   child.stderr.on('data', (chunk: Buffer) => {
     stderr += chunk.toString('utf-8');
   });
@@ -53,7 +59,10 @@ function startReleasedChild(dataDir: string, count: number, release: string): Ch
     buffered += chunk.toString('utf-8');
     const lines = buffered.split('\n');
     buffered = lines.pop() ?? '';
-    for (const line of lines) if (line.startsWith('ACK ')) acked.push(line.slice(4));
+    for (const line of lines) {
+      if (line.startsWith('ACK ')) acked.push(line.slice(4));
+      else if (line === 'READY') announceReady();
+    }
   });
 
   return {
@@ -63,7 +72,27 @@ function startReleasedChild(dataDir: string, count: number, release: string): Ch
       signal: signal as NodeJS.Signals | null,
     })),
     stderr: () => stderr,
+    ready,
   };
+}
+
+/**
+ * Wait until both children have constructed their store, then release them.
+ *
+ * The handshake is the case's premise. A release written as soon as the two
+ * children are *spawned* lets the faster one append before the slower one has read
+ * the directory, and the slower one then adopts a segment the faster one is still
+ * writing — which is what a restarted store is supposed to do, and what this file
+ * is supposed to rule out. Measured on CI run 45168632077: `TW.2` failed with
+ * `audit-20261123-0001.ndjson holds lines from proc-2715, proc-2716`, on a machine
+ * where `tsx` takes long enough to compile a module before the first write.
+ */
+async function releaseWhenBothReady(children: Child[], release: string): Promise<void> {
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('a child never announced READY')), 30_000).unref(),
+  );
+  await Promise.race([Promise.all(children.map((child) => child.ready)), timeout]);
+  writeFileSync(release, '');
 }
 
 /**
@@ -107,7 +136,7 @@ describe('AC 86 — two writers, one directory', () => {
     const release = join(dataDir, '..', `ac86-release-${process.pid}`);
     const [first, second] = [startReleasedChild(dataDir, 30, release), startReleasedChild(dataDir, 30, release)];
 
-    writeFileSync(release, '');
+    await releaseWhenBothReady([first, second], release);
 
     const [a, b] = await Promise.all([first.exited, second.exited]);
     rmSync(release, { force: true });
@@ -135,7 +164,7 @@ describe('AC 86 — two writers, one directory', () => {
     const release = join(dataDir, '..', `ac86-release-owner-${process.pid}`);
     const [first, second] = [startReleasedChild(dataDir, 12, release), startReleasedChild(dataDir, 12, release)];
 
-    writeFileSync(release, '');
+    await releaseWhenBothReady([first, second], release);
     await Promise.all([first.exited, second.exited]);
     rmSync(release, { force: true });
 

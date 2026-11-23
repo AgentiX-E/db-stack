@@ -46,8 +46,17 @@ const store = new FileAuditStore({ dataDir, maxFileSize: rotate ? 1 : 8 * 1024 *
  * A busy poll rather than `fs.watch`: the wait is a few hundred microseconds against
  * a write the parent performs immediately, and an fsnotify event that arrives after
  * the watcher is installed is one more way for a test to be flaky.
+ *
+ * `READY` is printed first, and that line is the point on a loaded runner. A parent
+ * that releases both children as soon as it has *spawned* them is releasing one of
+ * them before it has constructed its store: the other writes, and this one then
+ * finds the segment and adopts it — a supported continuation (a store restarted
+ * after a crash), and the exact opposite of what a case about two independent
+ * writers measures. Announcing readiness turns "started together" into "ready
+ * together", which is a property rather than a pause that is usually long enough.
  */
 if (awaitPath) {
+  process.stdout.write('READY\n');
   const deadline = Date.now() + 10_000;
   while (!existsSync(awaitPath)) {
     if (Date.now() > deadline) {
