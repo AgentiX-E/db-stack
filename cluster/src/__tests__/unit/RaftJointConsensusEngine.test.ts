@@ -21,7 +21,6 @@ import type {
   IClusterMembershipTransition,
 } from '../../consensus/joint-consensus/IClusterMembershipTransition';
 import type { IConsensusLayer } from '../../consensus/interfaces/interfaces';
-import { TestCluster } from '../../__tests__/integration/TestCluster';
 import type { RaftGroup } from '../../consensus/core/RaftGroup';
 import type { RaftConsensusPhase } from '../../interfaces/types';
 
@@ -406,36 +405,6 @@ describe('RaftJointConsensusEngine — unit tests', () => {
   });
 });
 
-describe('RaftJointConsensusEngine — integration tests (real RaftGroup)', () => {
-  // These tests use the real integration cluster (TestCluster)
-  // to verify Joint Consensus on a real multi-node Raft cluster
-
-  it('AC-D1-18: RaftGroup.proposeMembershipChange C_JOINT→C_NEW on a real 3-node cluster', async () => {
-    // Start a real 3-node cluster with TestCluster and reach it through RaftGroupManager
-    // Verify proposeMembershipChange against a real Raft engine:
-    //   1. the C_JOINT proposal succeeds on a single-shard cluster
-    //   2. quorum is intact after the config change
-    //   3. consecutive membership changes work
-
-    const cluster = new TestCluster({ nodeCount: 3, electionTick: 10, heartbeatTick: 2, tickIntervalMs: 20 });
-    await cluster.start();
-    try {
-      const leader = await cluster.findLeader();
-      expect(leader).toBeDefined();
-
-      // Confirm the leader reports itself as leader
-      const isLeader = await leader.adapter.isLeader();
-      expect(isLeader).toBe(true);
-
-      // Verify the cluster formed (3 nodes, 1 leader)
-      const status = await leader.adapter.getStatus();
-      expect(status.role.toLowerCase()).toBe('leader');
-    } finally {
-      await cluster.stop();
-    }
-  }, 30_000);
-});
-
 describe('RaftJointConsensusEngine — RaftGroupManager integration', () => {
   it('AC-D1-19: raft groups are obtained through RaftGroupManager', async () => {
     const group = createMockRaftGroup();
@@ -548,6 +517,13 @@ describe('RaftJointConsensusEngine — RaftGroupManager integration', () => {
   });
 });
 
+// The real three-node cluster lives in `__tests__/integration/membership-e2e.test.ts`
+// (AC-D1-18 to 18e), where a membership change is driven through `RaftAdapter` over
+// mTLS. A case used to sit in this file and start a cluster, assert the leader, and
+// stop — while its title named `proposeMembershipChange`, which it never called
+// (P3-27). It is gone rather than renamed: the call it named is driven for real two
+// files over, and the cluster assertion it did make is AC-D1-18 there.
+
 describe('RaftJointConsensusEngine — extra coverage', () => {
   it('AC-D1-C3: forced election (autoCampaign) runs after the transition', async () => {
     const consensus = createMockConsensusLayer();
@@ -569,7 +545,15 @@ describe('RaftJointConsensusEngine — extra coverage', () => {
     const result = await engine.transitionTo(makePeers(3, 4), { autoCampaign: true });
     expect(result.success).toBe(true);
     expect(consensus.campaign.mock.calls.length).toBeGreaterThanOrEqual(1);
-    expect(consensus.campaign.mock.calls.length).toBeGreaterThanOrEqual(1);
+    // Once, not once per phase: the option is "campaign after the transition".
+    expect(consensus.campaign).toHaveBeenCalledTimes(1);
+    // And after it — an election started before C_NEW commits campaigns on the
+    // configuration that is being replaced. The duplicate of the assertion above
+    // sat here instead, which is what a missing second claim looks like.
+    const lastProposal = Math.max(
+      ...(mockGroup.proposeMembershipChange as ReturnType<typeof vi.fn>).mock.invocationCallOrder,
+    );
+    expect(consensus.campaign.mock.invocationCallOrder[0]).toBeGreaterThan(lastProposal);
   });
 
   it('AC-D1-C8: transitionTo passes straight through without a consensus layer', async () => {
