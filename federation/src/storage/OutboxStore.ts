@@ -38,6 +38,7 @@
  */
 
 import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
+import { deriveRetention, type RetentionWindows } from './retention';
 import type { OutboxEntry, OutboxEntryInput, OutboxStatus } from '../interfaces/outbox/OutboxEntry';
 import type { OutboxStats } from '../interfaces/types';
 import { open, type Database, type RootDatabase } from 'lmdb';
@@ -75,6 +76,15 @@ export interface OutboxStoreConfig {
   /** Entry TTL (ms) before auto-housekeeping — default 14 days */
   ttlMs?: number;
   /**
+   * The same window under the name {@link deriveRetention} returns.
+   *
+   * `ttlMs` came first and keeps its meaning; this alias exists so a caller can
+   * spread a derived set of windows straight into the configuration instead of
+   * translating one field and silently leaving it at its default. `ttlMs` wins
+   * when both are given, because the older name is the one already in use.
+   */
+  entryTtlMs?: number;
+  /**
    * How long an entry may keep failing before the store gives up on it.
    * Default 60 000 ms, measured from its **first failure**.
    *
@@ -98,6 +108,15 @@ export interface OutboxStoreConfig {
   retryBackoffMs?: number;
   /** Ceiling on the backoff — default 2 000 ms. */
   retryBackoffMaxMs?: number;
+  /**
+   * How long the receiving peer remembers a `msgId`, in milliseconds.
+   *
+   * Default 30 minutes, from {@link deriveRetention}. The store does not use it
+   * — the peer's dedup ring does — but it is the window every retry of this
+   * store's entries has to fit inside, so a budget longer than it is refused at
+   * construction rather than discovered as a duplicated change on the peer.
+   */
+  dedupMs?: number;
   /** Dead letter TTL (ms) before auto-cleanup — default 7 days */
   deadLetterTtlMs?: number;
   /** Main LMDB map size — default 1GB */
@@ -123,23 +142,36 @@ export class OutboxStore implements IOutboxStore {
   private readonly msgIdToSeqDb: Database<number, string>;
 
   private readonly ttlMs: number;
+  /**
+   * The windows this store runs with, resolved once.
+   *
+   * Every duration below is read from here rather than from a literal, so
+   * `getRetention()` cannot report something the store does not do.
+   */
+  private readonly retention: RetentionWindows;
   /** `null` means "no attempt cap": the retry window decides. */
   private readonly maxRetries: number | null;
-  private readonly retryWindowMs: number;
   private readonly retryBackoffMs: number;
-  private readonly retryBackoffMaxMs: number;
-  private readonly deadLetterTtlMs: number;
   private readonly mapSize: number;
 
   constructor(config: OutboxStoreConfig) {
-    this.ttlMs = config.ttlMs ?? 14 * 24 * 60 * 60 * 1000;
+    // First, before the directory exists. A store whose entry TTL is shorter
+    // than its retry budget prunes entries that are still being retried, and a
+    // store whose budget outlives the peer's dedup window makes every retry a
+    // new change; both are configuration errors, and neither is worth an empty
+    // LMDB file on disk.
+    this.retention = deriveRetention({
+      dedupMs: config.dedupMs,
+      retryWindowMs: config.retryWindowMs,
+      retryBackoffMaxMs: config.retryBackoffMaxMs,
+      deadLetterTtlMs: config.deadLetterTtlMs,
+      entryTtlMs: config.ttlMs ?? config.entryTtlMs,
+    });
+    this.ttlMs = this.retention.entryTtlMs;
     // Not `?? 3`. A default cap of three attempts, on a pump that retries the head
     // of the queue once per cycle, is a default of "sixty milliseconds of outage".
     this.maxRetries = config.maxRetries ?? null;
-    this.retryWindowMs = config.retryWindowMs ?? 60_000;
     this.retryBackoffMs = config.retryBackoffMs ?? 50;
-    this.retryBackoffMaxMs = config.retryBackoffMaxMs ?? 2_000;
-    this.deadLetterTtlMs = config.deadLetterTtlMs ?? 7 * 24 * 60 * 60 * 1000;
     this.mapSize = config.mapSize ?? 1024 * 1024 * 1024;
 
     fs.mkdirSync(config.dataDir, { recursive: true });
@@ -496,7 +528,7 @@ export class OutboxStore implements IOutboxStore {
 
     // Two units of budget, and only one of them is a count.
     const spentMs = now - entry.firstFailedAt;
-    const outOfTime = spentMs >= this.retryWindowMs;
+    const outOfTime = spentMs >= this.retention.retryWindowMs;
     const outOfAttempts = this.maxRetries !== null && entry.attemptCount >= this.maxRetries;
 
     if (outOfTime || outOfAttempts) {
@@ -535,7 +567,7 @@ export class OutboxStore implements IOutboxStore {
   private backoffFor(attemptCount: number): number {
     if (this.retryBackoffMs <= 0) return 0;
     const doublings = Math.min(attemptCount - 1, 20);
-    return Math.min(this.retryBackoffMaxMs, this.retryBackoffMs * 2 ** doublings);
+    return Math.min(this.retention.retryBackoffMaxMs, this.retryBackoffMs * 2 ** doublings);
   }
 
   /**
@@ -680,7 +712,7 @@ export class OutboxStore implements IOutboxStore {
       }
 
       // Clean up dead letter entries
-      const dlCutoff = now - this.deadLetterTtlMs;
+      const dlCutoff = now - this.retention.deadLetterTtlMs;
       for (const item of this.deadLetterDb.getRange({
         start: 'dlq:',
         end: 'dlq:\xff',
@@ -694,6 +726,17 @@ export class OutboxStore implements IOutboxStore {
     });
 
     return removed;
+  }
+
+  /**
+   * The windows this store runs with.
+   *
+   * Returned as a copy: the derivation is pure, so a caller that wants to build
+   * a peer's dedup ring from the sender's budget asks here instead of repeating
+   * the arithmetic — and a caller cannot change what the store already uses.
+   */
+  getRetention(): RetentionWindows {
+    return { ...this.retention };
   }
 
   /**

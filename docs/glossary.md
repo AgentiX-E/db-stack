@@ -89,6 +89,15 @@ the definition here is the narrower, operative one.
   remembers recently seen message ids, so each change takes effect once — without claiming
   the transport itself is exactly-once.
 
+**Retention window**
+: One of the durations that govern an outbox entry: how long the receiver remembers a message
+  id (`dedup`), how long the sender retries (`retry window`), how long a parked entry is kept
+  (`dead-letter TTL`), and how long delivered markers survive housekeeping (entry TTL). The
+  first two are *nested* — a retry that outlives the receiver's memory is a second write — so
+  the package derives them together and refuses a configuration where they do not contain
+  each other. The last two are sequential rather than nested: the dead-letter clock starts
+  after the budget is spent, and the entry TTL never prunes a pending entry.
+
 **HLC (hybrid logical clock)**
 : A `(physical, logical, nodeId)` tuple. It follows wall time when it can and is advanced
   past anything observed, giving causal ordering plus a deterministic total order, without

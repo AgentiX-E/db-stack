@@ -25,6 +25,7 @@ import type {
   ReplicationStatus,
   ReplicationTarget,
 } from '../../interfaces/replication/IMultiLeaderReplication.js';
+import { deriveRetention, type RetentionWindows } from '../../storage/retention.js';
 
 // ── Inline helpers for benchmarks that need minimal mocks ──
 
@@ -72,6 +73,10 @@ class MockReplication implements IMultiLeaderReplication {
 
   onHighLag(_callback: (targetNodeId: string, lagMs: number) => void): () => void {
     return () => {};
+  }
+
+  getRetention(): RetentionWindows {
+    return deriveRetention();
   }
 }
 

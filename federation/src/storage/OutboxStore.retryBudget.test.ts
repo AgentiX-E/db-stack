@@ -108,7 +108,7 @@ describe('OutboxStore — the retry budget', () => {
   });
 
   it('RB.3: failures that span the window dead-letter the entry, with its reason', async () => {
-    const s = open({ retryWindowMs: 1_000 });
+    const s = open({ retryWindowMs: 1_000, retryBackoffMaxMs: 200 });
     const added = await s.add(entry('0/3:1'));
 
     at(0);
@@ -173,7 +173,7 @@ describe('OutboxStore — the retry budget', () => {
   });
 
   it('RB.8: a revived entry gets a fresh budget', async () => {
-    const s = open({ retryWindowMs: 1_000 });
+    const s = open({ retryWindowMs: 1_000, retryBackoffMaxMs: 200 });
     const added = await s.add(entry('0/8:1'));
     s.markFailed(added.id, 'a');
     at(2_000);
@@ -193,7 +193,7 @@ describe('OutboxStore — the retry budget', () => {
     // Carrying `firstFailedAt` across the revival would spend the whole window on
     // the revived entry's first failure, so the one recovery path an operator has
     // would immediately undo itself.
-    const s = open({ retryWindowMs: 1_000 });
+    const s = open({ retryWindowMs: 1_000, retryBackoffMaxMs: 200 });
     const added = await s.add(entry('0/9:1'));
     s.markFailed(added.id, 'a');
     at(5_000);
@@ -219,7 +219,7 @@ describe('OutboxStore — the retry budget', () => {
   it('RB.11: an entry written before the fields existed is budgeted from its next failure', async () => {
     // The store has entries on disk from before this iteration. Reading one back
     // must not produce `now - undefined`.
-    const s = open({ retryWindowMs: 1_000 });
+    const s = open({ retryWindowMs: 1_000, retryBackoffMaxMs: 200 });
     const added = await s.add(entry('0/11:1'));
     s['mainDb'].putSync(
       added.id,

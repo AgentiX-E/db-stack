@@ -1,3 +1,4 @@
+import type { RetentionWindows } from '../../storage/retention';
 import type { IHLCTimestamp } from '../hlc/IHLCTimestamp';
 import type { OutboxEntry } from '../outbox/OutboxEntry';
 
@@ -79,4 +80,15 @@ export interface IMultiLeaderReplication {
 
   /** Event: fires when replication lag exceeds threshold */
   onHighLag(callback: (targetNodeId: string, lagMs: number) => void): () => void;
+
+  /**
+   * The retention windows of the outbox this replication sends from.
+   *
+   * The replication is the only object that knows how long it will keep
+   * retrying an entry, so it is the only object a receiver can ask before it
+   * decides how long to remember a message id. Required rather than optional:
+   * an implementation that cannot answer is an implementation whose peer has to
+   * guess, and a guess that is too short is a duplicate change.
+   */
+  getRetention(): RetentionWindows;
 }

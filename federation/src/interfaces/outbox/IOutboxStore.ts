@@ -1,5 +1,6 @@
 import type { OutboxEntry, OutboxEntryInput } from './OutboxEntry';
 import type { OutboxStats } from '../types';
+import type { RetentionWindows } from '../../storage/retention';
 
 export interface IOutboxStore {
   /**
@@ -79,4 +80,13 @@ export interface IOutboxStore {
    * Get outbox store statistics.
    */
   getStats(): OutboxStats | Promise<OutboxStats>;
+
+  /**
+   * The retention windows this store runs with.
+   *
+   * Required rather than optional: a store that cannot say how long it retries
+   * cannot tell the peer how long to remember a message id, and the containment
+   * between the two is the difference between a retry and a duplicate.
+   */
+  getRetention(): RetentionWindows;
 }

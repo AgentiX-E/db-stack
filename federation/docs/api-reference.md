@@ -184,20 +184,29 @@ class OutboxStore implements IOutboxStore {
   isDelivered(entryId: string): boolean;
   markFailed(entryId: string, error?: string): boolean;
   retryDeadLetter(entryId: string): boolean;
+  retryDeadLetters(targetPeerId?: string): number;
   getDeadLetterEntries(): DeadLetterEntry[];
   getDeadLetterStats(): { count: number };
   getPendingCount(): Promise<number>;
+  getPendingStats(): Record<string, { count: number; oldestCreatedAt: number | null }>;
   getStats(): Promise<OutboxStats>;
+  getRetention(): RetentionWindows;
   isCapacityExceeded(): boolean;
-  housekeeping(): void;
+  housekeeping(): { delivered: number; deadLettered: number };
   close(): void;
 }
 ```
 
-`OutboxStoreConfig`: `dataDir` (required), `ttlMs?` (default 14 days),
-`retryWindowMs?` (default 60 s), `maxRetries?` (no default — off), `retryBackoffMs?`
-(default 50 ms), `retryBackoffMaxMs?` (default 2 000 ms), `deadLetterTtlMs?`
-(default 7 days), `mapSize?` (default 1 GiB).
+`OutboxStoreConfig`: `dataDir` (required), `ttlMs?` (default 14 days; `entryTtlMs?`
+is the same window under the name `deriveRetention` returns, so a derived set can be
+spread into the config), `retryWindowMs?` (default 60 s), `dedupMs?` (default 30 min
+— the peer's memory, which the retry budget must fit inside), `maxRetries?` (no
+default — off), `retryBackoffMs?` (default 50 ms), `retryBackoffMaxMs?` (default
+2 000 ms), `deadLetterTtlMs?` (default 7 days), `mapSize?` (default 1 GiB).
+
+The constructor resolves those durations through `deriveRetention` **before** it
+creates the data directory, so a configuration whose windows do not contain each
+other is refused rather than opened: see [`deriveRetention`](#deriveretention).
 
 **The retry budget is time, not attempts.** A failure starts a window that is
 measured from the *first* failure — an entry that waited a minute behind a busy
@@ -215,6 +224,51 @@ hard cap for a caller who wants three strikes on a fast link.
 (`'pending' | 'delivered' | 'failed'`) and attempt bookkeeping (`createdAt`,
 `lastAttemptAt`, `attemptCount`, `lastError`, `firstFailedAt`, `nextAttemptAt`).
 `OutboxEntryInput` is that shape minus the fields the store owns.
+
+### `deriveRetention`
+
+One derivation for the durations that govern an entry, from the shortest outward:
+
+```
+retryBackoffMax  ≤  retryWindow
+retryWindow + ackTimeout  ≤  dedup
+deliveryIndex  =  entryTtl
+```
+
+```typescript
+function deriveRetention(request?: RetentionRequest): RetentionWindows;
+class RetentionViolation extends Error {
+  readonly rule: 'window-not-a-duration' | 'retry-covers-backoff' | 'dedup-covers-retry';
+}
+const DEFAULT_RETENTION: Readonly<RetentionWindows>;
+```
+
+`RetentionRequest` is all-optional (`dedupMs`, `ackTimeoutMs`, `retryWindowMs`,
+`retryBackoffMaxMs`, `deadLetterTtlMs`, `entryTtlMs`) and an omitted field comes from
+`DEFAULT_RETENTION`. `RetentionWindows` is the same set with nothing optional, plus
+`deliveryIndexMs`, which is not a knob: the delivery record is pruned in the same pass
+as the entries, so it is reported as `entryTtlMs` rather than as a fifth number that
+could disagree with the fourth.
+
+`deriveRetention` is pure, so a composition root can derive once and hand the same
+numbers to components that cannot see each other — the outbox, the replication, the
+manager and the CDC pipeline all report theirs through `getRetention()` instead of
+restating a default.
+
+The two nested relations are enforced; a violation throws `RetentionViolation` with
+`rule` set and both numbers in the message, before any file is opened:
+
+```text
+RetentionViolation: dedup-covers-retry: the receiver forgets a message id after 300000 ms
+but the sender may retry it for 600000 ms and wait 5000 ms for each verdict, so a retry
+arrives as a new change
+```
+
+Two pairs that look nested are sequential and are deliberately **not** enforced: `ttlMs`
+prunes delivered records and the dead-letter queue but never a pending entry, and the
+dead-letter clock starts after the retry budget is spent. `Infinity` is a legal duration
+meaning "no limit", and a sender that never gives up retrying needs a receiver that never
+forgets — the same rule, read at the other end.
 
 ## Hybrid logical clock
 

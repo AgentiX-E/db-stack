@@ -229,8 +229,64 @@ await pipeline.start();
 | Effectively-once | Receiver-side `DedupRing` keyed by message id         | Each change takes effect once within the dedup window |
 | Bounded memory   | `pumpBatchSize`, `maxSizeMB` backpressure             | Throughput is capped, not the heap                    |
 
-**Dedup window caveat:** duplicates arriving after `dedupTtlMs` are treated as new. Size it
-above your maximum expected outage.
+### 2.1 The windows that have to contain each other
+
+Duplicates arriving after `dedupTtlMs` are treated as new, so the dedup window is not a
+tuning preference — it is the receiver's half of at-least-once delivery. Two windows have
+to relate to it, and the package therefore derives them together instead of accepting four
+independent constants:
+
+```
+retryBackoffMax  ≤  retryWindow  ≤  dedup − ackTimeout
+```
+
+Read it from the sender outward. One backoff has to fit inside the retry budget that
+schedules it, and the budget plus one acknowledgement wait has to fit inside the window the
+receiver remembers a message id for. A sender that retries past the receiver's memory is
+not retrying: it is writing the change twice.
+
+```ts
+import { deriveRetention, OutboxStore } from "@agentix-e/db-federation";
+
+const retention = deriveRetention({
+  retryWindowMs: 5 * 60_000, // five minutes of outage tolerated
+  ackTimeoutMs: 5_000, // one attempt's wait for the peer's verdict
+  dedupMs: 30 * 60_000, // what the receiver will remember
+});
+
+const outbox = new OutboxStore({ dataDir: "/var/lib/db/outbox", ...retention });
+```
+
+`deriveRetention` is pure and fills the numbers you leave out from the package defaults, so
+a composition root can derive once and hand the same values to the outbox and to the
+manager. Every component reports what it runs with — `outbox.getRetention()`,
+`manager.getRetention()`, `pipeline.getRetention()` — and none of them restates a default.
+
+If a combination cannot hold, the constructor refuses it rather than starting:
+
+```text
+RetentionViolation: dedup-covers-retry: the receiver forgets a message id after 300000 ms
+but the sender may retry it for 600000 ms and wait 5000 ms for each verdict, so a retry
+arrives as a new change
+```
+
+The refusal happens before the data directory is created, so a rejected configuration leaves
+nothing behind. `deriveRetention` is a pure function: the same request always produces the
+same windows, which is what lets components that cannot see each other agree.
+
+| Window          | Default | What it governs                                          |
+| --------------- | ------- | -------------------------------------------------------- |
+| `dedupMs`       | 30 min  | How long a receiver recognises a repeated message id     |
+| `ackTimeoutMs`  | 0       | How long one attempt waits for the peer's verdict        |
+| `retryWindowMs` | 60 s    | How long an entry may keep failing before it is parked   |
+| `deadLetterTtlMs` | 7 d   | How long a parked entry is kept for a revive             |
+| `entryTtlMs`    | 14 d    | How long delivered markers are kept before housekeeping  |
+
+Two pairs in that table look like they should nest and do not, and the difference matters
+when you size them: the entry TTL prunes _delivered_ markers, never a pending entry, so a
+short TTL is a fast housekeeping cycle rather than a lost change; and the dead-letter clock
+starts when an entry is parked, which is after the budget is spent, so the two durations are
+sequential rather than nested.
 
 ---
 

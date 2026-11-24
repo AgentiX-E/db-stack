@@ -188,9 +188,9 @@ describe('OutboxStore — nullish defaults', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-nullish-'));
     const s = new OutboxStore({ dataDir: tmp });
     expect(s['maxRetries']).toBeNull();
-    expect(s['retryWindowMs']).toBe(60_000);
+    expect(s.getRetention().retryWindowMs).toBe(60_000);
     expect(s['retryBackoffMs']).toBe(50);
-    expect(s['retryBackoffMaxMs']).toBe(2_000);
+    expect(s.getRetention().retryBackoffMaxMs).toBe(2_000);
     s.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   });

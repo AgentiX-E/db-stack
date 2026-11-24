@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { deriveRetention } from './storage/retention';
 import type {
   ITransport,
   TransportMessage,
@@ -53,6 +54,7 @@ describe('@agentix-e/db-federation types', () => {
       getDeadLetterEntries: vi.fn(() => []),
       retryDeadLetters: vi.fn(() => 0),
       housekeeping: vi.fn(() => ({ delivered: 0, deadLettered: 0 })),
+      getRetention: () => deriveRetention(),
       markFailed: vi.fn().mockReturnValue(false),
       getStats: vi.fn().mockReturnValue({} as OutboxStats),
     };
@@ -248,6 +250,7 @@ describe('@agentix-e/db-federation replication types', () => {
       onTargetRecovered: vi.fn().mockReturnValue(vi.fn()),
       isPeerReachable: vi.fn(() => true),
       onHighLag: vi.fn().mockReturnValue(vi.fn()),
+      getRetention: () => deriveRetention(),
     };
     expect(typeof replication.start).toBe('function');
     expect(typeof replication.stop).toBe('function');

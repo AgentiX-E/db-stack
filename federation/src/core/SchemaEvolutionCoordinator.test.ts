@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SchemaEvolutionCoordinator, type SchemaChange } from './SchemaEvolutionCoordinator';
 import type { IMultiLeaderReplication } from '../interfaces/replication/IMultiLeaderReplication';
+import { deriveRetention } from '../storage/retention';
 
 function mockReplication(): IMultiLeaderReplication {
   return {
@@ -27,6 +28,7 @@ function mockReplication(): IMultiLeaderReplication {
     onTargetRecovered: vi.fn(),
     isPeerReachable: vi.fn(() => true),
     onHighLag: vi.fn(),
+    getRetention: () => deriveRetention(),
   };
 }
 

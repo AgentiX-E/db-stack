@@ -145,7 +145,7 @@ function config(dir: string, overrides: Partial<ExactlyOnceCDCPipelineConfig> = 
     checkpointDir: join(dir, 'outbox'),
     pumpIntervalMs: 10,
     pumpBatchSize: 100,
-    dedupTtlMs: 60_000,
+    dedupTtlMs: 300_000,
     ackTimeoutMs: 60,
     ...overrides,
   };

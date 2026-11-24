@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HealthMonitor, type FederationHealth, type HealthMonitorConfig } from './HealthMonitor';
 import type { IMultiLeaderReplication, ReplicationStatus } from '../interfaces/replication/IMultiLeaderReplication';
+import { deriveRetention } from '../storage/retention';
 
 function mockStatus(overrides: Partial<ReplicationStatus> = {}): ReplicationStatus {
   return {
@@ -54,6 +55,7 @@ function createMockReplication(status: ReplicationStatus = mockStatus()): IMulti
     onTargetRecovered: vi.fn().mockReturnValue(vi.fn()),
     isPeerReachable: vi.fn(() => true),
     onHighLag: vi.fn().mockReturnValue(vi.fn()),
+    getRetention: () => deriveRetention(),
   };
 }
 

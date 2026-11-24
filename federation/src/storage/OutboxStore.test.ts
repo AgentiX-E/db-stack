@@ -394,7 +394,7 @@ describe('OutboxStore — Housekeeping', () => {
   beforeEach(() => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbox-hk-'));
     dataDir = tmpDir;
-    store = createTestStore({ dataDir, ttlMs: -1 }); // negative TTL means everything is expired
+    store = createTestStore({ dataDir, ttlMs: 0 }); // zero TTL means everything is expired
   });
 
   afterEach(() => {

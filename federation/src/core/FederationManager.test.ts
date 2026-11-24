@@ -27,6 +27,7 @@ import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
 import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
 import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
 import { HLC } from '../hlc/HLC';
+import { deriveRetention } from '../storage/retention';
 
 function dummyReplicationConfig(): ReplicationConfig {
   return {
@@ -54,6 +55,7 @@ function mockReplication(): IMultiLeaderReplication {
     onTargetRecovered: vi.fn().mockReturnValue(vi.fn()),
     isPeerReachable: vi.fn(() => true),
     onHighLag: vi.fn().mockReturnValue(vi.fn()),
+    getRetention: () => deriveRetention(),
   };
 }
 
@@ -101,6 +103,7 @@ function mockOutbox(): IOutboxStore {
     getDeadLetterEntries: vi.fn(() => []),
     retryDeadLetters: vi.fn(() => 0),
     housekeeping: vi.fn(() => ({ delivered: 0, deadLettered: 0 })),
+    getRetention: () => deriveRetention(),
     getStats: vi.fn().mockResolvedValue({
       totalEntries: 0,
       pendingCount: 0,

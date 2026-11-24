@@ -133,6 +133,21 @@ function setupFixture(registryKey = 'test-mlr'): Fixture {
   };
 }
 
+describe('MultiLeaderReplication — the budget its peer has to cover', () => {
+  it('reports the outbox windows rather than a second copy of them', () => {
+    const fix = setupFixture('mlr-retention');
+    try {
+      // The store was configured with a 3-attempt cap and the default window;
+      // whatever it answers, the replication must answer the same, because the
+      // peer sizes its dedup ring from this and the store is what enforces it.
+      expect(fix.a.getRetention()).toEqual(fix.outboxA.getRetention());
+      expect(fix.a.getRetention().retryWindowMs).toBe(60_000);
+    } finally {
+      fix.cleanup();
+    }
+  });
+});
+
 describe('MultiLeaderReplication — AC 42.4: HLC Timestamp on Replicated Writes', () => {
   let fix: Fixture;
 

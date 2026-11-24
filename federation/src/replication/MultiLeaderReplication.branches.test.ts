@@ -18,6 +18,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { MultiLeaderReplication } from './MultiLeaderReplication';
 import { HLC } from '../hlc/HLC';
+import { deriveRetention } from '../storage/retention';
 import type { ReplicationConfig } from '../interfaces/replication/IMultiLeaderReplication';
 import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
 import type { ITransport } from '../interfaces/transport/ITransport';
@@ -107,6 +108,7 @@ function mockOutbox(): MockOutbox {
     getDeadLetterEntries: vi.fn(() => []),
     retryDeadLetters: vi.fn(() => 0),
     housekeeping: vi.fn(() => ({ delivered: 0, deadLettered: 0 })),
+    getRetention: () => deriveRetention(),
     getStats: vi.fn(async () => ({
       totalEntries: 0,
       pendingCount: 0,

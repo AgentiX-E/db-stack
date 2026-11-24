@@ -10,6 +10,8 @@ export type { IOutboxStore } from './interfaces/outbox/IOutboxStore';
 export type { OutboxEntry, OutboxEntryInput, OutboxStatus } from './interfaces/outbox/OutboxEntry';
 export { OutboxStore } from './storage/OutboxStore';
 export type { OutboxStoreConfig, DeadLetterEntry } from './storage/OutboxStore';
+export { DEFAULT_RETENTION, deriveRetention, RetentionViolation } from './storage/retention';
+export type { RetentionRequest, RetentionRule, RetentionWindows } from './storage/retention';
 
 // HLC
 export type { IHLCTimestamp } from './interfaces/hlc/IHLCTimestamp';

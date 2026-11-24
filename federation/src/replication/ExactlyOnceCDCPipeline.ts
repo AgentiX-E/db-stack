@@ -54,6 +54,7 @@
 import { CDCEngine, type CDCEngineConfig } from './CDCEngine';
 import { OutboxStore, type OutboxStoreConfig } from '../storage/OutboxStore';
 import { DedupRing } from './DedupRing';
+import { deriveRetention, type RetentionWindows } from '../storage/retention';
 import { HLC } from '../hlc/HLC';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -217,6 +218,9 @@ export class ExactlyOnceCDCPipeline {
   private readonly cdc: ICDCEngine;
   private readonly outbox: OutboxStore;
   private readonly dedup: DedupRing;
+
+  /** The windows this pipeline runs with, derived once at construction. */
+  private readonly retention: RetentionWindows;
   private readonly config: ResolvedCDCPipelineConfig;
   private readonly checkpointPath: string;
 
@@ -318,11 +322,37 @@ export class ExactlyOnceCDCPipeline {
       ackTimeoutMs: config.ackTimeoutMs ?? 5_000,
     };
 
+    // The pipeline is the only component that holds both halves of the
+    // containment: the sender's budget (its outbox) and the receiver's memory
+    // (its dedup ring). The wait for a verdict belongs to the same sum as the
+    // retries, because it happens inside every attempt: a ring that covers the
+    // budget but not the wait forgets the id while the last attempt is still in
+    // flight, and that attempt's retry arrives as a new change.
+    this.retention = deriveRetention({
+      dedupMs: this.config.dedupTtlMs,
+      ackTimeoutMs: this.config.ackTimeoutMs,
+      retryWindowMs: this.config.outboxConfig.retryWindowMs,
+      retryBackoffMaxMs: this.config.outboxConfig.retryBackoffMaxMs,
+      deadLetterTtlMs: this.config.outboxConfig.deadLetterTtlMs,
+      entryTtlMs: this.config.outboxConfig.ttlMs,
+    });
+
     this.cdc = this.config.engine ?? new CDCEngine(this.config.cdcConfig);
     this.outbox = new OutboxStore(this.config.outboxConfig);
-    this.dedup = new DedupRing({ ttlMs: this.config.dedupTtlMs });
+    this.dedup = new DedupRing({ ttlMs: this.retention.dedupMs });
 
     this.checkpointPath = path.join(this.config.checkpointDir, 'cdc-checkpoint.json');
+  }
+
+  /**
+   * The windows this pipeline runs with.
+   *
+   * Reported so a composition root can align the peer's ring with this side's
+   * budget instead of restating the arithmetic — and so a test can assert the
+   * ring was built from the derivation rather than from a literal.
+   */
+  getRetention(): RetentionWindows {
+    return { ...this.retention };
   }
 
   // ── Lifecycle ────────────────────────────────────────────

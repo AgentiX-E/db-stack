@@ -31,6 +31,7 @@ import { DCSplitBrainDetector, type SplitBrainEvent } from './DCSplitBrainDetect
 import { ConflictResolver, type ConflictValue, type ConflictStrategy } from '../replication/ConflictResolver';
 import { AntiEntropy } from '../replication/AntiEntropy';
 import { DedupRing } from '../replication/DedupRing';
+import { deriveRetention, type RetentionWindows } from '../storage/retention';
 import type { InboundMessage } from '../interfaces/transport/InboundMessage';
 import type { DataEntry, DataProvider } from '../replication/AntiEntropy';
 import { EventEmitter } from 'events';
@@ -120,6 +121,16 @@ export interface FederationManagerConfig {
    * run nowhere outside the test suite.
    */
   outboxHousekeepingIntervalMs?: number;
+  /**
+   * How long this side remembers a `msgId` it has already applied.
+   * Default: the package default, 30 minutes.
+   *
+   * The ring is the receiver's half of at-least-once delivery, and its length is
+   * not a tuning preference: a retry that arrives after the ring has forgotten
+   * the id is a second change. The sender's budget is therefore read from the
+   * replication and a window shorter than it is refused in the constructor.
+   */
+  dedupWindowMs?: number;
 }
 
 export class FederationManager {
@@ -139,13 +150,18 @@ export class FederationManager {
   private _antiEntropy: AntiEntropy | null = null;
 
   /**
+   * The windows this side runs with, derived once from the sender's budget.
+   *
+   * Kept so `getRetention()` reports the window the ring was actually built
+   * with, rather than a second copy of the number that can drift from it.
+   */
+  private readonly retention: RetentionWindows;
+
+  /**
    * Receiver-side dedup. Transport delivery is at-least-once, so the same
    * message id can arrive more than once (retry, reconnect, anti-entropy).
    */
-  private readonly dedup = new DedupRing({
-    maxCapacity: 100_000,
-    ttlMs: 30 * 60_000,
-  });
+  private readonly dedup: DedupRing;
   private _unsubInbound: (() => void) | null = null;
   private _unsubRecovered: (() => void) | null = null;
   private _dlqScanTimer: ReturnType<typeof setInterval> | null = null;
@@ -167,6 +183,18 @@ export class FederationManager {
     config: FederationManagerConfig,
   ) {
     this.config = config;
+    // The sender's budget is the replication's, not ours: it is the component
+    // that retries. Ask it, then refuse a ring that would forget an id while the
+    // sender can still repeat it — in the constructor, before `start()` wires a
+    // single timer around a window that cannot hold what it must hold.
+    this.retention = deriveRetention({
+      ...replication.getRetention(),
+      dedupMs: config.dedupWindowMs,
+    });
+    this.dedup = new DedupRing({
+      maxCapacity: 100_000,
+      ttlMs: this.retention.dedupMs,
+    });
     this.hlc = config.hlc ?? new HLC(config.nodeId);
     this.healthMonitor = new HealthMonitor(replication, config.healthConfig);
   }
@@ -574,6 +602,18 @@ export class FederationManager {
    */
   getReplication(): IMultiLeaderReplication {
     return this.replication;
+  }
+
+  /**
+   * The retention windows this side runs with.
+   *
+   * The dedup window here is the one the ring was built with; the retry budget
+   * is the sender's, read from the replication at construction. A caller that
+   * needs both numbers to agree — a composition root wiring the outbox and the
+   * manager — reads them from one place instead of restating one of them.
+   */
+  getRetention(): RetentionWindows {
+    return { ...this.retention };
   }
 
   /**

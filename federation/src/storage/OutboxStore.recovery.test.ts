@@ -113,7 +113,7 @@ describe('OutboxStore — the retry window can be disabled', () => {
   it('Infinity never dead-letters, however long the failure lasts', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-    const store = makeStore({ retryWindowMs: Infinity });
+    const store = makeStore({ retryWindowMs: Infinity, dedupMs: Infinity });
     const entry = await store.add(input(['peer-b']));
 
     store.markFailed(entry.id, 'link down');

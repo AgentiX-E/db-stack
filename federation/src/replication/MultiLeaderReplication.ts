@@ -30,6 +30,7 @@ import type { TransportMessage } from '../interfaces/transport/TransportMessage'
 import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
 import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
 import type { OutboxStats } from '../interfaces/types';
+import type { RetentionWindows } from '../storage/retention';
 import { HLC } from '../hlc/HLC';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
@@ -72,6 +73,17 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
     this.outbox = options.outbox;
     this.config = options.config;
     this.hlc = options.hlc ?? new HLC(options.config.nodeId);
+  }
+
+  /**
+   * The windows of the outbox this replication sends from.
+   *
+   * Delegated rather than duplicated: the budget is a property of the store, and
+   * a second statement of it here is a number that can disagree with the one
+   * `markFailed` obeys.
+   */
+  getRetention(): RetentionWindows {
+    return this.outbox.getRetention();
   }
 
   async start(_config?: ReplicationConfig): Promise<void> {

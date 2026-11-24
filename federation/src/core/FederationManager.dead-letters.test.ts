@@ -20,6 +20,7 @@ import { OutboxStore } from '../storage/OutboxStore';
 import type { IMultiLeaderReplication } from '../interfaces/replication/IMultiLeaderReplication';
 import type { ITransport } from '../interfaces/transport/ITransport';
 import type { ReplicationConfig } from '../interfaces/replication/IMultiLeaderReplication';
+import { deriveRetention } from '../storage/retention';
 
 const teardown: Array<() => void> = [];
 
@@ -66,6 +67,7 @@ async function makeHarness(options: { reachable?: string[]; dlqScanIntervalMs?: 
     },
     isPeerReachable: (nodeId: string) => reachable.has(nodeId),
     onHighLag: () => () => {},
+    getRetention: () => deriveRetention(),
   };
 
   const transport: ITransport = {

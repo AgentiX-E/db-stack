@@ -43,7 +43,7 @@ function makeConfig(overrides?: Partial<ExactlyOnceCDCPipelineConfig>): ExactlyO
     pumpIntervalMs: 50,
     pumpBatchSize: 100,
     maxPending: 1000,
-    dedupTtlMs: 10_000,
+    dedupTtlMs: 300_000,
     ...overrides,
   };
 }
