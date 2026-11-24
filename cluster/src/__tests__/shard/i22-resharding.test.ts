@@ -3,16 +3,19 @@
  *
  * RES1-RES4: ShardStrategy (Hash, Range, ConsistentHash) unit tests
  * RES5-RES8: ShardManager lifecycle + events
- * RES9-RES12: ReshardPlanner (split, merge, move, rollback)
  * RES13-RES16: OnlineShardMigration (4-phase protocol, cutover, edge cases)
- * RES17-RES19: Integration scenarios (split then move, merge then rebalance)
- * RES20: Coverage verification
+ * RES18-RES19: Rebalance and hash uniformity
+ * RES20: Instance isolation
+ *
+ * The ReshardPlanner cases moved to `i86-reshard-planner.test.ts` when the
+ * planner stopped being a timer loop: what they pin now is a real copy through
+ * the two migration ports, which needs the in-memory shard this file's migration
+ * cases already use.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { HashShardStrategy, RangeShardStrategy, ConsistentHashStrategy } from '../../shard/ShardStrategy';
 import { ShardManager } from '../../shard/ShardManager';
-import { ReshardPlanner } from '../../shard/ReshardPlanner';
 import { OnlineShardMigration } from '../../shard/OnlineShardMigration';
 import { MemoryShardSink, MemoryShardSource, MemoryStore } from './migration-memory';
 
@@ -416,141 +419,6 @@ describe('RES8: ShardManager addNode/removeNode', () => {
   });
 });
 
-// ── RES9-RES12: ReshardPlanner ──────────────────────────────
-
-describe('RES9: ReshardPlanner — split plans', () => {
-  let planner: ReshardPlanner;
-
-  beforeEach(() => {
-    planner = new ReshardPlanner();
-  });
-
-  it('creates valid split plan', async () => {
-    const plan = await planner.createSplitPlan(5, 'user:5000');
-    expect(plan.type).toBe('split');
-    expect(plan.sourceShardIds).toEqual([5]);
-    expect(plan.targetShardIds.length).toBe(2);
-    expect(plan.dualWriteRequired).toBe(true);
-    expect(plan.batchSize).toBe(10000);
-  });
-
-  it('executes split plan through all phases', async () => {
-    const plan = await planner.createSplitPlan(1, 'mid');
-    const planId = await planner.executePlan(plan);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    const progress = await planner.getProgress(planId);
-    expect(progress).not.toBeNull();
-    expect(progress!.status).toBe('completed');
-    expect(progress!.progressPercent).toBe(100);
-  });
-
-  it('emits progress events', async () => {
-    const events: string[] = [];
-    planner.onProgress((p) => events.push(p.status));
-    const plan = await planner.createSplitPlan(1, 'mid');
-    await planner.executePlan(plan);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    expect(events).toContain('preparing');
-    expect(events).toContain('migrating');
-    expect(events).toContain('verifying');
-    expect(events).toContain('completed');
-  });
-
-  it('prevents duplicate execution of same plan', async () => {
-    const plan = await planner.createSplitPlan(2, 'k');
-    await planner.executePlan(plan);
-    await expect(planner.executePlan(plan)).rejects.toThrow('already executing');
-  });
-});
-
-describe('RES10: ReshardPlanner — merge plans', () => {
-  it('creates valid merge plan', async () => {
-    const planner = new ReshardPlanner();
-    const plan = await planner.createMergePlan([3, 7]);
-    expect(plan.type).toBe('merge');
-    expect(plan.sourceShardIds).toEqual([3, 7]);
-    expect(plan.targetShardIds).toEqual([3]);
-  });
-
-  it('executes merge plan to completion', async () => {
-    const planner = new ReshardPlanner();
-    const plan = await planner.createMergePlan([10, 20]);
-    const planId = await planner.executePlan(plan);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    const progress = await planner.getProgress(planId);
-    expect(progress!.status).toBe('completed');
-  });
-});
-
-describe('RES11: ReshardPlanner — move plans', () => {
-  it('creates a move plan', async () => {
-    const planner = new ReshardPlanner();
-    const plan = await planner.createMovePlan(42, 'node-z');
-    expect(plan.type).toBe('move');
-    expect(plan.sourceShardIds).toEqual([42]);
-    expect(plan.targetShardIds).toEqual([42]);
-    expect(plan.dualWriteRequired).toBe(false);
-  });
-});
-
-describe('RES12: ReshardPlanner — rollback and cancel', () => {
-  it('rollback resets progress', async () => {
-    const planner = new ReshardPlanner();
-    const plan = await planner.createSplitPlan(9, 'mid');
-    const planId = await planner.executePlan(plan);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    await planner.rollbackPlan(planId);
-    const progress = await planner.getProgress(planId);
-    expect(progress!.status).toBe('rolled-back');
-    expect(progress!.bytesMigrated).toBe(0);
-  });
-
-  it('cancel sets plan to failed', async () => {
-    const planner = new ReshardPlanner();
-    const plan = await planner.createSplitPlan(8, 'k');
-    const planId = await planner.executePlan(plan);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    await planner.cancelPlan(planId);
-    const progress = await planner.getProgress(planId);
-    expect(progress!.status).toBe('failed');
-  });
-
-  it('listActivePlans returns only active plans', async () => {
-    const planner = new ReshardPlanner();
-    const plan = await planner.createSplitPlan(6, 'k');
-    const planId = await planner.executePlan(plan);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    const active = await planner.listActivePlans();
-    expect(active.find((p) => p.planId === planId)).toBeUndefined();
-  });
-
-  it('verifyConsistency returns consistent after completion', async () => {
-    const planner = new ReshardPlanner();
-    const plan = await planner.createSplitPlan(7, 'mid');
-    const planId = await planner.executePlan(plan);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    const result = await planner.verifyConsistency(planId);
-    expect(result.consistent).toBe(true);
-    expect(result.mismatches).toBe(0);
-  });
-
-  it('verifyConsistency returns inconsistent for unknown plan', async () => {
-    const planner = new ReshardPlanner();
-    const result = await planner.verifyConsistency('nonexistent');
-    expect(result.consistent).toBe(false);
-  });
-
-  it('reset clears all state', async () => {
-    const planner = new ReshardPlanner();
-    const plan = await planner.createSplitPlan(3, 'k');
-    await planner.executePlan(plan);
-    planner.reset();
-    const progress = await planner.getProgress(plan.planId);
-    expect(progress).toBeNull();
-    expect(planner.getAllPlans()).toEqual([]);
-  });
-});
-
 // ── RES13-RES16: OnlineShardMigration ───────────────────────
 
 /**
@@ -790,23 +658,6 @@ describe('RES16: OnlineShardMigration — rollback/cancel/listing', () => {
   });
 });
 
-// ── RES17-RES19: Integration scenarios ──────────────────────
-
-describe('RES17: Split then move workflow', () => {
-  it('creates split plan, executes, then moves resulting shard', async () => {
-    const planner = new ReshardPlanner();
-    const splitPlan = await planner.createSplitPlan(1, 'mid');
-    await planner.executePlan(splitPlan);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    const splitProgress = await planner.getProgress(splitPlan.planId);
-    expect(splitProgress!.status).toBe('completed');
-
-    const movePlan = await planner.createMovePlan(splitPlan.targetShardIds[0]!, 'node-z');
-    expect(movePlan.type).toBe('move');
-    expect(movePlan.dualWriteRequired).toBe(false);
-  });
-});
-
 describe('RES18: Rebalance after migration', () => {
   it('rebalance distributes shards after migration completion', async () => {
     const strategy = new HashShardStrategy();
@@ -850,27 +701,9 @@ describe('RES19: Hash uniformity', () => {
   });
 });
 
-// ── RES20: Multiple planners isolation ──────────────────────
+// ── RES20: Instance isolation ───────────────────────────────
 
-describe('RES20: Multiple planners isolation', () => {
-  it('two planners are independent', async () => {
-    const p1 = new ReshardPlanner();
-    const p2 = new ReshardPlanner();
-
-    const plan1 = await p1.createSplitPlan(1, 'm');
-    const plan2 = await p2.createSplitPlan(2, 'k');
-
-    await p1.executePlan(plan1);
-    await p2.executePlan(plan2);
-
-    await new Promise((resolve) => setTimeout(resolve, 800));
-
-    const active1 = await p1.listActivePlans();
-    const active2 = await p2.listActivePlans();
-    expect(active1.length).toBe(0);
-    expect(active2.length).toBe(0);
-  });
-
+describe('RES20: Migration instance isolation', () => {
   it('migration instances are isolated', async () => {
     const m1 = makeMigration();
     const m2 = makeMigration();

@@ -170,12 +170,20 @@ const shardId = manager.route('user:42');
 ### Online resharding
 
 ```ts
-const planner = new ReshardPlanner();
-const plan = await planner.createMovePlan(7, 'node-b');
-await planner.executePlan(plan);
-
 // Moving one shard's data to the node that will own it.
 const migration = new OnlineShardMigration(shardSource, targetSink);
+const planner = new ReshardPlanner(migration);
+
+const plan = await planner.createMovePlan(7, 'node-b', 'node-a');
+const planId = await planner.executePlan(plan);
+
+// `preparing -> migrating -> verifying -> completed`, measured against the
+// source. A split or a merge is refused here: neither can be checked by
+// comparing counts, so neither is simulated.
+await planner.getProgress(planId);
+await planner.verifyConsistency(planId);
+
+// The same copy, driven directly, when a plan is more than you need.
 const { migrationId } = await migration.startMigration({
   shardId: 7,
   sourceNode: 'node-a',

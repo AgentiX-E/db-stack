@@ -30,6 +30,7 @@ import type {
   IMigrationConfig,
   IMigrationStatus,
   IOnlineShardMigration,
+  MigrationProgressEvent,
 } from '../interfaces/shard/IOnlineShardMigration';
 import type { IShardMigrationSink } from '../interfaces/shard/IShardMigrationSink';
 import type { IShardMigrationSource, ShardScanEntry } from '../interfaces/shard/IShardMigrationSource';
@@ -110,6 +111,7 @@ function progressOf(entriesCopied: number, entriesTotal: number): number {
 export class OnlineShardMigration implements IOnlineShardMigration {
   private migrations = new Map<string, MigrationState>();
   private writeSuspended = new Set<string>(); // migrationIds with suspended writes
+  private listeners = new Set<(event: MigrationProgressEvent) => void>();
 
   /**
    * @param source the shard being copied — enumerated by version, read by key
@@ -161,6 +163,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
 
     this.migrations.set(migrationId, state);
 
+    this.notify(state);
     state.run = this.runMigration(state);
 
     return { migrationId };
@@ -176,6 +179,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
       state.error = err instanceof Error ? err.message : String(err);
       this.writeSuspended.delete(state.migrationId);
     }
+    this.notify(state);
     return state.phase;
   }
 
@@ -231,6 +235,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
   private async catchUp(state: MigrationState): Promise<void> {
     const deadline = Date.now() + state.config.finalSyncTimeoutMs;
     state.phase = 'incremental-sync';
+    this.notify(state);
     for (;;) {
       this.checkpoint(state);
       if (state.stopRequested) return;
@@ -247,6 +252,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     const { shardId, targetNode, sourceNode, finalSyncTimeoutMs, pauseWritesOnCutover } = state.config;
     state.phase = 'cutover';
     if (pauseWritesOnCutover) this.writeSuspended.add(state.migrationId);
+    this.notify(state);
 
     // One more pass inside the cutover window: the writes that arrived between the
     // last catch-up scan and the suspension are the ones that would be lost.
@@ -298,6 +304,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     state.bytesCopied = targetStats.bytes;
     state.phase = 'completed';
     this.writeSuspended.delete(state.migrationId);
+    this.notify(state);
   }
 
   /** Read, then write, one batch. A key deleted between the two is reconciled, not copied. */
@@ -313,6 +320,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
       state.caughtUpVersion = Math.max(state.caughtUpVersion, entry.version);
     }
     state.entriesTotal = Math.max(state.entriesTotal, state.entriesCopied);
+    this.notify(state);
   }
 
   // ── Query ─────────────────────────────────────────────────
@@ -322,6 +330,18 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     if (!state) {
       throw new Error(`migration ${migrationId} not found`);
     }
+    return this.statusOf(state);
+  }
+
+  onProgress(listener: (event: MigrationProgressEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /** The one place a status is built; `getStatus` and every listener read the same counters. */
+  private statusOf(state: MigrationState): IMigrationStatus {
     const completed = state.phase === 'completed';
     return {
       phase: state.phase,
@@ -333,6 +353,25 @@ export class OnlineShardMigration implements IOnlineShardMigration {
       caughtUpVersion: state.caughtUpVersion,
       ...(state.error === undefined ? {} : { error: state.error }),
     };
+  }
+
+  /**
+   * Tell the listeners what the counters now say.
+   *
+   * A listener's exception is swallowed for the same reason a progress callback
+   * in a browser is: the migration is the caller's data, the listener is the
+   * caller's reporting, and reporting must not be able to abort a copy.
+   */
+  private notify(state: MigrationState): void {
+    if (this.listeners.size === 0) return;
+    const event: MigrationProgressEvent = { migrationId: state.migrationId, status: this.statusOf(state) };
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch {
+        // A consumer's bug is not the migration's failure.
+      }
+    }
   }
 
   // ── Control ───────────────────────────────────────────────
@@ -378,6 +417,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     state.caughtUpVersion = 0;
     state.error = undefined;
     this.writeSuspended.delete(migrationId);
+    this.notify(state);
   }
 
   async cancel(migrationId: string): Promise<void> {
@@ -397,6 +437,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     state.phase = 'failed';
     state.error = 'cancelled by user';
     this.writeSuspended.delete(migrationId);
+    this.notify(state);
   }
 
   /** Wait for a migration to reach a terminal phase, then report it. */
@@ -436,6 +477,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
   reset(): void {
     this.migrations.clear();
     this.writeSuspended.clear();
+    this.listeners.clear();
     migrationSeq = 0;
   }
 }

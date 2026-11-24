@@ -23,6 +23,7 @@ describe('IOnlineShardMigration', () => {
       cutover: vi.fn().mockResolvedValue(undefined),
       rollback: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn().mockResolvedValue(undefined),
+      onProgress: vi.fn().mockReturnValue(() => {}),
     };
 
     // Verify startMigration
@@ -65,6 +66,7 @@ describe('IOnlineShardMigration', () => {
       cutover: vi.fn().mockResolvedValue(undefined),
       rollback: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn().mockResolvedValue(undefined),
+      onProgress: vi.fn().mockReturnValue(() => {}),
     };
 
     const { migrationId } = await mock.startMigration(config);

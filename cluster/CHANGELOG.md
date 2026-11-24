@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-11-24
+
+### Added
+
+- **`IOnlineShardMigration.onProgress(listener)`** — a migration's progress without polling it. The
+  listener is called after every batch the target accepts and once per phase change, with the same
+  `IMigrationStatus` `getStatus()` returns, read from the same counters. A listener that throws is
+  ignored: a consumer's reporting bug is not a reason to abandon a copy of the caller's data.
+
+- **`ReshardPlan.sourceNode`, `ReshardPlan.targetNode` and `ReshardPlan.splitKey`.** A plan has to
+  say where the shard lives to be executable, and a split has to remember the boundary it divides
+  at — `createSplitPlan(shardId, splitKey)` accepted the key and dropped it, so the resulting plan
+  described two target shards and no line between them. `createMovePlan` takes the source node as an
+  optional third argument.
+
+### Changed
+
+- **`ReshardPlanner` executes a copy instead of simulating one.** `executePlan` used to start a timer
+  loop: `bytesMigrated` was `batch × batchSize × 1024`, `progressPercent` was `15 + batch/total × 70`,
+  `totalBytes` was a constant invented by `createSplitPlan`, and the advertised five phases were five
+  `await delay(50)` calls. Nothing was copied and no node was involved, so "completed" meant the loop
+  had ended. The planner now delegates to `OnlineShardMigration` and maps its measured status onto
+  `IMigrationProgress`: phases come from the coordinator's own (`preparing`, `dual-writing` or
+  `migrating`, `verifying`, `completed`), batches are counted from entries over the plan's batch
+  size, and the byte counters are the source's. The plan's `estimatedSizeBytes` seeds the first
+  report only — the estimate is available before the source is asked, and is replaced by the
+  measurement from the second report on.
+
+- **`ReshardPlanner.executePlan` refuses what it cannot verify.** A **split** re-keys entries and a
+  **merge** copies into a target that already holds entries; the coordinator completes by comparing
+  what the target says it holds with what the source says it has, and that comparison is only
+  meaningful when the two extents are the same. Both are refused, before a migration is registered,
+  with a message naming the shard, the boundary or the union involved. A move whose plan does not
+  name both nodes is refused the same way. A planner constructed without a coordinator refuses to
+  execute at all.
+
+- **`verifyConsistency` distinguishes incomplete from inconsistent.** A completed migration is
+  consistent because the coordinator refused to complete it otherwise; one still running reports how
+  many batches are not on the target yet, which is a number a caller can wait on; a failed one is
+  inconsistent with nothing to reconcile.
+
+### Fixed
+
+- **`ReshardPlanner.rollbackPlan`/`cancelPlan` reach the migration.** They used to relabel the
+  planner's own record and stop there, so a cancelled plan left a copy running. They now call the
+  coordinator, and the reported status is the one the copy actually reached.
+
 ## [2.0.0] — 2026-11-24
 
 ### Breaking
@@ -430,6 +477,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at the head of the buffer instead of being warned about and lost. The buffer is also never overtaken by a
   new frame, and a flush resolves its socket when its turn comes rather than when it was requested — a
   connection the pool has replaced is one whose writes the peer may never read.
+
 - **A one-voter group never took office, and could not commit if it had.** Two defects in
   `@maboke123/raft-core` 0.2.1 that a three-node cluster cannot reach. (1) A candidate collected its
   own vote, computed `votesNeeded`, and then waited for `RequestVoteResponse`s — which a group with no

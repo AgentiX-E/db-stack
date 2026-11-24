@@ -389,14 +389,14 @@ Every important operation emits structured logs and optional OTEL spans:
 ## Testing
 
 ```bash
-pnpm test                  # 2 387 tests, 147 test files
+pnpm test                  # 2 388 tests, 147 test files
 pnpm coverage              # the same, with per-file coverage gates
 pnpm test:perf             # performance benchmarks on a real 3-node TLS cluster
 pnpm tla-check             # TLA+ model checking
 ```
 
-- **147 test files, 2 387 tests** — unit, integration, boundary, chaos, LTS — 99.46 % lines,
-  99.72 % functions, 98.37 % branches, with a per-file floor of 95 %
+- **147 test files, 2 388 tests** — unit, integration, boundary, chaos, LTS — 99.47 % lines,
+  99.72 % functions, 98.34 % branches, with a per-file floor of 95 %
 - **TLA+ formal verification** — JointConsensus elections + log replication
 - **Jepsen-style validation** — fuzzy register checker + end-state scanning
 - **LTS soak tests** — 5-minute adaptive stability cycles, 0 leader changes

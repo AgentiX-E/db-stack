@@ -117,7 +117,7 @@ for, and what a node answers in the window before any of the three sources has
 produced a member set. That window is why a group on a shared transport used to be
 unaccounted — a watchdog built from an empty `peers` would have been a watchdog of
 one, which is true of every isolated node. The committed configuration is the only
-list that is a *fact*, so it is the one that wins.
+list that is a _fact_, so it is the one that wins.
 
 A single-node cluster is not that window: its committed configuration names one
 voter, one answer is a majority, and `hasQuorum` is `true` because it has to be.
@@ -126,7 +126,7 @@ voter, one answer is a majority, and `hasQuorum` is `true` because it has to be.
 
 `addServer` / `promoteServer` / `removeServer` append a **single-step**
 configuration — the new voter set is in force for the commit that admits it — so a
-change commits when the *enlarged* set can answer, not when every existing voter
+change commits when the _enlarged_ set can answer, not when every existing voter
 can. The arithmetic has a consequence worth stating plainly, because the intuitive
 reading is the opposite one: promoting a reachable learner needs
 `⌊(n+1)/2⌋ + 1` acknowledgements out of `n+1` voters, and the learner is one of
@@ -135,7 +135,7 @@ argued: `e2e/tests/cluster-membership.test.ts` (AC-C11) kills one voter of a
 six-voter cluster and promotes a seventh, on five real processes over mTLS, in under
 a second.
 
-What a change does not survive is *losing the quorum it would need*, and that case
+What a change does not survive is _losing the quorum it would need_, and that case
 is refused by name rather than by timeout. `removeServer` on a leader that can no
 longer hear a majority answers `{ changed: false, reason: 'no-quorum' }` in about a
 millisecond and appends nothing (AC-C12) — the guard reads the watchdog before
@@ -154,10 +154,10 @@ two-phase path (C_old → C_old,new → C_new, with rollback) use
 Two defaults are published because a caller may want to state them explicitly
 rather than inherit them:
 
-| Constant | Value | Meaning |
-|---|---:|---|
-| `DEFAULT_LOG_SLICE` | 128 | Entries one learner pull carries when the caller asks for no particular count. Raising it shortens catch-up at the cost of larger responses. |
-| `DEFAULT_SNAPSHOT_INTERVAL` | 200 | Committed entries between snapshots. Lower keeps the log a restart replays short and pays for it in capture cost; higher does the reverse. `bench/snapshot-threshold-sweep.ts` measures the curve. |
+| Constant                    | Value | Meaning                                                                                                                                                                                            |
+| --------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEFAULT_LOG_SLICE`         |   128 | Entries one learner pull carries when the caller asks for no particular count. Raising it shortens catch-up at the cost of larger responses.                                                       |
+| `DEFAULT_SNAPSHOT_INTERVAL` |   200 | Committed entries between snapshots. Lower keeps the log a restart replays short and pays for it in capture cost; higher does the reverse. `bench/snapshot-threshold-sweep.ts` measures the curve. |
 
 ### `RaftGroup`
 
@@ -190,12 +190,20 @@ class RaftGroup {
   getLearners(): Map<string, LearnerInfo>;
   addLearner(nodeId: string): Promise<boolean>;
   removeLearner(nodeId: string): boolean;
-  requestForLearner(fromIndex: number, limit?: number): Promise<{
-    entries: ApplyEntry[]; snapshotAvailable: boolean;
-    firstAvailableIndex: number; lastIndex: number; lastTerm: number;
+  requestForLearner(
+    fromIndex: number,
+    limit?: number,
+  ): Promise<{
+    entries: ApplyEntry[];
+    snapshotAvailable: boolean;
+    firstAvailableIndex: number;
+    lastIndex: number;
+    lastTerm: number;
   }>;
   updateLearnerProgress(nodeId: string, matchedIndex: number): void;
-  proposeMembershipChange(change: MembershipChange): Promise<{ success: boolean; phase: RaftConsensusPhase; error?: string }>;
+  proposeMembershipChange(
+    change: MembershipChange,
+  ): Promise<{ success: boolean; phase: RaftConsensusPhase; error?: string }>;
   rollbackMembershipChange(): Promise<boolean>;
   getConsensusPhase(): RaftConsensusPhase;
   isJointQuorumSatisfied(acknowledgedPeerIds: Set<number>): boolean;
@@ -203,7 +211,13 @@ class RaftGroup {
   trySnapshot(): Promise<void>;
   enforceLogLimit(): Promise<void>;
   enterReadOnlyMode(): Promise<void>;
-  getSplitBrainStatus(): { inMajority: boolean; readOnly: boolean; connectedPeers: number; totalPeers: number; fencingState: string };
+  getSplitBrainStatus(): {
+    inMajority: boolean;
+    readOnly: boolean;
+    connectedPeers: number;
+    totalPeers: number;
+    fencingState: string;
+  };
   stop(): void;
 }
 ```
@@ -224,13 +238,16 @@ aggregates health.
 ```typescript
 class RaftGroupManager {
   constructor(
-    outboxManager: any, tickMs?: number,
+    outboxManager: any,
+    tickMs?: number,
     flexQuorumConfig?: Partial<FlexibleQuorumConfig>,
     clusterTopology?: IClusterTopology,
   );
   registerShardWithReplica(
-    shardId: number, replica: IShardReplica,
-    peers: { nodeId: string; raftIndex: number }[], localRaftIndex: number,
+    shardId: number,
+    replica: IShardReplica,
+    peers: { nodeId: string; raftIndex: number }[],
+    localRaftIndex: number,
     raftConfigOverrides?: Partial<RaftConfig>,
   ): void;
   deregisterShard(shardId: number): void;
@@ -242,12 +259,19 @@ class RaftGroupManager {
   proposeBatch(shardId: number, entries: any[]): Promise<void>;
   proposeAndWait(shardId: number, entry: any): Promise<void>;
   read(shardId: number, sql: string, params?: any[]): Promise<any[]>;
-  proposeRead(shardId: number, sql: string, params?: any[]): Promise<{ rows: any[]; quorumResult: RaftGroupQuorumResult }>;
+  proposeRead(
+    shardId: number,
+    sql: string,
+    params?: any[],
+  ): Promise<{ rows: any[]; quorumResult: RaftGroupQuorumResult }>;
   getLeaderForShard(shardId: number): Promise<number>;
   getStats(): Promise<Record<number, { isLeader: boolean; term: number; progress: Record<string, number> }>>;
   getHealthStatus(): Promise<RaftHealthStatus[]>;
   getPeerStatus(): RaftPeerStatus[];
-  notifyTopologyChange(peers: { nodeId: string; raftIndex: number }[], localRaftIndex: number): Promise<Map<number, { success: boolean; phase: RaftConsensusPhase }>>;
+  notifyTopologyChange(
+    peers: { nodeId: string; raftIndex: number }[],
+    localRaftIndex: number,
+  ): Promise<Map<number, { success: boolean; phase: RaftConsensusPhase }>>;
   requestForLearner(shardId: number, fromIndex: number, limit?: number): Promise<LearnerPullResult>;
   getLeaderHealthSummary(): Promise<LeaderHealthSummary>;
   stop(): Promise<void>;
@@ -304,9 +328,23 @@ installs atomically. Stale partial assemblies are reaped.
 ```typescript
 class InstallSnapshotHandler {
   constructor(snapshotDir: string, nodeId: number, config?: Partial<InstallSnapshotHandlerConfig>);
-  handleChunk(req: InstallSnapshotRequest, raft: RaftAdapter, installSnapshotCallback: InstallSnapshotCallback): Promise<SnapshotChunkResult>;
-  createChunks(snapshotPath: string, meta: ShardSnapshotMeta, leaderId: string, chunkSize?: number): AsyncGenerator<InstallSnapshotRequest>;
-  sendSnapshot(raft: RaftAdapter, targetNodeId: string, snapshotPath: string, meta: ShardSnapshotMeta): Promise<boolean>;
+  handleChunk(
+    req: InstallSnapshotRequest,
+    raft: RaftAdapter,
+    installSnapshotCallback: InstallSnapshotCallback,
+  ): Promise<SnapshotChunkResult>;
+  createChunks(
+    snapshotPath: string,
+    meta: ShardSnapshotMeta,
+    leaderId: string,
+    chunkSize?: number,
+  ): AsyncGenerator<InstallSnapshotRequest>;
+  sendSnapshot(
+    raft: RaftAdapter,
+    targetNodeId: string,
+    snapshotPath: string,
+    meta: ShardSnapshotMeta,
+  ): Promise<boolean>;
   getAssemblyProgress(): { key: string; chunks: number; bytesReceived: number; elapsedMs: number }[];
   cleanStaleStates(): void;
   reset(): void;
@@ -863,22 +901,58 @@ a membership change would move.
 
 ### `ReshardPlanner`
 
-Plans and executes split, merge and move operations with an explicit phase
-machine, progress reporting, consistency verification and rollback.
+Describes a reshard and executes it through a migration coordinator.
+
+A reshard has two halves: a shape — which shards, which nodes, what batch size —
+and a copy. This class owns the shape; `OnlineShardMigration` owns the copy, and
+every number a caller reads here was measured by it.
 
 ```typescript
 class ReshardPlanner {
+  constructor(migration?: IOnlineShardMigration);
   createSplitPlan(sourceShardId: number, splitKey: string): Promise<ReshardPlan>;
   createMergePlan(sourceShardIds: [number, number]): Promise<ReshardPlan>;
-  createMovePlan(shardId: number, targetNodeId: string): Promise<ReshardPlan>;
+  createMovePlan(shardId: number, targetNodeId: string, sourceNodeId?: string): Promise<ReshardPlan>;
   executePlan(plan: ReshardPlan): Promise<string>;
-  getProgress(planId: string): Promise<IMigrationProgress>;
+  getProgress(planId: string): Promise<IMigrationProgress | null>;
   verifyConsistency(planId: string): Promise<{ consistent: boolean; mismatches: number }>;
   cancelPlan(planId: string): Promise<void>;
   rollbackPlan(planId: string): Promise<void>;
   onProgress(callback: (progress: IMigrationProgress) => void): () => void;
   listActivePlans(): Promise<ReshardPlan[]>;
+  getAllPlans(): ReshardPlan[];
+  dispose(): void;
 }
+```
+
+### What it executes, and what it refuses
+
+It executes **moves**. A move copies one shard, whole, from one node to another,
+which is the case the coordinator can prove: it finishes by comparing what the
+target holds with what the source has, and that comparison is only meaningful when
+the two extents are the same.
+
+A **split** re-keys entries (shard 7 becomes 71 and 72, and `user:5` belongs to one
+of them) and a **merge** copies a shard into a target that already holds entries.
+Neither has a source count to conserve against, so `executePlan` refuses them —
+before a migration is registered — with a message naming the shard, the boundary or
+the union involved. A refusal an operator can act on beats a percentage that
+measures nothing.
+
+`IMigrationProgress` is the coordinator's status in the plan's vocabulary:
+`dual-writing` is the initial sync of a plan that asked for dual writes, `migrating`
+is the catch-up, `verifying` is the cutover, and `completed` is only reported after
+the conservation check passed. `estimatedSizeBytes` seeds the first report — the
+only number available before the source is asked — and is replaced by the
+measurement from the second one on.
+
+```typescript
+const planner = new ReshardPlanner(migration);
+const plan = await planner.createMovePlan(7, 'node-b', 'node-a');
+const planId = await planner.executePlan(plan);
+
+await planner.getProgress(planId); // preparing -> migrating -> verifying -> completed
+await planner.verifyConsistency(planId); // { consistent: true, mismatches: 0 }
 ```
 
 ### `OnlineShardMigration`
@@ -903,6 +977,7 @@ class OnlineShardMigration {
   rollback(migrationId: string): Promise<void>;
   cancel(migrationId: string): Promise<void>;
   waitForCompletion(migrationId: string): Promise<IMigrationStatus>;
+  onProgress(listener: (event: MigrationProgressEvent) => void): () => void;
   areWritesSuspended(migrationId: string): boolean;
   getActiveMigrationCount(): number;
   listMigrations(): string[];
@@ -916,6 +991,9 @@ the watermark the coordinator reached.
 
 Prefer `waitForCompletion()` to polling `getStatus()`: the migration reports its
 own completion, and a fixed pause is a guess about how long a copy takes.
+`onProgress()` is the same signal for a caller that wants to publish progress while
+it runs: one report per applied batch and one per phase change, carrying the status
+`getStatus()` would return.
 
 ```typescript
 const migration = new OnlineShardMigration(shardSource, targetSink);
@@ -934,11 +1012,11 @@ if (status.phase === 'failed') throw new Error(status.error);
 
 Three outcomes are distinct on purpose:
 
-| Outcome | `phase` | Meaning |
-| --- | --- | --- |
-| Copied and verified | `completed` | The target holds as many entries as the source, checked after the final pass |
-| A write was lost | `failed` | The message names both counts: `the target holds 4 of the source's 5` |
-| The source never quiesced | `failed` | `did not quiesce within 5000 ms` — writes above the watermark outran the budget |
+| Outcome                   | `phase`     | Meaning                                                                         |
+| ------------------------- | ----------- | ------------------------------------------------------------------------------- |
+| Copied and verified       | `completed` | The target holds as many entries as the source, checked after the final pass    |
+| A write was lost          | `failed`    | The message names both counts: `the target holds 4 of the source's 5`           |
+| The source never quiesced | `failed`    | `did not quiesce within 5000 ms` — writes above the watermark outran the budget |
 
 A manual `cutover()` takes the same final pass and the same check, so it cannot
 report a migration the automatic path would have refused.
@@ -953,7 +1031,11 @@ network does not read as a failure.
 
 ```typescript
 class HAFailoverDetector {
-  constructor(config: Partial<HAFailoverDetectorConfig>, clusterTopology: IClusterTopology, consensusLayer: IConsensusLayer);
+  constructor(
+    config: Partial<HAFailoverDetectorConfig>,
+    clusterTopology: IClusterTopology,
+    consensusLayer: IConsensusLayer,
+  );
   registerShard(shardId: string): void;
   unregisterShard(shardId: string): void;
   start(): void;
@@ -975,14 +1057,27 @@ re-point clients — reporting each step.
 
 ```typescript
 class HAFailoverCoordinator {
-  constructor(consensusLayer, clusterTopology, consistencyVerifier?, clientManager?, clockCompensator?, fencingManager?, detectorConfig?);
+  constructor(
+    consensusLayer,
+    clusterTopology,
+    consistencyVerifier?,
+    clientManager?,
+    clockCompensator?,
+    fencingManager?,
+    detectorConfig?,
+  );
   initialize(): void;
   handleFailover(event: FailoverEvent): Promise<boolean>;
   verifyFailure(event: FailoverEvent): Promise<boolean>;
   shouldTakeOver(event: FailoverEvent, localNodeId: string): Promise<boolean>;
   triggerElection(event: FailoverEvent, localNodeId: string): Promise<boolean>;
   handleRaftReconfiguration(event: FailoverEvent): Promise<void>;
-  transferLeadership(shardId: string, targetNodeId: string, matchIndex?: number, lastLogIndex?: number): Promise<boolean>;
+  transferLeadership(
+    shardId: string,
+    targetNodeId: string,
+    matchIndex?: number,
+    lastLogIndex?: number,
+  ): Promise<boolean>;
   getStatus(): HAStatus;
   markNodeRecovered(nodeId: string): void;
   shutdown(): void;
@@ -1016,8 +1111,16 @@ clients observe it.
 ```typescript
 class HAConsistencyVerifier {
   constructor(consensusLayer?: IConsensusLayer);
-  verifyConsistency(shardId: string, consensusLayer: IConsensusLayer): Promise<{ consistent: boolean; details: string }>;
-  verifyNewLeaderConsistency(newLeaderId: string, shardId: string, consensusLayer?: IConsensusLayer, preFailoverCommitIndex?: number): Promise<boolean>;
+  verifyConsistency(
+    shardId: string,
+    consensusLayer: IConsensusLayer,
+  ): Promise<{ consistent: boolean; details: string }>;
+  verifyNewLeaderConsistency(
+    newLeaderId: string,
+    shardId: string,
+    consensusLayer?: IConsensusLayer,
+    preFailoverCommitIndex?: number,
+  ): Promise<boolean>;
 }
 ```
 
@@ -1228,32 +1331,32 @@ The three Raft roles: `ConsensusRole.Follower`, `ConsensusRole.Candidate`,
 
 ## Types
 
-| Type | What it describes |
-|------|-------------------|
-| `RaftConfig` | Node id, peers, election and heartbeat ticks, storage, transport, snapshot interval, pre-vote and check-quorum flags |
-| `Membership` / `MembershipChange` / `MembershipChangeResult` | Voters, learners, the change being proposed, and whether it committed |
-| `QuorumHealth` | Window size, majority, whether a quorum was heard inside it, and which peers were not |
-| `CommittedEntry` | `{ index, term, data }` — a log position and its payload |
-| `ApplyEntry` | The entry shape a replica applies, including the idempotency `msgId` |
-| `RaftHealthStatus` | Per-shard leader, term, commit index, applied index, last log index and `applyLag` |
-| `RaftPeerStatus` | Per-shard peer list, connected count and learner count |
-| `RaftGroupQuorumResult` | `{ quorumMet, required, actual, total, type }` |
-| `LearnerInfo` | A learner's matched index and catch-up state |
-| `SnapshotMeta` / `SnapshotDescriptor` / `SnapshotEnvelope` | Snapshot position, on-disk record, and the checksummed wire form |
-| `ShardSnapshotMeta` | What a node recorded about a snapshot it took: shard, node, log position and timestamp |
-| `RaftSnapshotMeta` | raft-core's log-level snapshot record: `snapshotIndex`, `snapshotTerm` and the `hardState` beside it |
-| `TransitionPhase` / `TransitionResult` / `TransitionOptions` | Joint-consensus phase, outcome, and retry policy |
-| `FencingConfig` / `FencingStatus` / `FenceState` | Lease length, escalation action, and the state machine |
-| `SessionConfig` / `SessionEntry` / `ISessionManager` | Session TTL, the entry, and the interface |
-| `RaftEvent` and its variants | `LeaderElectedEvent`, `LeaderLostEvent`, `StepDownEvent`, `ProposalCommittedEvent`, `ProposalAppliedEvent`, `SnapshotCreatedEvent`, `SnapshotRestoredEvent`, `RoleChangedEvent`, `MembershipChangedEvent` |
-| `IConsensusLayer` / `IClusterTopology` / `IOutboxWriter` / `IShardReplica` | The seams the HA and consensus layers are built on |
-| `IShardStrategy` / `IShardManager` / `IReshardPlanner` / `IOnlineShardMigration` | The sharding seams |
-| `IShardMigrationSource` / `IShardMigrationSink` / `ShardScanEntry` / `ShardVolumeStats` | The two ports a hot migration reads and writes through |
-| `RaftMessage` / `RaftEntry` | The wire shape a transport sends: numeric `msgType`, decimal-string ids, and the entries it carries |
-| `FramesDroppedEvent` | Why the transport discarded frames: `buffer-full` or `flush-failed`, with the count and the head of the oldest |
-| `RaftConsensusPhase` | The phase a joint-consensus transition is in: `stable`, `joint`, `transitional` |
-| `SqlVecErrorCode` | The stable codes `SqlVecError` carries across the package boundary |
-| `OperationResult` | `{ success, error? }` — the sharding layer's non-throwing result |
+| Type                                                                                    | What it describes                                                                                                                                                                                         |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RaftConfig`                                                                            | Node id, peers, election and heartbeat ticks, storage, transport, snapshot interval, pre-vote and check-quorum flags                                                                                      |
+| `Membership` / `MembershipChange` / `MembershipChangeResult`                            | Voters, learners, the change being proposed, and whether it committed                                                                                                                                     |
+| `QuorumHealth`                                                                          | Window size, majority, whether a quorum was heard inside it, and which peers were not                                                                                                                     |
+| `CommittedEntry`                                                                        | `{ index, term, data }` — a log position and its payload                                                                                                                                                  |
+| `ApplyEntry`                                                                            | The entry shape a replica applies, including the idempotency `msgId`                                                                                                                                      |
+| `RaftHealthStatus`                                                                      | Per-shard leader, term, commit index, applied index, last log index and `applyLag`                                                                                                                        |
+| `RaftPeerStatus`                                                                        | Per-shard peer list, connected count and learner count                                                                                                                                                    |
+| `RaftGroupQuorumResult`                                                                 | `{ quorumMet, required, actual, total, type }`                                                                                                                                                            |
+| `LearnerInfo`                                                                           | A learner's matched index and catch-up state                                                                                                                                                              |
+| `SnapshotMeta` / `SnapshotDescriptor` / `SnapshotEnvelope`                              | Snapshot position, on-disk record, and the checksummed wire form                                                                                                                                          |
+| `ShardSnapshotMeta`                                                                     | What a node recorded about a snapshot it took: shard, node, log position and timestamp                                                                                                                    |
+| `RaftSnapshotMeta`                                                                      | raft-core's log-level snapshot record: `snapshotIndex`, `snapshotTerm` and the `hardState` beside it                                                                                                      |
+| `TransitionPhase` / `TransitionResult` / `TransitionOptions`                            | Joint-consensus phase, outcome, and retry policy                                                                                                                                                          |
+| `FencingConfig` / `FencingStatus` / `FenceState`                                        | Lease length, escalation action, and the state machine                                                                                                                                                    |
+| `SessionConfig` / `SessionEntry` / `ISessionManager`                                    | Session TTL, the entry, and the interface                                                                                                                                                                 |
+| `RaftEvent` and its variants                                                            | `LeaderElectedEvent`, `LeaderLostEvent`, `StepDownEvent`, `ProposalCommittedEvent`, `ProposalAppliedEvent`, `SnapshotCreatedEvent`, `SnapshotRestoredEvent`, `RoleChangedEvent`, `MembershipChangedEvent` |
+| `IConsensusLayer` / `IClusterTopology` / `IOutboxWriter` / `IShardReplica`              | The seams the HA and consensus layers are built on                                                                                                                                                        |
+| `IShardStrategy` / `IShardManager` / `IReshardPlanner` / `IOnlineShardMigration`        | The sharding seams                                                                                                                                                                                        |
+| `IShardMigrationSource` / `IShardMigrationSink` / `ShardScanEntry` / `ShardVolumeStats` | The two ports a hot migration reads and writes through                                                                                                                                                    |
+| `RaftMessage` / `RaftEntry`                                                             | The wire shape a transport sends: numeric `msgType`, decimal-string ids, and the entries it carries                                                                                                       |
+| `FramesDroppedEvent`                                                                    | Why the transport discarded frames: `buffer-full` or `flush-failed`, with the count and the head of the oldest                                                                                            |
+| `RaftConsensusPhase`                                                                    | The phase a joint-consensus transition is in: `stable`, `joint`, `transitional`                                                                                                                           |
+| `SqlVecErrorCode`                                                                       | The stable codes `SqlVecError` carries across the package boundary                                                                                                                                        |
+| `OperationResult`                                                                       | `{ success, error? }` — the sharding layer's non-throwing result                                                                                                                                          |
 
 ## Where the exhaustive list lives
 

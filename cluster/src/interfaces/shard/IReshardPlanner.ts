@@ -7,6 +7,17 @@ export interface ReshardPlan {
   type: 'split' | 'merge' | 'move';
   sourceShardIds: number[];
   targetShardIds: number[];
+  /** The boundary a split divides at. Recorded, because a plan that drops it describes less than it decided. */
+  splitKey?: string;
+  /**
+   * The node that holds the shard now, and the node that will hold it.
+   *
+   * Required to execute and optional on the type: a plan is a description until
+   * someone places it, and a planner that guessed at placement would copy from
+   * whichever node it happened to ask.
+   */
+  sourceNode?: string;
+  targetNode?: string;
   /** Estimated data volume to move (bytes) */
   estimatedSizeBytes: number;
   /** Batch size for incremental migration */
@@ -33,7 +44,14 @@ export interface IMigrationProgress {
 export interface IReshardPlanner {
   createSplitPlan(sourceShardId: number, splitKey: string): Promise<ReshardPlan>;
   createMergePlan(sourceShardIds: [number, number]): Promise<ReshardPlan>;
-  createMovePlan(shardId: number, targetNodeId: string): Promise<ReshardPlan>;
+  /**
+   * A plan that moves one shard to another node.
+   *
+   * `sourceNodeId` is optional here and required to execute: the node holding the
+   * shard is a fact about the cluster, and a planner asked only for a destination
+   * has no business assuming where the data is.
+   */
+  createMovePlan(shardId: number, targetNodeId: string, sourceNodeId?: string): Promise<ReshardPlan>;
   executePlan(plan: ReshardPlan): Promise<string>; // returns planId
   getProgress(planId: string): Promise<IMigrationProgress | null>;
   cancelPlan(planId: string): Promise<void>;

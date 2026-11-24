@@ -37,10 +37,29 @@ export interface IMigrationStatus {
   error?: string;
 }
 
+/** One progress report from a running migration. */
+export interface MigrationProgressEvent {
+  migrationId: string;
+  status: IMigrationStatus;
+}
+
 export interface IOnlineShardMigration {
   startMigration(config: IMigrationConfig): Promise<{ migrationId: string }>;
   getStatus(migrationId: string): Promise<IMigrationStatus>;
   cutover(migrationId: string): Promise<void>;
   rollback(migrationId: string): Promise<void>;
   cancel(migrationId: string): Promise<void>;
+  /**
+   * Watch a migration without polling it.
+   *
+   * Called after every batch the target accepts and once per phase change, so a
+   * caller that wants to publish progress does not have to guess an interval and
+   * read `getStatus` into the gap. The report is the same shape as `getStatus`
+   * returns, read from the same counters — a listener is a delivery mechanism,
+   * not a second opinion.
+   *
+   * @returns an unsubscribe function; a listener that throws is ignored, because
+   * a progress consumer's bug is not a reason to abandon a running migration.
+   */
+  onProgress(listener: (event: MigrationProgressEvent) => void): () => void;
 }
