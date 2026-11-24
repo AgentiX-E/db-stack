@@ -161,7 +161,10 @@ describe('HealthOrchestrator — structured status', () => {
       }),
     );
 
-    const [component] = orchestrator.getComponentHealth();
+    const components = orchestrator.getComponentHealth();
+    expect(components).toHaveLength(1);
+    const component = components[0];
+    if (!component) throw new Error('the orchestrator returned no component');
 
     expect(component?.readiness).toEqual({
       ok: false,
@@ -333,7 +336,10 @@ describe('HealthOrchestrator — a probe that answers with a promise', () => {
       readiness: (() => Promise.resolve({ ok: true })) as unknown as () => ProbeResult,
     });
 
-    const [component] = orchestrator.getComponentHealth();
+    const components = orchestrator.getComponentHealth();
+    expect(components).toHaveLength(1);
+    const component = components[0];
+    if (!component) throw new Error('the orchestrator returned no component');
 
     expect(component.liveness.ok).toBe(false);
     expect(component.liveness.message).toContain('returned a promise');
@@ -368,7 +374,10 @@ describe('HealthOrchestrator — a probe that answers with a promise', () => {
     const orchestrator = new HealthOrchestrator();
     orchestrator.registerComponent(new EngineProbe());
 
-    const [component] = orchestrator.getComponentHealth();
+    const components = orchestrator.getComponentHealth();
+    expect(components).toHaveLength(1);
+    const component = components[0];
+    if (!component) throw new Error('the orchestrator returned no component');
 
     expect(component.liveness).toEqual({ ok: true, message: 'open' });
     expect(orchestrator.getAggregateStatus().status).toBe('healthy');
@@ -378,7 +387,10 @@ describe('HealthOrchestrator — a probe that answers with a promise', () => {
     const orchestrator = new HealthOrchestrator();
     orchestrator.registerComponent(probe('db', { readiness: () => ({ ok: true, message: 'warm' }) }));
 
-    const [component] = orchestrator.getComponentHealth();
+    const components = orchestrator.getComponentHealth();
+    expect(components).toHaveLength(1);
+    const component = components[0];
+    if (!component) throw new Error('the orchestrator returned no component');
 
     expect(component.readiness).toEqual({ ok: true, message: 'warm' });
   });

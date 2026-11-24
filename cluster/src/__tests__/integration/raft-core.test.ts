@@ -52,6 +52,20 @@ function readyBudgetMs(): number {
   return Math.max(READY_FLOOR_MS, coldStartMs * 4);
 }
 
+/**
+ * What the first start of the file is given, before any start has been measured.
+ *
+ * `readyBudgetMs()` derives its answer from the slowest start this file has seen,
+ * and before the first start there is nothing to derive from — so the floor was
+ * doing the work, and a floor is a guess about a machine the file has not asked
+ * yet. CI run 45303431592 failed here: TC1's first start did not report ready in
+ * ten seconds on a loaded runner, and the message named neither the node nor what
+ * it had printed. The first wait is therefore the collector — it is the one that
+ * produces the measurement every later wait is budgeted from — and the failure it
+ * reports names the node and the budget it was given.
+ */
+const FIRST_START_BUDGET_MS = 60_000;
+
 // ──────────────────────────────────────────
 //  Types
 // ──────────────────────────────────────────
@@ -234,8 +248,22 @@ describe('Raft Core Multi-Node Cluster', () => {
 
     // Wait for all nodes to report ready — and measure what that cost, because every
     // later start in this file is budgeted from the slowest one seen.
+    const budgetMs = coldStartMs === 0 ? FIRST_START_BUDGET_MS : readyBudgetMs();
     const startedAt = Date.now();
-    await Promise.all(newNodes.map((n) => waitForMessage([n], 'ready', readyBudgetMs())));
+    await Promise.all(
+      newNodes.map((n) =>
+        waitForMessage([n], 'ready', budgetMs).catch((error: unknown) => {
+          // The parent forwards every child's stderr with its own prefix, so the
+          // cause is in the log; what was missing was which node this wait was
+          // about and what it had been given.
+          const cause = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `node ${n.id} of ${newNodes.length} did not report ready within ${budgetMs} ms ` +
+              `(cold start measured at ${coldStartMs} ms before this start): ${cause}`,
+          );
+        }),
+      ),
+    );
     coldStartMs = Math.max(coldStartMs, Date.now() - startedAt);
 
     return newNodes;
