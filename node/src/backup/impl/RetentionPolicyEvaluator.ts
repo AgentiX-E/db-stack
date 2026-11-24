@@ -6,6 +6,8 @@
 
 import type { IBackupRetentionPolicy } from '../interfaces/index.js';
 import type { BackupMetadata, RetentionPolicy } from '../../core/types.js';
+import { deriveRetentionWindows } from './retentionWindows.js';
+import type { RetentionWindows } from './retentionWindows.js';
 
 const MILLISECONDS_PER_HOUR = 3_600_000;
 const MILLISECONDS_PER_DAY = 86_400_000;
@@ -183,10 +185,49 @@ function buildBackupSets(snapshots: BackupMetadata[]): BackupSet[] {
  */
 export class RetentionPolicyEvaluator implements IBackupRetentionPolicy {
   private policy: RetentionPolicy;
+  /**
+   * The windows this policy implies, when the caller said enough for them to be
+   * derived.
+   *
+   * `keepRecent` is the policy's; `snapshotIntervalMs` is the deployment's, and it
+   * arrives here because this is the object that would delete a backup on the
+   * strength of it. When the interval is not supplied there is nothing to compare,
+   * and `getWindows()` says so with `null` rather than inventing a number — the
+   * alternative is the state this class shipped in, where the window and the
+   * interval were two constants with no relationship and no way to notice.
+   */
+  private readonly windows: RetentionWindows | null;
 
-  constructor(policy: RetentionPolicy) {
+  /**
+   * @param policy count, byte ceiling, age floors and `keepRecent`
+   * @param options `snapshotIntervalMs` — how often a snapshot is taken. Supplying
+   *   it makes the pair checkable at construction, and an interval longer than the
+   *   window is refused here rather than discovered by a retention pass that
+   *   deleted the only backup
+   */
+  constructor(policy: RetentionPolicy, options: { snapshotIntervalMs?: number } = {}) {
     this.policy = { ...policy };
     assertFloorsAreReadable(this.policy);
+
+    const keepRecentMs = this.policy.keepRecent === undefined ? undefined : parseDurationToMs(this.policy.keepRecent);
+    this.windows =
+      keepRecentMs === undefined
+        ? null
+        : deriveRetentionWindows({
+            keepRecentMs,
+            ...(options.snapshotIntervalMs === undefined ? {} : { snapshotIntervalMs: options.snapshotIntervalMs }),
+          });
+  }
+
+  /**
+   * The windows this policy implies, or `null` when the policy states no
+   * `keepRecent`.
+   *
+   * Not part of `IBackupRetentionPolicy`: a pluggable policy that cannot answer is
+   * not wrong, it is uncheckable, and `BackupManager` treats the two the same way.
+   */
+  getWindows(): RetentionWindows | null {
+    return this.windows === null ? null : { ...this.windows };
   }
 
   /** @inheritdoc */

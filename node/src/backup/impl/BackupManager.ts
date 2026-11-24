@@ -60,6 +60,8 @@ import type {
 } from '../interfaces/index.js';
 import type { BackupMetadata, BackupResult, PITRTarget, RestoreResult } from '../../core/types.js';
 import { dependentsOf, newestCompletedSnapshot, resolveChain } from './backupChain.js';
+import { deriveRetentionWindows } from './retentionWindows.js';
+import type { RetentionWindows } from './retentionWindows.js';
 import { hashFile } from './backupArtifact.js';
 import { inventoryIdOf, inventoryKey, inventoryPrefix, parseRecord, serializeRecord } from './inventory.js';
 
@@ -931,6 +933,30 @@ export class BackupManager implements IBackupManager {
   }
 
   /**
+   * The retention windows this deployment implies, or `null` when the policy cannot
+   * state them.
+   *
+   * The policy supplies `keepRecent` and — when it was constructed with it — the
+   * snapshot interval; the engine supplies how far back its log replays. The three
+   * are related by `deriveRetentionWindows`, which refuses a pair that would leave a
+   * backup with no replay or a window that can expire between two snapshots.
+   *
+   * A policy that answers no windows is not refused: it is uncheckable rather than
+   * wrong, and a pluggable policy is allowed to be. What the middleware will not do
+   * is pretend it checked one.
+   */
+  async retentionWindows(): Promise<RetentionWindows | null> {
+    const declared = windowsOf(this.retention);
+    if (declared === null) return null;
+    const horizon = this.source.logHorizon === undefined ? null : await this.source.logHorizon();
+    return deriveRetentionWindows({
+      keepRecentMs: declared.keepRecentMs,
+      ...(declared.snapshotIntervalMs === undefined ? {} : { snapshotIntervalMs: declared.snapshotIntervalMs }),
+      ...(horizon === null ? {} : { logHorizonMs: horizon }),
+    });
+  }
+
+  /**
    * @inheritdoc
    *
    * The number returned is what was deleted, which is not what the policy asked for
@@ -940,8 +966,25 @@ export class BackupManager implements IBackupManager {
    */
   async prune(): Promise<number> {
     await this.sync();
+    // Refused before anything is deleted. A retention pass over a policy whose
+    // window outlives the engine's log removes backups that look restorable and
+    // are not, and the operator learns about it from the one they needed.
+    await this.retentionWindows();
     const inventory = Array.from(this.snapshots.values());
     const named = this.retention.evaluate(inventory).map((snapshot) => snapshot.snapshotId);
     return this.discard(expandDeletions(inventory, named));
   }
+}
+
+/**
+ * The windows a retention policy declares, when it can.
+ *
+ * Duck-typed on purpose: `IBackupRetentionPolicy` is a seam a caller can implement,
+ * and requiring `getWindows()` of every implementation would make an existing one
+ * stop compiling to gain an answer it may not have. A policy without the method is
+ * treated exactly like one that returns `null` — uncheckable, and unchecked.
+ */
+function windowsOf(policy: IBackupRetentionPolicy): RetentionWindows | null {
+  const candidate = policy as { getWindows?: () => RetentionWindows | null };
+  return typeof candidate.getWindows === 'function' ? candidate.getWindows() : null;
 }

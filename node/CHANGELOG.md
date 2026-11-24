@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`deriveRetentionWindows` — the three retention windows have to contain each other.**
+  `RetentionPolicyEvaluator` kept backups by count, age and bytes, and nothing related that window to how
+  far back the engine's log can replay or to how often a snapshot is taken. A week of `keepRecent` in front
+  of a two-hour log kept a week of objects that restore to their snapshot and stop; a window shorter than
+  the snapshot interval could expire between two backups and take the only restore with it. The derivation
+  is a pure function over `(keepRecentMs, snapshotIntervalMs?, logHorizonMs?)` with five named rules, and
+  `RetentionPolicyEvaluator` refuses an interval longer than its window at construction.
+- **`IBackupSource.logHorizon()`** — how far back the engine's log replays, in milliseconds, or `null` when
+  it keeps no log. Optional, and read on every retention pass rather than cached: a horizon moves as
+  segments are written and discarded.
+- **`BackupManager.retentionWindows()`** — the three numbers and the replay window they imply, or `null`
+  when the policy cannot state them. `prune()` calls it before deleting anything, so a policy whose window
+  outlives the log is an error an operator sees instead of a deletion they discover at restore time. The
+  method is also on `IBackupManager` — optional, because a manager is a seam a caller can implement.
+- **`RetentionWindowError` with a `rule`** — `keep-recent-not-positive`, `snapshot-interval-not-positive`,
+  `snapshot-interval-exceeds-keep-recent`, `log-horizon-not-positive`, `keep-recent-exceeds-log-horizon`,
+  so a caller reports the rule without parsing prose.
+
 - **An upgrade waits for the node to report the target version.** `_drainAndUpgrade` used to
   `await sleep(0)` where the upgrade should have been and then mark the node `completed`, and
   nothing ever read `RollingUpgradePlan.targetVersion` — so `upgradedNodes` counted nodes that had

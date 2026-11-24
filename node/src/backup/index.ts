@@ -67,6 +67,8 @@ export { S3StorageBackend } from './impl/S3StorageBackend.js';
 export type { S3StorageBackendConfig } from './impl/S3StorageBackend.js';
 export { RetentionPolicyEvaluator, parseDurationToMs } from './impl/RetentionPolicyEvaluator.js';
 export type { RetentionOutcome } from './impl/RetentionPolicyEvaluator.js';
+export { RetentionWindowError, deriveRetentionWindows } from './impl/retentionWindows.js';
+export type { RetentionWindowInput, RetentionWindowRule, RetentionWindows } from './impl/retentionWindows.js';
 export { dependentsOf, newestCompletedSnapshot, resolveChain, unrestorableReason } from './impl/backupChain.js';
 export type { ChainResolution } from './impl/backupChain.js';
 export { BackupVerifier } from './impl/BackupVerifier.js';

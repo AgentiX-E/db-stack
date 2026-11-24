@@ -13,23 +13,40 @@
 | `restoreFromSnapshot(snapshotId, options?)` | `Promise<RestoreResult>` |
 | `pitr(target, options?)` | `Promise<RestoreResult>` |
 | `prune()` | `Promise<number>` |
+| `retentionWindows?()` | `Promise<RetentionWindows \| null>` |
 
 `deleteBackup` and `prune` remove **sets**: naming a base removes every snapshot that cannot be replayed
 without it, and `prune()` answers with the count that actually went.
+
+`retentionWindows()` is the answer behind the refusal: `prune()` already refuses a policy whose window
+outlives the engine's log, and this says what the three numbers are before that happens. It is optional
+because a manager is a seam a caller can implement, and an implementation that cannot state its windows is
+uncheckable rather than wrong — the same argument as `IBackupSource.logHorizon()`.
 
 ### `IBackupSource`
 
 The engine port — the one thing the middleware cannot implement for a database.
 
-| Member | Return |
-|---|---|
-| `name` (property) | `string` |
-| `capture(destination)` | `Promise<SnapshotCapture>` |
-| `restore(source)` | `Promise<void>` |
+| Member | Return | Required |
+|---|---|---|
+| `name` (property) | `string` | yes |
+| `whole` (property) | `boolean \| undefined` | no |
+| `capture(destination)` | `Promise<SnapshotCapture>` | yes |
+| `restore(source)` | `Promise<void>` | yes |
+| `restoreChain(chain)` | `Promise<void>` | for a delta engine |
+| `logHorizon()` | `Promise<number \| null>` | no |
 
 `capture` must produce a consistent cut (quiesced, or taken from the engine's own snapshot) and must not
 resolve with a partial artefact. `restore` replaces the engine's state and, when it rejects, leaves that
 state unknown — so the caller restores again rather than assuming the previous contents survived.
+
+`whole: true` says every artefact is a complete copy, so the newest one alone is a restore; a delta engine
+leaves it out and implements `restoreChain`, which is handed the whole chain oldest-first. A source that
+declares neither is refused a chain rather than handed one artefact of it.
+
+`logHorizon()` answers how far back the engine's own log can replay, in milliseconds — `null` when it keeps
+no log, and the method itself is optional. It is read on every retention pass, because a horizon moves as
+segments are written and discarded, and it is the number `RetentionPolicyEvaluator` cannot know.
 
 `SnapshotCapture` is `{ bytes, files, facts? }`. `facts` is where an engine records `lsn` or a schema
 version; `targetLsn` PITR is resolved by comparing them.
@@ -81,8 +98,30 @@ floor has to say so rather than silently return fewer deletions.
 - **`DirectoryBackupSource`** — the reference `IBackupSource`; `name` is `DIRECTORY_SOURCE_NAME`.
 - **`InMemoryStorageBackend`** — `Map<string, Buffer>` blobs, for tests and for a node with no bucket.
 - **`S3StorageBackend`** — S3 through optional peer dependencies, resolved on first use.
-- **`RetentionPolicyEvaluator`** — ISO-8601 durations via `parseDurationToMs`, set-aware rules.
+- **`RetentionPolicyEvaluator`** — ISO-8601 durations via `parseDurationToMs`, set-aware rules, and the
+  windows it derives from `keepRecent` and the snapshot interval.
+- **`deriveRetentionWindows`, `RetentionWindowError`** — the pure derivation and its named refusals.
 - **`BackupVerifier`** — digest verification over a buffer or a stream, for the scheduled drill.
+
+## Retention windows
+
+A backup policy promises that a backup survives for `keepRecent`. Two other numbers decide whether that
+promise can be kept, and neither used to be related to it:
+
+| Number | Comes from | What breaks without it |
+|---|---|---|
+| `snapshotIntervalMs` | the deployment, through `new RetentionPolicyEvaluator(policy, { snapshotIntervalMs })` | a window shorter than the interval can expire between two snapshots, so a pass may delete the only restore that exists |
+| `logHorizonMs` | the engine, through `IBackupSource.logHorizon()` | a backup older than the log horizon restores to its snapshot and stops, so the policy keeps objects that look restorable and are not |
+
+`deriveRetentionWindows({ keepRecentMs, snapshotIntervalMs?, logHorizonMs? })` returns
+`{ keepRecentMs, snapshotIntervalMs?, logHorizonMs?, replayWindowMs }` or throws a `RetentionWindowError`
+naming one of five rules. `BackupManager.retentionWindows()` asks the engine and performs the same
+derivation; `prune()` calls it **before** deleting anything, so an incoherent configuration is an error
+rather than a deletion.
+
+A policy that cannot state its windows — a pluggable `IBackupRetentionPolicy` without `getWindows()` — is
+reported as `null` and left unchecked. Uncheckable is not the same as wrong, and the middleware does not
+pretend it checked one.
 
 ## Format and helper functions
 

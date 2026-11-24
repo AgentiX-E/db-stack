@@ -18,6 +18,7 @@ import type {
   RetentionPolicy,
   SnapshotType,
 } from '../../core/types.js';
+import type { RetentionWindows } from '../impl/retentionWindows.js';
 
 /** Single backup entry returned in listings. */
 export type BackupEntry = {
@@ -157,6 +158,22 @@ export interface IBackupManager {
    * Returns number of deleted snapshots.
    */
   prune(): Promise<number>;
+
+  /**
+   * The retention windows this deployment implies, or `null` when the policy cannot
+   * state them.
+   *
+   * `prune()` already refuses a policy whose window outlives the engine's log, so
+   * this is not the enforcement point — it is the answer an operator asks for
+   * before the refusal happens: "how far back can I restore", and "is the window I
+   * configured the window I run with".
+   *
+   * Optional for the same reason `IBackupSource.logHorizon` is: a manager is a seam
+   * a caller can implement, and an implementation that cannot state its windows is
+   * uncheckable rather than wrong. An implementation that omits it is treated
+   * exactly like one that answers `null`.
+   */
+  retentionWindows?(): Promise<RetentionWindows | null>;
 }
 
 /**
@@ -298,6 +315,27 @@ export interface IBackupSource {
    * calling it again from the same chain.
    */
   restoreChain?(chain: readonly string[]): Promise<void>;
+
+  /**
+   * How far back this engine's log can replay, in milliseconds, or `null` when it
+   * keeps no log.
+   *
+   * The one number the middleware cannot know and retention cannot do without: a
+   * backup older than this horizon restores to its snapshot and stops, so a policy
+   * that keeps backups for longer than the log reaches is keeping objects that look
+   * restorable and are not. `deriveRetentionWindows` refuses that pair by name.
+   *
+   * Optional, and honest in both directions. An engine that keeps no log returns
+   * `null` and is never refused for it, because it makes no replay promise to
+   * break. A source that omits the method entirely is treated the same way — which
+   * is also why the check is a refusal at the point retention runs rather than a
+   * constructor argument nobody can supply.
+   *
+   * Read on every retention pass rather than once: a log horizon moves as segments
+   * are written and discarded, and a cached answer is a policy that was legal
+   * yesterday.
+   */
+  logHorizon?(): Promise<number | null>;
 }
 
 /**
