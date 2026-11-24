@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ConfigWatcher` reads the files it claims to watch.** `startFileWatch()` armed an interval,
+  reported `fileWatchActive: true` and read nothing: `_loadFiles()` was a comment, so a watcher
+  started against a directory was a timer with no observer. It reads every configured path on each
+  poll now, parses it by extension, and applies what changed. `json` and `env` have parsers and no
+  dependencies; `yaml` and `toml` do not, and `FileWatchOptions.parsers` is where a caller supplies
+  one — a file whose format has no parser is reported rather than skipped. `getStats().fileWatch`
+  publishes what the file half did: one entry per path with the keys it contributed, the loads that
+  found new content and the reason the last attempt failed, because `fileWatchActive` was `true`
+  for a whole release while the answer to "what did it read" was "nothing".
+- **A watched file owns the keys it contributed.** When a reload drops a key the file used to
+  hold, the key leaves the store — but only if the store still carries the value that file put
+  there, so a poll cannot undo a `set()` an operator made deliberately.
+- **`reload()` can remove a key.** A reload applied `newValues` over the store and had no way to
+  say "and this one is gone", which is why a config file that lost a key kept the key. The removal
+  is part of the same atomic step: it fails validation if a schema requires the key, and it emits
+  the same change event a value change does.
+- **`FileWatchStats`, `WatchedFileStatus` and `FileWatchOptions.parsers`** are public types, so a
+  caller can write down what `getStats().fileWatch` returns.
+
 - **A restore replays the chain it was given, or refuses it by name.** `restoreFromSnapshot` verified
   that every base an incremental needs was still stored — and then handed `IBackupSource.restore` a
   single file. `DirectoryBackupSource` captures a whole tree every time, so for it that was correct; for

@@ -21,6 +21,8 @@ export type {
   ReloadResult,
   ConfigCheckpoint,
   ConfigWatcherStats,
+  FileWatchStats,
+  WatchedFileStatus,
 } from './interfaces/index.js';
 export { InMemoryConfigWatcher } from './impl/InMemoryConfigWatcher.js';
 export { ConfigWatcher } from './impl/ConfigWatcher.js';

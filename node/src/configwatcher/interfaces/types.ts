@@ -81,8 +81,26 @@ export interface FileWatchOptions {
   formats?: FileFormat[];
   /** Debounce ms before processing change (multiple writes). */
   debounceMs?: number;
-  /** Maximum number of changes per debounce window. */
+  /**
+   * Changes tolerated inside one debounce window before the reload is applied
+   * rather than postponed again.
+   *
+   * A debounce with no ceiling is a reload that can be starved: a file written
+   * more often than the window is long would never be read. The default is no
+   * ceiling, which is right for a file edited by a human and wrong for one
+   * rewritten by a sidecar — which is why the option exists at all.
+   */
   maxChangesPerWindow?: number;
+  /**
+   * Parsers for the formats this package does not ship.
+   *
+   * `json` and `env` have built-in parsers and no dependencies, because this
+   * package has no runtime dependencies. `yaml` and `toml` do not, and a file
+   * whose format has no parser is reported as a failure rather than skipped:
+   * "your watcher ignores this file" is something an operator has to be told,
+   * not left to discover.
+   */
+  parsers?: Partial<Record<FileFormat, (text: string, path: string) => Record<string, unknown>>>;
 }
 
 /** Supported file formats. */
@@ -257,12 +275,46 @@ export interface IConfigWatcher {
 /** Enhanced change handler with metadata. */
 export type ConfigChangeHandlerV2 = (event: ConfigChangeEvent) => void;
 
+/** What one watched file has contributed, and what it last cost. */
+export interface WatchedFileStatus {
+  path: string;
+  /** Format the watcher chose for the path, from its extension. `null` if it has none it knows. */
+  format: FileFormat | null;
+  /** Keys the file's most recent successful load contributed. */
+  keys: number;
+  /** Loads that found content different from the last one. The first read counts. */
+  loads: number;
+  /** When the file was last read and found different, or `null` before that. */
+  lastLoadedAt: number | null;
+  /** Why the last attempt to read this file failed, or `null` if it did not. */
+  failure: string | null;
+}
+
+/**
+ * What the watcher's file half is doing.
+ *
+ * Every field is a count of something that happened rather than a flag saying
+ * the feature exists: a watcher that starts, polls, and reads nothing is exactly
+ * the state this package shipped in — `_loadFiles()` was a comment — and a
+ * `fileWatchActive: true` said so in the affirmative for a whole release.
+ */
+export interface FileWatchStats {
+  /** Paths the watcher is polling. */
+  paths: string[];
+  /** Polls that found new content, summed over the watched files. */
+  loads: number;
+  /** One entry per path, whether or not it has ever loaded. */
+  files: WatchedFileStatus[];
+}
+
 /** Statistics for the config watcher. */
 export interface ConfigWatcherStats {
   totalKeys: number;
   totalWatchers: number;
   totalFilFilters: number;
   fileWatchActive: boolean;
+  /** What the file half read, or `null` when no watch is running. */
+  fileWatch: FileWatchStats | null;
   checkpoints: number;
   reloadCount: number;
   rollbackCount: number;

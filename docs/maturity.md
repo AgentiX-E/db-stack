@@ -221,12 +221,14 @@ would have pasted and watched fail. See §4.1 for what that found.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-All four rows are from CI run `45159857370`, the run that accepted iteration 76: `node`
-(99.49/98.67/99.87/99.49 over 157 files), `cluster` with the assemblers in it
-(99.46/98.33/99.72/99.46 over 65) and `federation` with the query and schema modules it absorbed
-(99.64/98.58/100/99.64 over 38). The iteration measured `node` locally first — 99.49/98.67/99.87/99.49
-over 3 174 cases — because a change to twenty lines of loop-shaped code has to be measured on the tree
-it ships, and the CI run restated the row rather than correcting it. The gate covers four packages, not three: the end-to-end harness is
+All four rows are from CI run `45339974392`, the run that accepted iteration 83: `cluster` with
+the assemblers in it (99.46/99.46/99.72/98.37 over 147 files), `federation` with the query and schema
+modules it absorbed (99.64/98.58/100/99.64 over 81) and the harness (100/97.22/100/100). The `node`
+row is iteration 84's measurement of the tree it ships — 99.70/98.70/99.87/99.70 over 3 199 cases in
+158 files, from `pnpm --filter @agentix-e/db-node run coverage` — because a change has to be measured
+on the tree it ships; the `Coverage (node)` job of that commit's CI restates the four numbers, and the
+row is corrected here if it disagrees. The previous four rows were from CI run `45159857370`, which
+accepted iteration 76. The gate covers four packages, not three: the end-to-end harness is
 measured as well (100/97.22/100/100), because a harness bug produces confident, meaningless
 acceptance passes. That last row read 100 % on all four dimensions when this page was first
 written, then 99.44 / 96.47 while the harness carried the fatal-error path nothing read; it reads
@@ -237,7 +239,7 @@ code, and the row is reported as measured rather than as remembered.
 | --------------- | ---------- | -------- | --------- | ------ |
 | `cluster`       | 99.46%     | 98.37%   | 99.72%    | 99.46% |
 | `federation`    | 99.64%     | 98.58%   | 100%      | 99.64% |
-| `node`          | 99.49%     | 98.67%   | 99.87%    | 99.49% |
+| `node`          | 99.70%     | 98.70%   | 99.87%    | 99.70% |
 | `e2e` (harness) | 100%       | 97.22%   | 100%      | 100%   |
 
 The rows are in the order the tool prints them — statements, branches, functions, lines. The first

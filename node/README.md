@@ -1,6 +1,6 @@
 # @agentix-e/db-node
 
-**Everything a single database node needs — 20 modules, 3 178 test cases in 157 files, every
+**Everything a single database node needs — 20 modules, 3 199 test cases in 158 files, every
 coverage dimension at or above 95 %.**
 
 Twenty modules that operate on **one node**, in one package. A probe probes its own
@@ -32,7 +32,7 @@ node.health.HealthOrchestrator;
 | [`backup`](./src/backup/) | Real capture, digests, bucket confirmation, a durable inventory, chains, PITR. | 316 |
 | [`chaosengine`](./src/chaosengine/) | Fault definitions and the scenario runner. | 128 |
 | [`circuitbreaker`](./src/circuitbreaker/) | Breaker state per call site. | 15 |
-| [`configwatcher`](./src/configwatcher/) | Configuration watching and change notification. | 107 |
+| [`configwatcher`](./src/configwatcher/) | Configuration watching and change notification. | 128 |
 | [`health`](./src/health/) | Liveness, readiness and startup probes. | 82 |
 | [`logger`](./src/logger/) | The `ILogger` port and an in-memory implementation. | 55 |
 | [`maintenance`](./src/maintenance/) | VACUUM / ANALYZE / REINDEX scheduling. | 387 |
@@ -45,8 +45,8 @@ node.health.HealthOrchestrator;
 | [`security`](./src/security/) | TLS, RBAC and encryption at rest — the implementation of `auth`. | 629 |
 | [`slacollector`](./src/slacollector/) | SLA event collection. | 13 |
 
-**Total: `pnpm coverage` reports 157 files and 3 178 tests, 0 failures** (`test:unit`: 138 files /
-2 846; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
+**Total: `pnpm coverage` reports 158 files and 3 199 tests, 0 failures** (`test:unit`: 139 files /
+2 867; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
 column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
 any of these numbers disagrees with it — a number in prose has no compiler, so this gate is that
 compiler.
@@ -97,7 +97,7 @@ the one to read first: it states what the module decides and what it deliberatel
 does not.
 
 ```bash
-npm test              # 157 files, 3 178 tests
+npm test              # 158 files, 3 199 tests
 npm run coverage      # writes coverage/test-report.json, the file check:test-counts reads
 ```
 
