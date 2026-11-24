@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An upgrade waits for the node to report the target version.** `_drainAndUpgrade` used to
+  `await sleep(0)` where the upgrade should have been and then mark the node `completed`, and
+  nothing ever read `RollingUpgradePlan.targetVersion` — so `upgradedNodes` counted nodes that had
+  been relabelled. A node that never restarted and a node that came back on the old version were both
+  reported as upgraded, and a canary that failed to start was promoted. `IVersionProbe` is the port:
+  `reportedVersion(nodeId)` is what the node says it is running, `requestUpgrade(nodeId, version)` is
+  optional and lets the orchestrator drive the restart. The wait is bounded by
+  `upgradeTimeoutMs`/`upgradePollIntervalMs` and counted in polls rather than against a wall clock, so
+  an injected sleep still produces a deterministic number of attempts. A plan with no probe is
+  refused in validation — a millisecond, instead of a batch of nodes reported as new when they are
+  not. `NodeUpgradeState.reportedVersion` and the `node_version_confirmed` event carry the evidence
+  and the number of polls it took.
+- **`RollingUpgradeEvent.batchIndex` is set.** Every emit passed the index inside `details` and left
+  the public field `undefined`, so a consumer filtering events by batch matched nothing.
+- **A canary failure says what failed.** The catch reported "Canary health check failed" for every
+  canary error, including the ones that happened before the first health check ran.
+
 - **`ConfigWatcher` reads the files it claims to watch.** `startFileWatch()` armed an interval,
   reported `fileWatchActive: true` and read nothing: `_loadFiles()` was a comment, so a watcher
   started against a directory was a timer with no observer. It reads every configured path on each
@@ -86,6 +103,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   machine and in every locale.
 
 ### Fixed
+
+- **`_validatePlan` had an unreachable second empty-node check** — the first test already covers it —
+  and `_checkBatchHealth` guarded against a missing check function that validation has already refused.
+  Both removed rather than covered.
 
 - **The backup budget is measured on the manager's clock.** `createBackup` compared `Date.now()`
   against the deadline after the capture and again after the upload, so a budget was a measurement of

@@ -1,6 +1,6 @@
 # @agentix-e/db-node
 
-**Everything a single database node needs — 20 modules, 3 199 test cases in 158 files, every
+**Everything a single database node needs — 20 modules, 3 223 test cases in 159 files, every
 coverage dimension at or above 95 %.**
 
 Twenty modules that operate on **one node**, in one package. A probe probes its own
@@ -41,12 +41,12 @@ node.health.HealthOrchestrator;
 | [`monitor`](./src/monitor/) | Slow-query, connection-pool and deadlock detection. | 129 |
 | [`observability`](./src/observability/) | W3C trace context and spans. | 44 |
 | [`otel`](./src/otel/) | The OpenTelemetry bridge. | 16 |
-| [`rollingupgrade`](./src/rollingupgrade/) | Upgrade plans, batching and health gating. | 121 |
+| [`rollingupgrade`](./src/rollingupgrade/) | Upgrade plans, batching, version verification and health gating. | 145 |
 | [`security`](./src/security/) | TLS, RBAC and encryption at rest — the implementation of `auth`. | 629 |
 | [`slacollector`](./src/slacollector/) | SLA event collection. | 13 |
 
-**Total: `pnpm coverage` reports 158 files and 3 199 tests, 0 failures** (`test:unit`: 139 files /
-2 867; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
+**Total: `pnpm coverage` reports 159 files and 3 223 tests, 0 failures** (`test:unit`: 140 files /
+2 891; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
 column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
 any of these numbers disagrees with it — a number in prose has no compiler, so this gate is that
 compiler.
@@ -97,7 +97,7 @@ the one to read first: it states what the module decides and what it deliberatel
 does not.
 
 ```bash
-npm test              # 158 files, 3 199 tests
+npm test              # 159 files, 3 223 tests
 npm run coverage      # writes coverage/test-report.json, the file check:test-counts reads
 ```
 

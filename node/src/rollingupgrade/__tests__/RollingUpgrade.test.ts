@@ -1,12 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { RollingUpgradeOrchestrator } from '../impl/RollingUpgradeOrchestrator.js';
-import type { RollingUpgradePlan, BatchHealth } from '../interfaces/types.js';
+import type { RollingUpgradePlan, BatchHealth, IVersionProbe } from '../interfaces/types.js';
 
 // These cases exercise the IRollingUpgrade contract through the orchestrator.
 // `InMemoryRollingUpgrade` was a one-line subclass of it and nothing else, so
 // the tests moved to the class that has behaviour (iteration 54).
 
 const instantSleep = () => Promise.resolve();
+
+/**
+ * A probe whose nodes already run the plan's target version.
+ *
+ * Every case in this file is about batching, canary or rollback; the upgrade
+ * itself is what `iteration-85` covers. A probe is still required — an upgrade
+ * nobody can observe is not an upgrade — so the shortest honest one is a node
+ * that answers on the first read.
+ */
+const settledProbe = (version = '2.0.0'): IVersionProbe => ({ reportedVersion: async () => version });
 
 function makePlan(overrides: Partial<RollingUpgradePlan> = {}): RollingUpgradePlan {
   return {
@@ -43,6 +53,7 @@ describe('RollingUpgradeOrchestrator', () => {
     const ug = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
       sleep: instantSleep,
+      probe: settledProbe(),
     });
     ug.registerHealthCheck('ok', healthy);
     const stats = await ug.execute(
@@ -60,6 +71,7 @@ describe('RollingUpgradeOrchestrator', () => {
     const ug = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
       sleep: instantSleep,
+      probe: settledProbe(),
     });
     ug.registerHealthCheck('ok', healthy);
     const stats = await ug.execute(
@@ -77,6 +89,7 @@ describe('RollingUpgradeOrchestrator', () => {
     const ug = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
       sleep: instantSleep,
+      probe: settledProbe(),
     });
     ug.registerHealthCheck('ok', healthy);
     const stats = await ug.execute(
@@ -101,6 +114,7 @@ describe('RollingUpgradeOrchestrator', () => {
     const ug = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
       sleep: instantSleep,
+      probe: settledProbe(),
     });
     ug.registerHealthCheck('ok', healthy);
     await ug.execute(makePlan({ healthCheckNames: ['ok'] }));

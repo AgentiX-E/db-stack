@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { RollingUpgradeOrchestrator } from '../impl/RollingUpgradeOrchestrator.js';
-import type { RollingUpgradePlan, BatchHealth } from '../interfaces/types.js';
+import type { RollingUpgradePlan, BatchHealth, IVersionProbe } from '../interfaces/types.js';
 
 // Yield to the macrotask queue (setTimeout 0) rather than Promise.resolve().
 // A `while (paused) await sleep()` loop awaits this sleep 100 times per second;
@@ -18,6 +18,16 @@ import type { RollingUpgradePlan, BatchHealth } from '../interfaces/types.js';
 // lets the timeout interrupt the mutant and turn an infinite hang into a fast,
 // observable test failure.
 const instantSleep = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/**
+ * A probe whose nodes report the plan's target version on the first read.
+ *
+ * The orchestrator refuses to run a plan whose outcome it cannot observe, so
+ * every engine in this file — including the ones built to make a mutant hang —
+ * carries the shortest honest probe. Waiting on a version is not what these
+ * cases pin; the cases that do are in `i85-version-wait.test.ts`.
+ */
+const settledProbe = (version = '2.0.0'): IVersionProbe => ({ reportedVersion: async () => version });
 
 /**
  * The orchestrator keeps its pause flag private; the pause/resume tests pin it
@@ -65,7 +75,7 @@ function unhealthy(): Promise<BatchHealth> {
 }
 
 function engine() {
-  return new RollingUpgradeOrchestrator({ minBakeMs: 0, sleep: instantSleep });
+  return new RollingUpgradeOrchestrator({ minBakeMs: 0, sleep: instantSleep, probe: settledProbe() });
 }
 
 afterEach(() => {
@@ -242,6 +252,7 @@ describe('rollingupgrade validation & abort', () => {
   it('rejects canary bake time below the safety floor', async () => {
     const e = new RollingUpgradeOrchestrator({
       minBakeMs: 10_000,
+      probe: settledProbe(),
       sleep: instantSleep,
     });
     // bakeTimeMs 9999 < minBakeMs 10000 → reject.
@@ -263,6 +274,7 @@ describe('rollingupgrade validation & abort', () => {
   it('accepts canary bake time at the floor', async () => {
     const e = new RollingUpgradeOrchestrator({
       minBakeMs: 10_000,
+      probe: settledProbe(),
       sleep: instantSleep,
     });
     e.registerHealthCheck('ok', healthy);
@@ -577,6 +589,7 @@ describe('rollingupgrade canary bake sleep', () => {
     const sleeps: number[] = [];
     const e = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
+      probe: settledProbe(),
       sleep: async (ms: number) => {
         sleeps.push(ms);
       },
@@ -595,15 +608,22 @@ describe('rollingupgrade canary bake sleep', () => {
         drain: { timeoutMs: 1, waitForInflight: false, connectionDrainMs: 1 },
       }),
     );
-    // waitForInflight=false removes the drain sleep; the only remaining sleep
-    // is the drain yield sleep(0). bakeTimeMs=0 must NOT add another sleep.
-    expect(sleeps.filter((ms) => ms === 0).length).toBe(1);
+    // waitForInflight=false removes the drain sleep, the probe answers on its
+    // first read, and bakeTimeMs=0 adds no bake. Nothing should sleep at all —
+    // the zero-length yield that used to stand in for the upgrade is gone, and
+    // an upgrade is now proven by the version the node reports rather than by a
+    // timer that elapsed.
+    expect(sleeps).toEqual([]);
+    const stats = e.getStats()!;
+    expect(stats.upgradedNodes).toBe(1);
+    expect(e.getBatches()[0]!.nodes[0]!.reportedVersion).toBe('2.0.0');
   });
 
   it('sleeps for the bake time when bakeTimeMs is positive', async () => {
     const sleeps: number[] = [];
     const e = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
+      probe: settledProbe(),
       sleep: async (ms: number) => {
         sleeps.push(ms);
       },
@@ -1093,6 +1113,7 @@ describe('rollingupgrade rollback of in-flight draining nodes', () => {
     let throwOnce = true;
     const e = new RollingUpgradeOrchestrator({
       minBakeMs: 0,
+      probe: settledProbe(),
       sleep: async (ms: number) => {
         if (ms > 0 && throwOnce) {
           throwOnce = false;

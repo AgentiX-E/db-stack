@@ -59,6 +59,46 @@ export type RollbackTrigger =
   | 'on_degradation' // SLO degradation detected
   | 'manual_only'; // Only manual rollback
 
+/**
+ * What an upgrading node reports about itself.
+ *
+ * The orchestrator can drain a node, change its state label and start a timer
+ * without knowing anything about the database. What it cannot do without a probe
+ * is answer the only question an upgrade exists to answer: *is this node running
+ * the target version now?* Before this interface the orchestrator simulated the
+ * upgrade with a zero-length sleep and then marked the node `completed`, so
+ * `upgradedNodes` counted nodes it had relabelled rather than nodes it had
+ * verified — and a node that failed to come up was reported as upgraded.
+ *
+ * The probe is the engine adapter's job, which is why it is two methods and no
+ * types from any engine: a PostgreSQL adapter reads `SHOW server_version`, a
+ * key-value store reads its build string, and neither is visible here.
+ */
+export interface IVersionProbe {
+  /**
+   * The version the node reports it is running, or `null` when it cannot answer
+   * yet.
+   *
+   * `null` is not failure. A node that is shutting down to be replaced, or that
+   * has not finished starting, has no version to report — that is the expected
+   * state in the middle of an upgrade, and the orchestrator waits for it to
+   * become a version rather than treating silence as a verdict.
+   */
+  reportedVersion(nodeId: string): Promise<string | null>;
+
+  /**
+   * Ask the node to restart onto `version`.
+   *
+   * Optional, because the restart is often not the middleware's to command: a
+   * caller whose deployment tool replaces the process leaves this out and lets
+   * {@link reportedVersion} report the outcome. A probe that implements it lets
+   * the orchestrator drive the whole upgrade, and a rejection here fails the node
+   * with the probe's own reason — a request that could not be delivered is not an
+   * upgrade that is merely slow.
+   */
+  requestUpgrade?(nodeId: string, version: string): Promise<void>;
+}
+
 /** Graceful drain configuration for nodes being replaced. */
 export interface DrainConfig {
   /** Drain timeout (ms) before force-kill. */
@@ -101,6 +141,16 @@ export interface RollingUpgradePlan {
   healthCheckNames: string[];
   /** Maximum total duration (ms) before auto-abort. */
   maxDurationMs?: number;
+  /**
+   * How long a node may take to report `targetVersion` (ms, default 30 000).
+   *
+   * Counted in polls rather than against a wall clock, so a caller that injects
+   * an instant sleep still gets a deterministic number of attempts instead of a
+   * spin whose length depends on the machine.
+   */
+  upgradeTimeoutMs?: number;
+  /** Delay between version polls (ms, default 250). */
+  upgradePollIntervalMs?: number;
 }
 
 // ── Batch & Phase ───────────────────────────────────────────
@@ -111,6 +161,14 @@ export interface NodeUpgradeState {
   status: 'pending' | 'draining' | 'upgrading' | 'health_check' | 'completed' | 'failed' | 'rolled_back';
   startedAt?: number;
   completedAt?: number;
+  /**
+   * The version the node said it was running, once it said the target one.
+   *
+   * Absent while the node is in flight and absent on a node that failed to reach
+   * the target: this is the evidence, not the intention, so a node nobody
+   * confirmed carries no version at all.
+   */
+  reportedVersion?: string;
   error?: string;
 }
 
@@ -149,6 +207,7 @@ export interface RollingUpgradeEvent {
     | 'batch_started'
     | 'batch_health_checked'
     | 'batch_promoted'
+    | 'node_version_confirmed'
     | 'batch_failed'
     | 'canary_started'
     | 'canary_health_checked'

@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { RollingUpgradeOrchestrator } from '../impl/RollingUpgradeOrchestrator.js';
-import type { RollingUpgradePlan, BatchHealth } from '../interfaces/types.js';
+import type { RollingUpgradePlan, BatchHealth, IVersionProbe } from '../interfaces/types.js';
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -27,11 +27,23 @@ const NODES = [
 /** Instant sleep for fast tests. */
 const instantSleep = () => Promise.resolve();
 
+/**
+ * A probe whose nodes report `version` on every read.
+ *
+ * The upgrade orchestrator refuses a plan whose target version nobody can
+ * confirm; these cases are about batching and health gating, so the probe is the
+ * simplest one that confirms.
+ */
+function settledProbe(version = '2.0.0'): IVersionProbe {
+  return { reportedVersion: async () => version };
+}
+
 /** Create engine with fast test options. */
 function createEngine(opts: { minBakeMs?: number } = {}) {
   return new RollingUpgradeOrchestrator({
     minBakeMs: opts.minBakeMs ?? 100,
     sleep: instantSleep,
+    probe: settledProbe(),
   });
 }
 

@@ -14,6 +14,7 @@ import type {
   NodeUpgradeState,
   CanaryConfig,
   DrainConfig,
+  IVersionProbe,
 } from './types.js';
 
 export type {
@@ -26,6 +27,7 @@ export type {
   NodeUpgradeState,
   CanaryConfig,
   DrainConfig,
+  IVersionProbe,
 };
 
 /**

@@ -165,8 +165,23 @@ export class IntegratedFactory {
 
   // ── RollingUpgrade ─────────────────────────────────
 
-  createRollingUpgrade(): IRollingUpgrade {
-    return new RollingUpgradeOrchestrator();
+  /**
+   * A rolling upgrade whose nodes behave like nodes: each starts on
+   * `initialVersion`, moves only when the orchestrator asks it to, and reports
+   * what it is actually running. The old factory returned an orchestrator with no
+   * probe at all and the harness still saw `completed`, because nothing was ever
+   * asked.
+   */
+  createRollingUpgrade(initialVersion = 'v1'): IRollingUpgrade {
+    const running = new Map<string, string>();
+    return new RollingUpgradeOrchestrator({
+      probe: {
+        reportedVersion: async (nodeId: string) => running.get(nodeId) ?? initialVersion,
+        requestUpgrade: async (nodeId: string, version: string) => {
+          running.set(nodeId, version);
+        },
+      },
+    });
   }
 
   // ── CircuitBreaker ─────────────────────────────────

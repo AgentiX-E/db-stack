@@ -25,6 +25,7 @@ import type {
   NodeUpgradeState,
   CanaryConfig,
   DrainConfig,
+  IVersionProbe,
 } from '../interfaces/index.js';
 
 /** Default drain configuration. */
@@ -36,6 +37,30 @@ const DEFAULT_DRAIN: Required<DrainConfig> = {
 
 /** Minimum canary bake time (safety floor). */
 const MIN_CANARY_BAKE_MS = 10_000;
+
+/** How long a node gets to report the target version, before the plan's own value. */
+const DEFAULT_UPGRADE_TIMEOUT_MS = 30_000;
+
+/** How often a node's version is read while waiting for it to change. */
+const DEFAULT_UPGRADE_POLL_MS = 250;
+
+/**
+ * A node did not report the target version in time.
+ *
+ * Typed so the batch path can turn it into a failed batch — and the plan's
+ * rollback policy — while every other error keeps propagating out of `execute()`
+ * as it did before. An interruption during the drain is the caller's problem;
+ * a node that came back on the old version is the upgrade's.
+ */
+class UpgradeNotVerified extends Error {
+  constructor(
+    readonly nodeId: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'UpgradeNotVerified';
+  }
+}
 
 // ── Orchestrator ─────────────────────────────────────────────
 
@@ -53,10 +78,13 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
   private _sleepFn: (ms: number) => Promise<void>;
   /** Override min canary bake time for testing (default 10s). */
   private _minBakeMs: number;
+  /** The node's own account of what it is running. Absent means no upgrade can be verified. */
+  private _probe: IVersionProbe | undefined;
 
-  constructor(opts?: { minBakeMs?: number; sleep?: (ms: number) => Promise<void> }) {
+  constructor(opts?: { minBakeMs?: number; sleep?: (ms: number) => Promise<void>; probe?: IVersionProbe }) {
     this._sleepFn = opts?.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, Math.max(0, ms))));
     this._minBakeMs = opts?.minBakeMs ?? MIN_CANARY_BAKE_MS;
+    this._probe = opts?.probe;
   }
 
   // ── Public API ──────────────────────────────────────────
@@ -159,9 +187,11 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
       if (canaryBatch) {
         try {
           await this._executeCanary(canaryBatch, plan.canary);
-        } catch {
-          // Canary failed — rollback trigger
-          this._handleFailure('canary', canaryBatch, 'Canary health check failed');
+        } catch (err) {
+          // Canary failed — rollback trigger. The reason is the actual one: a
+          // canary that never reported the target version and a canary that
+          // reported it and then failed its health check are different incidents.
+          this._handleFailure('canary', canaryBatch, err instanceof Error ? err.message : 'Canary failed');
           return this._buildStats();
         }
       }
@@ -207,14 +237,15 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
   // ── Internal: Validation ─────────────────────────────────
 
   private _validatePlan(plan: RollingUpgradePlan): void {
+    // An empty node list and a missing id are one refusal: a plan that names no
+    // nodes has nothing to upgrade either way. The second `length === 0` check
+    // that used to follow was unreachable — the first test already covers it, and
+    // a branch nothing can enter is not a stricter validation, just a line that
+    // shows up as uncovered.
     const missingId = !plan.id;
     const emptyNodes = !plan.nodes.length;
     if (missingId || emptyNodes) {
       throw new Error('Invalid plan: id and nodes are required');
-    }
-    const zeroNodes = plan.nodes.length === 0;
-    if (zeroNodes) {
-      throw new Error('Invalid plan: nodes list cannot be empty');
     }
     if (plan.canary) {
       const fractionNotPositive = plan.canary.fraction <= 0;
@@ -238,6 +269,17 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
       if (missingCheck) {
         throw new Error(`Health check "${name}" is not registered`);
       }
+    }
+    // A plan without a probe is a plan whose outcome nobody can check. Refusing
+    // here costs a millisecond; the alternative is a `completed` batch of nodes
+    // that are still on the old version, which is the failure mode this
+    // orchestrator used to manufacture by sleeping for zero milliseconds and
+    // calling that an upgrade.
+    if (!this._probe) {
+      throw new Error(
+        `Invalid plan: targetVersion "${plan.targetVersion}" cannot be verified — ` +
+          'no version probe was passed to the constructor',
+      );
     }
   }
 
@@ -313,10 +355,7 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
   // ── Internal: Canary Execution ───────────────────────────
 
   private async _executeCanary(batch: UpgradeBatch, config: CanaryConfig): Promise<void> {
-    this._emit('canary_started', {
-      batchIndex: batch.index,
-      nodes: batch.nodes.map((n) => n.nodeId),
-    });
+    this._emit('canary_started', { batchIndex: batch.index, nodes: batch.nodes.map((n) => n.nodeId) }, batch.index);
 
     // Mark nodes as upgrading
     await this._drainAndUpgrade(batch);
@@ -324,13 +363,10 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
     // Check canary health
     batch.status = 'running';
     const health = await this._checkBatchHealth(batch);
-    this._emit('canary_health_checked', {
-      batchIndex: batch.index,
-      healthy: health.healthy,
-    });
+    this._emit('canary_health_checked', { batchIndex: batch.index, healthy: health.healthy }, batch.index);
 
     if (!health.healthy) {
-      this._emit('canary_failed', { batchIndex: batch.index });
+      this._emit('canary_failed', { batchIndex: batch.index }, batch.index);
       throw new Error('Canary health check failed');
     }
 
@@ -345,28 +381,32 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
       node.completedAt = Date.now();
     }
     batch.status = 'completed';
-    this._emit('canary_promoted', { batchIndex: batch.index });
+    this._emit('canary_promoted', { batchIndex: batch.index }, batch.index);
   }
 
   // ── Internal: Batch Execution ────────────────────────────
 
   private async _executeBatch(batch: UpgradeBatch, _globalIndex: number): Promise<boolean> {
-    this._emit('batch_started', {
-      batchIndex: batch.index,
-      nodes: batch.nodes.map((n) => n.nodeId),
-    });
+    this._emit('batch_started', { batchIndex: batch.index, nodes: batch.nodes.map((n) => n.nodeId) }, batch.index);
 
     // Drain and upgrade
-    await this._drainAndUpgrade(batch);
+    try {
+      await this._drainAndUpgrade(batch);
+    } catch (err) {
+      // A node that came back on the wrong version is a failed batch, and the
+      // plan's rollback policy decides what happens next. Every other error — a
+      // drain interrupted by the caller, a probe that threw something other than
+      // a version read — keeps propagating as it did before.
+      if (!(err instanceof UpgradeNotVerified)) throw err;
+      this._handleFailure('upgrade', batch, err.message);
+      return false;
+    }
 
     // Health check
     batch.status = 'running';
     this.phase = 'health_checking';
     const health = await this._checkBatchHealth(batch);
-    this._emit('batch_health_checked', {
-      batchIndex: batch.index,
-      healthy: health.healthy,
-    });
+    this._emit('batch_health_checked', { batchIndex: batch.index, healthy: health.healthy }, batch.index);
 
     const plan = this.plan!;
 
@@ -388,7 +428,7 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
           }
         }
         batch.status = 'completed';
-        this._emit('batch_promoted', { batchIndex: batch.index });
+        this._emit('batch_promoted', { batchIndex: batch.index }, batch.index);
         this.phase = 'rolling';
         return true;
       }
@@ -403,7 +443,7 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
       node.completedAt = Date.now();
     }
     batch.status = 'completed';
-    this._emit('batch_promoted', { batchIndex: batch.index });
+    this._emit('batch_promoted', { batchIndex: batch.index }, batch.index);
     this.phase = 'rolling';
     return true;
   }
@@ -422,14 +462,84 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
           await this._sleepFn(drain.connectionDrainMs);
         }
 
-        // Phase 2: Upgrade (simulated)
+        // Phase 2: Upgrade, and wait for the node to say so
         node.status = 'upgrading';
-        await this._sleepFn(0); // yield event loop for async health checks
+        await this._awaitReportedVersion(node);
 
         // Phase 3: Health check post-upgrade
         node.status = 'health_check';
       }
     }
+  }
+
+  /**
+   * Wait until the node reports the plan's target version.
+   *
+   * The wait is the upgrade. Everything before it — draining connections, setting
+   * `upgrading` — is preparation, and everything after it reasons about a node
+   * whose version is known. The old implementation slept for zero milliseconds in
+   * this position and moved on, so a node that failed to restart was counted in
+   * `upgradedNodes` and health-checked as if it were new.
+   *
+   * The deadline is counted in polls, not against a wall clock: a caller that
+   * injects an instant sleep still gets a bounded number of attempts, and the
+   * failure arrives in the same number of polls on every machine.
+   */
+  private async _awaitReportedVersion(node: NodeUpgradeState): Promise<void> {
+    const plan = this.plan!;
+    const probe = this._probe!;
+    const target = plan.targetVersion;
+    const interval = Math.max(1, plan.upgradePollIntervalMs ?? DEFAULT_UPGRADE_POLL_MS);
+    const timeoutMs = plan.upgradeTimeoutMs ?? DEFAULT_UPGRADE_TIMEOUT_MS;
+    const maxPolls = Math.max(1, Math.ceil(timeoutMs / interval));
+
+    // A restart that cannot be requested is not an upgrade that is merely slow:
+    // the node was never asked to change version, so waiting for it would burn
+    // the whole budget to report a timeout that hides the real reason.
+    if (probe.requestUpgrade) {
+      try {
+        await probe.requestUpgrade(node.nodeId, target);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        node.status = 'failed';
+        node.error = `could not request upgrade to ${target}: ${reason}`;
+        throw new UpgradeNotVerified(node.nodeId, node.error);
+      }
+    }
+
+    let last: string | null = null;
+    let lastError: string | undefined;
+    for (let poll = 0; poll < maxPolls; poll++) {
+      try {
+        last = await probe.reportedVersion(node.nodeId);
+        lastError = undefined;
+      } catch (err) {
+        // A node that cannot be reached mid-restart is exactly what the loop is
+        // for. The reason is kept so a timeout can say why it never heard back.
+        last = null;
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+
+      if (last === target) {
+        node.reportedVersion = target;
+        this._emit(
+          'node_version_confirmed',
+          { nodeId: node.nodeId, version: target, polls: poll + 1 },
+          undefined,
+          node.nodeId,
+        );
+        return;
+      }
+
+      if (poll + 1 < maxPolls) await this._sleepFn(interval);
+    }
+
+    node.status = 'failed';
+    node.error =
+      `node did not report version ${target} within ${timeoutMs} ms ` +
+      `(${maxPolls} polls): ${last === null ? 'no version reported' : `it reports ${last}`}` +
+      (lastError === undefined ? '' : ` — ${lastError}`);
+    throw new UpgradeNotVerified(node.nodeId, node.error);
   }
 
   // ── Internal: Health Checking ─────────────────────────────
@@ -446,8 +556,9 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
     for (const node of batch.nodes) {
       let nodeHealthy = true;
       for (const checkName of checks) {
-        const fn = this.healthChecks.get(checkName);
-        if (!fn) continue;
+        // `_validatePlan` has already refused any name that is not registered, so
+        // there is no missing-function case here to guard: the lookup cannot fail.
+        const fn = this.healthChecks.get(checkName)!;
 
         try {
           const result = await fn(node.nodeId);
@@ -484,7 +595,7 @@ export class RollingUpgradeOrchestrator implements IRollingUpgrade {
         node.error = reason;
       }
     }
-    this._emit('batch_failed', { batchIndex: batch.index, reason });
+    this._emit('batch_failed', { batchIndex: batch.index, reason }, batch.index);
 
     const plan = this.plan!;
 

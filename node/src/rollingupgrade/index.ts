@@ -12,5 +12,6 @@ export type {
   DrainConfig,
   BatchStrategy,
   RollbackTrigger,
+  IVersionProbe,
 } from './interfaces/types.js';
 export { RollingUpgradeOrchestrator } from './impl/RollingUpgradeOrchestrator.js';
