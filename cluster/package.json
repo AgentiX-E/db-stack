@@ -18,7 +18,7 @@
     "bench:ycsb": "tsx bench/raft-ycsb.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && node ../scripts/fix-esm-extensions.mjs dist",
     "clean": "rm -rf dist coverage",
-    "coverage": "vitest run --coverage",
+    "coverage": "vitest run --coverage --reporter=default --reporter=json --outputFile=coverage/test-report.json",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "lint": "eslint .",
     "test": "vitest run",

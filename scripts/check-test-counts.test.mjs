@@ -30,6 +30,7 @@ import {
   parseCount,
   run,
   statements,
+  TARGETS,
 } from "./check-test-counts.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -499,5 +500,176 @@ test("the command line is the command line: a missing report exits 1 and says wh
     assert.match(child.stderr, /writes one\.$/m);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── A page that states one total ────────────────────────────────────────────
+
+/** A package page in the shape `cluster/README.md` and `federation/README.md` use. */
+const summaryPage = (cases, files) =>
+  [
+    "# Package",
+    "",
+    "| **Testing** | chaos, soak |",
+    "",
+    "## Testing",
+    "",
+    "```bash",
+    `pnpm test                  # ${cases} tests, ${files} test files`,
+    "```",
+    "",
+    `- **${files} test files, ${cases} tests** — unit, integration, chaos`,
+    "",
+  ].join("\n");
+
+/** Two files, three cases: the numbers a page has to state to be right. */
+const THREE_IN_TWO = {
+  testResults: [
+    {
+      name: "/repo/cluster/src/raft/group.test.ts",
+      assertionResults: [{}, {}],
+    },
+    { name: "/repo/cluster/src/raft/log.test.ts", assertionResults: [{}] },
+  ],
+};
+
+test("a page with one total is checked in both places it states it", () => {
+  const right = auditPage(summaryPage("3", "2"), measure(THREE_IN_TWO), {
+    shapes: "summary",
+  });
+  assert.deepEqual(right.findings, []);
+
+  // Each statement is wrong on its own, because a page being right in one place
+  // is the shape that hides a wrong number in the other: the union check would
+  // pass if either statement were read.
+  const boldWrong = summaryPage("3", "2").replace(
+    "- **2 test files, 3 tests**",
+    "- **131 test files, 3 tests**",
+  );
+  const boldFindings = auditPage(boldWrong, measure(THREE_IN_TWO), {
+    shapes: "summary",
+  }).findings;
+
+  assert.equal(boldFindings.length, 1);
+  assert.match(boldFindings[0].message, /says `131` where the run reports `2`/);
+
+  const commandWrong = summaryPage("3", "2").replace(
+    "# 3 tests, 2 test files",
+    "# 613 tests, 2 test files",
+  );
+  const commandFindings = auditPage(commandWrong, measure(THREE_IN_TWO), {
+    shapes: "summary",
+  }).findings;
+
+  assert.equal(commandFindings.length, 1);
+  assert.match(
+    commandFindings[0].message,
+    /says `613` where the run reports `3`/,
+  );
+});
+
+test("a page with no module table is not asked for one", () => {
+  // The table pass is the node page's contract. Running it over a package page
+  // would report every module in the run as a row the page forgot — twenty
+  // findings about a table the page never claimed to have.
+  const { findings } = auditPage(summaryPage("3", "2"), measure(THREE_IN_TWO), {
+    shapes: "summary",
+  });
+
+  assert.equal(
+    findings.filter((finding) => /no row in the table/.test(finding.message))
+      .length,
+    0,
+  );
+});
+
+test("a summary statement the page no longer carries is a finding", () => {
+  const { findings } = auditPage(
+    "# Package\n\nNo numbers here.\n",
+    measure(THREE_IN_TWO),
+    {
+      shapes: "summary",
+    },
+  );
+
+  assert.equal(findings.length, 2);
+  assert.ok(
+    findings.every((finding) => /no longer states/.test(finding.message)),
+  );
+});
+
+test("every page in the table is audited, and a missing report names its own command", () => {
+  const dir = mkdtempSync(join(tmpdir(), "test-counts-targets-"));
+  try {
+    const node = join(dir, "node.md");
+    const cluster = join(dir, "cluster.md");
+    writeFileSync(node, summaryPage("3", "2"));
+    writeFileSync(cluster, summaryPage("3", "2"));
+    const report = join(dir, "report.json");
+    writeFileSync(report, JSON.stringify(THREE_IN_TWO));
+
+    const lines = [];
+    const code = run([], {
+      targets: [
+        { page: node, report, shapes: "summary" },
+        { page: cluster, report, shapes: "summary" },
+      ],
+      log: (line) => lines.push(line),
+    });
+
+    assert.equal(code, 0);
+    assert.equal(
+      lines.length,
+      2,
+      `one line per page, got ${lines.join(" / ")}`,
+    );
+    assert.match(lines[0], /✓ test-counts: .*node\.md says 3 cases in 2 files/);
+    assert.match(
+      lines[1],
+      /✓ test-counts: .*cluster\.md says 3 cases in 2 files/,
+    );
+
+    const errors = [];
+    const missing = run([], {
+      targets: [
+        { page: node, report, shapes: "summary" },
+        { page: cluster, report: join(dir, "absent.json"), shapes: "summary" },
+      ],
+      error: (line) => errors.push(line),
+    });
+
+    assert.equal(missing, 1);
+    assert.match(errors[0], /no report at/);
+    assert.match(errors[0], /pnpm --filter @agentix-e\/db-.* run coverage/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the repository's own table is every page that states a total", () => {
+  assert.equal(TARGETS.length, 3);
+
+  for (const target of TARGETS) {
+    const text = readFileSync(resolve(ROOT, target.page), "utf8");
+    const module = target.page.split("/")[0];
+    const measured = measure({
+      testResults: [
+        { name: `/${module}/src/a.test.ts`, assertionResults: [{}] },
+        { name: `/${module}/src/b.test.ts`, assertionResults: [{}] },
+      ],
+    });
+    const shapes = statements(measured, target.shapes);
+
+    assert.ok(
+      shapes.length >= 2,
+      `${target.page} declares a shape with ${shapes.length} statement(s)`,
+    );
+    for (const statement of shapes) {
+      assert.ok(
+        statement.pattern.test(text),
+        `${target.page} no longer carries the sentence for \`${statement.id}\`, so the gate ` +
+          `reads nothing there`,
+      );
+    }
   }
 });

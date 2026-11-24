@@ -18,7 +18,7 @@
     "test": "vitest run",
     "test:unit": "vitest run --exclude \"src/__tests__/integration/**\" --exclude \"src/__tests__/chaos/**\" --exclude \"src/__tests__/performance/**\"",
     "test:integration": "vitest run src/__tests__/integration src/__tests__/chaos",
-    "coverage": "vitest run --coverage",
+    "coverage": "vitest run --coverage --reporter=default --reporter=json --outputFile=coverage/test-report.json",
     "lint": "eslint .",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "clean": "rm -rf dist coverage",

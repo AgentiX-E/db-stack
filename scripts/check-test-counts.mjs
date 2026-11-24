@@ -23,17 +23,53 @@
  * Usage:
  *   node scripts/check-test-counts.mjs [--report <path>] [--write]
  *
+ * With no arguments it audits every page in `TARGETS`. `--report` points the
+ * first of them at another report, which is how a test reaches the branch.`
+ *
  * `--write` rewrites the numbers instead of failing, for the iteration that
  * changes the suite.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
-const PAGE = "node/README.md";
-const REPORT = "node/coverage/test-report.json";
+
+/**
+ * Every page that states a test total, and the report that decides it.
+ *
+ * The gate used to know two paths — `node/README.md` and its report — and the
+ * other two packages drifted by hundreds of cases with nothing looking: the
+ * cluster page claimed 2 116 cases in 131 files while the suite ran 2 350 in
+ * 144, and the federation page claimed 363 in 29 while it ran past a thousand.
+ * A constant per page is a constant per page to forget, so the pages are a table.
+ *
+ * `shapes` names the sentence shapes a page uses, because the three pages are
+ * not written the same way and rewriting a page to fit a gate is the wrong
+ * direction. `modules` is the node page: a headline, a split sentence, a
+ * quick-start line and a table of twenty modules. `summary` is the other two: a
+ * bold line that totals the suite and the comment beside the command that runs
+ * it.
+ */
+export const TARGETS = [
+  {
+    page: "node/README.md",
+    report: "node/coverage/test-report.json",
+    shapes: "modules",
+  },
+  {
+    page: "cluster/README.md",
+    report: "cluster/coverage/test-report.json",
+    shapes: "summary",
+  },
+  {
+    page: "federation/README.md",
+    report: "federation/coverage/test-report.json",
+    shapes: "summary",
+  },
+];
+
 // The integration suite, wherever a package keeps it. It was `src/__tests__/e2e/`
 // while every module was its own package; the modules now sit one level deeper
 // (`packages/node/src/core/__tests__/e2e/`), and a constant that still required the
@@ -130,6 +166,36 @@ function packageOf(file) {
 }
 
 /**
+ * The two sentences a package page uses when it states one total.
+ *
+ * A page that lists no modules has nothing to reconcile between a table and a
+ * total; what it can get wrong is the total itself, in the two places it says it.
+ * Both are checked, because a page that is right in one and wrong in the other
+ * is the shape every drift in this repository has had.
+ */
+export function summaryStatements(total) {
+  return [
+    {
+      id: "summary",
+      describe: (values) => `${values[0]} test files, ${values[1]} tests`,
+      // "- **131 test files, 2 116 tests** — unit, integration, boundary, …"
+      pattern: /-\s*\*\*(\d+)\s+test\s+files,\s*([\d\s,.]+?)\s+tests\*\*/d,
+      expected: [String(total.files), formatCount(total.cases)],
+    },
+    {
+      id: "command",
+      describe: (values) => `${values[0]} tests, ${values[1]} test files`,
+      // "pnpm test                  # 2 116 tests, 131 test files"
+      pattern:
+        /(?:npm|pnpm) test\s+#\s*([\d\s,.]+?)\s+tests?,\s*(\d+)\s+test\s+files/d,
+      expected: [formatCount(total.cases), String(total.files)],
+    },
+  ];
+}
+
+/**
+ * Every place the page states a number the run decides.
+/**
  * Every place the page states a number the run decides.
  *
  * Each statement carries the pattern that finds it and the values it should
@@ -137,8 +203,9 @@ function packageOf(file) {
  * statement in a finding, so the message reads like a sentence about the page
  * rather than an offset.
  */
-export function statements(measured) {
+export function statements(measured, shapes = "modules") {
   const { total, suites } = measured;
+  if (shapes === "summary") return summaryStatements(total);
   return [
     {
       id: "headline",
@@ -192,13 +259,14 @@ const ROW =
  * Returns `findings` (each with `line` and `message`) and `edits` (the rewrites
  * `--write` would apply), so a test can assert both without a temporary file.
  */
-export function auditPage(text, measured) {
+export function auditPage(text, measured, options = {}) {
+  const shapes = options.shapes ?? "modules";
   const findings = [];
   const edits = [];
 
   const lineOf = (index) => text.slice(0, index).split("\n").length;
 
-  for (const statement of statements(measured)) {
+  for (const statement of statements(measured, shapes)) {
     const match = statement.pattern.exec(text);
     if (!match) {
       findings.push({
@@ -230,6 +298,11 @@ export function auditPage(text, measured) {
       }
     }
   }
+
+  // A page with no module table has nothing to reconcile row by row; running the
+  // table pass over it would report every module in the run as a row the page
+  // forgot, which is twenty findings about a table the page never claimed.
+  if (shapes !== "modules") return { findings, edits };
 
   const rows = new Map();
   for (const row of text.matchAll(ROW)) {
@@ -318,7 +391,6 @@ export function run(argv = process.argv.slice(2), options = {}) {
   // report path is a branch, and the only way to reach it from a test is to point
   // the gate at a tree instead of at this one.
   const base = options.root ?? root;
-  const pagePath = options.page ?? resolve(base, PAGE);
   const write = options.write ?? argv.includes("--write");
 
   const at = argv.indexOf("--report");
@@ -326,37 +398,95 @@ export function run(argv = process.argv.slice(2), options = {}) {
     error("✗ test-counts: --report needs a path");
     return 1;
   }
-  const reportPath =
-    options.report ??
-    (at === -1 ? resolve(base, REPORT) : resolve(argv[at + 1]));
+  const override = options.report ?? (at === -1 ? null : resolve(argv[at + 1]));
 
-  const report = loadReport(reportPath);
-  if (!report) {
+  // A caller that names a page is auditing a page; a caller that does not is
+  // auditing the repository, which is every page in the table. `--report` is the
+  // escape hatch for the first page in it, which is the page the gate was written
+  // for and the one anybody reaching for the flag means.
+  const targets =
+    options.targets ??
+    (options.page
+      ? [
+          {
+            page: options.page,
+            // `--report` is how a caller with a page reaches the branch without
+            // naming a report twice; a target with no report at all is a crash,
+            // not a finding, so the fallback is the flag rather than undefined.
+            report: options.report ?? override,
+            shapes: options.shapes ?? "modules",
+          },
+        ]
+      : TARGETS.map((target, index) =>
+          index === 0 && override ? { ...target, report: override } : target,
+        ));
+
+  const audited = [];
+  const missing = [];
+  for (const target of targets) {
+    const pagePath = options.page ? options.page : resolve(base, target.page);
+    const reportPath = isAbsolute(target.report)
+      ? target.report
+      : resolve(base, target.report);
+
+    const report = loadReport(reportPath);
+    if (!report) {
+      missing.push({ target, reportPath });
+      continue;
+    }
+
+    const measured = measure(report);
+    const text = readFileSync(pagePath, "utf8");
+    const { findings, edits } = auditPage(text, measured, {
+      shapes: target.shapes,
+    });
+    audited.push({
+      // A page inside the repository is named the way every other gate names it;
+      // one the caller supplied is named by the path the caller supplied.
+      page: options.page ? pagePath : target.page,
+      pagePath,
+      shapes: target.shapes,
+      measured,
+      findings,
+      edits,
+    });
+  }
+
+  if (missing.length > 0) {
+    const named = missing
+      .map(({ reportPath }) => relative(base, reportPath))
+      .join(", ");
+    const first = missing[0].reportPath;
     error(
-      `✗ test-counts: no report at ${relative(base, reportPath)}.\n` +
+      `✗ test-counts: no report at ${named}.\n` +
         `The gate counts what a run measured, so it needs a run: ` +
-        `\`pnpm --filter @agentix-e/db-node run coverage\` writes one.`,
+        `\`${coverageCommand(base, first)}\` writes one.`,
     );
     return 1;
   }
 
-  const measured = measure(report);
-  const text = readFileSync(pagePath, "utf8");
-  const { findings, edits } = auditPage(text, measured);
-  // A page inside the repository is named the way every other gate names it;
-  // one the caller supplied is named by the path the caller supplied.
-  const page = options.page ? pagePath : PAGE;
-
+  const edits = audited.flatMap((entry) => entry.edits);
   if (write && edits.length > 0) {
-    writeFileSync(pagePath, applyEdits(text, edits));
-    log(`✎ test-counts: rewrote ${edits.length} number(s) in ${page}`);
+    for (const entry of audited) {
+      if (entry.edits.length === 0) continue;
+      writeFileSync(
+        entry.pagePath,
+        applyEdits(readFileSync(entry.pagePath, "utf8"), entry.edits),
+      );
+      log(
+        `✎ test-counts: rewrote ${entry.edits.length} number(s) in ${entry.page}`,
+      );
+    }
     return 0;
   }
 
+  const findings = audited.flatMap((entry) =>
+    entry.findings.map((finding) => ({ ...finding, page: entry.page })),
+  );
   if (findings.length > 0) {
     error(`✗ test-counts: ${findings.length} finding(s)\n`);
     for (const finding of findings)
-      error(`  ${page}:${finding.line} ${finding.message}`);
+      error(`  ${finding.page}:${finding.line} ${finding.message}`);
     error(
       "\nA page that states a number is making a claim about a run. Either the number is right, " +
         "or the sentence that carries it goes.",
@@ -364,11 +494,32 @@ export function run(argv = process.argv.slice(2), options = {}) {
     return 1;
   }
 
-  log(
-    `✓ test-counts: ${formatCount(measured.total.cases)} cases in ${measured.total.files} files ` +
-      `over ${measured.packages.size} modules, and the page says so five times`,
-  );
+  for (const entry of audited) {
+    const { total, packages } = entry.measured;
+    if (entry.shapes === "modules") {
+      log(
+        `✓ test-counts: ${formatCount(total.cases)} cases in ${total.files} files ` +
+          `over ${packages.size} modules, and the page says so five times`,
+      );
+    } else {
+      log(
+        `✓ test-counts: ${entry.page} says ${formatCount(total.cases)} cases in ${total.files} files`,
+      );
+    }
+  }
   return 0;
+}
+
+/**
+ * The command that writes the report the gate is missing.
+ *
+ * A gate that says "run coverage" is a gate whose reader has to work out which
+ * package. The report path already names it: `cluster/coverage/test-report.json`
+ * is written by the filter whose package is `db-cluster`.
+ */
+export function coverageCommand(base, reportPath) {
+  const dir = relative(base, reportPath).split(sep)[0];
+  return `pnpm --filter @agentix-e/db-${dir || "node"} run coverage`;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

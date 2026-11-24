@@ -69,7 +69,7 @@ without reinventing it.
 | **Formal Verification** | TLA+ specs for joint consensus elections + log replication |
 | **Security** | mTLS transport, circuit-breaker protection, connection pooling |
 | **Observability** | OTEL distributed tracing, structured logging, Prometheus metrics |
-| **Testing** | 613 tests, chaos engineering, Jepsen-style validation, LTS soak tests |
+| **Testing** | Chaos engineering, Jepsen-style validation, LTS soak tests — the totals in [Testing](#testing) are the run's |
 
 ### What db-cluster is NOT
 
@@ -389,13 +389,13 @@ Every important operation emits structured logs and optional OTEL spans:
 ## Testing
 
 ```bash
-pnpm test                  # 2 116 tests, 131 test files
+pnpm test                  # 2 350 tests, 144 test files
 pnpm coverage              # the same, with per-file coverage gates
 pnpm test:perf             # performance benchmarks on a real 3-node TLS cluster
 pnpm tla-check             # TLA+ model checking
 ```
 
-- **131 test files, 2 116 tests** — unit, integration, boundary, chaos, LTS — 99.36 % lines,
+- **144 test files, 2 350 tests** — unit, integration, boundary, chaos, LTS — 99.36 % lines,
   99.70 % functions, 98.26 % branches, with a per-file floor of 95 %
 - **TLA+ formal verification** — JointConsensus elections + log replication
 - **Jepsen-style validation** — fuzzy register checker + end-state scanning
