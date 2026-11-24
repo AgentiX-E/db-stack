@@ -31,14 +31,47 @@ export interface ShardStateMachineCallbacks {
    */
   applyHandler?: (data: string, index?: number, term?: number) => void | Promise<void>;
 
+  /**
+   * Where the entry about to be applied sits in the log, when the caller knows.
+   *
+   * raft-core hands `apply()` a payload and nothing else, so the position has to
+   * come from the caller. It used to be documented as this callback and there was
+   * no such callback: `applyHandler` declared `index?` and `term?` parameters that
+   * no caller ever filled, so an engine that persists state — and PITR, which
+   * records where each write happened — could not have known where it was in the
+   * log. Reported rather than guessed: a caller that does not know returns
+   * `undefined` and the handler is called with the payload alone.
+   */
+  getEntryContext?: () => { index: number; term: number } | undefined;
+
   /** Called to serialize current state for snapshot. Should return serialized state bytes. */
   takeSnapshotCallback?: () => Buffer | Promise<Buffer>;
   /** Called to restore state from snapshot bytes. */
   installSnapshotCallback?: (data: Buffer) => void | Promise<void>;
 }
 
+/** What the adapter has actually done, as opposed to what it was constructed to do. */
+export interface ShardStateMachineSnapshot {
+  /** `degraded` while the most recent apply is the one that failed. */
+  status: 'running' | 'degraded';
+  /** Commands that reached the handler and returned. */
+  appliedCommands: number;
+  /** Log position of the most recent attempt, or null before the first one. */
+  appliedIndex: number | null;
+  appliedTerm: number | null;
+  /** Wall clock of the most recent successful apply, or null before the first one. */
+  lastAppliedAt: number | null;
+  /** Reason the most recent apply failed, or null. Cleared by a success. */
+  lastError: string | null;
+}
+
 export class ShardStateMachine implements ApplicationStateMachine {
   private callbacks: ShardStateMachineCallbacks;
+  private appliedCommands = 0;
+  private appliedIndex: number | null = null;
+  private appliedTerm: number | null = null;
+  private lastAppliedAt: number | null = null;
+  private lastError: string | null = null;
 
   constructor(callbacks: ShardStateMachineCallbacks) {
     this.callbacks = callbacks;
@@ -55,22 +88,54 @@ export class ShardStateMachine implements ApplicationStateMachine {
     const payload = command.payload;
     const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
 
+    // Read once per entry: a context that changes between the read and the call
+    // would report one position and apply another.
+    const context = this.callbacks.getEntryContext?.();
+    if (context) {
+      this.appliedIndex = context.index;
+      this.appliedTerm = context.term;
+    }
+
     if (this.callbacks.applyHandler) {
       try {
-        await this.callbacks.applyHandler(data);
+        if (context) {
+          await this.callbacks.applyHandler(data, context.index, context.term);
+        } else {
+          await this.callbacks.applyHandler(data);
+        }
+        this.appliedCommands += 1;
+        this.lastAppliedAt = Date.now();
+        this.lastError = null;
       } catch (err: any) {
-        logger.error({ err }, `[ShardStateMachine] applyHandler error: ${err.message}`);
+        // The failure is state, not just a log line: the next `getState()` is how
+        // a caller finds out that this replica is not applying.
+        this.lastError = err?.message ?? String(err);
+        logger.error({ err }, `[ShardStateMachine] applyHandler error: ${this.lastError}`);
         throw err;
       }
+    } else {
+      this.appliedCommands += 1;
+      this.lastAppliedAt = Date.now();
     }
   }
 
   /**
-   * Returns a view of the current application state.
-   * For now returns a summary object.
+   * What this state machine has applied.
+   *
+   * It used to return `{ status: 'running' }` on every call. The answer a leader
+   * asks for — is this replica caught up, and if not, why — was the same for a
+   * shard that had applied nothing and one that had applied everything, and the
+   * same after a failure as before it.
    */
-  getState(): any {
-    return { status: 'running' };
+  getState(): ShardStateMachineSnapshot {
+    return {
+      status: this.lastError === null ? 'running' : 'degraded',
+      appliedCommands: this.appliedCommands,
+      appliedIndex: this.appliedIndex,
+      appliedTerm: this.appliedTerm,
+      lastAppliedAt: this.lastAppliedAt,
+      lastError: this.lastError,
+    };
   }
 
   /**

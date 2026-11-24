@@ -15,6 +15,7 @@
 
 import { IPITRHook } from '../interfaces/IPITRHook';
 import * as crypto from 'crypto';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -76,6 +77,15 @@ export class PITRManager {
   private walEntries = new Map<string, WALEntry[]>(); // shardId → WAL entries
   private lastCheckpointTime = new Map<string, number>(); // shardId → epoch ms
   private enabled = false;
+  /**
+   * What compression actually saved, per shard.
+   *
+   * Measured at the moment the checkpoint is written, because that is the only
+   * moment both numbers exist: the snapshot before it was stored and the stream
+   * after. A ratio computed later would have to decompress to find out, which is
+   * the work the setting exists to avoid.
+   */
+  private compression = new Map<string, { checkpoints: number; uncompressedBytes: number; compressedBytes: number }>();
 
   constructor(config: Partial<PITRConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -123,12 +133,10 @@ export class PITRManager {
       timestamp: entry.timestamp || Date.now(),
     });
 
-    // Auto-checkpoint if interval has elapsed
-    const lastCheckpoint = this.lastCheckpointTime.get(entry.shardId) ?? 0;
-    if (Date.now() - lastCheckpoint >= this.config.checkpointIntervalMs) {
-      // Defer checkpoint creation to explicit call — avoid sync ops in hot path
-    }
-
+    // No auto-checkpoint here: a checkpoint is a synchronous copy of the whole
+    // state machine, and doing it inside the apply path would put that copy in
+    // front of every write. The interval is honoured by the caller that owns the
+    // clock — an empty `if` here used to look like it did.
     // Enforce WAL retention
     this.enforceWALRetention(entry.shardId);
   }
@@ -150,12 +158,24 @@ export class PITRManager {
    * @param snapshotData — Current state machine data
    */
   createCheckpoint(shardId: string, snapshotIndex: number, snapshotTerm: number, snapshotData: Buffer): PITRCheckpoint {
+    // The bytes that go on disk, and the measurement of what they cost.
+    const stored = this.config.compressSnapshots ? this.compressSnapshot(snapshotData) : Buffer.from(snapshotData);
+    const tally = this.compression.get(shardId) ?? {
+      checkpoints: 0,
+      uncompressedBytes: 0,
+      compressedBytes: 0,
+    };
+    tally.checkpoints += 1;
+    tally.uncompressedBytes += snapshotData.length;
+    tally.compressedBytes += stored.length;
+    this.compression.set(shardId, tally);
+
     const checkpoint: PITRCheckpoint = {
       checkpointId: this.generateCheckpointId(shardId),
       shardId,
       snapshotIndex,
       snapshotTerm,
-      snapshotData: this.config.compressSnapshots ? this.compressSnapshot(snapshotData) : Buffer.from(snapshotData),
+      snapshotData: stored,
       timestamp: Date.now(),
       compressed: this.config.compressSnapshots,
     };
@@ -357,15 +377,58 @@ export class PITRManager {
       .join('\n');
   }
 
+  /**
+   * Compress a snapshot for storage.
+   *
+   * gzip, because the setting says "gzip" and because the one property an
+   * operator turns it on for is that the checkpoint is smaller than the snapshot.
+   * This used to return `Buffer.from(data)`: the flag was set, the bytes were
+   * not touched, and every round-trip test passed because the matching
+   * "decompressor" was the identity too.
+   */
   private compressSnapshot(data: Buffer): Buffer {
-    // Placeholder for real compression (e.g., zlib.gzipSync)
-    // Using identity for now — tests validate the API contract
-    return Buffer.from(data);
+    return gzipSync(data);
   }
 
+  /**
+   * Decompress a checkpoint, refusing a stream that is not one.
+   *
+   * A truncated or corrupt checkpoint has to fail here rather than return
+   * whatever `toString()` makes of it: a restore that lands on a half-written
+   * snapshot is a restore that reports success and loses rows.
+   */
   private decompressSnapshot(data: Buffer): string {
-    // Placeholder for real decompression
-    return data.toString();
+    try {
+      return gunzipSync(data).toString();
+    } catch (error) {
+      throw new Error(
+        `PITR checkpoint stream is not a readable gzip stream (${data.length} bytes): ` + `${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * What compression saved for a shard.
+   *
+   * `ratio` is compressed bytes over snapshot bytes: below 1 is a saving, 1 is
+   * none, and a shard with no checkpoints has nothing to compare.
+   */
+  getCompressionStats(shardId: string): {
+    checkpoints: number;
+    uncompressedBytes: number;
+    compressedBytes: number;
+    ratio: number;
+  } {
+    const tally = this.compression.get(shardId);
+    if (!tally || tally.uncompressedBytes === 0) {
+      return {
+        checkpoints: tally?.checkpoints ?? 0,
+        uncompressedBytes: tally?.uncompressedBytes ?? 0,
+        compressedBytes: tally?.compressedBytes ?? 0,
+        ratio: 1,
+      };
+    }
+    return { ...tally, ratio: tally.compressedBytes / tally.uncompressedBytes };
   }
 
   // ── Cleanup ──────────────────────────────────────────────
@@ -375,6 +438,7 @@ export class PITRManager {
     this.checkpoints.clear();
     this.walEntries.clear();
     this.lastCheckpointTime.clear();
+    this.compression.clear();
     this.enabled = false;
   }
 }

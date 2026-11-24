@@ -35,7 +35,7 @@ export type {
   TransportReconnectConfig,
 } from './consensus/core/RaftGroupManager';
 export { ShardStateMachine } from './consensus/core/ShardStateMachine';
-export type { ShardStateMachineCallbacks } from './consensus/core/ShardStateMachine';
+export type { ShardStateMachineCallbacks, ShardStateMachineSnapshot } from './consensus/core/ShardStateMachine';
 export { RaftJointConsensusEngine } from './consensus/joint-consensus/RaftJointConsensusEngine';
 export type {
   TransitionPhase,
