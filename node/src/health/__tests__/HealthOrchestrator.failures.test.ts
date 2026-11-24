@@ -291,3 +291,95 @@ describe('HealthOrchestrator — registration', () => {
     expect(orchestrator.liveness()).toEqual({ ok: true, errors: [] });
   });
 });
+
+describe('HealthOrchestrator — a probe that answers with a promise', () => {
+  /**
+   * `registerFunctional`'s docblock used to show an `async` readiness probe, and
+   * the type says `() => ProbeResult`. A JavaScript caller gets no compiler to
+   * argue with: the promise is stored, `result.ok` is `undefined`, and the
+   * component is reported unhealthy forever with a message that names nothing.
+   * The answer is refused by name instead — the probe is wrong, and a reader of
+   * `/readyz` should be told which way.
+   */
+  const promiseProbe = (kind: 'liveness' | 'readiness' | 'startup'): IHealthProbe => {
+    const async = () => Promise.resolve({ ok: true }) as unknown as ProbeResult;
+    return probe('db', { [kind]: async });
+  };
+
+  it('names liveness, readiness and startup rather than reporting a silent failure', () => {
+    for (const kind of ['liveness', 'readiness', 'startup'] as const) {
+      const orchestrator = new HealthOrchestrator();
+      orchestrator.registerComponent(promiseProbe(kind));
+
+      const result =
+        kind === 'liveness'
+          ? orchestrator.liveness()
+          : kind === 'readiness'
+            ? orchestrator.readiness()
+            : orchestrator.startup();
+
+      expect(result.ok, kind).toBe(false);
+      expect(result.errors.join(' '), kind).toContain('returned a promise');
+    }
+  });
+
+  it('reports the promise through the structured status, not as an undefined result', () => {
+    const orchestrator = new HealthOrchestrator();
+    // Both halves answer with a promise: one promise and one real answer is
+    // `degraded`, which is the aggregate saying what it was told. The claim here
+    // is that a promise is never read as a passing result.
+    orchestrator.registerComponent({
+      ...promiseProbe('liveness'),
+      readiness: (() => Promise.resolve({ ok: true })) as unknown as () => ProbeResult,
+    });
+
+    const [component] = orchestrator.getComponentHealth();
+
+    expect(component.liveness.ok).toBe(false);
+    expect(component.liveness.message).toContain('returned a promise');
+    expect(component.readiness.ok).toBe(false);
+    expect(orchestrator.getAggregateStatus().status).toBe('unhealthy');
+  });
+
+  it('keeps the probe as the receiver, so a class probe that reads its own state answers', () => {
+    // `getComponentHealth()` used to pass `entry.probe.liveness` to a helper and
+    // call it there. A closure does not notice; a class does — `this` was
+    // undefined, the throw landed in the same `catch` a real failure uses, and a
+    // healthy component was reported unhealthy with "Cannot read properties of
+    // undefined".
+    class EngineProbe implements IHealthProbe {
+      readonly probeId = 'engine';
+      readonly componentName = 'Engine';
+      private readonly open = true;
+
+      liveness(): ProbeResult {
+        return { ok: this.open, message: this.open ? 'open' : 'closed' };
+      }
+
+      readiness(): ProbeResult {
+        return { ok: this.open };
+      }
+
+      startup(): ProbeResult {
+        return { ok: this.open };
+      }
+    }
+
+    const orchestrator = new HealthOrchestrator();
+    orchestrator.registerComponent(new EngineProbe());
+
+    const [component] = orchestrator.getComponentHealth();
+
+    expect(component.liveness).toEqual({ ok: true, message: 'open' });
+    expect(orchestrator.getAggregateStatus().status).toBe('healthy');
+  });
+
+  it('leaves a synchronous probe untouched', () => {
+    const orchestrator = new HealthOrchestrator();
+    orchestrator.registerComponent(probe('db', { readiness: () => ({ ok: true, message: 'warm' }) }));
+
+    const [component] = orchestrator.getComponentHealth();
+
+    expect(component.readiness).toEqual({ ok: true, message: 'warm' });
+  });
+});

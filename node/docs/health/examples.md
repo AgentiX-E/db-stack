@@ -12,13 +12,16 @@ const app = express();
 // Register probes for each subsystem
 health.registerFunctional('database', 'SQLite Engine', {
   liveness: () => ({ ok: true }),
-  readiness: async () => {
-    try {
-      await db.execute('SELECT 1');
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, message: err.message };
-    }
+  // Probes are synchronous: `readiness()` has to *return* a result on the
+  // `/readyz` path, so a check that needs I/O reports what the last attempt
+  // learned rather than awaiting a new one. Refresh the value on a timer or from
+  // the connection's own state; a probe that returns a promise is refused and
+  // named as such.
+  readiness: () => {
+    const last = db.lastPing(); // { at: number; error: string | null }
+    return last.error === null
+      ? { ok: true, details: { ageMs: Date.now() - last.at } }
+      : { ok: false, message: last.error };
   },
 });
 

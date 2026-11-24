@@ -47,16 +47,29 @@
  * exported under that name (TS2724), a non-callable that is called (TS2349).
  * A fragment cannot make those true by being a fragment.
  *
- * ## Why it is compiled twice
+ * ## Why every block is its own module
  *
  * A page may repeat a binding name across blocks (`const registry = …` in three
  * examples). Concatenated, the second declaration is a duplicate identifier,
- * TypeScript resets it to `any`, and every claim about it stops being checkable
- * — a false green produced by the gate's own assembling. So a page whose
- * concatenation raises a collision is compiled a second time block by block,
- * where each block is its own scope, and the findings are unioned. Blocks that
- * build on each other are covered by the first pass; blocks that shadow each
- * other are covered by the second.
+ * TypeScript resets it to `any`, and every claim about it stops being checkable —
+ * a false green produced by the gate's own assembling. Worse, one page's
+ * `class HAFailoverDetector` became the type of `new InMemoryDeadlockDetector()`
+ * on a page about deadlock detection.
+ *
+ * So a block is the unit: the unit a reader copies, and the only unit whose
+ * meaning the page controls from inside. Each block is written as its own module
+ * and judged alone. A snippet that builds on a value the prose introduced is
+ * still read — it simply cannot be judged *about* that value, because the name is
+ * not declared in the block, and "cannot find name" is not a claim.
+ *
+ * ## Why the judged list is asserted, not described
+ *
+ * The paragraph above used to say TS2322 was judged while `JUDGED_CODES` did not
+ * contain it — so `const zz: number = "not a number"` passed, and three pages
+ * that assigned a promise where a probe result was declared passed with it. The
+ * list is the contract; the prose is a comment. `check-doc-examples.test.mjs`
+ * reads the names out of this comment and fails if one of them is missing from
+ * the list, so the two cannot drift again.
  *
  * Usage: node scripts/check-doc-examples.mjs [--verbose]
  */
@@ -92,6 +105,7 @@ const VERBOSE = process.argv.includes("--verbose");
  * reports them would be turned off within a week.
  */
 export const JUDGED_CODES = new Map([
+  [2322, "a value cannot be assigned to the type it is declared as"],
   [2339, "property does not exist on the type"],
   [2345, "argument cannot be passed to this parameter"],
   [2349, "this expression is not callable"],

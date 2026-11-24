@@ -16,7 +16,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -24,6 +30,7 @@ import {
   auditExamples,
   dedupe,
   describeDiagnostic,
+  JUDGED_CODES,
   documentedPages,
   exampleSource,
   report,
@@ -150,6 +157,56 @@ test("a required property the literal omits is a finding", (t) => {
     [2345, 2561].includes(findings[0].code),
     `unexpected code ${findings[0].code}`,
   );
+});
+
+test("a value the declared type cannot hold is a finding", (t) => {
+  // The shape the audit's probe used: `const zz: number = "not a number"`. It is
+  // TS2322, and a snippet that assigns a string to a number is a claim about the
+  // API in the same sense a wrong argument is — the reader who pastes it gets an
+  // error. It went unreported because 2322 was named in this gate's own contract
+  // and absent from the list the gate judges.
+  const root = fixture(page(`const zz: number = "not a number";`));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const findings = audit(root);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].code, 2322);
+  assert.match(findings[0].message, /not assignable to type 'number'/);
+});
+
+test("a probe function with the wrong return type is a finding", (t) => {
+  // `registerFunctional`'s `readiness: async () => ({ ok: true })` — the promise
+  // of a result where a result is declared. Reported as 2322, and the reason the
+  // health pages are worth compiling at all.
+  const root = fixture(
+    page(
+      `import { describeGroup } from "@agentix-e/db-fixture";\nconst describe: (o: { id: string }) => string = (o: { id: string }) => 1;\ndescribeGroup({ id: "a" });`,
+    ),
+  );
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const findings = audit(root);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].code, 2322);
+});
+
+test("every diagnostic code the gate promises to judge is in the list it judges", () => {
+  // A contract is the list, not the prose beside it. The header names the codes
+  // this gate treats as claims; 2322 was in the prose and not in `JUDGED_CODES`,
+  // so the gate promised a judgement it did not perform.
+  const header = readFileSync(
+    resolve(ROOT, "scripts", "check-doc-examples.mjs"),
+    "utf8",
+  ).split("*/")[0];
+  const named = new Set(header.match(/\bTS(\d{4})\b/g) ?? []);
+
+  assert.ok(named.size >= 6, `the header names only ${named.size} codes`);
+  for (const name of named) {
+    assert.ok(
+      JUDGED_CODES.has(Number(name.slice(2))),
+      `${name} is named in the header and absent from JUDGED_CODES`,
+    );
+  }
 });
 
 test("a name the block never declares is not a finding", (t) => {

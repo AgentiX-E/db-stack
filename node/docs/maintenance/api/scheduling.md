@@ -11,12 +11,23 @@ const scheduler = new MaintenanceWindowScheduler();
 scheduler.registerWindow({
   id: "vacuum-nightly",
   name: "Nightly VACUUM",
-  operation: "vacuum",
-  recurrence: { mode: "cron", expression: "0 3 * * *" },
-  durationMs: 45 * 60_000,
+  operationType: "vacuum",
+  targets: ["orders", "order_items"],
+  recurrence: "cron",
+  cronExpression: "0 3 * * *",
   priority: 10,
+  owner: "platform",
+  maxDurationMin: 45,
+  requiresApproval: true,
 });
 ```
+
+`recurrence` is one string, not an object: `once`, `daily`, `weekly`, `monthly`
+or `cron`. What the mode needs is a sibling field — `cronExpression` for `cron`,
+`at` for `once`, `startTime`/`endTime` for the calendar modes, plus `daysOfWeek`
+or `daysOfMonth` where the mode has days. `maxDurationMin` is minutes, and `0`
+means unbounded; `requiresApproval` decides whether an occurrence may start
+without a call to `approveWindow`.
 
 ## Lifecycle
 

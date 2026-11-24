@@ -152,10 +152,10 @@ health.registerFunctional('storage-engine', 'Storage Engine', {
       details: { pagesFree },
     };
   },
-  startup: async () => {
-    await waitForInit();
-    return { ok: true };
-  },
+  // Synchronous, like `liveness` and `readiness`: the orchestrator reads the
+  // result, it does not await it. `initialised` is set by whatever finishes the
+  // work.
+  startup: () => ({ ok: initialised }),
 }, { critical: true });
 ```
 
