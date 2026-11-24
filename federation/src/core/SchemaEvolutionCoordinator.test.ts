@@ -24,6 +24,8 @@ function mockReplication(): IMultiLeaderReplication {
     getPendingCounts: vi.fn(),
     onTargetConnected: vi.fn(),
     onTargetDisconnected: vi.fn(),
+    onTargetRecovered: vi.fn(),
+    isPeerReachable: vi.fn(() => true),
     onHighLag: vi.fn(),
   };
 }

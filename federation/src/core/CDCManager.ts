@@ -1,39 +1,35 @@
 /**
  * CDCManager — Change Data Capture manager for cross-DC event streaming.
  *
- * Owns per-target CDCEngine instances and provides:
- *   1. Stream-based CDC event capture (changes applied to local Raft)
- *   2. Per-target CDC workers (one CDCEngine per federation target)
- *   3. Filtering by target DC/node for efficient cross-DC forwarding
- *   4. Lag tracking and backpressure
- *   5. Event replay from a given checkpoint (WAL-anchored)
+ * Owns the local change stream: changes applied to the local Raft group are
+ * captured here and offered, in capture order, to every registered handler.
+ * Per-DC routing is not this layer's job — `MultiLeaderReplication` owns one
+ * durable outbox per target and is the only path that crosses a datacenter.
  *
  * Invariants:
- *   MA1 — At least one CDC worker per DC target
- *   MA2 — CDC events delivered at-least-once (idempotent downstream)
- *   MA3 — Lag never exceeds configured max (backpressure on overflow)
- *   MA4 — Restart from checkpoint without data loss
- *   MA5 — Graceful shutdown stops all workers
+ *   MA2 — every captured event is offered to every handler, at-least-once
+ *   MA3 — a full buffer triggers a drain and a backpressure signal, never a
+ *         discard; `getDeliveryStats()` makes the accounting checkable
+ *   MA5 — graceful shutdown drains the buffer before it stops
+ *
+ * This class used to construct one `CDCEngine` per federation target, start it,
+ * stop it, and never hand it an event. Those engines model PostgreSQL's
+ * table/row shape (`tableName`, `oldValues`, `newValues`) and this manager
+ * models key/value changes; the only way to feed one from the other was to
+ * invent a table name from a key. `getEngineCount()` therefore answered a
+ * question about decoration: a two-target federation reported two engines and
+ * zero events ever reached either. The engines are gone, and with them `hlc`
+ * and `maxLagMs`, two constructor fields nothing read.
  */
 
-import { CDCEngine } from '../replication/CDCEngine';
-import type { HLC } from '../hlc/HLC';
 import { EventEmitter } from 'events';
-
-export interface CDCTarget {
-  nodeId: string;
-  dc: string;
-}
 
 export interface CDCManagerConfig {
   nodeId: string;
-  hlc: HLC;
-  /** Maximum events buffered before applying backpressure */
+  /** Maximum events buffered before the manager drains instead of growing */
   maxBufferSize?: number;
   /** Tick interval for flushing CDC events (ms) */
   tickMs?: number;
-  /** Maximum replication lag before triggering backpressure (ms) */
-  maxLagMs?: number;
 }
 
 export interface CDCEvent {
@@ -50,54 +46,54 @@ export interface CDCEvent {
 export type CDCEventHandler = (event: CDCEvent) => Promise<void>;
 
 /**
- * Streams local changes to one engine per remote DC, with lag backpressure.
+ * What the manager did with the events it was given.
  *
- * It used to declare `implements ICDCManager` and satisfy that publication
- * interface with seven stubs — `getPublications()` returned `[]` for every
- * caller, forever, and `dropPublication()` did nothing. That interface belongs
- * to `CDCPublicationRegistry`, which really keeps the maps; a manager that
- * answers "no publications" to a question it never asked is not an
- * implementation, it is a name collision with a return value.
+ * `captured === delivered + bufferSize` holds whenever no drain is in flight:
+ * every event is either retired by a flush or still queued. `requeued` and
+ * `deliveryFailures` are cumulative diagnostics — a re-queued event is counted
+ * once when it goes back and once again when it is finally delivered, so they
+ * do not enter the identity. `handlers` is the number of consumers the events
+ * were offered to; a non-zero `captured` with zero `handlers` is a stream
+ * nobody is reading, which is a dashboard fact rather than a delivery failure.
  */
+export interface CDCDeliveryStats {
+  captured: number;
+  delivered: number;
+  requeued: number;
+  deliveryFailures: number;
+  bufferSize: number;
+  handlers: number;
+}
+
 export class CDCManager {
-  private readonly config: Required<CDCManagerConfig>;
+  private readonly config: { nodeId: string; maxBufferSize: number; tickMs: number };
   private readonly emitter = new EventEmitter();
-  private readonly engines: CDCEngine[] = [];
   private readonly eventBuffer: CDCEvent[] = [];
   private readonly eventHandlers: Set<CDCEventHandler> = new Set();
 
   private started = false;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private isApplyingBackpressure = false;
+  private draining = false;
+  private flushChain: Promise<void> = Promise.resolve();
+
+  private readonly counters = { captured: 0, delivered: 0, requeued: 0, deliveryFailures: 0 };
 
   constructor(config: CDCManagerConfig) {
     this.config = {
       nodeId: config.nodeId,
-      hlc: config.hlc,
       maxBufferSize: config.maxBufferSize ?? 10_000,
       tickMs: config.tickMs ?? 100,
-      maxLagMs: config.maxLagMs ?? 60_000,
     };
   }
 
-  async start(targets: CDCTarget[]): Promise<void> {
+  async start(): Promise<void> {
     if (this.started) return;
 
-    // MA1: At least one CDC worker per DC target
-    for (const target of targets) {
-      const engine = new CDCEngine({
-        nodeId: `${this.config.nodeId}→${target.nodeId}`,
-        hlc: this.config.hlc,
-      });
-      await engine.start();
-      this.engines.push(engine);
-    }
-
-    // Start flush loop
+    // Flush loop. `flushBuffer()` never rejects — every handler failure is
+    // caught and re-queued — so the catch here is for the timer, not the work.
     this.tickTimer = setInterval(() => {
-      this.flushBuffer().catch(() => {
-        /* best-effort */
-      });
+      void this.flushBuffer();
     }, this.config.tickMs);
 
     this.started = true;
@@ -111,46 +107,41 @@ export class CDCManager {
       this.tickTimer = null;
     }
 
-    // MA5: Graceful shutdown — flush remaining events, then stop engines
+    // MA5: graceful shutdown — drain what is buffered, then detach.
     await this.flushBuffer();
-
-    for (const engine of this.engines) {
-      try {
-        await engine.stop();
-      } catch {
-        /* best-effort */
-      }
-    }
-
-    this.engines.length = 0;
-    this.eventBuffer.length = 0;
     this.emitter.removeAllListeners();
   }
 
   /**
    * Capture a CDC event from the local write path.
-   * MA2: Events delivered at-least-once.
-   * MA3: Backpressure when buffer exceeds maxBufferSize.
+   *
+   * A full buffer is a reason to drain, not a reason to discard. The caller
+   * awaits this method, so the drain is the producer's backpressure: the write
+   * path slows down to the consumer's rate instead of losing changes at a
+   * threshold. If the drain cannot free space because a handler is refusing,
+   * the event is still buffered — the buffer is allowed to exceed its bound and
+   * `isBackpressured()` stays true until the consumer catches up.
    */
   async capture(event: CDCEvent): Promise<void> {
     if (!this.started) {
       throw new Error('CDCManager not started');
     }
 
-    // MA3: Backpressure
     if (this.eventBuffer.length >= this.config.maxBufferSize) {
       this.isApplyingBackpressure = true;
       this.emitter.emit('backpressure', {
         bufferSize: this.eventBuffer.length,
         maxBufferSize: this.config.maxBufferSize,
       });
-      return;
+      // A handler that captures re-entrantly would deadlock on this await, so
+      // only a producer outside the current drain may wait for one.
+      if (!this.draining) await this.flushBuffer();
     }
 
     this.eventBuffer.push(event);
+    this.counters.captured++;
     this.emitter.emit('event-captured', event);
 
-    // If buffer is filling up, notify
     if (this.eventBuffer.length >= this.config.maxBufferSize * 0.8) {
       this.emitter.emit('buffer-warning', {
         bufferSize: this.eventBuffer.length,
@@ -194,40 +185,111 @@ export class CDCManager {
   }
 
   /**
-   * Get the number of active CDC engines.
-   */
-  getEngineCount(): number {
-    return this.engines.length;
-  }
-
-  /**
    * Check if started.
    */
   isStarted(): boolean {
     return this.started;
   }
 
+  /**
+   * Delivery accounting. See `CDCDeliveryStats` for the invariant.
+   */
+  getDeliveryStats(): CDCDeliveryStats {
+    return {
+      captured: this.counters.captured,
+      delivered: this.counters.delivered,
+      requeued: this.counters.requeued,
+      deliveryFailures: this.counters.deliveryFailures,
+      bufferSize: this.eventBuffer.length,
+      handlers: this.eventHandlers.size,
+    };
+  }
+
+  /**
+   * Drain the buffer.
+   *
+   * Drains are serialised: the tick loop and a producer that found the buffer
+   * full may both call this, and two interleaved drains of the same array would
+   * deliver an event twice or re-order a batch. Chaining onto the previous
+   * promise makes the second caller wait, and by then the buffer is empty.
+   */
+  async flushBuffer(): Promise<void> {
+    const next = this.flushChain.then(() => this.drainOnce());
+    this.flushChain = next.catch(() => undefined);
+    return next;
+  }
+
   // ── Private ──────────────────────────────────────────────
 
-  private async flushBuffer(): Promise<void> {
-    if (this.eventBuffer.length === 0) return;
-
-    // Take a snapshot of the current buffer
-    const events = this.eventBuffer.splice(0);
-    this.isApplyingBackpressure = false;
-
-    // Deliver to all registered handlers
-    for (const handler of this.eventHandlers) {
-      try {
-        await handler(events[0]!); // Deliver one at a time to each handler
-      } catch {
-        // Individual handler failure shouldn't block others
-      }
+  private async drainOnce(): Promise<void> {
+    if (this.eventBuffer.length === 0) {
+      this.isApplyingBackpressure = false;
+      return;
     }
 
-    // MA2: All CDC engines receive events
-    // Each engine records the events for WAL-anchored replay
-    // (Future: per-engine event routing based on target DC)
-    this.emitter.emit('flushed', events.length);
+    this.draining = true;
+    try {
+      const batch = this.eventBuffer.splice(0);
+
+      // Lowest index any handler refused to accept. Everything from here on is
+      // still owed — to that handler, and to every handler that has not seen it.
+      let undeliveredFrom = batch.length;
+
+      for (const handler of this.eventHandlers) {
+        for (let i = 0; i < batch.length; i++) {
+          const event = batch[i]!;
+          try {
+            await handler(event);
+          } catch (err: unknown) {
+            this.counters.deliveryFailures++;
+            if (i < undeliveredFrom) undeliveredFrom = i;
+            this.emitter.emit('delivery-failed', {
+              key: event.key,
+              eventId: event.eventId,
+              index: i,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            // This handler's cursor stops at the event it refused. Delivery is
+            // at-least-once and order-preserving, so the tail must be re-offered
+            // from here rather than skipped: a handler that failed on one event
+            // has not seen the ones behind it.
+            break;
+          }
+        }
+      }
+
+      // The prefix each handler accepted is retired; the tail goes back. When a
+      // handler refuses its very first event, `undeliveredFrom` is `0` and the
+      // whole batch is still owed — which is why the count below is the prefix
+      // length and not `batch.length - requeued`.
+      this.counters.delivered += undeliveredFrom;
+      if (undeliveredFrom < batch.length) {
+        this.prepend(batch.slice(undeliveredFrom));
+        this.counters.requeued += batch.length - undeliveredFrom;
+        this.isApplyingBackpressure = true;
+      } else {
+        this.isApplyingBackpressure = false;
+      }
+
+      // The count is what reached the handlers, not what left the buffer.
+      this.emitter.emit('flushed', undeliveredFrom);
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  /**
+   * Put events back at the head of the buffer, preserving order.
+   *
+   * `unshift(...events)` throws `RangeError: Maximum call stack size exceeded`
+   * once the argument list is large enough, and the batch size here is a
+   * configuration value — so the splice goes in chunks whose offsets compose to
+   * the original order.
+   */
+  private prepend(events: CDCEvent[]): void {
+    const CHUNK = 4096;
+    for (let offset = 0; offset < events.length; offset += CHUNK) {
+      this.eventBuffer.splice(offset, 0, ...events.slice(offset, offset + CHUNK));
+    }
   }
 }

@@ -46,6 +46,36 @@ export interface IOutboxStore {
   markFailed(entryId: string, error?: string): boolean;
 
   /**
+   * Per-target backlog: entries still owed, and when the oldest was created.
+   *
+   * The creation time of the oldest entry is the only honest definition of
+   * replication lag; a channel with an empty queue has none, however long ago
+   * its last successful delivery was.
+   */
+  getPendingStats(): Record<string, { count: number; oldestCreatedAt: number | null }>;
+
+  /**
+   * Every dead lettered entry, newest last.
+   *
+   * The recovery scan needs to know whether the queue is non-empty before it
+   * asks each target; `getDeadLetterStats().count` would do, but the entries
+   * are what an operator wants to look at when they are not empty.
+   */
+  getDeadLetterEntries(): Array<OutboxEntry & { deadAt?: number }>;
+
+  /**
+   * Revive dead letters, optionally only those owed to one target.
+   * Returns how many were revived.
+   */
+  retryDeadLetters(targetPeerId?: string): number;
+
+  /**
+   * Prune delivered and dead-lettered entries past their TTL.
+   * Returns what it removed, because a silent prune is a silent loss.
+   */
+  housekeeping(): { delivered: number; deadLettered: number };
+
+  /**
    * Get outbox store statistics.
    */
   getStats(): OutboxStats | Promise<OutboxStats>;

@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { CDCManager, type CDCTarget } from '../../core/CDCManager';
+import { CDCManager } from '../../core/CDCManager';
 import { DCSplitBrainDetector, type DCHeartbeat } from '../../core/DCSplitBrainDetector';
 import { ConflictResolver, type ConflictValue, type CRDTCounterState } from '../../replication/ConflictResolver';
 import { HLC } from '../../hlc/HLC';
@@ -18,25 +18,32 @@ import { HLC } from '../../hlc/HLC';
 
 describe('MA1-MA5: CDCManager — Change Data Capture', () => {
   let cdc: CDCManager;
-  const targets: CDCTarget[] = [
-    { nodeId: 'dc-2/node-1', dc: 'dc-2' },
-    { nodeId: 'dc-3/node-1', dc: 'dc-3' },
-  ];
-
   beforeEach(async () => {
-    cdc = new CDCManager({
-      nodeId: 'dc-1/node-1',
-      hlc: new HLC('dc-1/node-1'),
-    });
-    await cdc.start(targets);
+    cdc = new CDCManager({ nodeId: 'dc-1/node-1' });
+    await cdc.start();
   });
 
   afterEach(async () => {
     await cdc.stop();
   });
 
-  it('MA1 — creates one engine per target', () => {
-    expect(cdc.getEngineCount()).toBe(2);
+  it('MA1 — every captured change reaches every handler', async () => {
+    const seen: string[] = [];
+    cdc.onEvent(async (e) => {
+      seen.push(e.key);
+    });
+    await cdc.capture({
+      eventId: 'ma1-1',
+      key: 'ma1-key',
+      value: 'v',
+      type: 'insert',
+      sourceNodeId: 'dc-1/node-1',
+      sourceDc: 'dc-1',
+      hlcTimestamp: { wallTime: 1, logical: 0, nodeId: 'n1' },
+      appliedAt: Date.now(),
+    });
+    await cdc.flushBuffer();
+    expect(seen).toEqual(['ma1-key']);
   });
 
   it('MA2 — delivers captured events to handlers', async () => {
@@ -64,11 +71,10 @@ describe('MA1-MA5: CDCManager — Change Data Capture', () => {
   it('MA3 — applies backpressure when buffer exceeds max', async () => {
     const smallCdc = new CDCManager({
       nodeId: 'n1',
-      hlc: new HLC('n1'),
       maxBufferSize: 3,
       tickMs: 99999, // very long tick to prevent auto-flush
     });
-    await smallCdc.start(targets);
+    await smallCdc.start();
 
     let backpressured = false;
     smallCdc.onBackpressure(() => {
@@ -116,12 +122,13 @@ describe('MA1-MA5: CDCManager — Change Data Capture', () => {
     });
 
     await cdc.stop();
-    // stop() flushes before halting
+    // stop() flushes before halting: the event captured above is delivered.
+    expect(received).toHaveLength(1);
     expect(cdc.isStarted()).toBe(false);
   });
 
   it('throws when capturing before start', async () => {
-    const fresh = new CDCManager({ nodeId: 'n1', hlc: new HLC('n1') });
+    const fresh = new CDCManager({ nodeId: 'n1' });
     await expect(
       fresh.capture({
         eventId: 'e',
@@ -469,7 +476,7 @@ describe('MA10-MA12: ConflictResolver — All Strategies', () => {
 describe('MA13-MA15: Integration Readiness', () => {
   it('MA13 — all sub-systems instantiatable independently', () => {
     const hlc = new HLC('test');
-    const cdc = new CDCManager({ nodeId: 'n1', hlc });
+    const cdc = new CDCManager({ nodeId: 'n1' });
     const detector = new DCSplitBrainDetector({
       nodeId: 'n1',
       dcId: 'dc-1',
@@ -485,8 +492,8 @@ describe('MA13-MA15: Integration Readiness', () => {
   it('MA14 — no runtime errors on rapid start/stop cycles', async () => {
     const hlc = new HLC('cycle-test');
     for (let i = 0; i < 3; i++) {
-      const cdc = new CDCManager({ nodeId: 'n1', hlc });
-      await cdc.start([]);
+      const cdc = new CDCManager({ nodeId: 'n1' });
+      await cdc.start();
       expect(cdc.isStarted()).toBe(true);
       await cdc.stop();
       expect(cdc.isStarted()).toBe(false);
@@ -495,9 +502,9 @@ describe('MA13-MA15: Integration Readiness', () => {
 
   it('MA15 — double-start is idempotent', async () => {
     const hlc = new HLC('idem-test');
-    const cdc = new CDCManager({ nodeId: 'n1', hlc });
-    await cdc.start([]);
-    await cdc.start([]); // should not throw
+    const cdc = new CDCManager({ nodeId: 'n1' });
+    await cdc.start();
+    await cdc.start(); // should not throw
     await cdc.stop();
   });
 });

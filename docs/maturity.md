@@ -2233,3 +2233,136 @@ for 180 s, because no deadline the test owns can fire while time is fake. The fl
 asserted first now and the await follows, which is the same rule as everywhere else on
 this page: **a verdict has to exist before the thing it is a verdict about can be
 awaited**.
+
+---
+
+## A flush that delivers one event is not a flush
+
+`CDCManager` sits on the write hot path: `FederationManager.replicate()` captures every
+change it commits locally. `flushBuffer()` took the whole buffer with `splice(0)` and then,
+for each handler, did `await handler(events[0]!)`. A batch of thirty changes delivered one
+change and destroyed twenty-nine, and the `flushed` event that reported it emitted
+`events.length` — the count of the ones that were thrown away.
+
+Two properties replaced it, and both are about sets rather than counters.
+
+**Every captured event reaches every handler, in capture order.** The case asserts the
+sequence `['e0'…'e4']`, not a length. It is the difference between "thirty arrived" and
+"thirty were captured".
+
+**A handler that refuses an event has not seen the ones behind it.** Delivery is
+at-least-once and order-preserving, so a failure at index *i* re-queues *i…n*. The test
+drives a handler that rejects `k1` and asserts the healthy handler received `k0`, the
+buffer still holds two entries, and `flushed` reported **one** — a re-queued tail is not a
+delivery, and the counter that says otherwise is the defect wearing a dashboard.
+
+A full buffer became a reason to drain rather than a reason to discard. `capture()` awaits
+the drain and then buffers, so the producer's backpressure is latency and the buffer is
+allowed to exceed its bound instead of dropping an event at the threshold. `getDeliveryStats()`
+publishes `captured === delivered + bufferSize`; the re-queue counter is deliberately _not_
+in that identity, because an event that goes back is counted once when it returns and again
+when it finally lands.
+
+The per-target `CDCEngine` array went with it. It was constructed in `start()`, started,
+stopped, and never given an event: the engines model PostgreSQL's table-and-row shape
+(`tableName`, `oldValues`, `newValues`) and this manager models key/value changes, so the
+only way to feed one from the other was to invent a table name from a key. `getEngineCount()`
+answered a question about decoration — a two-target federation reported two engines and
+zero events ever reached either.
+
+## A dead letter is a queue entry, not a tombstone
+
+Three facts made the dead-letter queue a graveyard:
+
+- `retryFailed()` on the replication engine reset a failure counter, scheduled a tick, and
+  returned a hard `0`. Its comment said a future iteration would iterate the queue.
+- `OutboxStore.retryDeadLetter(id)` revived one entry and had **no production caller**.
+- `housekeeping()` deleted delivered and dead-lettered entries past their TTL and had **no
+  production caller** either.
+
+So the queue only ever grew, one entry at a time, and nothing in the package could say how
+much each target was owed.
+
+The repair keeps the two directions apart. `retryDeadLetters(target?)` revives a queue and
+returns the count; `MultiLeaderReplication.retryFailed()` calls it and answers with that
+number; `FederationManager` runs the scan (`dlqScanIntervalMs`, default 5 s) and the prune
+(`outboxHousekeepingIntervalMs`, default 60 s), and exposes `scanDeadLetters()` for an
+operator who has just restored a site. Reviving only for a **reachable** target is what
+makes the scan a retry policy rather than a spin: a revived entry gets a fresh window, so a
+permanently failing target costs one attempt per window, not one per scan.
+
+`housekeeping()` now returns `{ delivered, deadLettered }`. It is the last moment an entry
+can leave the outbox, and a prune that removes a thousand dead letters looks exactly like a
+prune that removed none.
+
+**The revive must not erase the evidence of failure.** `retryFailed()` resets the entry's
+budget in the store and deliberately leaves the worker's consecutive-failure count alone: it
+is what makes the next successful delivery a recovery rather than an ordinary one. The first
+version of the change reset it, and the case that asserts `target-recovered` failed — the
+announcement could no longer tell the two apart.
+
+Recovery also had to survive an empty queue. The only place that could emit a recovery
+signal was the success branch of `doTick()`, and when every pending entry has been written
+off the worker takes its empty-batch early return — so the branch that reports recovery was
+unreachable exactly when recovery mattered. The empty branch now reads the **link** instead
+of the queue: `isPeerReachable()` is a fact about a socket, and it is what "the peer is back"
+means when there is nothing left to send.
+
+## Lag is what is owed, not how long ago
+
+`getStatus()` computed `lagMs` as `now - lastSuccessAt`. That figure grows on a channel with
+nothing to send, so a target that delivered one write and then sat idle for five minutes
+reported itself critical — and a monitor built on it would forward every read away from a
+healthy replica, permanently. The two halves of the defect are one:
+
+```ts
+const lagMs = worker.lastSuccessAt !== null ? now - worker.lastSuccessAt : 0;  // before
+const lagMs = oldest === null ? 0 : Math.max(0, now - oldest);                // after
+```
+
+`oldest` is the creation time of the oldest entry the target still owes, read in the same
+ordered pass over the pending index that counts the backlog — one scan answers "how many"
+and "how far behind" together, and replaces the `fetchOldestPending(100_000)` the count used
+to cost. `HealthMonitor` additionally requires `pendingCount > 0` before it calls anything
+lagging, which is belt and braces: the case injects a target with `lagMs: 600_000` and zero
+entries and requires silence, then the same target owing one entry and requires the callback.
+
+## A consumer that declines is not an apply
+
+The recovery e2e killed all four processes of one datacenter, wrote eight keys, waited for
+them to be written off, cold-restarted the datacenter, and then waited for the keys at the
+peer for three minutes. What the dump said:
+
+```
+west: { isLeader: true, commitIndex: 2, stateSize: 0, inboundFrames: 8, lastInboundError: null }
+east: { pending: { 'dc-west-gw': 0 }, deadLetters: 0, connectedPeers: ['dc-west-gw'] }
+```
+
+Eight frames arrived. None was applied. Nothing recorded an error, and the sender's outbox
+was already empty — the entries had been retired the moment `send()` accepted them.
+
+The mechanism: the restarted gateway is a follower for the few hundred milliseconds before
+it wins its election, its `proposeReplicated` saw `isLeader() === false`, sent a message to
+the harness and **returned**, and `applyInbound` recorded the frame as applied. The library
+cannot currently tell the two apart: a receiver that could not apply is indistinguishable
+from one that did.
+
+The harness consumer now waits for leadership and throws if it never arrives, which is what
+turned the case green. The library half is the synchronous commit gate — an acknowledgement
+must be the peer's statement that its own log has the change, not the sender's statement
+that its socket took the bytes — and it is the same defect as the write path's
+`local commit → ACK` one layer down. Both are open, and this dump is what they are for.
+
+## The gate that counted a page it never compiled
+
+`check-doc-examples` lists `docs/user-guide/federation.md` among the pages it reads. Three
+deliberate errors on that page — a constructor with the wrong number of arguments, a
+`priority` field the interface does not declare, and finally `const zz: number = "not a
+number"` — all pass it, in a `ts` fence the gate's own contract page says is compiled twice.
+
+The page was the worst offender in the audit: sections 3–6 described a `FederationManager`
+constructor the package does not have, a `QueryRouter` class that does not exist, four
+routing policies out of the six that do, and an `AntiEntropy` that takes a remote store it
+cannot use. The examples are rewritten against the real API in iteration 78 and now
+type-check where a reader pastes them; the gate's hole is recorded rather than assumed
+closed, because a page count is not a page compiled.

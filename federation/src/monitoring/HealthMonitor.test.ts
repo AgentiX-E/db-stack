@@ -51,6 +51,8 @@ function createMockReplication(status: ReplicationStatus = mockStatus()): IMulti
     getPendingCounts: vi.fn().mockResolvedValue({}),
     onTargetConnected: vi.fn().mockReturnValue(vi.fn()),
     onTargetDisconnected: vi.fn().mockReturnValue(vi.fn()),
+    onTargetRecovered: vi.fn().mockReturnValue(vi.fn()),
+    isPeerReachable: vi.fn(() => true),
     onHighLag: vi.fn().mockReturnValue(vi.fn()),
   };
 }
@@ -250,6 +252,62 @@ describe('HealthMonitor — High-Lag Events', () => {
 
     await monitor.check();
     expect(highLagTargets).toHaveLength(0);
+  });
+
+  it('does not fire for an idle channel whose lag figure is only the clock', async () => {
+    // The shape a monitor fed by `now - lastSuccessAt` produces: a target that
+    // delivered everything it was given and has been quiet since. Nothing is
+    // owed, so nothing is lagging — and a consumer that believes otherwise
+    // forwards every read away from a healthy replica, permanently.
+    const repl = createMockReplication(
+      mockStatus({
+        targets: [
+          {
+            targetNodeId: 'node-b',
+            connected: true,
+            lagMs: 600_000,
+            pendingCount: 0,
+            lastSuccessAt: Date.now() - 600_000,
+            lastErrorAt: null,
+            lastErrorMessage: null,
+          },
+        ],
+      }),
+    );
+    const monitor = new HealthMonitor(repl, { highLagThresholdMs: 60_000 });
+
+    const highLagTargets: string[] = [];
+    monitor.onHighLag((targetNodeId) => highLagTargets.push(targetNodeId));
+
+    const health = await monitor.check();
+
+    expect(highLagTargets).toHaveLength(0);
+    expect(health.targets[0]!.pendingCount).toBe(0);
+  });
+
+  it('fires as soon as the same channel owes one entry', async () => {
+    const repl = createMockReplication(
+      mockStatus({
+        targets: [
+          {
+            targetNodeId: 'node-b',
+            connected: true,
+            lagMs: 600_000,
+            pendingCount: 1,
+            lastSuccessAt: Date.now() - 600_000,
+            lastErrorAt: null,
+            lastErrorMessage: null,
+          },
+        ],
+      }),
+    );
+    const monitor = new HealthMonitor(repl, { highLagThresholdMs: 60_000 });
+
+    const highLagTargets: string[] = [];
+    monitor.onHighLag((targetNodeId) => highLagTargets.push(targetNodeId));
+
+    await monitor.check();
+    expect(highLagTargets).toEqual(['node-b']);
   });
 });
 

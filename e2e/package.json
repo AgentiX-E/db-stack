@@ -20,7 +20,8 @@
     "test:harness": "vitest run tests/harness-contract.test.ts",
     "lint": "eslint .",
     "format:check": "prettier --check \"harness/**/*.{ts,mjs}\" \"tests/**/*.ts\" \"bench/**/*.ts\" \"*.ts\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:recovery": "vitest run tests/federation-recovery.test.ts"
   },
   "dependencies": {
     "@agentix-e/db-cluster": "workspace:*",

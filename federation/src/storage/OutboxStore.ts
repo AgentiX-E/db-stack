@@ -376,6 +376,41 @@ export class OutboxStore implements IOutboxStore {
   }
 
   /**
+   * Per-target backlog: how many entries a target still owns, and when the
+   * oldest of them was created.
+   *
+   * `oldestCreatedAt` is what replication lag means. `lastSuccessAt` is not:
+   * `now - lastSuccessAt` grows on a channel that has nothing to send, so a
+   * target that delivered one write and then sat idle for five minutes
+   * reported itself critical. Lag is a property of the queue, and the queue is
+   * here — one ordered pass over the pending index answers it for every target
+   * at once, which is also cheaper than the `fetchOldestPending(100_000)` scan
+   * `getStatus()` used to do to answer the count alone.
+   */
+  getPendingStats(): Record<string, { count: number; oldestCreatedAt: number | null }> {
+    const stats: Record<string, { count: number; oldestCreatedAt: number | null }> = {};
+
+    for (const item of this.pendingDb.getRange({
+      start: 'pending:',
+      end: 'pending:\xff',
+    })) {
+      const seq = item.value as number;
+      const entry = this.mainDb.get(`entry:${seq}`) as OutboxEntry | undefined;
+      if (!entry || entry.status !== 'pending') continue;
+
+      for (const peerId of entry.targetPeerIds) {
+        const slot = (stats[peerId] ??= { count: 0, oldestCreatedAt: null });
+        slot.count++;
+        if (slot.oldestCreatedAt === null || entry.createdAt < slot.oldestCreatedAt) {
+          slot.oldestCreatedAt = entry.createdAt;
+        }
+      }
+    }
+
+    return stats;
+  }
+
+  /**
    * Get outbox store statistics.
    */
   async getStats(): Promise<OutboxStats> {
@@ -542,6 +577,31 @@ export class OutboxStore implements IOutboxStore {
   }
 
   /**
+   * Revive every dead letter, or every dead letter for one target.
+   *
+   * Returns the number revived — the count is the whole point. `retryFailed()`
+   * on the replication engine used to answer `0` unconditionally while
+   * scheduling a tick, so an operator who asked "did anything come back?" got
+   * the same answer from an empty queue and from a thousand recovered entries.
+   *
+   * Each revive goes through `retryDeadLetter()`, which gives the entry a fresh
+   * retry budget and a queue slot at the tail. Re-applying an old value is safe
+   * because the receiver resolves every inbound key by HLC, so a revived entry
+   * cannot overwrite a newer value that overtook it.
+   */
+  retryDeadLetters(targetPeerId?: string): number {
+    const dead = this.getDeadLetterEntries().filter(
+      (entry) => targetPeerId === undefined || entry.targetPeerIds.includes(targetPeerId),
+    );
+
+    let revived = 0;
+    for (const entry of dead) {
+      if (this.retryDeadLetter(entry.id)) revived++;
+    }
+    return revived;
+  }
+
+  /**
    * Get all dead letter entries.
    */
   getDeadLetterEntries(): DeadLetterEntry[] {
@@ -592,10 +652,16 @@ export class OutboxStore implements IOutboxStore {
 
   /**
    * Remove entries older than ttlMs from the deliveryDb and dead letter queue.
+   *
+   * Returns what it deleted. The deletion is the last moment an entry can be
+   * lost from the outbox, so it is the one place that must be reportable rather
+   * than silent: a pruning that removes a thousand dead letters looks exactly
+   * like a pruning that removed none, and only one of those is news.
    */
-  housekeeping(): void {
+  housekeeping(): { delivered: number; deadLettered: number } {
     const now = Date.now();
     const cutoff = now - this.ttlMs;
+    const removed = { delivered: 0, deadLettered: 0 };
 
     this.root.transactionSync(() => {
       // Clean up delivered entries
@@ -609,6 +675,7 @@ export class OutboxStore implements IOutboxStore {
           this.deliveryDb.removeSync(item.key as string);
           // Clean up reverse index
           this.msgIdToSeqDb.removeSync(entryId);
+          removed.delivered++;
         }
       }
 
@@ -621,9 +688,12 @@ export class OutboxStore implements IOutboxStore {
         const entry = item.value as DeadLetterEntry;
         if (entry.deadAt && entry.deadAt < dlCutoff) {
           this.deadLetterDb.removeSync(item.key as string);
+          removed.deadLettered++;
         }
       }
     });
+
+    return removed;
   }
 
   /**

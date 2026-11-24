@@ -328,6 +328,11 @@ jobs:
         run: pnpm build
       - name: Cross-cluster sync over mTLS (AC-F1..F5)
         run: pnpm --filter @agentix-e/db-stack-e2e run test:federation
+      # Its own invocation: this suite kills a datacenter and cold-restarts it,
+      # and the restart has to be the only thing competing for the machine's
+      # sockets and CPU if the recovery timings are to mean anything.
+      - name: Retry window, dead letters and cold restart (AC-F6..F7)
+        run: pnpm --filter @agentix-e/db-stack-e2e run test:recovery
       # A log written by one process, tailed by another, shipped over TLS, and
       # delivered to a real HTTP receiver — the CDC path end to end, with the
       # conservation identity read from the process that ran.

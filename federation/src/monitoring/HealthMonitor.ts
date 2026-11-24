@@ -132,9 +132,15 @@ export class HealthMonitor {
       targets,
     };
 
-    // Fire high-lag callbacks
+    // Fire high-lag callbacks.
+    //
+    // `pendingCount > 0` is part of the condition, not a detail: a target with
+    // nothing owed is not lagging, and a consumer that treats it as lagging
+    // forwards every read away from a healthy replica forever. The lag figure
+    // itself now comes from the queue, so this is belt and braces against a
+    // monitor fed by an implementation that still reports clock arithmetic.
     for (const t of targets) {
-      if (t.status !== 'healthy' && t.lagMs > 0) {
+      if (t.pendingCount > 0 && t.status !== 'healthy' && t.lagMs > 0) {
         for (const cb of this.highLagCallbacks) {
           cb(t.targetNodeId, t.lagMs);
         }

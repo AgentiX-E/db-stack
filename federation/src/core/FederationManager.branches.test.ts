@@ -44,6 +44,8 @@ function mockReplication() {
     getPendingCounts: vi.fn().mockResolvedValue({}),
     onTargetConnected: vi.fn().mockReturnValue(vi.fn()),
     onTargetDisconnected: vi.fn().mockReturnValue(vi.fn()),
+    onTargetRecovered: vi.fn().mockReturnValue(vi.fn()),
+    isPeerReachable: vi.fn(() => true),
     onHighLag: vi.fn().mockReturnValue(vi.fn()),
   };
 }
@@ -88,6 +90,10 @@ function mockOutbox(): IOutboxStore {
     markDelivered: vi.fn().mockResolvedValue(undefined),
     markFailed: vi.fn().mockReturnValue(false),
     getPendingCount: vi.fn().mockResolvedValue(0),
+    getPendingStats: vi.fn(() => ({})),
+    getDeadLetterEntries: vi.fn(() => []),
+    retryDeadLetters: vi.fn(() => 0),
+    housekeeping: vi.fn(() => ({ delivered: 0, deadLettered: 0 })),
     getStats: vi.fn().mockResolvedValue({
       totalEntries: 0,
       pendingCount: 0,

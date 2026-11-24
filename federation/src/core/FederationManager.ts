@@ -26,7 +26,7 @@ import type { IOutboxStore } from '../interfaces/outbox/IOutboxStore';
 import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
 import { HLC, makeHLC } from '../hlc/HLC';
 import { HealthMonitor, type FederationHealth, type HealthMonitorConfig } from '../monitoring/HealthMonitor';
-import { CDCManager, type CDCTarget, type CDCEvent } from './CDCManager';
+import { CDCManager, type CDCEvent } from './CDCManager';
 import { DCSplitBrainDetector, type SplitBrainEvent } from './DCSplitBrainDetector';
 import { ConflictResolver, type ConflictValue, type ConflictStrategy } from '../replication/ConflictResolver';
 import { AntiEntropy } from '../replication/AntiEntropy';
@@ -82,9 +82,6 @@ export interface IFederationConsumer {
   onConflict(conflict: ConflictEntry): Promise<void>;
 }
 
-/** @internal */
-export const NOT_IMPLEMENTED_YET = 'Not implemented in Phase 2';
-
 // ── FederationManager ──────────────────────────
 
 export interface FederationManagerConfig {
@@ -102,6 +99,27 @@ export interface FederationManagerConfig {
   hlc?: HLC;
   /** Health monitor config (optional) */
   healthConfig?: HealthMonitorConfig;
+  /**
+   * How often to revive dead letters whose target is reachable. Default 5 000.
+   * `0` disables the scan.
+   *
+   * A dead letter is not a tombstone. The retry window decides when the store
+   * stops trying an entry on its own; this scan decides when to try it again,
+   * and it is the only thing that does — `OutboxStore.retryDeadLetter(id)`
+   * existed with no production caller. Reviving only for a reachable target is
+   * what makes the scan a retry policy instead of a spin: the revived entry
+   * gets a fresh window, so a permanently failing target costs one attempt per
+   * window rather than one per scan.
+   */
+  dlqScanIntervalMs?: number;
+  /**
+   * How often to prune delivered and dead-lettered entries past their TTL.
+   * Default 60 000. `0` disables pruning.
+   *
+   * This is the only place an outbox entry is deleted for good, and it used to
+   * run nowhere outside the test suite.
+   */
+  outboxHousekeepingIntervalMs?: number;
 }
 
 export class FederationManager {
@@ -129,6 +147,9 @@ export class FederationManager {
     ttlMs: 30 * 60_000,
   });
   private _unsubInbound: (() => void) | null = null;
+  private _unsubRecovered: (() => void) | null = null;
+  private _dlqScanTimer: ReturnType<typeof setInterval> | null = null;
+  private _housekeepingTimer: ReturnType<typeof setInterval> | null = null;
 
   // Local key-value store for AntiEntropy (MA10-MA12)
   private readonly localStore = new Map<
@@ -160,7 +181,7 @@ export class FederationManager {
    *   5. AntiEntropy (Merkle tree reconciliation)
    *   6. HealthMonitor (periodic health checks)
    */
-  async start(cdcTargets?: CDCTarget[]): Promise<void> {
+  async start(): Promise<void> {
     if (this._started) return;
 
     // 1. Start replication engine
@@ -169,9 +190,8 @@ export class FederationManager {
     // 2. Start CDC Manager
     this._cdcManager = new CDCManager({
       nodeId: this.config.nodeId,
-      hlc: this.hlc,
     });
-    await this._cdcManager.start(cdcTargets ?? []);
+    await this._cdcManager.start();
 
     // 3. Start Split-Brain Detector
     this._splitBrainDetector = new DCSplitBrainDetector({
@@ -211,7 +231,65 @@ export class FederationManager {
       });
     });
 
+    // 8. Revive dead letters and prune expired entries.
+    //
+    // Both timers exist because neither task had a production caller: the
+    // dead letter queue was reachable only through a per-entry method, and the
+    // TTL prune only through the test suite. A queue that nothing drains and
+    // nothing prunes is storage growth in one direction and permanent data
+    // loss in the other.
+    this._unsubRecovered = this.replication.onTargetRecovered((targetNodeId) => {
+      this.emitter.emit('target-recovered', targetNodeId);
+      // The link is back; the entries written off while it was down are the
+      // first thing worth retrying.
+      void this.scanDeadLetters().catch(() => undefined);
+    });
+
+    const dlqScanIntervalMs = this.config.dlqScanIntervalMs ?? 5_000;
+    if (dlqScanIntervalMs > 0) {
+      this._dlqScanTimer = setInterval(() => {
+        void this.scanDeadLetters().catch(() => undefined);
+      }, dlqScanIntervalMs);
+      this._dlqScanTimer.unref?.();
+    }
+
+    const housekeepingIntervalMs = this.config.outboxHousekeepingIntervalMs ?? 60_000;
+    if (housekeepingIntervalMs > 0) {
+      this._housekeepingTimer = setInterval(() => {
+        try {
+          const removed = this.config.outbox.housekeeping();
+          if (removed.delivered > 0 || removed.deadLettered > 0) {
+            this.emitter.emit('outbox-pruned', removed);
+          }
+        } catch (err: unknown) {
+          this._lastInboundError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        }
+      }, housekeepingIntervalMs);
+      this._housekeepingTimer.unref?.();
+    }
+
     this._started = true;
+  }
+
+  /**
+   * Revive the dead letters of every target that is reachable right now.
+   *
+   * Public because an operator who has just brought a datacenter back should
+   * not have to wait for the next tick of a timer to find out whether anything
+   * came back. Returns the number of entries revived, per target.
+   */
+  async scanDeadLetters(): Promise<Record<string, number>> {
+    const revived: Record<string, number> = {};
+    if (this.config.outbox.getDeadLetterEntries().length === 0) return revived;
+
+    for (const target of this.config.replicationConfig.targets) {
+      if (!this.replication.isPeerReachable(target.nodeId)) continue;
+      const count = await this.replication.retryFailed(target.nodeId);
+      if (count > 0) revived[target.nodeId] = count;
+    }
+
+    if (Object.keys(revived).length > 0) this.emitter.emit('dead-letters-revived', revived);
+    return revived;
   }
 
   /**
@@ -358,6 +436,13 @@ export class FederationManager {
     this._started = false;
     this._unsubInbound?.();
     this._unsubInbound = null;
+    this._unsubRecovered?.();
+    this._unsubRecovered = null;
+    for (const timer of [this._dlqScanTimer, this._housekeepingTimer]) {
+      if (timer) clearInterval(timer);
+    }
+    this._dlqScanTimer = null;
+    this._housekeepingTimer = null;
     this.healthMonitor.stop();
     this._splitBrainDetector?.stop();
     await this._cdcManager?.stop();
@@ -576,6 +661,20 @@ export class FederationManager {
   /**
    * Register a high-lag callback.
    */
+  /**
+   * Register a callback for a target that was failing and is delivering again.
+   *
+   * Re-emitted from the replication engine so a supervisor only has to hold
+   * one object: the manager already owns the engine, the health monitor, the
+   * split-brain detector and the anti-entropy sweep.
+   */
+  onTargetRecovered(callback: (targetNodeId: string) => void): () => void {
+    this.emitter.on('target-recovered', callback);
+    return () => {
+      this.emitter.off('target-recovered', callback);
+    };
+  }
+
   onHighLag(callback: (targetNodeId: string, lagMs: number) => void): () => void {
     return this.healthMonitor.onHighLag(callback);
   }

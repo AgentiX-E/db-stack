@@ -61,6 +61,22 @@ export interface IMultiLeaderReplication {
   /** Event: fires when a target disconnects */
   onTargetDisconnected(callback: (targetNodeId: string) => void): () => void;
 
+  /**
+   * Event: fires when a target that had been failing delivers again.
+   *
+   * Distinct from `onTargetConnected`, which fires once when the worker is
+   * created: a target can be connected and failing at the same time, and the
+   * transition that matters for a dead letter queue is "it works again".
+   */
+  onTargetRecovered(callback: (targetNodeId: string) => void): () => void;
+
+  /**
+   * Whether the transport currently holds a link to a target.
+   *
+   * Recovery evidence that survives an empty queue — see `onTargetRecovered`.
+   */
+  isPeerReachable(targetNodeId: string): boolean;
+
   /** Event: fires when replication lag exceeds threshold */
   onHighLag(callback: (targetNodeId: string, lagMs: number) => void): () => void;
 }

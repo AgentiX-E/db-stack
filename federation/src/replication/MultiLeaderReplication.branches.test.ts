@@ -81,6 +81,7 @@ type MockOutboxStore = IOutboxStore & {
   fetchOldestPending: Mock<(count: number, limit?: number) => Promise<OutboxEntry[]>>;
   markDelivered: Mock<(entryId: string) => Promise<void>>;
   markFailed: Mock<(entryId: string, error?: string) => boolean>;
+  getPendingStats: Mock<() => Record<string, { count: number; oldestCreatedAt: number | null }>>;
 };
 
 interface MockOutbox {
@@ -102,6 +103,10 @@ function mockOutbox(): MockOutbox {
     markDelivered,
     markFailed,
     getPendingCount: vi.fn(async () => 0),
+    getPendingStats: vi.fn<() => Record<string, { count: number; oldestCreatedAt: number | null }>>(() => ({})),
+    getDeadLetterEntries: vi.fn(() => []),
+    retryDeadLetters: vi.fn(() => 0),
+    housekeeping: vi.fn(() => ({ delivered: 0, deadLettered: 0 })),
     getStats: vi.fn(async () => ({
       totalEntries: 0,
       pendingCount: 0,
@@ -233,7 +238,7 @@ describe('MultiLeaderReplication — retryFailed branches', () => {
     expect(n).toBe(0);
   });
 
-  it('returns 0 and resets worker when target exists', async () => {
+  it('returns the revived count and keeps the failure evidence', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
     const mlr = new MultiLeaderReplication({
@@ -258,8 +263,13 @@ describe('MultiLeaderReplication — retryFailed branches', () => {
     worker.consecutiveFailures = 3;
 
     const n = await mlr.retryFailed('t1');
+    // The count comes from the store, not from a constant: this mock store
+    // revives nothing, so the answer is 0 — and the worker's failure count is
+    // deliberately left alone, because it is the evidence that this target had
+    // been failing and therefore the only way a later success can be announced
+    // as a recovery rather than an ordinary delivery.
     expect(n).toBe(0);
-    expect(worker.consecutiveFailures).toBe(0); // reset
+    expect(worker.consecutiveFailures).toBe(3);
 
     await mlr.stop();
   });
@@ -529,11 +539,13 @@ describe('MultiLeaderReplication — lifecycle & nullish branches', () => {
     expect(status.targets).toEqual([]);
   });
 
-  it('getPendingCounts covers `?? 0` for a peer absent from config targets', async () => {
+  it('seeds every configured target with zero, then overlays the queue', async () => {
     const { store } = mockOutbox();
     const { transport } = mockTransport();
-    // entry targets an unknown peer "ghost"
-    store.fetchOldestPending.mockResolvedValueOnce([entry('e-ghost', ['ghost'])]);
+    // A peer that is not a configured target still appears: the queue is the
+    // source of truth for what is owed, and hiding a backlog because its target
+    // was removed from the config is how entries become invisible.
+    store.getPendingStats.mockReturnValue({ ghost: { count: 1, oldestCreatedAt: 10 } });
 
     const mlr = new MultiLeaderReplication({
       transport,
@@ -542,7 +554,8 @@ describe('MultiLeaderReplication — lifecycle & nullish branches', () => {
     });
 
     const counts = await mlr.getPendingCounts();
-    // "ghost" is not a configured target → the `counts[peerId] ?? 0` path runs
+    expect(counts['t1']).toBe(0);
+    expect(counts['t2']).toBe(0);
     expect(counts['ghost']).toBe(1);
   });
 

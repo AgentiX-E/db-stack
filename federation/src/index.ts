@@ -84,7 +84,7 @@ export type { CDCPublicationRegistryConfig } from './replication/CDCPublicationR
 // subscriptions; this is the manager `FederationManager.getCDC()` returns, and
 // it was the one class in the package that a consumer could not import.
 export { CDCManager } from './core/CDCManager';
-export type { CDCManagerConfig, CDCTarget, CDCEvent, CDCEventHandler } from './core/CDCManager';
+export type { CDCManagerConfig, CDCDeliveryStats, CDCEvent, CDCEventHandler } from './core/CDCManager';
 // The exactly-once pipeline was implemented and tested but never re-exported,
 // so consumers could not reach it from the package root.
 export { ExactlyOnceCDCPipeline } from './replication/ExactlyOnceCDCPipeline';

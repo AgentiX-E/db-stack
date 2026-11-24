@@ -101,6 +101,7 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
     this.workers.clear();
     this.emitter.removeAllListeners('target-connected');
     this.emitter.removeAllListeners('target-disconnected');
+    this.emitter.removeAllListeners('target-recovered');
     this.emitter.removeAllListeners('high-lag');
   }
 
@@ -135,17 +136,24 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
    * Get replication status for all targets.
    */
   async getStatus(): Promise<ReplicationStatus> {
-    const pendingCounts = await this.getPendingCounts();
+    // Lag is read from the queue, not from the clock. `now - lastSuccessAt`
+    // grows on a channel that has nothing to send, so a target that delivered
+    // one write and then sat idle reported itself critical; and when every
+    // entry had been dead-lettered the queue was empty while the clock kept
+    // counting. The age of the oldest owed entry answers the operator's actual
+    // question — "how far behind is this target?" — and is 0 when it is not.
+    const backlog = this.outbox.getPendingStats();
+    const now = Date.now();
 
     const targets = Array.from(this.workers.entries()).map(([targetNodeId, worker]) => {
-      const now = Date.now();
-      const lagMs = worker.lastSuccessAt !== null ? now - worker.lastSuccessAt : 0;
+      const owed = backlog[targetNodeId];
+      const oldest = owed?.oldestCreatedAt ?? null;
 
       return {
         targetNodeId,
         connected: worker.running,
-        lagMs: this.started ? lagMs : -1,
-        pendingCount: pendingCounts[targetNodeId] ?? 0,
+        lagMs: oldest === null ? 0 : Math.max(0, now - oldest),
+        pendingCount: owed?.count ?? 0,
         lastSuccessAt: worker.lastSuccessAt,
         lastErrorAt: worker.lastErrorAt,
         lastErrorMessage: worker.lastErrorMessage,
@@ -160,43 +168,63 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
   }
 
   /**
-   * Force retry failed (dead letter) entries for a specific target.
+   * Revive the dead letters owed to a target and try them again.
+   *
+   * Returns how many entries came back. It used to return `0` for every input
+   * while resetting a counter and scheduling a tick — a function whose name
+   * promised the dead letter queue and whose body touched a failure counter.
+   * The queue was reachable only through `OutboxStore.retryDeadLetter(id)`,
+   * which nothing in the package called.
    */
   async retryFailed(targetNodeId: string): Promise<number> {
     const target = this.config.targets.find((t) => t.nodeId === targetNodeId);
     if (!target) return 0;
 
-    // Future: iterate dead letter and retry entries for this target
-    // For now, signal worker to flush on next tick
+    const revived = this.outbox.retryDeadLetters(targetNodeId);
+
     const worker = this.workers.get(targetNodeId);
     if (worker) {
-      worker.consecutiveFailures = 0;
-      // Schedule immediate tick
+      // The failure counter is deliberately *not* reset here. It is the
+      // evidence that this target had been failing, and a revive that erased it
+      // would make the next successful delivery indistinguishable from an
+      // ordinary one — so the recovery would go unannounced.
+      if (worker.tickTimer) clearTimeout(worker.tickTimer);
       this.scheduleTick(worker, 0);
     }
 
-    return 0;
+    return revived;
   }
 
   /**
    * Get pending count per target by scanning the outbox.
    */
   async getPendingCounts(): Promise<Record<string, number>> {
-    // Fetch pending entries and count by target
-    const pending = await this.outbox.fetchOldestPending(100_000);
+    const backlog = this.outbox.getPendingStats();
     const counts: Record<string, number> = {};
 
     for (const target of this.config.targets) {
       counts[target.nodeId] = 0;
     }
 
-    for (const entry of pending) {
-      for (const peerId of entry.targetPeerIds) {
-        counts[peerId] = (counts[peerId] ?? 0) + 1;
-      }
+    for (const [peerId, stats] of Object.entries(backlog)) {
+      counts[peerId] = stats.count;
     }
 
     return counts;
+  }
+
+  /**
+   * Whether the transport currently holds a link to a target.
+   *
+   * This is the only recovery evidence available once every entry owed to a
+   * target has been dead-lettered: the queue is empty, so nothing is attempted,
+   * so no attempt can succeed, so the success branch that used to be the only
+   * source of a recovery signal never runs. A connected socket is a fact about
+   * the link rather than about the queue, and it is what "the peer is back"
+   * means.
+   */
+  isPeerReachable(targetNodeId: string): boolean {
+    return this.transport.getConnectedPeers().some((peer) => peer.peerId === targetNodeId);
   }
 
   /**
@@ -222,6 +250,16 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
   /**
    * Event: fires when replication lag exceeds threshold.
    */
+  /**
+   * Register a callback for when a target that had been failing delivers again.
+   */
+  onTargetRecovered(callback: (targetNodeId: string) => void): () => void {
+    this.emitter.on('target-recovered', callback);
+    return () => {
+      this.emitter.off('target-recovered', callback);
+    };
+  }
+
   onHighLag(callback: (targetNodeId: string, lagMs: number) => void): () => void {
     this.emitter.on('high-lag', callback);
     return () => {
@@ -278,7 +316,14 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
       const forTarget = pending.filter((e) => e.targetPeerIds.includes(worker.nodeId) && e.status === 'pending');
 
       if (forTarget.length === 0) {
-        // No pending — sleep normally
+        // Nothing is owed. This is also the only place the dead-letter corner
+        // can be observed: if every entry was written off, the success branch
+        // below never runs, so recovery must be read from the link instead.
+        if (worker.consecutiveFailures > 0 && this.isPeerReachable(worker.nodeId)) {
+          worker.consecutiveFailures = 0;
+          worker.lastErrorMessage = null;
+          this.emitter.emit('target-recovered', worker.nodeId);
+        }
         this.scheduleTick(worker, worker.tickMs);
         return;
       }
@@ -315,9 +360,11 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
       }
 
       if (allSucceeded && deliveredCount > 0) {
+        const wasFailing = worker.consecutiveFailures > 0;
         worker.lastSuccessAt = Date.now();
         worker.consecutiveFailures = 0;
         worker.lastErrorMessage = null;
+        if (wasFailing) this.emitter.emit('target-recovered', worker.nodeId);
         this.scheduleTick(worker, worker.tickMs);
       } else {
         // Some failures — apply backoff

@@ -58,6 +58,14 @@ class MockReplication implements IMultiLeaderReplication {
     return () => {};
   }
 
+  onTargetRecovered(_callback: (targetNodeId: string) => void): () => void {
+    return () => {};
+  }
+
+  isPeerReachable(_targetNodeId: string): boolean {
+    return true;
+  }
+
   onTargetDisconnected(_callback: (targetNodeId: string) => void): () => void {
     return () => {};
   }

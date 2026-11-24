@@ -247,15 +247,28 @@ Two DCs can write the same key. You choose the semantics per table or key prefix
 | Custom                 | `'custom'`       | Your resolver decides                    | Up to you       |
 
 ```ts
-const resolver = new ConflictResolver({
-  localNodeId: "dc-east-1",
-  strategy: "lww",
-});
-resolver.registerCustom("inventory", {
-  predicate: (a, b) => a.key === b.key,
-  resolver: (a, b) => ({ winner: a, merged: mergeInventory(a, b) }),
-});
+import { ConflictResolver } from "@agentix-e/db-federation";
+
+const resolver = new ConflictResolver("dc-east-1");
+
+// A predicate names the keys this rule owns; the resolver decides the value.
+resolver.registerCustomResolver(
+  { keyPrefix: "inventory:" },
+  async (key, local, remote) => ({
+    key,
+    resolvedValue: JSON.stringify(mergeInventory(JSON.parse(local.value), JSON.parse(remote.value))),
+    strategyUsed: "custom",
+    loserNodeIds: [],
+    merged: true,
+  }),
+);
+
+const verdict = await resolver.resolve("inventory:sku-7", localValue, remoteValue);
 ```
+
+`resolve()` picks the strategy itself: a registered custom resolver whose predicate
+matches the key wins, otherwise the built-in CRDT strategies apply when the stored value
+parses as one, and `lww` is the fallback.
 
 **LWW is lossy by design.** If a lost write is unacceptable, use a CRDT or an
 application-level merge — the transport cannot invent information the merge discards.
@@ -268,18 +281,24 @@ After a partition, the two sides have diverged. Merkle trees let each side compu
 summary and exchange only the differing leaves:
 
 ```ts
-const antiEntropy = new AntiEntropy({
-  local: localStore,
-  remote: remoteStore,
-  config: {
-    rangeSize: 1024,
-    hashAlgorithm: "sha256",
-    maxDepth: 20,
-  },
-});
-const result = await antiEntropy.sync();
-// { comparedRanges, divergentRanges, repairedKeys, durationMs }
+import { AntiEntropy, type DataProvider } from "@agentix-e/db-federation";
+
+const antiEntropy = new AntiEntropy(
+  { nodeId: "dc-east-1", merkleDepth: 4, intervalMs: 5_000 },
+  dataProvider, // getRange / getEntriesAfter / get / apply — your storage, not ours
+);
+await antiEntropy.start();
+const results = await antiEntropy.syncAll();
+// SyncResult[] — { nodeId, entriesSynced, entriesSkipped, conflictsResolved, durationMs, completedAt }
 ```
+
+`AntiEntropy` reconciles one side against a `DataProvider`. It does **not** carry the
+remote side over a socket: `syncWith(peerId)` and `syncAll()` compare the local Merkle
+tree against the provider they were given, so pointing both sides at the same provider
+compares the local dataset with itself and reports convergence that was never in doubt.
+A real cross-datacenter sweep needs a remote Merkle source in front of the provider,
+and that port is not implemented in this package — see
+[maturity](../maturity.md) for the current state.
 
 Cost is proportional to **divergence**, not to total data size — that is the entire point
 of the Merkle approach. Run it after any partition, and periodically as a safety net.
@@ -289,18 +308,39 @@ of the Merkle approach. Run it after any partition, and periodically as a safety
 ## 5. Multi-leader and topology
 
 ```ts
-const federation = new FederationManager({
+import { FederationManager, MultiLeaderReplication, OutboxStore } from "@agentix-e/db-federation";
+
+const outbox = new OutboxStore({ dataDir: "/var/lib/db/outbox" });
+
+const replicationConfig = {
   nodeId: "dc-east-1",
   dc: "east",
-  replicationConfig: {
-    targets: [{ nodeId: "dc-west-1", priority: 1 }],
-    topology: "multi-leader",
-  },
-  transport,
-  outbox,
-});
+  curveDir: "/var/lib/db/outbox",
+  targets: [
+    {
+      nodeId: "dc-west-1",
+      dc: "west",
+      address: "west.internal:7443",
+      topology: "cross-dc" as const,
+      maxBackoffSeconds: 60,
+    },
+  ],
+};
+
+// The manager takes the replication engine, then its own config: it owns the
+// change stream, the health monitor, the split-brain detector and the
+// anti-entropy sweep, and the engine is the one thing it delegates.
+const federation = new FederationManager(
+  new MultiLeaderReplication({ transport, outbox, config: replicationConfig }),
+  { nodeId: "dc-east-1", dc: "east", replicationConfig, transport, outbox },
+);
 await federation.start();
 ```
+
+`ReplicationConfig` has exactly these fields — `nodeId`, `dc`, `targets`, `curveDir`,
+and the optional `tickMs`, `batchSize`, `maxRetries`. Per-target `priority` does not
+exist, and `topology` belongs to the target (`intra-dc`, `cross-dc`, `edge`), not to the
+config.
 
 | Concern               | Component                        | What it does                                                     |
 | --------------------- | -------------------------------- | ---------------------------------------------------------------- |
@@ -323,17 +363,36 @@ health = 100 − min(lag_ms/1000, 1)·30 − (err/(err+0.01))·40 − min(reconn
 `QueryRouter` sends a query to the cluster that owns the data:
 
 ```ts
-const router = new QueryRouter({
-  topology,
-  localClusterId: "dc-east-1",
-  policy: "nearest-writer",
+import { FederatedQueryRouter } from "@agentix-e/db-federation";
+
+const router = new FederatedQueryRouter();
+router.registerNode({
+  id: "dc-west-1",
+  host: "west.internal",
+  port: 5432,
+  role: "replica",
+  health: "healthy",
+  shardIds: ["orders"],
+  weight: 1,
+  capabilities: ["read"],
+  region: "west",
 });
-const target = router.route({ table: "orders", key: "order-9" });
+router.setRoutingPolicy({ strategy: "leader_only", fallbackStrategy: "round_robin", maxRetries: 2 });
+
+const plan = router.planQuery({
+  id: "q-1",
+  sql: "SELECT * FROM orders WHERE id = $1",
+  intent: "read",
+  consistency: "read_your_writes",
+  targetShards: ["orders"],
+  timeoutMs: 2_000,
+});
 ```
 
-Policies: `local-first` (default), `nearest-writer`, `primary-only`, `read-any`.
-Routing decisions are _routing hints_, not guarantees; the owning cluster still enforces
-its own consistency rules.
+Strategies: `round_robin`, `least_connections`, `weighted`, `geo_affinity`, `cost_based`,
+`leader_only`. Routing decisions are _routing hints_, not guarantees; the owning cluster
+still enforces its own consistency rules. `consistency` is carried in the query type and
+is not yet consulted by the router.
 
 ---
 

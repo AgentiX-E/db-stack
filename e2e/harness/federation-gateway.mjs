@@ -13,6 +13,7 @@
  * ------------
  *   parent → gateway : { cmd: 'replicate', key, value, type }
  *                    | { cmd: 'status' }
+ *                    | { cmd: 'retry-failed' }
  *                    | { cmd: 'stop' }
  *   gateway → parent : { type: 'ready' | 'applied' | 'status' | 'error' | 'replicated' }
  */
@@ -65,6 +66,21 @@ let transport;
 let federation;
 let outbox;
 
+/**
+ * Keys the local change stream delivered to a registered consumer.
+ *
+ * The outbox is what crosses the datacenter, so a CDC event that never reaches
+ * a consumer is not a data-loss event — but it is a change nobody observed, and
+ * `flushBuffer()` used to deliver only the first event of every batch while
+ * reporting the whole batch as flushed. Recording what actually arrived makes
+ * that claim checkable from outside the process.
+ */
+const cdcKeys = [];
+/** Frames this gateway's transport handed to its inbound subscribers. */
+const inboundFrameIds = [];
+/** Targets that were failing and are delivering again. */
+const recoveredTargets = [];
+
 function send(message) {
   process.send?.(message);
 }
@@ -79,19 +95,36 @@ function requireKey(key) {
   return key;
 }
 
+/**
+ * Propose `data` once this node is the leader, or fail loudly.
+ *
+ * An inbound replication frame must end up in this cluster's own log. Returning
+ * quietly when the node is not the leader — which is what this consumer did —
+ * tells `applyInbound` that the change was applied when it was not: the frame
+ * is gone from the sender's outbox and from this cluster's log at the same
+ * time, and nothing anywhere records the loss. A restarted gateway is a
+ * follower for the few hundred milliseconds before it wins its election, so
+ * that window is not hypothetical.
+ */
+async function proposeWhenLeader(key, value, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await adapter.isLeader()) {
+      await adapter.propose(JSON.stringify({ key, value }));
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`not leader within ${timeoutMs}ms: inbound entry ${key} was not applied`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 /** Local Raft consumer: propose an inbound remote entry into our own cluster. */
 const consumer = {
   async proposeReplicated(entry) {
-    if (!(await adapter.isLeader())) {
-      send({
-        type: 'error',
-        nodeId: cfg.nodeId,
-        data: 'not leader, cannot apply replicated entry',
-      });
-      return;
-    }
     const key = entry.key ?? entry.data?.key;
-    await adapter.propose(JSON.stringify({ key, value: entry.data }));
+    await proposeWhenLeader(key, entry.data);
   },
   getHLC() {
     return federation?.hlc ?? null;
@@ -181,11 +214,15 @@ async function main() {
   stage('transport-start');
   await transport.start();
 
+  const outboxConfig = cfg.outbox ?? {};
   outbox = new OutboxStore({
     dataDir: cfg.outboxDir,
-    ttlMs: 600_000,
-    maxRetries: 10,
-    deadLetterTtlMs: 600_000,
+    ttlMs: outboxConfig.ttlMs ?? 600_000,
+    maxRetries: outboxConfig.maxRetries ?? 10,
+    // A retry window that is short enough for a test to outlast it, and long
+    // enough that a healthy peer never produces a dead letter.
+    retryWindowMs: outboxConfig.retryWindowMs ?? 60_000,
+    deadLetterTtlMs: outboxConfig.deadLetterTtlMs ?? 600_000,
     mapSize: 16 * 1024 * 1024,
   });
 
@@ -220,11 +257,28 @@ async function main() {
     replicationConfig,
     transport,
     outbox,
+    dlqScanIntervalMs: cfg.dlqScanIntervalMs ?? 500,
+    outboxHousekeepingIntervalMs: cfg.outboxHousekeepingIntervalMs ?? 0,
   });
 
   stage('replication-ready');
+  // A second subscriber on the same transport, used only for observability: it
+  // counts what arrived, so a test can tell "the peer never got the frame" from
+  // "the peer got it and did not apply it".
+  transport.onMessage((msg) => {
+    inboundFrameIds.push(String(msg.messageId));
+  });
   federation.registerConsumer(consumer);
+  federation.onTargetRecovered((targetNodeId) => {
+    recoveredTargets.push(targetNodeId);
+  });
   await federation.start();
+  // After `start()`: the manager creates its change stream there, so the
+  // accessor throws before it. No write has happened yet, so no event is lost
+  // between the two statements.
+  federation.getCDC().onEvent(async (event) => {
+    cdcKeys.push(event.key);
+  });
 
   stage('federation-started');
   send({
@@ -269,8 +323,15 @@ async function main() {
             connectedPeers: transport.getConnectedPeers().map((p) => p.peerId),
             lastSendError: transport.getLastSendError(),
             lastInboundError: federation.getLastInboundError(),
+            cdc: { ...federation.getCDC().getDeliveryStats(), keysDelivered: cdcKeys.length },
+            inboundFrames: inboundFrameIds.length,
+            deadLetters: outbox.getDeadLetterStats().count,
+            recoveredTargets: [...recoveredTargets],
           },
         });
+      } else if (msg.cmd === 'retry-failed') {
+        const revived = await federation.scanDeadLetters();
+        send({ type: 'retry-failed', nodeId: cfg.nodeId, data: revived });
       } else if (msg.cmd === 'stop') {
         transport.destroy();
         await federation.stop();

@@ -49,6 +49,10 @@ describe('@agentix-e/db-federation types', () => {
       fetchOldestPending: vi.fn().mockResolvedValue([]),
       markDelivered: vi.fn().mockResolvedValue(undefined),
       getPendingCount: vi.fn().mockResolvedValue(0),
+      getPendingStats: vi.fn(() => ({})),
+      getDeadLetterEntries: vi.fn(() => []),
+      retryDeadLetters: vi.fn(() => 0),
+      housekeeping: vi.fn(() => ({ delivered: 0, deadLettered: 0 })),
       markFailed: vi.fn().mockReturnValue(false),
       getStats: vi.fn().mockReturnValue({} as OutboxStats),
     };
@@ -241,6 +245,8 @@ describe('@agentix-e/db-federation replication types', () => {
       getPendingCounts: vi.fn().mockResolvedValue({ 'node-b': 5 }),
       onTargetConnected: vi.fn().mockReturnValue(vi.fn()),
       onTargetDisconnected: vi.fn().mockReturnValue(vi.fn()),
+      onTargetRecovered: vi.fn().mockReturnValue(vi.fn()),
+      isPeerReachable: vi.fn(() => true),
       onHighLag: vi.fn().mockReturnValue(vi.fn()),
     };
     expect(typeof replication.start).toBe('function');
