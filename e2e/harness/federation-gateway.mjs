@@ -216,13 +216,17 @@ async function main() {
 
   const outboxConfig = cfg.outbox ?? {};
   outbox = new OutboxStore({
+    // Every knob the suite set, forwarded verbatim. This used to be four keys
+    // copied by hand (`ttlMs`, `maxRetries`, `retryWindowMs`, `deadLetterTtlMs`)
+    // with the rest silently replaced by production defaults — so a suite that
+    // shortened the retry window to one second kept the two-second default
+    // backoff, and the store refused the pair at boot. The request is validated
+    // against the store's own key set in the parent (`assertGatewayConfig`), so
+    // what arrives here is already known to be readable.
+    ...outboxConfig,
+    // Owned by this file: the directory comes from `outboxDir` and the map size
+    // is a suite-wide budget, not a property of the scenario.
     dataDir: cfg.outboxDir,
-    ttlMs: outboxConfig.ttlMs ?? 600_000,
-    maxRetries: outboxConfig.maxRetries ?? 10,
-    // A retry window that is short enough for a test to outlast it, and long
-    // enough that a healthy peer never produces a dead letter.
-    retryWindowMs: outboxConfig.retryWindowMs ?? 60_000,
-    deadLetterTtlMs: outboxConfig.deadLetterTtlMs ?? 600_000,
     mapSize: 16 * 1024 * 1024,
   });
 
@@ -327,6 +331,11 @@ async function main() {
             inboundFrames: inboundFrameIds.length,
             deadLetters: outbox.getDeadLetterStats().count,
             recoveredTargets: [...recoveredTargets],
+            // What the outbox actually runs with, not what the suite asked for.
+            // A scenario that shortens a window needs to be able to assert that
+            // the window it got is the one it set — otherwise a knob dropped on
+            // the way in turns the suite into a test of the default.
+            retention: federation.getRetention(),
           },
         });
       } else if (msg.cmd === 'retry-failed') {

@@ -67,6 +67,13 @@ interface GatewayStatus {
   recoveredTargets: string[];
   lastSendError: string | null;
   inboundFrames: number;
+  retention: {
+    retryWindowMs: number;
+    retryBackoffMaxMs: number;
+    dedupMs: number;
+    deadLetterTtlMs: number;
+    entryTtlMs: number;
+  };
 }
 
 function buildCluster(prefix: string, baseDir: string, ports: number[]): ClusterNodeSpec[] {
@@ -97,7 +104,15 @@ interface GatewayOptions {
   peer: { nodeId: string; dc: string; host: string; port: number; transportNodeId: number };
   nodes: ClusterNodeSpec[];
   baseDir: string;
-  outbox: { retryWindowMs: number; maxRetries?: number };
+  /**
+   * The outbox windows this scenario runs with.
+   *
+   * A window is not a single number: one backoff has to fit inside the retry
+   * budget that schedules it, or the budget is spent sleeping past its own
+   * deadline. The suite states both, and the store refuses the pair if a future
+   * edit shortens the budget below the ceiling without moving the ceiling too.
+   */
+  outbox: { retryWindowMs: number; retryBackoffMaxMs: number };
 }
 
 function gatewayConfig(opts: GatewayOptions, listenPort: number): Record<string, unknown> {
@@ -205,8 +220,10 @@ describe('Federation recovery (two real clusters, mTLS, cold restarts)', () => {
           baseDir,
           // Short enough that a test can outlast it. The production default is
           // chosen against the longest tolerable outage; a suite that waited
-          // for that default would not be a suite anyone runs.
-          outbox: { retryWindowMs: 1_000 },
+          // for that default would not be a suite anyone runs. The backoff
+          // ceiling is sized to the budget so the last attempt is not scheduled
+          // after the window has already closed.
+          outbox: { retryWindowMs: 1_000, retryBackoffMaxMs: 200 },
         },
         fedPorts[0]!,
       ),
@@ -232,7 +249,7 @@ describe('Federation recovery (two real clusters, mTLS, cold restarts)', () => {
           },
           nodes: westSpecs,
           baseDir,
-          outbox: { retryWindowMs: 1_000 },
+          outbox: { retryWindowMs: 1_000, retryBackoffMaxMs: 200 },
         },
         fedPorts[1]!,
       ),
@@ -267,6 +284,19 @@ describe('Federation recovery (two real clusters, mTLS, cold restarts)', () => {
     }
     for (const dir of dirs.splice(0)) removeTempDir(dir);
   });
+
+  it('AC-F5: each gateway runs with the outbox windows the suite set', async () => {
+    // The scenario's timing depends on a one-second retry window, so the run has
+    // to be able to prove it got one. The gateway used to copy four keys out of
+    // the suite's `outbox` block and drop the rest, which is how the window below
+    // arrived next to the untouchable two-second default backoff.
+    for (const cluster of [east, west]) {
+      const { retention } = await cluster.gateway.status<GatewayStatus>();
+      expect(retention.retryWindowMs).toBe(1_000);
+      expect(retention.retryBackoffMaxMs).toBe(200);
+      expect(retention.dedupMs).toBeGreaterThanOrEqual(retention.retryWindowMs);
+    }
+  }, 60_000);
 
   it('AC-F6: a thirty-key burst is committed at the peer, and the change stream delivered thirty', async () => {
     const keys = Array.from({ length: 30 }, (_, i) => `burst-${i}`);

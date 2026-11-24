@@ -1,9 +1,10 @@
 /**
  * Harness contract — the process harness is code too, so it is tested like code.
  *
- * The e2e suites trust three things about `harness/support.ts`: that a wait fails
- * loudly (with the child's own log tail) instead of hanging, that a kill is a real
- * kill, and that teardown is idempotent. When any of those silently changed, the
+ * The e2e suites trust four things about `harness/support.ts`: that a wait fails
+ * loudly (with the child's own log tail) instead of hanging, that a child which
+ * cannot answer ends the wait instead of costing it the deadline, that a kill is a
+ * real kill, and that teardown is idempotent. When any of those silently changed, the
  * suites would not fail — they would pass for the wrong reason or hang the runner,
  * which is precisely how a green pipeline stops meaning anything.
  *
@@ -19,6 +20,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  assertGatewayConfig,
   ChildNode,
   getFreePorts,
   PORT_BASE,
@@ -189,6 +191,38 @@ describe('harness contract', () => {
     try {
       const fresh = await import('../harness/support');
       await expect(fresh.getFreePort()).rejects.toThrow('failed to allocate port');
+    } finally {
+      vi.doUnmock('node:net');
+      vi.resetModules();
+    }
+  }, 10_000);
+
+  it('getFreePort refuses a whole slot of busy ports instead of returning a number', async () => {
+    // The other half of the same guarantee: when every port in the slot is taken,
+    // the allocator has nothing left to hand out. A silent fallback to the kernel's
+    // ephemeral pool here would hand a child a port any outbound connection could
+    // take between the probe and its own `listen`, which is the failure the window
+    // exists to prevent — so the exhaustion is an error that names the window.
+    vi.resetModules();
+    vi.doMock('node:net', () => ({
+      createServer: () => {
+        const fake: any = new EventEmitter();
+        fake.unref = () => undefined;
+        fake.listen = () =>
+          setImmediate(() => fake.emit('error', Object.assign(new Error('busy'), { code: 'EADDRINUSE' })));
+        fake.address = () => null;
+        fake.close = (cb?: () => void) => cb?.();
+        return fake;
+      },
+    }));
+    try {
+      const fresh = await import('../harness/support');
+      const error = await fresh
+        .getFreePort()
+        .then(() => undefined)
+        .catch((err: Error) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error!.message).toContain('no free port in the harness window at');
     } finally {
       vi.doUnmock('node:net');
       vi.resetModules();
@@ -378,4 +412,187 @@ describe('harness contract', () => {
     expect(error!.message).toContain('diagnostics unavailable');
     expect(error!.message).toContain('diagnostics-boom');
   }, 10_000);
+});
+
+/**
+ * A wait that is answered by the child's absence.
+ *
+ * The three signals below all mean the same thing — the message is never coming —
+ * and the harness used to act on none of them: the exit status was recorded and
+ * never read, `fatal: true` was produced by every child and consumed by nobody,
+ * and a gateway that refused its configuration at boot cost the suite its full
+ * ninety-second deadline. These tests pin the diagnosis: an explained failure in
+ * milliseconds, not a timeout whose message has to be matched against the log.
+ */
+describe('a child that will never answer', () => {
+  /** A child that reports a fatal error and then sits there, alive. */
+  function spawnFatal(label = 'fatal-node'): ChildNode {
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "process.send({ type: 'error', data: 'retry-covers-backoff: 1000 < 2000', fatal: true }); setInterval(() => {}, 1000);",
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
+    );
+    return new ChildNode(label, child);
+  }
+
+  it('HF.1: a fatal error ends the wait it cannot answer, naming the reason', async () => {
+    const node = spawnFatal();
+    const started = Date.now();
+    try {
+      const error = await node
+        .waitForType('ready', 30_000)
+        .then(() => undefined)
+        .catch((err: Error) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error!.message).toContain('[fatal-node] reported a fatal error');
+      expect(error!.message).toContain('retry-covers-backoff');
+      expect(error!.message).toContain('ready');
+      // The child is still running, so only the fatal flag can have ended this.
+      expect(node.exited).toBe(false);
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      node.kill();
+      await node.waitForExit();
+    }
+  }, 20_000);
+
+  it('HF.2: a wait that asked for the fatal error still receives it', async () => {
+    // Resolution precedes rejection on purpose: a test asserting a refusal waits
+    // for exactly this message, and the assertion must see the message.
+    const node = spawnFatal('asserting-node');
+    try {
+      const message = await node.waitForType('error', 5_000);
+      expect(message.fatal).toBe(true);
+      expect(message.data).toContain('retry-covers-backoff');
+    } finally {
+      node.kill();
+      await node.waitForExit();
+    }
+  }, 20_000);
+
+  it('HF.3: an exit without a message fails the wait with the status it exited with', async () => {
+    const node = new ChildNode(
+      'exiting-node',
+      spawn(process.execPath, ['-e', 'process.exit(3)'], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] }),
+    );
+    const started = Date.now();
+    const error = await node
+      .waitForType('ready', 30_000)
+      .then(() => undefined)
+      .catch((err: Error) => err);
+    expect(error).toBeInstanceOf(Error);
+    expect(error!.message).toContain('[exiting-node] exited with code 3 before');
+    expect(error!.message).toContain('ready');
+    expect(Date.now() - started).toBeLessThan(10_000);
+  }, 20_000);
+
+  it('HF.4: a message sent just before the exit still answers the wait', async () => {
+    // The exit is deferred by one turn of the event loop so a message the child
+    // wrote but did not get to flush is not discarded on the way out.
+    const node = new ChildNode(
+      'last-words',
+      spawn(process.execPath, ['-e', "process.send({ type: 'stopped', nodeId: 1 }); process.exit(0);"], {
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      }),
+    );
+    const message = await node.waitForType('stopped', 10_000);
+    expect(message.type).toBe('stopped');
+    await node.waitForExit();
+  }, 20_000);
+
+  it('HF.5: a fatal error does not resurrect a wait that already resolved', async () => {
+    const node = spawnFatal('already-done');
+    try {
+      await node.waitForType('error', 5_000);
+      // A second wait for the same message resolves from the buffer rather than
+      // being failed by the fatal flag on the message it found there.
+      await expect(node.waitForType('error', 1_000)).resolves.toMatchObject({ fatal: true });
+    } finally {
+      node.kill();
+      await node.waitForExit();
+    }
+  }, 20_000);
+
+  it('HF.6: a fatal error whose payload is not a string is still reported', async () => {
+    // Children report what they caught, and what they caught is not always a string:
+    // a refusal carries a structured reason. The rejection must name it rather than
+    // printing the word "object".
+    const node = new ChildNode(
+      'structured-fatal',
+      spawn(
+        process.execPath,
+        [
+          '-e',
+          "process.send({ type: 'error', data: { rule: 'retry-covers-backoff' }, fatal: true }); setInterval(() => {}, 1000);",
+        ],
+        { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
+      ),
+    );
+    try {
+      const error = await node
+        .waitForType('ready', 30_000)
+        .then(() => undefined)
+        .catch((err: Error) => err);
+      expect(error!.message).toContain('"rule":"retry-covers-backoff"');
+    } finally {
+      node.kill();
+      await node.waitForExit();
+    }
+  }, 20_000);
+});
+
+/**
+ * Gateway configuration is checked before a process is spawned.
+ *
+ * The `outbox` block is the one place a suite states its retention windows, and
+ * the gateway used to read four of its keys and ignore the rest. A typo was
+ * therefore indistinguishable from a default, and a suite that set a window got
+ * a run that measured something else.
+ */
+describe('gateway configuration contract', () => {
+  const coherent = { dataDir: '/tmp/unused', outboxDir: '/tmp/unused-outbox' };
+
+  it('GC.1: refuses a key the outbox store does not read, and names it', () => {
+    expect(() => assertGatewayConfig({ ...coherent, outbox: { retryWindow: 1_000 } })).toThrow(
+      /does not read: retryWindow \(accepted: ttlMs, entryTtlMs, retryWindowMs/,
+    );
+  });
+
+  it('GC.2: refuses knobs the gateway owns', () => {
+    expect(() => assertGatewayConfig({ ...coherent, outbox: { dataDir: '/tmp/x' } })).toThrow(
+      /outbox\.dataDir is set by the gateway/,
+    );
+    expect(() => assertGatewayConfig({ ...coherent, outbox: { mapSize: 4_096 } })).toThrow(/outbox\.mapSize/);
+  });
+
+  it('GC.3: accepts the retention quartet a scenario states', () => {
+    expect(() =>
+      assertGatewayConfig({
+        ...coherent,
+        outbox: { retryWindowMs: 1_000, retryBackoffMaxMs: 200, dedupMs: 120_000, deadLetterTtlMs: 60_000 },
+      }),
+    ).not.toThrow();
+  });
+
+  it('GC.4: accepts a gateway with no outbox block at all', () => {
+    expect(() => assertGatewayConfig(coherent)).not.toThrow();
+  });
+
+  it('GC.5: refuses an outbox block that is not an object', () => {
+    expect(() => assertGatewayConfig({ ...coherent, outbox: null })).toThrow(/must be an object, got null/);
+    expect(() => assertGatewayConfig({ ...coherent, outbox: [1] })).toThrow(/must be an object, got an array/);
+    expect(() => assertGatewayConfig({ ...coherent, outbox: 'fast' })).toThrow(/must be an object, got string/);
+  });
+
+  it('GC.6: names every offending key, in the plural when there is more than one', () => {
+    expect(() => assertGatewayConfig({ ...coherent, outbox: { retryWindow: 1, dedupWindow: 2 } })).toThrow(
+      /keys the store does not read: retryWindow, dedupWindow/,
+    );
+    expect(() => assertGatewayConfig({ ...coherent, outbox: { dataDir: '/tmp/x', mapSize: 1 } })).toThrow(
+      /outbox\.dataDir, mapSize are set by the gateway/,
+    );
+  });
 });

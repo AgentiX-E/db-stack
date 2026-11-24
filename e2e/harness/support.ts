@@ -16,6 +16,7 @@ import { join, resolve } from 'node:path';
 import { useTestTmpRoot } from '../../scripts/test-tmpdir.mjs';
 import { generateClusterCerts } from '@agentix-e/db-cluster/testing';
 import type { TestClusterCerts } from '@agentix-e/db-cluster/testing';
+import type { OutboxStoreConfig } from '@agentix-e/db-federation';
 
 const HARNESS_DIR = resolve(import.meta.dirname, '.');
 
@@ -209,6 +210,22 @@ export function removeTempDir(dir: string): void {
   }
 }
 
+/**
+ * One outstanding `waitFor`.
+ *
+ * The timer and the `reject` live here rather than in the promise closure so that
+ * every path that settles a wait — the message arriving, the deadline passing, the
+ * child exiting, the child declaring itself fatal — goes through one of two
+ * functions and none of them can leave a timer behind.
+ */
+interface Waiter {
+  predicate: (m: NodeMessage) => boolean;
+  what: string;
+  timer: ReturnType<typeof setTimeout>;
+  resolve: (m: NodeMessage) => void;
+  reject: (error: Error) => void;
+}
+
 /** Base class handling IPC plumbing, message buffering and lifecycle. */
 export class ChildNode {
   readonly messages: NodeMessage[] = [];
@@ -216,10 +233,7 @@ export class ChildNode {
   readonly stderrTail: string[] = [];
   /** Rolling tail of the child's stdout (its structured log). */
   readonly stdoutTail: string[] = [];
-  private readonly waiters: Array<{
-    predicate: (m: NodeMessage) => boolean;
-    resolve: (m: NodeMessage) => void;
-  }> = [];
+  private readonly waiters: Waiter[] = [];
   private exitCode: number | null = null;
 
   constructor(
@@ -229,6 +243,13 @@ export class ChildNode {
     process.on('message', (msg) => this.dispatch(msg as NodeMessage));
     process.on('exit', (code) => {
       this.exitCode = code ?? 0;
+      // A child that has exited can never send the message a waiter is waiting
+      // for. Letting the waiter sit out its full deadline — 90 s for a gateway
+      // that died during boot — hides the exit status and the stderr tail that
+      // already explain the failure, and turns a five-second diagnosis into a
+      // timed-out test. `setImmediate` lets the IPC channel deliver a message
+      // the child sent just before it left.
+      setImmediate(() => this.settleAfterExit());
     });
     // A crashed child (SIGKILL in the failover tests) can tear down its stdio
     // and IPC pipes while the parent still has readers attached, which surfaces
@@ -280,12 +301,65 @@ export class ChildNode {
   private dispatch(msg: NodeMessage): void {
     if (!msg || !msg.type) return;
     this.messages.push(msg);
-    for (let i = this.waiters.length - 1; i >= 0; i--) {
-      const waiter = this.waiters[i]!;
-      if (waiter.predicate(msg)) {
-        this.waiters.splice(i, 1);
-        waiter.resolve(msg);
-      }
+    // Resolve first, then decide whether the message also ends the conversation:
+    // a test that is *asserting* a fatal error waits for exactly this message, and
+    // it must receive it rather than a rejection that pre-empts the assertion.
+    for (const waiter of [...this.waiters]) {
+      if (waiter.predicate(msg)) this.resolve(waiter, msg);
+    }
+    if (msg.type === 'error' && msg.fatal === true) {
+      // Every harness child sends `{ type: 'error', fatal: true }` as its last
+      // message before exiting, and nothing in this class used to read the flag:
+      // a gateway that refused its configuration at boot looked exactly like a
+      // gateway that was slow to boot, and the suite paid the full 90 s deadline
+      // for a reason the child had already stated in a millisecond.
+      const reason = typeof msg.data === 'string' ? msg.data : JSON.stringify(msg.data);
+      setImmediate(() =>
+        this.failAll(
+          `[${this.label}] reported a fatal error`,
+          ` (fatal: ${reason}; stderr: ${this.stderrTail.slice(-5).join(' | ') || '<empty>'})`,
+        ),
+      );
+    }
+  }
+
+  /** Remove a waiter from the book, so no path can settle it twice. */
+  private forget(waiter: Waiter): boolean {
+    const index = this.waiters.indexOf(waiter);
+    if (index < 0) return false;
+    this.waiters.splice(index, 1);
+    clearTimeout(waiter.timer);
+    return true;
+  }
+
+  private resolve(waiter: Waiter, msg: NodeMessage): void {
+    if (this.forget(waiter)) waiter.resolve(msg);
+  }
+
+  private fail(waiter: Waiter, message: string): void {
+    if (this.forget(waiter)) waiter.reject(new Error(message));
+  }
+
+  /** Fail every outstanding wait with one reason. */
+  private failAll(headline: string, detail: string): void {
+    for (const waiter of [...this.waiters]) this.fail(waiter, `${headline} before ${waiter.what}${detail}`);
+  }
+
+  /**
+   * Settle the waits an exited child can no longer answer.
+   *
+   * There is no message to look for here: a message the child sent before it left
+   * is dispatched by the IPC channel before this handler runs, and a wait created
+   * after the exit searches the buffer first. What is left is a wait whose message
+   * is never coming, and the exit status is the whole explanation.
+   */
+  private settleAfterExit(): void {
+    for (const waiter of [...this.waiters]) {
+      this.fail(
+        waiter,
+        `[${this.label}] exited with code ${String(this.exitStatus)} before ${waiter.what}` +
+          ` (stderr: ${this.stderrTail.slice(-5).join(' | ') || '<empty>'})`,
+      );
     }
   }
 
@@ -294,23 +368,23 @@ export class ChildNode {
     const existing = this.messages.find(predicate);
     if (existing) return Promise.resolve(existing);
 
-    return new Promise<NodeMessage>((resolveWaiter, reject) => {
-      const timer = setTimeout(() => {
-        const index = this.waiters.findIndex((w) => w.resolve === wrapped);
-        if (index >= 0) this.waiters.splice(index, 1);
-        reject(
-          new Error(
+    return new Promise<NodeMessage>((resolveWaiter, rejectWaiter) => {
+      const waiter: Waiter = {
+        predicate,
+        what,
+        resolve: resolveWaiter,
+        reject: rejectWaiter,
+        // The callback runs after this literal is assigned, so referring to the
+        // waiter it belongs to is how `fail` gets the timer it must clear.
+        timer: setTimeout(() => {
+          this.fail(
+            waiter,
             `[${this.label}] timed out after ${timeoutMs}ms waiting for ${what}` +
               ` (exit=${this.exitStatus ?? 'running'}; stderr: ${this.stderrTail.slice(-5).join(' | ') || '<empty>'})`,
-          ),
-        );
-      }, timeoutMs);
-
-      const wrapped = (msg: NodeMessage): void => {
-        clearTimeout(timer);
-        resolveWaiter(msg);
+          );
+        }, timeoutMs),
       };
-      this.waiters.push({ predicate, resolve: wrapped });
+      this.waiters.push(waiter);
     });
   }
 
@@ -523,6 +597,7 @@ export function spawnAuditReader(config: Record<string, unknown>, label: string)
 
 /** Spawn one federation gateway process (Raft member + federation stack). */
 export function spawnGateway(config: Record<string, unknown>, label: string): ChildNode {
+  assertGatewayConfig(config);
   const child = spawn(process.execPath, [join(HARNESS_DIR, 'federation-gateway.mjs')], {
     env: {
       ...process.env,
@@ -531,6 +606,63 @@ export function spawnGateway(config: Record<string, unknown>, label: string): Ch
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   return new ChildNode(label, child);
+}
+
+/** Outbox keys the gateway owns: a suite that sets them is configuring nothing. */
+const GATEWAY_OWNED_OUTBOX_KEYS = ['dataDir', 'mapSize'];
+
+/**
+ * The `outbox` keys a suite may set, named against the store's own configuration
+ * type so that a field the store renames stops compiling here instead of being
+ * silently dropped at runtime.
+ */
+const OUTBOX_REQUEST_KEYS: ReadonlyArray<keyof OutboxStoreConfig> = [
+  'ttlMs',
+  'entryTtlMs',
+  'retryWindowMs',
+  'maxRetries',
+  'retryBackoffMs',
+  'retryBackoffMaxMs',
+  'dedupMs',
+  'deadLetterTtlMs',
+];
+
+/**
+ * Refuse a gateway configuration whose `outbox` block cannot be honoured.
+ *
+ * The gateway used to copy four hand-picked keys out of `outbox` and drop the
+ * rest, so a suite that set `retryBackoffMaxMs` (or misspelled a key) ran against
+ * the production default and reported on a configuration it never asked for.
+ * That is how a one-second retry window shipped next to the two-second default
+ * backoff: the backoff was not dropped by the store, it was dropped here.
+ *
+ * Checked in the parent, before a process is spawned, because a refusal that
+ * needs a boot to discover is a 90-second way to read a message this function
+ * can produce immediately.
+ */
+export function assertGatewayConfig(config: Record<string, unknown>): void {
+  const outbox = config.outbox;
+  if (outbox === undefined) return;
+  if (typeof outbox !== 'object' || outbox === null || Array.isArray(outbox)) {
+    const shape = outbox === null ? 'null' : Array.isArray(outbox) ? 'an array' : typeof outbox;
+    throw new Error(`gateway outbox must be an object, got ${shape}`);
+  }
+  const unknown = Object.keys(outbox).filter(
+    (key) => !(OUTBOX_REQUEST_KEYS as readonly string[]).includes(key) && !GATEWAY_OWNED_OUTBOX_KEYS.includes(key),
+  );
+  if (unknown.length > 0) {
+    throw new Error(
+      `gateway outbox has ${unknown.length === 1 ? 'a key' : 'keys'} the store does not read: ${unknown.join(', ')}` +
+        ` (accepted: ${OUTBOX_REQUEST_KEYS.join(', ')})`,
+    );
+  }
+  const owned = Object.keys(outbox).filter((key) => GATEWAY_OWNED_OUTBOX_KEYS.includes(key));
+  if (owned.length > 0) {
+    throw new Error(
+      `gateway outbox.${owned.join(', ')} ${owned.length === 1 ? 'is' : 'are'} set by the gateway, not by the suite` +
+        ' (the outbox directory comes from `outboxDir`)',
+    );
+  }
 }
 
 /**

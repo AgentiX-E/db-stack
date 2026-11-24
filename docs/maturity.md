@@ -227,17 +227,18 @@ All four rows are from CI run `45159857370`, the run that accepted iteration 76:
 (99.64/98.58/100/99.64 over 38). The iteration measured `node` locally first — 99.49/98.67/99.87/99.49
 over 3 174 cases — because a change to twenty lines of loop-shaped code has to be measured on the tree
 it ships, and the CI run restated the row rather than correcting it. The gate covers four packages, not three: the end-to-end harness is
-measured as well (99.44/99.44/100/96.47), because a harness bug produces confident, meaningless
+measured as well (100/97.22/100/100), because a harness bug produces confident, meaningless
 acceptance passes. That last row read 100 % on all four dimensions when this page was first
-written and reads 99.44 / 100 / 96.47 now; the number moved because the harness gained code, and
-the row is reported as measured rather than as remembered.
+written, then 99.44 / 96.47 while the harness carried the fatal-error path nothing read; it reads
+100 / 97.22 now that the two refusal paths are tested. The number moves because the harness gains
+code, and the row is reported as measured rather than as remembered.
 
 | Package         | Statements | Branches | Functions | Lines  |
 | --------------- | ---------- | -------- | --------- | ------ |
 | `cluster`       | 99.46%     | 98.33%   | 99.72%    | 99.46% |
 | `federation`    | 99.64%     | 98.58%   | 100%      | 99.64% |
 | `node`          | 99.49%     | 98.67%   | 99.87%    | 99.49% |
-| `e2e` (harness) | 99.44%     | 96.47%   | 100%      | 99.44% |
+| `e2e` (harness) | 100%       | 97.22%   | 100%      | 100%   |
 
 The rows are in the order the tool prints them — statements, branches, functions, lines. The first
 two columns had been labelled the other way round since this table was written, which is how a
@@ -429,7 +430,7 @@ pnpm audit:policy                                    # production tree to zero, 
 pnpm coverage:e2e                                    # e2e harness, same 95 % thresholds
 pnpm coverage:gate                                   # all four packages, every dimension
 pnpm check:test-counts                               # the numbers on the README are this run's numbers
-pnpm e2e                                             # 59 real-process acceptance tests (TLS, HTTP, SIGKILL)
+pnpm e2e                                             # 85 real-process acceptance tests (TLS, HTTP, SIGKILL)
 pnpm test:mutation                                   # mutation score, all three packages
 pnpm check:mutation-timeouts                         # every Timeout in those reports has been read
 (cd cluster && pnpm test:perf)                       # 22 benchmarks on a real 3-node TLS cluster
@@ -2366,3 +2367,87 @@ routing policies out of the six that do, and an `AntiEntropy` that takes a remot
 cannot use. The examples are rewritten against the real API in iteration 78 and now
 type-check where a reader pastes them; the gate's hole is recorded rather than assumed
 closed, because a page count is not a page compiled.
+
+---
+
+## A fatal error nobody read
+
+CI run `45320587437` failed two jobs on one commit: `E2E — cross-cluster sync over
+mTLS (two real DCs)` and `Coverage (e2e harness)`. Both failures were the same failure,
+and it read like this:
+
+```
+[east-gateway] [gateway] fatal: RetentionViolation: retry-covers-backoff:
+  the retry budget is 1000 ms but one backoff may last 2000 ms
+Error: [east-gateway] timed out after 90000ms waiting for ready from east-gateway
+  (exit=1; stderr: … [gateway] fatal: RetentionViolation …)
+```
+
+The child had said what was wrong, in its first ten milliseconds, **and then the suite
+waited ninety seconds for it to say something else**. Three separate defects had to line
+up for that, and each one is the same shape: a signal that exists and is read by nobody.
+
+**The knob that was dropped.** The gateway's harness copied four keys out of the suite's
+`outbox` block —
+
+```js
+ttlMs: outboxConfig.ttlMs ?? 600_000,
+maxRetries: outboxConfig.maxRetries ?? 10,
+retryWindowMs: outboxConfig.retryWindowMs ?? 60_000,
+deadLetterTtlMs: outboxConfig.deadLetterTtlMs ?? 600_000,
+```
+
+— and dropped every other key the store accepts. So the scenario that shortened the retry
+window to one second kept the two-second default backoff, and iteration 80's derivation
+refused the pair at boot, correctly: a budget that is spent sleeping past its own deadline
+is not a budget. The refusal was right. The configuration was never what the suite asked
+for, and the harness had no way to say so.
+
+The `outbox` block is now forwarded verbatim, with `dataDir` and `mapSize` owned by the
+gateway and every other key checked in the parent before a process is spawned —
+`assertGatewayConfig` refuses a key the store does not read (a typo is not a default) and
+names the keys it does. The check is typed against `keyof OutboxStoreConfig`, so a field
+the store renames stops compiling here instead of silently reverting to production
+defaults at runtime.
+
+**The flag nobody consumed.** `NodeMessage` has carried `fatal?: boolean` since the
+harness was written, and all six child programmes set it as their last message before
+exiting. `ChildNode` read it nowhere. A gateway that refused its configuration and a
+gateway that was slow to bind a port produced the same observation: silence, until the
+deadline. `waitFor` now fails on `{ type: 'error', fatal: true }` with the child's own
+reason in the message, and resolution still precedes rejection so that a test *asserting*
+a refusal receives the message it asked for.
+
+**The exit nobody noticed.** `process.on('exit')` recorded the status and stopped there.
+A wait whose message can no longer arrive now fails with it:
+
+```
+[exiting-node] exited with code 3 before ready (stderr: <empty>)
+```
+
+Measured on the case that used to cost the run ninety seconds: **4 ms** to a named
+failure. The `settleAfterExit` path deliberately has no "is the message in the buffer?"
+branch — a message the child sent before leaving is dispatched before the exit handler
+runs, and a wait created afterwards searches the buffer first, so the branch would be
+code no test could reach. That is the same rule this page applies to empty `if` blocks:
+an unreachable branch is a comment shaped like code.
+
+The suite now also *observes* what it configured. `status` carries
+`retention: federation.getRetention()`, and `AC-F5` asserts the gateway runs with a 1 000 ms
+window and a 200 ms ceiling — the number the scenario's timing depends on, reported by the
+process that runs with it rather than restated by the test that asked for it.
+
+| Measure | Before | After |
+| ------- | ------ | ----- |
+| Time to a named failure when a child refuses its configuration | 90 000 ms (deadline) | 4 ms |
+| Failure text | `timed out after 90000ms waiting for ready` | `reported a fatal error before ready (fatal: retry-covers-backoff…)` |
+| `outbox` keys the gateway honours | 4 of 10 | 10 of 10, checked before spawn |
+| `e2e` harness coverage | 99.44 / 96.47 / 100 / 99.44 | **100 / 97.22 / 100 / 100** |
+| `e2e` cases | 71 | **85** (14 new) |
+
+The general lesson is the one the acceptance table already states about products and this
+page states about instruments: **a declared signal with no consumer is not a feature, it
+is a claim**. `fatal: true` was produced by six programmes, documented in the message type,
+and consumed by zero callers for the whole life of the harness — and the cost was not
+correctness, it was diagnosis: every run that hit it paid ninety seconds to learn something
+the child had already said.
