@@ -225,9 +225,9 @@ All four rows are from CI run `45339974392`, the run that accepted iteration 83:
 the assemblers in it (99.46/99.46/99.72/98.37 over 147 files), `federation` with the query and schema
 modules it absorbed (99.64/98.58/100/99.64 over 81) and the harness (100/97.22/100/100). The `node`
 row is iteration 84's measurement of the tree it ships — 99.70/98.70/99.87/99.70 over 3 199 cases in
-158 files, from `pnpm --filter @agentix-e/db-node run coverage` — because a change has to be measured
-on the tree it ships; the `Coverage (node)` job of that commit's CI restates the four numbers, and the
-row is corrected here if it disagrees. The previous four rows were from CI run `45159857370`, which
+158 files, from `pnpm --filter @agentix-e/db-node run coverage`, with the `Coverage (node)` job of
+that commit's CI (`45351145717`) green on the same tree — because a change has to be measured on the
+tree it ships, and a row is reported as measured rather than as remembered. The previous four rows were from CI run `45159857370`, which
 accepted iteration 76. The gate covers four packages, not three: the end-to-end harness is
 measured as well (100/97.22/100/100), because a harness bug produces confident, meaningless
 acceptance passes. That last row read 100 % on all four dimensions when this page was first
