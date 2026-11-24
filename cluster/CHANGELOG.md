@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-11-24
+
+### Breaking
+
+- **`OnlineShardMigration` takes its two ports in the constructor.** `startMigration` used to
+  accept them per call, which meant two callers could give one coordinator two different shards
+  and neither would be told. `new OnlineShardMigration(source, sink)` binds them at construction;
+  `startMigration(config)` now takes only the configuration.
+
+- **`startMigration`/`cutover` report a `MigrationPhase` instead of nothing.** A coordinator that
+  returned `void` left the caller with `getStatus()` and a timer. `runMigration()` returns the
+  terminal phase, and `waitForCompletion()` waits for it; the old `sleep(1500)` in the resharding
+  suite was a guess about how long a copy takes, and a guess is not a completion signal.
+
+- **`getStatus().phase` is a measured phase, not a label the coordinator set on itself.**
+  `copying`, `catching-up`, `quiesced`, `completed`, `cancelled`, `failed` — and every terminal
+  phase is reachable only through the check that decides it: `cutover` refuses while the target
+  holds fewer entries than the source (`the target holds 4 of the source's 5`), and a copy that
+  cannot quiesce says so (`did not quiesce within 50 ms`) rather than reporting completion.
+
 ### Added
 
 - **`IShardMigrationSource` and `IShardMigrationSink`** — the two ports a hot migration reads and

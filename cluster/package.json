@@ -1,6 +1,6 @@
 {
   "name": "@agentix-e/db-cluster",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "description": "Database cluster orchestration layer with Raft consensus, WAL, sharding, and HA",
   "type": "module",
   "main": "./dist/index.js",
