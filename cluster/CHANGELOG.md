@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`IShardMigrationSource` and `IShardMigrationSink`** — the two ports a hot migration reads and
+  writes through, with `ShardScanEntry`, `ShardVolumeStats` and `IMigrationStatus`. The unit of
+  enumeration is a version rather than an offset: a shard that gains entries during a copy shifts
+  every offset after the insertion point, so a paged scan would skip or repeat, while a version
+  watermark is unaffected by concurrent writes.
+
 - **`docs/testing.md` — the harness subpath, documented.** `@agentix-e/db-cluster/testing` has
   published fifteen symbols since it was introduced — a real cluster you can partition and kill, the
   waiting and linearizability checks, and an engine-conformance suite — and not one of them appeared
@@ -212,6 +218,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   survive a CI run.
 
 ### Changed
+
+- **`OnlineShardMigration` takes the shard and the target it migrates.** The constructor was
+  argument-less and the class was a simulation: the byte total came from `Math.random()` between ten
+  and sixty megabytes, `bytesCopied` advanced by the configured batch size whether or not anything
+  was copied, catch-up added a random delta per round, and each batch slept 15 ms. `progress` was
+  therefore the same curve for an empty shard and a full one, and a caller could conclude nothing
+  from `completed` except that the loop had ended. It now reads through `IShardMigrationSource` and
+  writes through `IShardMigrationSink` — five methods a caller implements over its own engine — and
+  reports what it measured. **This is a breaking change to a constructor signature**; a migration
+  that cannot name its source and its sink is the defect, not an API.
+
+  Three outcomes are now distinct. `completed` means the target reported as many entries as the
+  source after the final pass. A target that is short fails with both counts
+  (`the target holds 4 of the source's 5`). A source that never quiesced inside
+  `finalSyncTimeoutMs` fails as `did not quiesce within 5000 ms` — a different problem, with a
+  different fix, and one that used to be indistinguishable from a slow network.
+
+  `getStatus()` returns `IMigrationStatus`: `entriesCopied`, `entriesTotal`, `bytesCopied`,
+  `remainingBytes` and `caughtUpVersion` alongside `phase` and `progress`. `waitForCompletion()` is
+  new and is what a caller should use instead of polling — the migration reports its own completion.
+  `cutover()` now performs the same final pass and the same conservation check as the automatic
+  path, so a manual cutover cannot report a migration the automatic one would have refused, and
+  `cancel()` unwinds at its next checkpoint rather than letting the run finish and relabelling it.
 
 - **The documentation ships in the tarball.** `files` listed `dist`, `README.md` and
   `CHANGELOG.md`, so `docs/api-reference.md` and the new `docs/testing.md` were readable on GitHub

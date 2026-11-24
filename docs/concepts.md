@@ -85,8 +85,14 @@ layer decides which shard owns a key.
 | `ConsistentHashStrategy` | hash ring with virtual nodes | Membership churn | Needs care to stay balanced |
 
 Resharding is **online**: `OnlineShardMigration` copies a shard's state to the target,
-replays the tail of the log, and flips routing atomically. There is no maintenance
-window.
+catches up everything written above the version the copy reached, and flips routing
+atomically. There is no maintenance window.
+
+The coordinator reads through `IShardMigrationSource` and writes through
+`IShardMigrationSink`, so it migrates any engine that can enumerate its entries by
+version and count what it holds — the package never imports your engine. It completes
+only after asking both sides for their entry counts, which is why a migration that
+loses a write reports the two numbers rather than a percentage.
 
 ---
 

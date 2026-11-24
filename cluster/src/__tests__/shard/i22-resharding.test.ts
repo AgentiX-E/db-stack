@@ -14,6 +14,7 @@ import { HashShardStrategy, RangeShardStrategy, ConsistentHashStrategy } from '.
 import { ShardManager } from '../../shard/ShardManager';
 import { ReshardPlanner } from '../../shard/ReshardPlanner';
 import { OnlineShardMigration } from '../../shard/OnlineShardMigration';
+import { MemoryShardSink, MemoryShardSource, MemoryStore } from './migration-memory';
 
 // ── RES1: HashStrategy ──────────────────────────────────────
 
@@ -552,11 +553,23 @@ describe('RES12: ReshardPlanner — rollback and cancel', () => {
 
 // ── RES13-RES16: OnlineShardMigration ───────────────────────
 
+/**
+ * A migration over an in-memory shard.
+ *
+ * The coordinator takes its source and its sink as constructor arguments — they
+ * are what makes it engine-agnostic — so every case here builds both.
+ */
+function makeMigration(entries = 8): OnlineShardMigration {
+  const store = new MemoryStore();
+  for (let i = 0; i < entries; i += 1) store.put(`k${i}`, `v${i}`);
+  return new OnlineShardMigration(new MemoryShardSource(store), new MemoryShardSink());
+}
+
 describe('RES13: OnlineShardMigration — start and status', () => {
   let migration: OnlineShardMigration;
 
   beforeEach(() => {
-    migration = new OnlineShardMigration();
+    migration = makeMigration();
   });
 
   it('starts migration and gets initial status', async () => {
@@ -607,7 +620,7 @@ describe('RES13: OnlineShardMigration — start and status', () => {
 
 describe('RES14: OnlineShardMigration — 4-phase protocol', () => {
   it('completes full migration lifecycle', async () => {
-    const migration = new OnlineShardMigration();
+    const migration = makeMigration();
     const { migrationId } = await migration.startMigration({
       shardId: 2,
       sourceNode: 'node-a',
@@ -616,15 +629,16 @@ describe('RES14: OnlineShardMigration — 4-phase protocol', () => {
       finalSyncTimeoutMs: 50,
       pauseWritesOnCutover: true,
     });
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const status = await migration.getStatus(migrationId);
+    // Waited for, not slept on: the migration reports its own completion, and a
+    // fixed pause is a guess about how long a copy takes.
+    const status = await migration.waitForCompletion(migrationId);
     expect(status.phase).toBe('completed');
     expect(status.progress).toBe(100);
     expect(status.remainingBytes).toBe(0);
   }, 10_000);
 
   it('pauseWritesOnCutover suspends writes', async () => {
-    const migration = new OnlineShardMigration();
+    const migration = makeMigration();
     const { migrationId } = await migration.startMigration({
       shardId: 3,
       sourceNode: 'node-a',
@@ -633,15 +647,18 @@ describe('RES14: OnlineShardMigration — 4-phase protocol', () => {
       finalSyncTimeoutMs: 200,
       pauseWritesOnCutover: true,
     });
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    const suspended = migration.areWritesSuspended(migrationId);
-    expect(typeof suspended).toBe('boolean');
+    const status = await migration.waitForCompletion(migrationId);
+    expect(status.phase).toBe('completed');
+    // The suspension is a lock taken for the cutover window and released when
+    // the shard belongs to the target; a lock that outlives its holder is an
+    // outage, so the release is what this asserts.
+    expect(migration.areWritesSuspended(migrationId)).toBe(false);
   }, 10_000);
 });
 
 describe('RES15: OnlineShardMigration — cutover', () => {
   it('manual cutover forces completion', async () => {
-    const migration = new OnlineShardMigration();
+    const migration = makeMigration();
     const { migrationId } = await migration.startMigration({
       shardId: 4,
       sourceNode: 'node-a',
@@ -657,7 +674,7 @@ describe('RES15: OnlineShardMigration — cutover', () => {
   });
 
   it('cutover on completed migration is idempotent', async () => {
-    const migration = new OnlineShardMigration();
+    const migration = makeMigration();
     const { migrationId } = await migration.startMigration({
       shardId: 4,
       sourceNode: 'a',
@@ -671,7 +688,7 @@ describe('RES15: OnlineShardMigration — cutover', () => {
   });
 
   it('cutover on rolled-back migration throws', async () => {
-    const migration = new OnlineShardMigration();
+    const migration = makeMigration();
     const { migrationId } = await migration.startMigration({
       shardId: 4,
       sourceNode: 'a',
@@ -687,7 +704,7 @@ describe('RES15: OnlineShardMigration — cutover', () => {
 
 describe('RES16: OnlineShardMigration — rollback/cancel/listing', () => {
   it('rollback resets to initial state', async () => {
-    const migration = new OnlineShardMigration();
+    const migration = makeMigration();
     const { migrationId } = await migration.startMigration({
       shardId: 5,
       sourceNode: 'a',
@@ -703,7 +720,7 @@ describe('RES16: OnlineShardMigration — rollback/cancel/listing', () => {
   });
 
   it('cancel on terminal state is idempotent', async () => {
-    const migration = new OnlineShardMigration();
+    const migration = makeMigration();
     const { migrationId } = await migration.startMigration({
       shardId: 5,
       sourceNode: 'a',
@@ -717,12 +734,12 @@ describe('RES16: OnlineShardMigration — rollback/cancel/listing', () => {
   });
 
   it('rollback with unknown migration throws', async () => {
-    const migration = new OnlineShardMigration();
+    const migration = makeMigration();
     await expect(migration.rollback('nope')).rejects.toThrow('not found');
   });
 
   it('listMigrations returns all IDs', async () => {
-    const migration = new OnlineShardMigration();
+    const migration = makeMigration();
     const r1 = await migration.startMigration({
       shardId: 1,
       sourceNode: 'a',
@@ -745,18 +762,31 @@ describe('RES16: OnlineShardMigration — rollback/cancel/listing', () => {
   });
 
   it('getActiveMigrationCount tracks active migrations', async () => {
-    const migration = new OnlineShardMigration();
+    // Held inside its first scan, so "active" is a state the migration is in
+    // rather than a race against a copy that finishes in a millisecond.
+    const store = new MemoryStore();
+    for (let i = 0; i < 4; i += 1) store.put(`k${i}`, `v${i}`);
+    const source = new MemoryShardSource(store);
+    let release: () => void = () => undefined;
+    source.pending = new Promise<void>((resolvePending) => {
+      release = resolvePending;
+    });
+    const migration = new OnlineShardMigration(source, new MemoryShardSink());
     expect(migration.getActiveMigrationCount()).toBe(0);
 
-    await migration.startMigration({
+    const { migrationId } = await migration.startMigration({
       shardId: 1,
       sourceNode: 'a',
       targetNode: 'b',
-      batchSize: 10 * 1024 * 1024,
+      batchSize: 1024,
       finalSyncTimeoutMs: 50,
       pauseWritesOnCutover: false,
     });
     expect(migration.getActiveMigrationCount()).toBe(1);
+
+    release();
+    await migration.waitForCompletion(migrationId);
+    expect(migration.getActiveMigrationCount()).toBe(0);
   });
 });
 
@@ -842,8 +872,8 @@ describe('RES20: Multiple planners isolation', () => {
   });
 
   it('migration instances are isolated', async () => {
-    const m1 = new OnlineShardMigration();
-    const m2 = new OnlineShardMigration();
+    const m1 = makeMigration();
+    const m2 = makeMigration();
 
     const r1 = await m1.startMigration({
       shardId: 1,

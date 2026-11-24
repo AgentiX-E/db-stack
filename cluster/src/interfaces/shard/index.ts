@@ -10,4 +10,6 @@
 export type { IShardStrategy } from './IShardStrategy';
 export type { IShardManager } from './IShardManager';
 export type { IReshardPlanner, ReshardPlan, IMigrationProgress } from './IReshardPlanner';
-export type { IOnlineShardMigration, IMigrationConfig } from './IOnlineShardMigration';
+export type { IOnlineShardMigration, IMigrationConfig, IMigrationStatus } from './IOnlineShardMigration';
+export type { IShardMigrationSource, ShardScanEntry, ShardVolumeStats } from './IShardMigrationSource';
+export type { IShardMigrationSink } from './IShardMigrationSink';

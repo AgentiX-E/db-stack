@@ -235,7 +235,7 @@ code, and the row is reported as measured rather than as remembered.
 
 | Package         | Statements | Branches | Functions | Lines  |
 | --------------- | ---------- | -------- | --------- | ------ |
-| `cluster`       | 99.46%     | 98.33%   | 99.72%    | 99.46% |
+| `cluster`       | 99.46%     | 98.37%   | 99.72%    | 99.46% |
 | `federation`    | 99.64%     | 98.58%   | 100%      | 99.64% |
 | `node`          | 99.49%     | 98.67%   | 99.87%    | 99.49% |
 | `e2e` (harness) | 100%       | 97.22%   | 100%      | 100%   |
@@ -2451,3 +2451,73 @@ is a claim**. `fatal: true` was produced by six programmes, documented in the me
 and consumed by zero callers for the whole life of the harness — and the cost was not
 correctness, it was diagnosis: every run that hit it paid ninety seconds to learn something
 the child had already said.
+
+---
+
+## A copy that counted itself
+
+`OnlineShardMigration` claimed to move a shard between nodes with zero downtime, and its
+constructor took no arguments — which should have been the tell. There was no shard to copy:
+
+```ts
+const totalBytes = Math.floor(Math.random() * 50 * 1024 * 1024) + 10 * 1024 * 1024;
+for (let batch = 0; batch < totalBatches; batch++) {
+  await this.delayMs(15);
+  state.bytesCopied += state.config.batchSize;
+}
+const delta = Math.floor(Math.random() * bytesPerBatch * 0.1);   // "catch-up"
+```
+
+Every number was about the loop. `progress` was the batch index over a total drawn from a
+range, so an empty shard and a full one produced the same curve; `bytesCopied` counted a
+configured batch size rather than bytes; the catch-up delta was random. `completed` meant
+"the loop ended", which is precisely the thing a migration's completion must not mean.
+
+The class now takes the shard and the target it migrates: `IShardMigrationSource` (stats, a
+page of entries above a version watermark, one entry by key, the current version) and
+`IShardMigrationSink` (apply an entry, count what is held). Five methods over the caller's own
+engine — the package never imports it, which is what makes the same coordinator migrate a
+key-value shard, a document collection and a log-structured store.
+
+Three decisions carry it, and each one came from a case that failed:
+
+**A version watermark, not an offset.** A shard that gains entries mid-copy shifts every offset
+after the insertion point, so a paged scan skips or repeats. A watermark is unaffected: new
+writes are above it, and the catch-up collects them. `OM.3` writes an entry between two pages
+and asserts it arrives.
+
+**The initial pass ends at the version the shard held at the start.** "Until a scan comes back
+empty" is a loop with no exit under sustained writes — the first version of `OM.8`, a shard
+that gains one entry per scan, hung the suite for ten minutes. The write that arrives during a
+copy belongs to the bounded catch-up, not to an unbounded first pass.
+
+**Completion is a comparison, not a counter.** Before saying it is done, the migration asks
+both sides how many entries they hold. `entriesCopied` is what it sent; the check is what
+arrived. A target that is short fails with both numbers —
+`the target holds 4 of the source's 5` — and a source that never quiesced fails differently:
+
+| Outcome | Message | What it means |
+| ------- | ------- | ------------- |
+| Copied and verified | *(none)* | The target's own count equals the source's |
+| A write was lost | `lost entries: the target holds 4 of the source's 5` | What was sent did not arrive |
+| The shard never quiesced | `did not quiesce within 50 ms: 3 of 7 entries are above version 4` | The target is behind by writes the deadline forbade copying |
+
+The second and third are not the same problem and do not have the same fix, which is why they
+stopped sharing one.
+
+Two of my own assertions were wrong while writing the cases, and both were caught by the code
+being right:
+
+- Quiescence was first decided by comparing the watermark against the source's current version.
+  A shard whose entries are **deleted** mid-copy has a current version above the watermark and
+  nothing left to send, so a complete migration was reported as `did not quiesce`. The signal is
+  the final pass ending on an empty page (`OM.15`).
+- The cancellation case asserted `failed` against a migration that had already finished. A
+  completed migration is not cancellable, and the test — not the code — was describing the wrong
+  thing; holding the run inside its first scan made it a test of cancellation (`OM.11`).
+
+`cutover()` now takes the same final pass and the same check, so a manual cutover cannot report
+a migration the automatic one would have refused (`OM.9`), and `cancel()` unwinds at a
+checkpoint rather than letting the run finish and relabelling it. `waitForCompletion()` replaces
+polling: a fixed pause is a guess about how long a copy takes, and two of the lifecycle cases
+carried `sleep(2000)` and `sleep(1500)` to make that guess.

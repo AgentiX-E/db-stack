@@ -884,21 +884,64 @@ class ReshardPlanner {
 ### `OnlineShardMigration`
 
 The hot-migration coordinator: copies the shard while it serves traffic,
-suspends writes for the cutover window, then resumes on the target and rolls
-back if the cutover does not complete.
+suspends writes for the cutover window, and completes only after the target
+reports as many entries as the source holds.
+
+It knows nothing about the database. Reads arrive through `IShardMigrationSource`
+and writes through `IShardMigrationSink` — two interfaces, five methods, that any
+engine can implement. The unit of enumeration is a **version**, not an offset: a
+shard that gains entries during the copy shifts every offset after the insertion
+point, so a paged scan would skip or repeat, while a version watermark is
+unaffected.
 
 ```typescript
 class OnlineShardMigration {
+  constructor(source: IShardMigrationSource, sink: IShardMigrationSink);
   startMigration(config: IMigrationConfig): Promise<{ migrationId: string }>;
-  getStatus(migrationId: string): Promise<{ phase: string; progress: number; remainingBytes: number }>;
+  getStatus(migrationId: string): Promise<IMigrationStatus>;
   cutover(migrationId: string): Promise<void>;
   rollback(migrationId: string): Promise<void>;
   cancel(migrationId: string): Promise<void>;
+  waitForCompletion(migrationId: string): Promise<IMigrationStatus>;
   areWritesSuspended(migrationId: string): boolean;
   getActiveMigrationCount(): number;
   listMigrations(): string[];
 }
 ```
+
+`IMigrationStatus` reports what was measured, not what was attempted:
+`entriesCopied` over `entriesTotal` gives `progress`, `bytesCopied` and
+`remainingBytes` come from the source's own byte counts, and `caughtUpVersion` is
+the watermark the coordinator reached.
+
+Prefer `waitForCompletion()` to polling `getStatus()`: the migration reports its
+own completion, and a fixed pause is a guess about how long a copy takes.
+
+```typescript
+const migration = new OnlineShardMigration(shardSource, targetSink);
+const { migrationId } = await migration.startMigration({
+  shardId: 7,
+  sourceNode: 'node-a',
+  targetNode: 'node-b',
+  batchSize: 512,
+  finalSyncTimeoutMs: 5_000,
+  pauseWritesOnCutover: true,
+});
+
+const status = await migration.waitForCompletion(migrationId);
+if (status.phase === 'failed') throw new Error(status.error);
+```
+
+Three outcomes are distinct on purpose:
+
+| Outcome | `phase` | Meaning |
+| --- | --- | --- |
+| Copied and verified | `completed` | The target holds as many entries as the source, checked after the final pass |
+| A write was lost | `failed` | The message names both counts: `the target holds 4 of the source's 5` |
+| The source never quiesced | `failed` | `did not quiesce within 5000 ms` — writes above the watermark outran the budget |
+
+A manual `cutover()` takes the same final pass and the same check, so it cannot
+report a migration the automatic path would have refused.
 
 ## High availability
 
@@ -1205,6 +1248,7 @@ The three Raft roles: `ConsensusRole.Follower`, `ConsensusRole.Candidate`,
 | `RaftEvent` and its variants | `LeaderElectedEvent`, `LeaderLostEvent`, `StepDownEvent`, `ProposalCommittedEvent`, `ProposalAppliedEvent`, `SnapshotCreatedEvent`, `SnapshotRestoredEvent`, `RoleChangedEvent`, `MembershipChangedEvent` |
 | `IConsensusLayer` / `IClusterTopology` / `IOutboxWriter` / `IShardReplica` | The seams the HA and consensus layers are built on |
 | `IShardStrategy` / `IShardManager` / `IReshardPlanner` / `IOnlineShardMigration` | The sharding seams |
+| `IShardMigrationSource` / `IShardMigrationSink` / `ShardScanEntry` / `ShardVolumeStats` | The two ports a hot migration reads and writes through |
 | `RaftMessage` / `RaftEntry` | The wire shape a transport sends: numeric `msgType`, decimal-string ids, and the entries it carries |
 | `FramesDroppedEvent` | Why the transport discarded frames: `buffer-full` or `flush-failed`, with the count and the head of the oldest |
 | `RaftConsensusPhase` | The phase a joint-consensus transition is in: `stable`, `joint`, `transitional` |

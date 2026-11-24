@@ -172,7 +172,9 @@ export { IWalStorage } from './interfaces/wal/IWalStorage';
 export { IShardManager } from './interfaces/shard/IShardManager';
 export { IShardStrategy } from './interfaces/shard/IShardStrategy';
 export { IReshardPlanner, ReshardPlan, IMigrationProgress } from './interfaces/shard/IReshardPlanner';
-export { IOnlineShardMigration, IMigrationConfig } from './interfaces/shard/IOnlineShardMigration';
+export { IOnlineShardMigration, IMigrationConfig, IMigrationStatus } from './interfaces/shard/IOnlineShardMigration';
+export { IShardMigrationSource, ShardScanEntry, ShardVolumeStats } from './interfaces/shard/IShardMigrationSource';
+export { IShardMigrationSink } from './interfaces/shard/IShardMigrationSink';
 export { IFailoverDetector, FailoverDetectorConfig } from './interfaces/ha/IFailoverDetector';
 export {
   IFailoverCoordinator,

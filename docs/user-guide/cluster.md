@@ -170,12 +170,37 @@ const shardId = manager.route('user:42');
 ### Online resharding
 
 ```ts
-const plan = new ReshardPlanner({ strategy, currentShards, targetShards }).plan();
-await new OnlineShardMigration({ plan, source, target }).execute();
+const planner = new ReshardPlanner();
+const plan = await planner.createMovePlan(7, 'node-b');
+await planner.executePlan(plan);
+
+// Moving one shard's data to the node that will own it.
+const migration = new OnlineShardMigration(shardSource, targetSink);
+const { migrationId } = await migration.startMigration({
+  shardId: 7,
+  sourceNode: 'node-a',
+  targetNode: 'node-b',
+  batchSize: 512,
+  finalSyncTimeoutMs: 5_000,
+  pauseWritesOnCutover: true,
+});
+const status = await migration.waitForCompletion(migrationId);
 ```
 
-The migration copies state, replays the tail of the log, and only then switches routing.
-During the copy the source keeps serving; the switch is a routing update, not a restart.
+The migration copies state, then catches up everything written above the version the
+copy reached, and only then switches routing. During the copy the source keeps serving;
+the switch is a routing update, not a restart.
+
+`shardSource` and `targetSink` are yours: `IShardMigrationSource` asks a shard for its
+entry count, a page of entries above a version watermark, one entry by key and its
+current version; `IShardMigrationSink` applies an entry and counts what it holds. Any
+engine that can answer those five questions can be migrated by this coordinator — the
+package never imports yours.
+
+The migration does not claim success from its own counter. Before it completes it asks
+both sides how many entries they hold, and a target that is short fails the migration
+with both numbers in the message; so does a source that never quiesced inside
+`finalSyncTimeoutMs`.
 
 ### Write forwarding (optional `pg` dependency)
 
