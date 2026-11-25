@@ -63,7 +63,8 @@ import type { ICDCEngine, CDCChangeEvent } from '../interfaces/replication/ICDCM
 import { compareLsn, parseLsn } from '../interfaces/replication/IChangeLogReader';
 import type { TransportMessage } from '../interfaces/transport/TransportMessage';
 import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
-import { buildAckFrame, CDC_ACK_TYPE, parseAck, type CdcAckVerdict } from './cdcAck';
+import { buildAckFrame, type CdcAckVerdict } from './cdcAck';
+import { AckTracker } from './AckTracker';
 
 // ── Constants ──────────────────────────────────────────────
 
@@ -278,26 +279,19 @@ export class ExactlyOnceCDCPipeline {
   private lastAppendError: string | null = null;
 
   /**
-   * Frames sent and not yet answered, by message id.
+   * Frames sent and not yet answered.
    *
-   * Registered *before* `send()` is awaited: an in-process transport delivers the
-   * peer's answer inside the same tick, and an ack that arrives before there is
-   * anything to match it against is a lost ack — the entry would then wait out the
-   * full timeout and be marked failed after the peer had applied it.
+   * The wait itself lives in `AckTracker` — the same behaviour the replication
+   * worker needs, and one implementation of "wait, but not for ever, and answer
+   * `aborted` when *we* stopped".
    */
-  private readonly awaitingAck = new Map<
-    string,
-    { settle: (verdict: CdcAckVerdict) => void; timer: ReturnType<typeof setTimeout> }
-  >();
+  private readonly acks: AckTracker;
 
   /** The transport subscription that carries acks back. Detached on `stop()`. */
   private detachAcks: (() => void) | null = null;
 
   /** The cycle in flight, so a stop can wait for it instead of racing it. */
   private cycleInFlight: Promise<void> | null = null;
-
-  private acksReceived = 0;
-  private ackTimeouts = 0;
 
   // ── Constructor ──────────────────────────────────────────
 
@@ -340,6 +334,7 @@ export class ExactlyOnceCDCPipeline {
     this.cdc = this.config.engine ?? new CDCEngine(this.config.cdcConfig);
     this.outbox = new OutboxStore(this.config.outboxConfig);
     this.dedup = new DedupRing({ ttlMs: this.retention.dedupMs });
+    this.acks = new AckTracker({ timeoutMs: this.config.ackTimeoutMs });
 
     this.checkpointPath = path.join(this.config.checkpointDir, 'cdc-checkpoint.json');
   }
@@ -371,7 +366,7 @@ export class ExactlyOnceCDCPipeline {
     const transport = this.config.transport;
     if (transport && this.config.acknowledgement === 'peer') {
       this.detachAcks = transport.onMessage((message) => {
-        if (message.type === CDC_ACK_TYPE) this.onAckFrame(message);
+        this.acks.handle(message);
       });
     }
 
@@ -393,7 +388,7 @@ export class ExactlyOnceCDCPipeline {
     // Waiting is not failing. A cycle that is blocked on an ack is released with
     // `aborted`, so the entry keeps its place and is not charged an attempt for
     // the shutdown.
-    this.releaseAcks('the pipeline stopped before the peer acknowledged');
+    this.acks.release('the pipeline stopped before the peer acknowledged');
     this.detachAcks?.();
     this.detachAcks = null;
     await this.cycleInFlight;
@@ -545,65 +540,6 @@ export class ExactlyOnceCDCPipeline {
     return transport.send(frame);
   }
 
-  /**
-   * Match an inbound confirmation to the frame it answers.
-   *
-   * An ack for an id nobody is waiting for is dropped, and that is not an error:
-   * a retry that timed out and was re-sent re-uses the message id — the id is the
-   * change's — so the late ack arrives after the wait it belonged to has ended.
-   */
-  private onAckFrame(message: TransportMessage): void {
-    const waiting = this.awaitingAck.get(message.messageId);
-    if (waiting === undefined) return;
-    this.awaitingAck.delete(message.messageId);
-    clearTimeout(waiting.timer);
-    this.acksReceived += 1;
-    waiting.settle(parseAck(message.payload, message.messageId));
-  }
-
-  /** Start waiting for the ack of one frame. */
-  private expectAck(msgId: string): Promise<CdcAckVerdict> {
-    return new Promise<CdcAckVerdict>((settle) => {
-      const timer = setTimeout(() => {
-        // The ack may have settled this while the timer was already queued.
-        if (this.awaitingAck.get(msgId)?.timer !== timer) return;
-        this.awaitingAck.delete(msgId);
-        this.ackTimeouts += 1;
-        settle({
-          ok: false,
-          error: `no acknowledgement for ${msgId} within ${this.config.ackTimeoutMs} ms`,
-        });
-      }, this.config.ackTimeoutMs);
-      // An unanswered frame must not keep a shutting-down process alive.
-      timer.unref?.();
-      this.awaitingAck.set(msgId, { settle, timer });
-    });
-  }
-
-  /**
-   * Stop waiting for every in-flight frame without learning anything.
-   *
-   * `aborted` rather than `ok: false`: the peer has not refused, and charging the
-   * entry an attempt for our own shutdown would spend a retry budget on a
-   * decision the peer never saw.
-   */
-  private releaseAcks(reason: string): void {
-    for (const [msgId, waiting] of [...this.awaitingAck]) {
-      this.awaitingAck.delete(msgId);
-      clearTimeout(waiting.timer);
-      waiting.settle({ ok: false, error: `${reason} (${msgId})`, aborted: true });
-    }
-  }
-
-  /** Abandon one frame: its send was refused or threw, so nothing will answer. */
-  private abandonAck(msgId: string, reason: string): void {
-    const waiting = this.awaitingAck.get(msgId);
-    if (waiting === undefined) return;
-    this.awaitingAck.delete(msgId);
-    clearTimeout(waiting.timer);
-    waiting.settle({ ok: false, error: reason, aborted: true });
-  }
-
   // ── Checkpoint (G3: crash-recoverable LSN) ───────────────
 
   /**
@@ -698,8 +634,8 @@ export class ExactlyOnceCDCPipeline {
       checkpoints: { ...this.checkpoint.lastConfirmedLSN },
       deadLetterCount: this.outbox.getDeadLetterStats().count,
       pumpActive: this.pumpActive,
-      acksReceived: this.acksReceived,
-      ackTimeouts: this.ackTimeouts,
+      acksReceived: this.acks.received,
+      ackTimeouts: this.acks.timeouts,
     };
   }
 
@@ -944,20 +880,20 @@ export class ExactlyOnceCDCPipeline {
       if (isWaitingOutBackoff(entry)) break;
 
       const msg = this.frameOf(entry);
-      const verdict = this.expectAck(msg.messageId);
+      const verdict = this.acks.expect(msg.messageId);
 
       let accepted: boolean;
       try {
         accepted = await transport.send(msg);
       } catch (err) {
         const reason = describeError(err);
-        this.abandonAck(msg.messageId, reason);
+        this.acks.abandon(msg.messageId, reason);
         this.failEntry(entry, reason);
         return;
       }
       if (!accepted) {
         const reason = `Transport refused message to ${msg.targetPeerId}`;
-        this.abandonAck(msg.messageId, reason);
+        this.acks.abandon(msg.messageId, reason);
         this.failEntry(entry, reason);
         return;
       }

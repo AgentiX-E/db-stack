@@ -31,6 +31,7 @@ import { DCSplitBrainDetector, type SplitBrainEvent } from './DCSplitBrainDetect
 import { ConflictResolver, type ConflictValue, type ConflictStrategy } from '../replication/ConflictResolver';
 import { AntiEntropy } from '../replication/AntiEntropy';
 import { DedupRing } from '../replication/DedupRing';
+import { buildAckFrame, CDC_ACK_TYPE } from '../replication/cdcAck';
 import { deriveRetention, type RetentionWindows } from '../storage/retention';
 import type { InboundMessage } from '../interfaces/transport/InboundMessage';
 import type { DataEntry, DataProvider } from '../replication/AntiEntropy';
@@ -58,6 +59,17 @@ export interface ReplicatedEntry {
   /** HLC timestamp for causal ordering */
   hlcTimestamp: IHLCTimestamp;
 }
+
+/**
+ * What became of an inbound frame.
+ *
+ * Six facts, not one boolean. `applied` and `duplicate` both mean "this node holds
+ * the value"; `superseded` means it deliberately kept its own; `declined` means a
+ * consumer could not put it into the local cluster; `malformed` means it could not
+ * be read; and `not-a-change` means the frame was a confirmation addressed to
+ * another component.
+ */
+export type InboundOutcome = 'applied' | 'duplicate' | 'superseded' | 'malformed' | 'declined' | 'not-a-change';
 
 export interface ConflictEntry {
   /** The key that had a conflict */
@@ -141,6 +153,8 @@ export class FederationManager {
   private consumers: IFederationConsumer[] = [];
   /** Reason the most recent inbound apply failed, for diagnostics. */
   private _lastInboundError: string | null = null;
+  /** Reason the most recent confirmation could not be sent, for diagnostics. */
+  private _lastAckError: string | null = null;
   private _started = false;
 
   // Multi-Active production components
@@ -254,6 +268,10 @@ export class FederationManager {
       // Inbound frames are fire-and-forget, but a rejection must not become an
       // unhandled promise rejection (which terminates the process on Node >=15).
       // Record it instead so the operator can inspect the failure.
+      //
+      // A confirmation is not a change: `applyInbound` says so with
+      // `not-a-change` and answers nothing, which is what stops two nodes from
+      // acknowledging each other's acknowledgements for ever.
       void this.applyInbound(msg).catch((err: unknown) => {
         this._lastInboundError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       });
@@ -321,22 +339,54 @@ export class FederationManager {
   }
 
   /**
-   * Apply a replication frame received from a peer DC.
+   * Apply a replication frame received from a peer DC, and answer it.
    *
    * Ordering: dedup by message id → decode envelope → resolve conflict with
    * the local value (LWW by HLC by default) → persist to the local store →
-   * notify consumers so they can propose the entry into their own Raft group.
+   * notify consumers so they can propose the entry into their own Raft group →
+   * confirm to the sender.
    *
-   * @returns `applied`, `duplicate`, `superseded` (remote lost the conflict)
-   *          or `malformed` when the frame cannot be decoded.
+   * The confirmation is the point of the last step. `ITransport.send()` resolving
+   * `true` is a statement about this node's socket, so a sender that retires an
+   * outbox entry on it reports a delivery this node never made — the measured
+   * shape was twenty changes reported delivered, thirteen applied, no refusal and
+   * no dead letter. The answer is sent after the local write and after every
+   * consumer has proposed, because that is the moment after which a retry would
+   * add nothing.
+   *
+   * @returns `applied`, `duplicate`, `superseded` (remote lost the conflict),
+   *   `malformed` when the frame cannot be decoded, `declined` when a consumer
+   *   could not propose it into the local cluster, or `not-a-change` when the
+   *   frame is a confirmation for another component.
    */
-  async applyInbound(msg: InboundMessage): Promise<'applied' | 'duplicate' | 'superseded' | 'malformed'> {
-    if (!msg.messageId) return 'malformed';
-    if (this.dedup.contains(msg.messageId)) return 'duplicate';
+  async applyInbound(msg: InboundMessage): Promise<InboundOutcome> {
+    // A confirmation is not a change. Answering one would start a conversation
+    // between two nodes that never ends.
+    if (msg.type === CDC_ACK_TYPE) return 'not-a-change';
+
+    if (!msg.messageId) {
+      // Nothing to answer: the id *is* what a confirmation is matched by.
+      this._lastInboundError = 'inbound frame has no message id, so it cannot be answered';
+      return 'malformed';
+    }
+
+    if (this.dedup.contains(msg.messageId)) {
+      // Applied earlier — by this node, so the sender may stop retrying. Answered
+      // rather than dropped: this is the retry the sender is waiting to hear about.
+      await this.answer(msg);
+      return 'duplicate';
+    }
     this.dedup.put(msg.messageId);
 
     const decoded = decodeEnvelope(msg.payload, msg.type ?? 'replicate');
-    if (!decoded) return 'malformed';
+    if (!decoded) {
+      // The id is released so the retry is judged on its own: a frame that is
+      // merely unreadable *now* must not be reported as a duplicate by the ring.
+      this.dedup.delete(msg.messageId);
+      this._lastInboundError = `frame ${msg.messageId} is not a decodable replicate envelope`;
+      await this.answer(msg, this._lastInboundError);
+      return 'malformed';
+    }
 
     const remoteValue: ConflictValue = {
       key: decoded.key,
@@ -355,7 +405,10 @@ export class FederationManager {
       };
       const resolution = await this._conflictResolver.resolve(decoded.key, local, remoteValue);
       if (resolution.resolvedValue !== remoteValue.value) {
-        // Local write won; the remote entry is stale.
+        // Local write won; the remote entry is stale. Confirmed rather than
+        // refused: the conflict is settled, and a retry would settle it the same
+        // way, so asking the sender to try again would only cost it its budget.
+        await this.answer(msg);
         return 'superseded';
       }
     }
@@ -374,14 +427,31 @@ export class FederationManager {
     this._splitBrainDetector?.recordApply();
 
     for (const consumer of this.consumers) {
-      await consumer.proposeReplicated({
-        key: decoded.key,
-        data: decoded.value,
-        type: decoded.type,
-        sourceDc: decoded.sourceDc ?? 'unknown',
-        sourceNodeId: decoded.sourceNodeId,
-        hlcTimestamp: remoteValue.hlc,
-      });
+      try {
+        await consumer.proposeReplicated({
+          key: decoded.key,
+          data: decoded.value,
+          type: decoded.type,
+          sourceDc: decoded.sourceDc ?? 'unknown',
+          sourceNodeId: decoded.sourceNodeId,
+          hlcTimestamp: remoteValue.hlc,
+        });
+      } catch (err: unknown) {
+        // The receiving cluster did not take the entry: no leader, this node is a
+        // follower, or the proposal was rejected. The local converged store has
+        // the value but the cluster does not, which is exactly the state a sender
+        // must not be told was a delivery — so it is told the reason instead.
+        //
+        // The id leaves the dedup ring with the refusal, so the retry is applied
+        // again rather than answered as a duplicate that never happened. This is
+        // the defect the ring would otherwise create: a refusal followed by a
+        // duplicate is a silent loss with two acknowledgements.
+        const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        this.dedup.delete(msg.messageId);
+        this._lastInboundError = reason;
+        await this.answer(msg, reason);
+        return 'declined';
+      }
     }
 
     this.emitter.emit('replicated-entry', {
@@ -391,7 +461,31 @@ export class FederationManager {
       sourceNodeId: decoded.sourceNodeId,
     });
 
+    await this.answer(msg);
     return 'applied';
+  }
+
+  /**
+   * Confirm one inbound frame to the node that sent it.
+   *
+   * Never throws. The change has already been applied by the time this runs, and a
+   * confirmation that cannot reach the wire is the sender's timeout to absorb —
+   * turning it into a rejection here would report a failure to a caller whose work
+   * succeeded, and `getLastAckError()` is the diagnostic that says so.
+   */
+  private async answer(inbound: InboundMessage, refusal?: string): Promise<void> {
+    try {
+      const frame = buildAckFrame(inbound, this.config.nodeId, this.hlc.now(), refusal);
+      const sent = await this.config.transport.send(frame);
+      this._lastAckError = sent ? null : `the transport refused the confirmation for ${inbound.messageId}`;
+    } catch (err: unknown) {
+      this._lastAckError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    }
+  }
+
+  /** Reason the most recent confirmation could not be sent, or null. */
+  getLastAckError(): string | null {
+    return this._lastAckError;
   }
 
   /**

@@ -408,13 +408,21 @@ class MultiLeaderReplication implements IMultiLeaderReplication {
   onTargetConnected(callback: (targetNodeId: string) => void): () => void;
   onTargetDisconnected(callback: (targetNodeId: string) => void): () => void;
   onHighLag(callback: (targetNodeId: string, lagMs: number) => void): () => void;
+  getAckStats(): { received: number; timeouts: number; pending: number; unsolicited: number };
 }
 ```
 
 `MultiLeaderReplicationOptions`: `transport`, `outbox`, `config`
 (`ReplicationConfig`), and an optional `hlc` for deterministic tests.
 `ReplicationConfig`: `nodeId`, `dc`, `targets` (`ReplicationTarget[]`),
-`curveDir`, `tickMs?`, `batchSize?`, `maxRetries?`.
+`curveDir`, `tickMs?`, `batchSize?`, `maxRetries?`, `acknowledgement?`
+(`'peer' | 'none'`, default `'peer'`), `ackTimeoutMs?` (default 5 000 ms).
+
+An entry leaves the outbox when the peer says it applied the change. `'none'`
+retires it on `send()` resolving, which is a statement about this node's socket and
+not about the peer's state — the weaker contract, chosen explicitly, for a peer that
+cannot answer. `getAckStats()` is how a sender tells a slow peer from a silent one:
+`timeouts` rising beside a flat `received` is a reachable peer that is not applying.
 
 ## Change data capture
 
@@ -1156,8 +1164,9 @@ class FederationManager {
     shardIdOrKey: number | string, valueOrData: string, type: string,
     remoteValue?: ConflictValue,
   ): Promise<{ msgId: string }>;
-  applyInbound(msg: InboundMessage): Promise<'applied' | 'duplicate' | 'superseded' | 'malformed'>;
+  applyInbound(msg: InboundMessage): Promise<InboundOutcome>;
   getLastInboundError(): string | null;
+  getLastAckError(): string | null;
   getLocalValue(key: string): string | undefined;
   getLocalStore(): Map<string, { key: string; value: string; hlc: IHLCTimestamp }>;
   getLocalStoreSize(): number;
@@ -1179,6 +1188,52 @@ class FederationManager {
 
 `FederationManagerConfig`: `nodeId`, `dc`, `replicationConfig`, `transport`,
 `outbox`, `hlc?`, `healthConfig?`.
+
+### `InboundOutcome`
+
+What became of an inbound frame. Six facts rather than one boolean, because a sender
+retires an outbox entry on the answer and the answer has to be as strong as the claim
+it replaces.
+
+| Outcome | What happened | What is answered |
+|---|---|---|
+| `applied` | written to the converged store, and every consumer proposed it into the local cluster | `{ ok: true }` |
+| `duplicate` | this node already applied that message id | `{ ok: true }` |
+| `superseded` | the local value won the conflict; retrying would decide it the same way | `{ ok: true }` |
+| `malformed` | the payload is not an envelope this build can read | `{ ok: false, error }` |
+| `declined` | a consumer could not propose it — no leader, this node is a follower, the proposal was rejected | `{ ok: false, error }` |
+| `not-a-change` | the frame is itself a confirmation; nothing was applied and nothing is answered | — |
+
+`declined` releases the dedup id before it answers. Without that release the sender's
+retry would be read as a duplicate of a change that never landed — one refusal followed
+by one acknowledgement, which is a silent loss wearing two confirmations.
+
+### `AckTracker`
+
+The bounded wait for a confirmation, used by both senders — `ExactlyOnceCDCPipeline`
+and `MultiLeaderReplication`. It answers the question (a verdict, a timeout, or
+`aborted` when *we* stopped) and leaves the consequences to its caller: a pipeline
+moves a checkpoint, a replication worker retires or charges an entry.
+
+```typescript
+class AckTracker {
+  constructor(options: { timeoutMs: number; onTimeout?: (id: string, ms: number) => void;
+                         onUnsolicited?: (id: string) => void });
+  expect(messageId: string): Promise<CdcAckVerdict>;
+  handle(frame: TransportMessage): boolean;
+  release(reason: string): void;
+  abandon(messageId: string, reason: string): void;
+  get pending(): number;
+  get received(): number;
+  get timeouts(): number;
+  get unsolicited(): number;
+}
+```
+
+`expect()` is called before the frame is sent: an in-process transport delivers the
+peer's reply inside the same tick, and an answer that arrives with nothing to match it
+against is a lost answer — the entry would then wait out a budget the peer had already
+met.
 
 ### `IFederationConsumer`
 

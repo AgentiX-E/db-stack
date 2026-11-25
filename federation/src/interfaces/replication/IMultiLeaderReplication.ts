@@ -21,6 +21,30 @@ export interface ReplicationConfig {
   tickMs?: number;
   batchSize?: number;
   maxRetries?: number;
+  /**
+   * What counts as a delivery.
+   *
+   * `'peer'` (the default) means the receiving node confirmed it applied the
+   * change, and an outbox entry is retired on that confirmation rather than on
+   * `ITransport.send()` resolving. That resolution is a statement about this
+   * node's socket: a TCP write into a connection whose peer has already gone is
+   * accepted by the local kernel, so a sender that retires on it reports a
+   * delivery the peer never made. An acceptance run measured the gap — twenty
+   * changes reported delivered, thirteen applied, no refusal, no dead letter.
+   *
+   * `'none'` is the weaker contract, chosen explicitly: the transport's answer is
+   * the delivery. It is the right shape for a peer that cannot answer, and it is
+   * still at-least-once onto the wire.
+   */
+  acknowledgement?: 'peer' | 'none';
+  /**
+   * How long one confirmation is waited for, in milliseconds. Default 5 000.
+   *
+   * Ignored when `acknowledgement` is `'none'`. A wait that expires is a failed
+   * attempt, not a lost entry: the entry keeps its place and the retry budget
+   * decides when it becomes a dead letter with a reason.
+   */
+  ackTimeoutMs?: number;
 }
 
 export interface ReplicationStatus {

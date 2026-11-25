@@ -342,13 +342,18 @@ describe('FederationManager — applyInbound', () => {
     await fm.stop();
   });
 
-  it('propagates a consumer failure to the caller', async () => {
+  it('answers a consumer failure with a refusal instead of taking the change', async () => {
+    // It used to reject. A rejection told the caller, and told the sender nothing:
+    // the frame had been received, the local store had the value, and the sending
+    // node had already retired the entry. `declined` plus a refusal on the wire is
+    // the same fact said to the party that can act on it.
     const failing = consumer({
       proposeReplicated: vi.fn().mockRejectedValue(new Error('raft unavailable')),
     });
     const { fm } = await started(failing);
 
-    await expect(fm.applyInbound(frame())).rejects.toThrow('raft unavailable');
+    await expect(fm.applyInbound(frame())).resolves.toBe('declined');
+    expect(fm.getLastInboundError()).toBe('Error: raft unavailable');
 
     await fm.stop();
   });

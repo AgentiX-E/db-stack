@@ -62,6 +62,7 @@ export { FederationManager } from './core/FederationManager';
 export type {
   FederationManagerConfig,
   IFederationConsumer,
+  InboundOutcome,
   ReplicatedEntry,
   ConflictEntry,
 } from './core/FederationManager';
@@ -103,6 +104,8 @@ export type {
 // package would otherwise have to re-derive the frame type and its body.
 export { buildAckFrame, CDC_ACK_TYPE, parseAck } from './replication/cdcAck';
 export type { CdcAckVerdict } from './replication/cdcAck';
+export { AckTracker } from './replication/AckTracker';
+export type { AckTrackerOptions } from './replication/AckTracker';
 
 // CDC sinks. None of these were exported, so no consumer could implement a sink
 // or reach the retry/batching wrapper: the interface, the in-memory sink and the

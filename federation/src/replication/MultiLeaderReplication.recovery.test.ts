@@ -54,6 +54,10 @@ function makeFixture(options: { retryWindowMs?: number; tickMs?: number } = {}):
     nodeId: 'node-a',
     dc: 'dc-east',
     curveDir: dir,
+    // Send-only: this fixture's peers are transports, not applying nodes, so the
+    // only delivery signal available is the transport's. The acknowledged contract
+    // is measured in `MultiLeaderReplication.ack.test.ts`.
+    acknowledgement: 'none',
     tickMs: options.tickMs ?? 10,
     batchSize: 100,
     targets: [

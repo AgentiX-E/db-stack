@@ -32,6 +32,8 @@ import type { OutboxEntry } from '../interfaces/outbox/OutboxEntry';
 import type { OutboxStats } from '../interfaces/types';
 import type { RetentionWindows } from '../storage/retention';
 import { HLC } from '../hlc/HLC';
+import { AckTracker } from './AckTracker';
+import type { CdcAckVerdict } from './cdcAck';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 
@@ -68,11 +70,46 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
   private started = false;
   private readonly workers = new Map<string, TargetWorker>();
 
+  /**
+   * The wait for each frame's confirmation.
+   *
+   * The same class `ExactlyOnceCDCPipeline` uses, because "wait, but not for ever,
+   * and answer `aborted` when *we* stopped" is one behaviour with one
+   * implementation. What differs is only what a verdict does here: retire the
+   * entry, or charge it an attempt.
+   */
+  private readonly acks: AckTracker;
+
+  /** True when an entry is retired on the peer's confirmation. */
+  private readonly acked: boolean;
+
+  /** The transport subscription that carries confirmations back. */
+  private detachAcks: (() => void) | null = null;
+
   constructor(options: MultiLeaderReplicationOptions) {
     this.transport = options.transport;
     this.outbox = options.outbox;
     this.config = options.config;
     this.hlc = options.hlc ?? new HLC(options.config.nodeId);
+    this.acked = (options.config.acknowledgement ?? 'peer') === 'peer';
+    this.acks = new AckTracker({ timeoutMs: options.config.ackTimeoutMs ?? 5_000 });
+  }
+
+  /**
+   * What the waiting side has seen: `received`, `timeouts`, `pending` and
+   * `unsolicited`.
+   *
+   * Reported for the same reason the retention windows are: a sender that is
+   * waiting for answers needs to distinguish a slow peer from a peer that never
+   * answers, and a counter is the only thing that can.
+   */
+  getAckStats(): { received: number; timeouts: number; pending: number; unsolicited: number } {
+    return {
+      received: this.acks.received,
+      timeouts: this.acks.timeouts,
+      pending: this.acks.pending,
+      unsolicited: this.acks.unsolicited,
+    };
   }
 
   /**
@@ -89,6 +126,16 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
   async start(_config?: ReplicationConfig): Promise<void> {
     if (this.started) return;
     const cfg = _config ?? this.config;
+
+    // Subscribed before the first frame leaves: an in-process transport delivers
+    // the peer's answer inside the same tick, and an ack that arrives before
+    // there is anything to match it against is a lost ack — the entry would then
+    // wait out the full budget and be charged an attempt after the peer applied it.
+    if (this.acked) {
+      this.detachAcks = this.transport.onMessage((message) => {
+        this.acks.handle(message);
+      });
+    }
 
     // Start one worker per target
     for (const target of cfg.targets) {
@@ -111,6 +158,11 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
     }
 
     this.workers.clear();
+    // Waiting is not failing: a worker blocked on an answer is released `aborted`,
+    // so a shutdown does not spend a retry on a decision the peer never made.
+    this.acks.release('replication stopped before the peer acknowledged');
+    this.detachAcks?.();
+    this.detachAcks = null;
     this.emitter.removeAllListeners('target-connected');
     this.emitter.removeAllListeners('target-disconnected');
     this.emitter.removeAllListeners('target-recovered');
@@ -343,6 +395,12 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
       let allSucceeded = true;
       let deliveredCount = 0;
 
+      // Phase one: put the frames on the wire, registering each wait *before* the
+      // send. Phase two reads the answers. The two are separate because a batch is
+      // in flight at once: awaiting each answer inside the send loop would make a
+      // batch of a hundred cost a hundred round-trips end to end.
+      const inFlight: Array<{ entryId: string; verdict: Promise<CdcAckVerdict> }> = [];
+
       for (const entry of forTarget) {
         if (worker.stopRequested) return;
 
@@ -356,18 +414,61 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
           type: entry.type,
         };
 
+        const verdict = this.acked ? this.acks.expect(msg.messageId) : null;
+
         try {
           const sent = await this.transport.send(msg);
-          if (sent) {
-            await this.outbox.markDelivered(entry.id);
-            deliveredCount++;
-          } else {
-            throw new Error(`Transport rejected message to ${worker.nodeId}`);
-          }
+          if (!sent) throw new Error(`Transport rejected message to ${worker.nodeId}`);
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
+          if (verdict !== null) {
+            this.acks.abandon(msg.messageId, errMsg);
+            // The head of the queue could not leave, so nothing behind it may be
+            // retired: the outbox is an ordered log, and a hole in it is a change
+            // no peer will ever be offered again.
+            this.outbox.markFailed(entry.id, errMsg);
+            allSucceeded = false;
+            break;
+          }
           this.outbox.markFailed(entry.id, errMsg);
           allSucceeded = false;
+          continue;
+        }
+
+        if (verdict === null) {
+          await this.outbox.markDelivered(entry.id);
+          deliveredCount++;
+        } else {
+          inFlight.push({ entryId: entry.id, verdict });
+        }
+      }
+
+      if (inFlight.length > 0) {
+        const answered = await Promise.all(
+          inFlight.map(async (item) => ({ entryId: item.entryId, verdict: await item.verdict })),
+        );
+
+        for (const [index, { entryId, verdict }] of answered.entries()) {
+          if (verdict.ok) {
+            await this.outbox.markDelivered(entryId);
+            deliveredCount++;
+            continue;
+          }
+
+          // Our own shutdown, not the peer's decision: leave everything pending.
+          if (verdict.aborted) return;
+
+          this.outbox.markFailed(entryId, verdict.error ?? 'the peer did not confirm the change');
+          allSucceeded = false;
+
+          // Everything behind a refused entry was already sent, and those changes
+          // were very likely applied — the receiver deduplicates the repeat and
+          // answers it — but retiring them here would let the queue move past an
+          // entry that is still owed. A duplicate is recoverable; a gap is not.
+          for (const rest of answered.slice(index + 1)) {
+            this.acks.abandon(rest.entryId, `an earlier entry in the batch was refused (${entryId})`);
+          }
+          break;
         }
       }
 

@@ -30,6 +30,9 @@ function makeConfig(overrides: Partial<ReplicationConfig> = {}): ReplicationConf
     nodeId: 'local',
     dc: 'dc-east',
     curveDir: '/tmp/test',
+    // These cases measure the send-only contract: the transport's answer is the
+    // delivery. The acknowledged contract has its own file, where a peer answers.
+    acknowledgement: 'none',
     tickMs: 10,
     batchSize: 100,
     targets: [

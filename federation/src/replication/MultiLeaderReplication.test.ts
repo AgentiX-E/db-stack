@@ -29,6 +29,10 @@ function makeMultiDcConfig(localNodeId: string): ReplicationConfig {
     nodeId: localNodeId,
     dc: localNodeId === 'node-a' || localNodeId === 'node-b' ? 'dc-east' : 'dc-west',
     curveDir: '/tmp/test-curves',
+    // Send-only: nothing in this fixture applies inbound frames, so nothing could
+    // answer a confirmation. The acknowledged contract is measured in
+    // `MultiLeaderReplication.ack.test.ts`, where a peer does answer.
+    acknowledgement: 'none',
     tickMs: 50,
     batchSize: 100,
     targets: [

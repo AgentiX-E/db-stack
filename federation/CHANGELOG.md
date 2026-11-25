@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The replication worker delivers on the peer's word too, and the receiver answers every
+  outcome.** `ExactlyOnceCDCPipeline` learned this in 1.2.0; `MultiLeaderReplication` — the path
+  `FederationManager` composes, and the one the cross-cluster acceptance suite drives — still retired
+  an outbox entry the moment `ITransport.send()` resolved `true`. That resolution is a statement about
+  the sender's socket: a write into a connection whose peer has gone is accepted by the local kernel,
+  so the queue reported deliveries the peer never made. `ReplicationConfig.acknowledgement` now
+  defaults to `'peer'`, and an entry leaves the queue on a `cdc_ack` that says *applied*; a refusal
+  fails it on the spot with the peer's reason, a silence fails it after `ackTimeoutMs`, and a stop
+  releases the wait without charging an attempt. A batch is in flight at once — the wait is registered
+  before each send and read after the batch — so a hundred entries cost a hundred sends and one
+  round-trip rather than a hundred of each. `getAckStats()` reports `received`, `timeouts`, `pending`
+  and `unsolicited`, because a sender waiting for answers needs to tell a slow peer from a silent one.
+- **`FederationManager.applyInbound()` answers the frame it applied.** Every outcome is now confirmed:
+  `applied`, `duplicate` and `superseded` with `{ ok: true }`, `malformed` and `declined` with
+  `{ ok: false, error }` naming what was wrong. `declined` is new and is the point — a consumer that
+  cannot propose the entry into the local Raft cluster (no leader, this node is a follower, the
+  proposal was rejected) used to reject the call, which told the caller and told the *sender* nothing,
+  and the sender had already retired the entry. The refusal also releases the dedup id, so the retry
+  is applied again rather than answered as a duplicate of a change that never landed: that pair — one
+  refusal followed by one duplicate — is a silent loss wearing two acknowledgements. `not-a-change`
+  is the sixth outcome, returned for a frame that is itself a confirmation; answering one would start
+  a conversation between two nodes that never ends. `getLastAckError()` reports a confirmation that
+  could not reach the wire, which is the sender's timeout to absorb and not a reason to fail an apply
+  that succeeded.
+- **`AckTracker`** — the bounded wait, once. `ExactlyOnceCDCPipeline` grew the first copy (a waiter
+  map, a timer per waiter, an abort path for shutdown, counters for an operator) and the replication
+  worker needs the same behaviour for the same reason; two copies of "wait, but not for ever, and
+  answer `aborted` when *we* stopped" is two chances for one of them to charge a retry for our own
+  shutdown. The tracker answers the question and the callers keep their consequences: a pipeline moves
+  a checkpoint, a replication worker retires or charges an entry.
+  `CDCPipelineMetrics.acksReceived` / `ackTimeouts` now read the tracker's counters, so the two
+  implementations cannot drift.
+
+### Changed
+
+- **BREAKING — `ReplicationConfig.acknowledgement` defaults to `'peer'`.** A peer that cannot answer a
+  confirmation will see its entries fail after `ackTimeoutMs` and dead-letter with a reason instead of
+  being reported delivered. That is the point: the previous default was a delivery nobody had made.
+  `acknowledgement: 'none'` restores the weaker contract explicitly, and is the right choice for a
+  peer that cannot answer.
+- **BREAKING — `FederationManager.applyInbound()` returns
+  `'applied' | 'duplicate' | 'superseded' | 'malformed' | 'declined' | 'not-a-change'`** and no longer
+  throws when a consumer fails. A rejection could not be put on the wire, so it reached the one party
+  that could not act on it.
+
 - **A change is delivered when the peer says it was applied.** `ITransport.send()` resolves `true`
   when the local socket took the bytes, and a TCP write into a connection whose peer has gone is
   accepted by the kernel — an acceptance run reported twenty changes delivered and thirteen applied,
