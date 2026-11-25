@@ -238,7 +238,7 @@ describe('AckTracker', () => {
     await expect(verdict).resolves.toEqual({ ok: true });
   });
 
-  it('AT.18 — a timer that was already queued when the answer arrived is ignored', async () => {
+  it('AT.17 — a timer that was already queued when the answer arrived is ignored', async () => {
     // `clearTimeout` cannot unqueue a callback the event loop has already taken, so
     // the timeout has to check that it is still the timer for this wait. Simulated by
     // making `clearTimeout` a no-op: the wait settles, and then the stale callback runs.
