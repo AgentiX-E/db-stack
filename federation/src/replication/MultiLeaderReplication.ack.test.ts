@@ -396,4 +396,100 @@ describe('MultiLeaderReplication — an entry leaves the queue on the peer’s a
 
     await replication.stop();
   });
+
+  it('MA.13 — an unreachable peer writes off the whole backlog, not one entry per backoff', async () => {
+    // The shape this pins was measured, not imagined: `AC-F7` ("entries written
+    // while a datacenter was down are recovered from the dead letter queue") timed
+    // out at 60 s with eight entries queued and a one-second retry window. A
+    // transport that refuses the head of the queue refuses every entry behind it
+    // for the same reason — the link is down, not the change — so the whole
+    // backlog has to be charged on the same tick it was offered. Charging one
+    // entry per tick turns an outage into a drain that grows with the backlog:
+    // eight entries behind a one-second backoff took minutes, and a thousand
+    // entries would take longer than the outage anyone was recovering from.
+    const entries = Array.from({ length: 8 }, (_, i) => entry(`e${i + 1}`));
+    const { store, markDelivered, markFailed } = mockOutbox(entries);
+    const { transport, send } = mockTransport(() => {
+      throw new Error('connect ECONNREFUSED 127.0.0.1:20056');
+    });
+    const replication = new MultiLeaderReplication({
+      transport,
+      outbox: store,
+      // A backoff long enough that "one entry per tick" cannot finish inside the
+      // window this case allows — the same ratio the acceptance run had.
+      config: makeConfig({ targets: [{ ...makeConfig().targets[0]!, maxBackoffSeconds: 1 }] }),
+    });
+
+    await replication.start();
+    await waitFor(
+      () => markFailed.mock.calls.length === entries.length,
+      `all ${entries.length} entries to be charged, saw ${markFailed.mock.calls.length}`,
+      400,
+    );
+
+    expect(markDelivered).not.toHaveBeenCalled();
+    // Only the head is offered: a link that refused it has nothing to say about the
+    // rest, so nothing behind it is put on the wire.
+    expect(send.mock.calls.map((call) => call[0].messageId)).toEqual(['e1']);
+    // Charged in queue order on the one tick that failed: the first entry is the
+    // head, which is what an operator reading the dead letter queue sees first.
+    expect(markFailed.mock.calls.slice(0, entries.length).map((call) => call[0])).toEqual(entries.map((e) => e.id));
+    // Nothing is left waiting on a socket that already closed.
+    expect(replication.getAckStats().pending).toBe(0);
+
+    await replication.stop();
+  });
+
+  it('MA.14 — a link that fails at the head retires nothing behind it, and charges it all', async () => {
+    // The other half of MA.13: charging the queue is not the same as retiring it.
+    // Nothing behind a head that could not leave the node may be offered — the
+    // frames go out in queue order, and the receiver appends in arrival order — so
+    // e2 is never sent, never delivered, and charged with the reason that names
+    // e1 rather than a socket error an operator cannot act on.
+    const entries = [entry('e1'), entry('e2')];
+    const { store, markDelivered, markFailed } = mockOutbox(entries);
+    const { transport, send } = mockTransport(() => {
+      throw new Error('socket reset by peer');
+    });
+    const replication = new MultiLeaderReplication({ transport, outbox: store, config: makeConfig() });
+
+    await replication.start();
+    await waitFor(() => markFailed.mock.calls.length >= 2, 'both entries to be charged');
+
+    // The double hands the fixtures back on every tick, so the same head is offered
+    // again after the backoff; what matters is that e2 never was.
+    expect(new Set(send.mock.calls.map((call) => call[0].messageId))).toEqual(new Set(['e1']));
+    expect(markDelivered).not.toHaveBeenCalled();
+    expect(markFailed).toHaveBeenCalledWith('e1', 'socket reset by peer');
+    expect(markFailed).toHaveBeenCalledWith(
+      'e2',
+      'an earlier entry in the batch could not leave this node (e1): socket reset by peer',
+    );
+
+    await replication.stop();
+  });
+
+  it('MA.15 — a link that fails mid-batch still settles what it already sent', async () => {
+    // e1 left the node and the peer answered before e2's send threw. Breaking out
+    // of the send loop must not abandon that answer: the wait was opened, the peer
+    // spent the apply on it, and a batch that ends early is not a reason to leave
+    // the entry in the queue until its budget expires.
+    const entries = [entry('e1'), entry('e2'), entry('e3')];
+    const { store, markDelivered, markFailed } = mockOutbox(entries);
+    const { transport, deliver } = mockTransport((frame) => {
+      if (frame.messageId === 'e2') throw new Error('connection reset');
+      deliver(ackOk(frame));
+    });
+    const replication = new MultiLeaderReplication({ transport, outbox: store, config: makeConfig() });
+
+    await replication.start();
+    await waitFor(() => markDelivered.mock.calls.length > 0, 'e1 to be retired');
+
+    expect(new Set(markDelivered.mock.calls.map((call) => call[0]))).toEqual(new Set(['e1']));
+    expect(new Set(markFailed.mock.calls.map((call) => call[0]))).toEqual(new Set(['e2', 'e3']));
+    // Nothing is left waiting on a link that already failed.
+    expect(replication.getAckStats().pending).toBe(0);
+
+    await replication.stop();
+  });
 });

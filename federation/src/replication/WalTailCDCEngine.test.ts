@@ -188,8 +188,13 @@ describe('WalTailCDCEngine', () => {
       throw new Error('a consumer that throws must not stop the stream');
     });
 
+    // The two polls are driven by hand rather than through `start()`. The case is
+    // about which listener saw which record, and `start()` polls once before it
+    // resolves *and* leaves an interval behind: the answer then depended on where
+    // those two ran relative to `detach()`, which is a property of how busy the
+    // machine was rather than of the engine. Two explicit polls, no timer.
     await writer.append(change('orders', 1));
-    await engine.start();
+    await engine.poll();
     detach();
     await writer.append(change('orders', 2));
     await engine.poll();

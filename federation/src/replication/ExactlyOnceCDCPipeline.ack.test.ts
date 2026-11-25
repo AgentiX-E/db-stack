@@ -204,15 +204,21 @@ describe('ExactlyOnceCDCPipeline — a delivery is the peer’s answer', () => {
   it('ACK.2: the confirmation is what advances the checkpoint', async () => {
     const dir = makeDir();
     const remote = peer({ answer: 'silent' });
-    const pipeline = await pipelineWithOneChange(dir, remote);
+    // The budget has to outlast the case rather than the other way round. It used
+    // to be the 60 ms default with a 40 ms sleep in the middle, which left twenty
+    // milliseconds of slack between an assertion about "not confirmed yet" and the
+    // timeout that would make it true for the wrong reason: on a loaded runner the
+    // sleep overshot, the wait expired, the late confirmation was `unsolicited`,
+    // and the case waited three seconds for a delivery nobody was waiting for.
+    const pipeline = await pipelineWithOneChange(dir, remote, { ackTimeoutMs: 5_000 });
 
     await waitFor(() => remote.frames.length === 1);
-    await new Promise((resolve) => setTimeout(resolve, 40));
     expect(pipeline.getLastConfirmedLSN('users'), 'nothing was confirmed').toBeNull();
 
     remote.emit(buildAckFrame(remote.frames[0]!, 'dc-b', remote.frames[0]!.timestamp));
     await waitFor(async () => (await pipeline.getMetrics()).outboxDelivered === 1);
     expect(pipeline.getLastConfirmedLSN('users')).toBe('0/00000001');
+    expect((await pipeline.getMetrics()).ackTimeouts).toBe(0);
   });
 
   it('ACK.3: a silent peer costs a timeout, and the entry stays pending', async () => {

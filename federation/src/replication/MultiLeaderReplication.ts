@@ -401,7 +401,7 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
       // batch of a hundred cost a hundred round-trips end to end.
       const inFlight: Array<{ entryId: string; verdict: Promise<CdcAckVerdict> }> = [];
 
-      for (const entry of forTarget) {
+      for (const [index, entry] of forTarget.entries()) {
         if (worker.stopRequested) return;
 
         const msg: TransportMessage = {
@@ -420,19 +420,30 @@ export class MultiLeaderReplication implements IMultiLeaderReplication {
           const sent = await this.transport.send(msg);
           if (!sent) throw new Error(`Transport rejected message to ${worker.nodeId}`);
         } catch (err: unknown) {
+          // A failure here is the transport's, not the peer's: the frame never
+          // left this node, so the change was never offered and cannot have been
+          // applied. What it says about the rest of the batch is the part this
+          // worker got wrong: the frames are offered in queue order over one
+          // link, so a link that refuses the head refuses every entry behind it
+          // for the same reason, and the batch failed as a whole. Charging only
+          // the head — the shape `AC-F7` measured — made the write-off drain one
+          // entry per *worker backoff*, which is exponential: eight entries behind
+          // a one-second backoff took minutes and a thousand would have taken
+          // hours, while the queue sat on changes whose budget had long expired.
+          // The cycle now stops here (nothing behind a head that could not leave
+          // may be offered, which is the ordering rule the pipeline documents) and
+          // charges every entry it did not get to, naming the head in the reason.
           const errMsg = err instanceof Error ? err.message : String(err);
-          if (verdict !== null) {
-            this.acks.abandon(msg.messageId, errMsg);
-            // The head of the queue could not leave, so nothing behind it may be
-            // retired: the outbox is an ordered log, and a hole in it is a change
-            // no peer will ever be offered again.
-            this.outbox.markFailed(entry.id, errMsg);
-            allSucceeded = false;
-            break;
-          }
+          if (verdict !== null) this.acks.abandon(msg.messageId, errMsg);
           this.outbox.markFailed(entry.id, errMsg);
+          for (const rest of forTarget.slice(index + 1)) {
+            this.outbox.markFailed(
+              rest.id,
+              `an earlier entry in the batch could not leave this node (${entry.id}): ${errMsg}`,
+            );
+          }
           allSucceeded = false;
-          continue;
+          break;
         }
 
         if (verdict === null) {

@@ -247,6 +247,18 @@ baseMs, maxMs, maxRetries)` is exported so the boundary can be asserted directly
 
 ### Fixed
 
+- **A dead peer was written off one entry per backoff, so an outage of any size outlasted the
+  retry window it was supposed to be bounded by.** The replication worker charges the head of the
+  queue when a send fails, and the batch used to end there: the entries behind it stayed pending
+  with their budgets never started, and the worker tried again after its own exponential backoff —
+  1 s, 2 s, 4 s, up to five minutes. Eight entries behind a one-second backoff therefore took
+  minutes to reach the dead letter queue, and a thousand would have taken hours, which is not a
+  bound anyone can act on. The batch is the unit of delivery: it is offered in queue order over one
+  link, so a link that refuses the head refuses every entry behind it for the same reason. The cycle
+  now stops at the failed head — nothing behind it may be offered, which is the ordering rule the
+  send-only path already documents — and charges every entry it did not reach, naming the head in
+  the reason. `e2e` `AC-F7` ("entries written while a datacenter was down are recovered from the dead
+  letter queue") timed out at 60 s before this change and completes in 2.5 s after it.
 - **The outbox was FIFO and the wire was not.** `pumpCycle()` walked the rest of the batch after a
   refusal: entry 4's `send()` returned false, entries 5 and 6 were sent, and 4's retry landed after
   them — and the receiver appends in arrival order, so the log at the far end read `…, 5, 6, 4, …`.
