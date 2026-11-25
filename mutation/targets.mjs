@@ -124,6 +124,21 @@ export const TARGETS = {
       // datacenter for ever, `===` widened to `>=` lets the stale frame through,
       // and a watermark lowered on refusal makes every later frame stale too.
       "federation/src/replication/epoch.ts",
+      // The control plane: anti-entropy, heartbeats and bootstrap. Every file here
+      // is a state machine whose wrong answers are silent — a sequence compared
+      // with `>=` reports an interval as a duplicate so the detector never sees a
+      // silence, a chunk index compared with `!==` accepts a gap, and a bucket
+      // named from the entries rather than from the key hashes to a tree that
+      // agrees with itself. Coverage sees none of that; a surviving mutant is the
+      // only evidence the tests do.
+      "federation/src/replication/AntiEntropy.ts",
+      "federation/src/replication/antientropyFrames.ts",
+      "federation/src/replication/bootstrapFrames.ts",
+      "federation/src/core/AntiEntropyProtocol.ts",
+      "federation/src/core/HeartbeatProtocol.ts",
+      "federation/src/core/heartbeatFrame.ts",
+      "federation/src/core/SnapshotBootstrap.ts",
+      "federation/src/core/DCSplitBrainDetector.ts",
     ],
     testConfig: "federation/vitest.mutation.config.ts",
     concurrency: 2,

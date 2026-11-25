@@ -397,9 +397,15 @@ describe('@agentix-e/db-federation replication types', () => {
       conflictsResolved: 2,
       durationMs: 1234,
       completedAt: Date.now(),
+      // The two fields that make a sync result a measurement rather than a
+      // summary: how much was pushed the other way, and whether the peer was
+      // reached at all. A run that reached nobody is not a run that agreed.
+      pushed: 3,
+      peerReachable: true,
     };
     expect(result.entriesSynced).toBe(150);
     expect(result.conflictsResolved).toBe(2);
+    expect(result.peerReachable).toBe(true);
   });
 
   it('should export IAntiEntropy interface with all methods', () => {

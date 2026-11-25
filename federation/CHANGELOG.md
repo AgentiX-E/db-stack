@@ -9,6 +9,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Anti-entropy compares a peer's root instead of comparing this node's dataset with itself.**
+  `AntiEntropy.syncWith(peerId)` never sent anything: it read the local dataset, built a second digest
+  from the *same* dataset, and reported the difference between two copies of one tree — which is always
+  nothing. The component could be constructed, `start()`ed and observed to agree with itself while no
+  frame ever left the process. Three things had to change together, and the first is the one that
+  mattered: the tree's leaf boundaries are now derived from the key alone (`bucketPrefix(key, depth)`
+  is the first `depth` bits of `SHA-256(key)`), so two nodes independently compute the same buckets
+  from the same key space and a bucket-by-bucket comparison is possible at all. A digest now enumerates
+  all `2^depth` buckets including the empty ones, which share one constant hash — a digest that listed
+  only the buckets it had data for made "absent" indistinguishable from "empty", so a peer missing a
+  bucket and a peer running an older build read the same. `diff()` compares hashes rather than counts
+  (the same number of entries with different values is still a divergence), `applyRemote()` keeps the
+  origin clock it was given (a store that stamped `Date.now()` made every applied entry look newer than
+  its source, so the next sweep classified *this* node as the divergent side and pushed the same bucket
+  back — a loop that never converges and never reports an error), and `syncWith()` throws for a peer it
+  has not been bound to instead of returning a well-formed result describing nothing.
+  `AntiEntropyProtocol` is the half that owns the socket: it binds a `MerklePeer` per target, runs the
+  sweep on a timer (`start()` no longer constructs the algorithm and forgets to start it), and
+  `exchange()` is a real request-and-bounded-wait that reports the root each peer claimed. Pushes are
+  not acknowledged on purpose: a push is idempotent and a sweep repeats it, so the divergence is its
+  own receipt and an ack would cost a second state machine with its own timeout and its own way of
+  reporting a slow peer as a down one.
+- **The datacenter heartbeat is a frame, so it can be lost, duplicated or late — and each of those
+  means something now.** The heartbeat used to be a local `EventEmitter` emission: subscribers inside
+  the process saw it and no peer ever did, so `DCSplitBrainDetector`'s expiry timer measured a map only
+  a test ever filled, and a datacenter that stopped speaking was indistinguishable from one that had
+  never been configured. `HeartbeatProtocol` sends `fed_heartbeat` frames carrying a sequence number
+  and the sender's HLC; a frame at or below the last accepted sequence is counted as `outOfOrder` and
+  dropped, because three copies of one interval must not look like three intervals, and because a late
+  frame inserts a *past* clock into the detector's per-datacenter HLC chain — manufacturing exactly the
+  pattern a split brain produces. The sequence advances once per beat, not once per target: the same
+  interval told to three peers is one observation. A higher sequence whose `sentAt` went backwards is
+  accepted (refusing it would freeze the peer's liveness on the last good beat) and recorded, because a
+  clock that stepped back is why the detector's chain is about to look strange. `DCSplitBrainDetector`
+  reports each silence **once** via `onHeartbeatExpired()` and clears the mark when the peer speaks
+  again — a counter that grows while nothing changes is not a measurement.
+- **`SnapshotBootstrap` — the snapshot a joining datacenter never had, plus the log handoff that makes
+  it complete and the cursor that makes it resumable.** A datacenter that joined an existing
+  federation had no way to obtain state that predated its arrival; a `bootstrap` was a word in the
+  roadmap. `SnapshotBootstrap` is both roles in one class, because whichever side restarts is the
+  receiver for that transfer and the other is the source — possibly simultaneously, for its own peer.
+  The position is read **before** the state, so a write that lands during the read is in the snapshot
+  *and* in the handoff; the other order leaves it in neither. The receiver persists
+  `{transferId, nextChunk}` after every chunk it accepts, so a process that died at chunk 4 113 of ten
+  thousand resumes there, and — more importantly — a *sender* that died can be resumed against,
+  because the request names the position rather than the receiver's memory. `highWaterMark` moves to
+  `max(highWaterMark, snapshotLsn)` rather than to `snapshotLsn`, so a peer already ahead of the
+  snapshot cannot have its floor pulled down by someone else's older state. A handoff the sender
+  cannot complete (its log was compacted past the receiver's floor) is reported with `complete: false`
+  and the receiver drops its cursor, forcing the next attempt against a fresh snapshot instead of
+  resuming into the same hole. Frames of one transfer are processed **serially**: with async handlers
+  interleaving, two chunks read the same `expected`, the second judged itself out of order and asked
+  for a re-send — measured as five gap requests and twelve chunk frames carrying three chunks, a
+  protocol that converges by accident and does its work four times over.
+- **`FederationManager` wires all three protocols and owns the log a bootstrap is handed off from.**
+  `getAntiEntropyProtocol()`, `getHeartbeat()`, `getBootstrap()` and `getProtocolStatus()` expose them;
+  `bootstrapFrom(peerNodeId?)` brings this datacenter up to date (defaulting to the first configured
+  target, because a rebuild script that has to read the topology to find a peer is a rebuild script
+  with a hard-coded peer in it). Control frames are routed before the dedup ring, because a heartbeat
+  that repeats a sequence is a duplicate *of an interval*, not of a change, and the ring would answer
+  it with the wrong vocabulary; each protocol carries its own idempotence — a chunk index, a sequence
+  number, a digest that is computed again. `getLsn()` and the handoff log record every change that
+  becomes visible to this layer (a local write, an applied inbound frame, an entry applied by
+  anti-entropy or a bootstrap), and a position the log has already dropped is an error rather than an
+  empty answer: `[]` would tell the peer its handoff finished and leave it with a hole nothing fills.
+- **`fed_ae_summary` / `fed_ae_push` / `fed_heartbeat` / five bootstrap frame types**, each with a
+  strict decoder: a frame that cannot be read is counted and named in `lastError` rather than treated
+  as agreement. A decoder that accepted a truncated digest would make a disagreement look like a match,
+  which is the one failure anti-entropy exists to prevent.
+
 - **The replication worker delivers on the peer's word too, and the receiver answers every
   outcome.** `ExactlyOnceCDCPipeline` learned this in 1.2.0; `MultiLeaderReplication` — the path
   `FederationManager` composes, and the one the cross-cluster acceptance suite drives — still retired
@@ -61,6 +131,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — `SyncResult` gained `pushed` and `peerReachable`.** A sync result was a summary that
+  could not say how much moved the other way, or whether the peer was reached at all. A run that
+  reached nobody is not a run that agreed; a consumer that reads `entriesSynced: 0` as "in sync" had no
+  way to tell the two apart.
+- **BREAKING — `AntiEntropy.syncWith(peerId)` throws for an unbound peer.** It used to return a
+  well-formed `SyncResult` with zeroes for any string at all, which made a typo in a node id look like
+  a successful reconciliation.
+- **`FederationManager.stop()` stops the protocols before the detector and the anti-entropy object they
+  drive.** The other order leaves timers running against objects that are being torn down, and an
+  outstanding digest round trip is settled on `stop()` rather than left to expire — a promise that
+  resolves five seconds after the protocol stopped answering is a leak with a delay.
+- **`DCSplitBrainDetector` gained `isRunning`, `onHeartbeatExpired()` and an `expiredDcs` set.** The
+  getter is what a supervisor polls; the set is what makes a silence reported once.
 - **BREAKING — `ReplicationConfig.acknowledgement` defaults to `'peer'`.** A peer that cannot answer a
   confirmation will see its entries fail after `ackTimeoutMs` and dead-letter with a reason instead of
   being reported delivered. That is the point: the previous default was a delivery nobody had made.

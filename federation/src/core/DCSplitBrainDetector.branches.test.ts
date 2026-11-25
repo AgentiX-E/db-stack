@@ -182,3 +182,42 @@ describe('DCSplitBrainDetector — lifecycle & heartbeat branches', () => {
     d.stop();
   });
 });
+
+// ── Lifecycle surface ──
+
+describe('DCSplitBrainDetector — the lifecycle it reports', () => {
+  it('reports whether it is tracking heartbeats', () => {
+    const d = makeDetector();
+
+    // The flag is what a supervisor polls; a detector that always reported
+    // "running" would keep a stopped node's silence in the expiry scan.
+    expect(d.isRunning).toBe(false);
+    d.start();
+    expect(d.isRunning).toBe(true);
+    d.stop();
+    expect(d.isRunning).toBe(false);
+  });
+
+  it('stops reporting splits once the callback is removed', () => {
+    const d = makeDetector();
+    d.start();
+
+    const seen: string[] = [];
+    const off = d.onSplitBrainDetected((event) => seen.push(event.winningDc));
+    off();
+
+    // A subscription that cannot be withdrawn outlives the object that wanted it,
+    // which is a leak in a long-lived process and a duplicate notification in a
+    // short one.
+    d.receiveHeartbeat({
+      dcId: 'dc-2',
+      nodeId: 'dc-2/node-1',
+      hlc: { wallTime: 1, logical: 1, nodeId: 'dc-2/node-1' },
+      appliedCount: 0,
+      timestamp: Date.now(),
+    });
+    expect(seen).toEqual([]);
+
+    d.stop();
+  });
+});

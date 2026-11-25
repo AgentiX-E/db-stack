@@ -70,6 +70,16 @@ export class DCSplitBrainDetector {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private appliedCount = 0;
 
+  /**
+   * Datacenters already reported missing since they last spoke.
+   *
+   * Without this the expiry scan emitted the same event on every tick for as long
+   * as the peer stayed down — a signal that says "still down" in a shape that
+   * subscribers treat as "just went down". The recovery is the peer speaking
+   * again, which clears the entry.
+   */
+  private readonly expiredDcs = new Set<string>();
+
   private readonly maxHlcChainLength = 100;
 
   constructor(config: DCSplitBrainConfig) {
@@ -104,17 +114,43 @@ export class DCSplitBrainDetector {
 
     this.remoteHeartbeats.clear();
     this.activeSplitBrains.clear();
+    this.expiredDcs.clear();
     this.emitter.removeAllListeners();
+  }
+
+  /** True while the detector is tracking heartbeats. */
+  get isRunning(): boolean {
+    return this.started;
+  }
+
+  /**
+   * Register a callback for a datacenter that stopped speaking.
+   *
+   * Fires once per silence, not once per tick — `HeartbeatProtocol` counts these,
+   * and a counter that grows while nothing changes is not a measurement.
+   */
+  onHeartbeatExpired(callback: (event: { dcId: string; lastSeen: number; silenceMs: number }) => void): () => void {
+    this.emitter.on('heartbeat-expired', callback);
+    return () => {
+      this.emitter.off('heartbeat-expired', callback);
+    };
   }
 
   /**
    * Receive a heartbeat from a remote DC node.
    * MA6: Track heartbeats for split-brain detection.
+   *
+   * The frame that carries a heartbeat is lossy, so an absent one is data: it is
+   * handled by `broadcastHeartbeat`'s expiry scan, not here. This method's job is
+   * the arrival side only.
    */
   receiveHeartbeat(heartbeat: DCHeartbeat): void {
     if (!this.started) return;
 
     this.remoteHeartbeats.set(heartbeat.dcId, heartbeat);
+    // A datacenter that speaks again is no longer missing, so the next silence is
+    // reported as a new event rather than suppressed as a repeat of the old one.
+    this.expiredDcs.delete(heartbeat.dcId);
 
     // Update HLC chain for this DC
     let chain = this.dcHlcChains.get(heartbeat.dcId);
@@ -238,9 +274,12 @@ export class DCSplitBrainDetector {
     const timeout = this.config.heartbeatIntervalMs * this.config.missedHeartbeatThreshold;
     for (const [dcId, lastHb] of this.remoteHeartbeats) {
       if (now - lastHb.timestamp > timeout) {
+        if (this.expiredDcs.has(dcId)) continue;
+        this.expiredDcs.add(dcId);
         this.emitter.emit('heartbeat-expired', {
           dcId,
           lastSeen: lastHb.timestamp,
+          silenceMs: now - lastHb.timestamp,
         });
       }
     }

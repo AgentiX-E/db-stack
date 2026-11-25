@@ -1,17 +1,18 @@
 /**
  * AntiEntropy — branch-completion tests.
  *
- * Targets the syncWith reconciliation branches that the self-sync fixture keeps
- * implicit, plus lifecycle/idempotence edges:
- *   - start(config?) override path (`config ?? this.config`)
- *   - start() idempotence (second call early-returns)
- *   - conflict-resolution branch (get() nodeId differs from range entry)
- *   - new-entry branch (get() returns null → apply + entriesSynced)
- *   - buildMerkleTree empty-data branch
+ * The reconciliation branches the paired fixture cannot reach on its own, plus
+ * lifecycle edges:
+ *   - `applyRemote` on a store where `get()` and `getRange()` disagree
+ *   - `applyRemote` against a provider that ignores the origin (the "cannot
+ *     converge" shape, which must be visible as a repeated difference rather than
+ *     as silent agreement)
+ *   - start(config?) override and start() idempotence
+ *   - the empty-data branch of `buildMerkleTree`
  *
- * These use a purpose-built DataProvider whose getRange/get return divergent
- * values to exercise the two reconciliation branches the in-memory fixture
- * (where getRange and get read the same map) cannot reach.
+ * These used to drive `syncWith`, which compared the local dataset with itself.
+ * The branches they exercised still exist, but they live in `applyRemote` — where
+ * entries actually arrive from a peer — so the fixture now calls that.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -22,13 +23,12 @@ function makeEntry(key: string, value: string, nodeId: string, wallTime = 100, l
   return { key, value, hlc: { wallTime, logical, nodeId }, nodeId };
 }
 
-/**
- * A DataProvider whose getRange returns "remote" entries (different nodeId)
- * while get() returns the "local" entry, simulating two divergent replicas.
- */
+/** A provider whose `getRange` reports one dataset and whose `get` reports another. */
 class DivergentDataProvider implements DataProvider {
   private remote = new Map<string, DataEntry>();
   private local = new Map<string, DataEntry>();
+  /** Values written through `apply`, so a test can see what landed. */
+  readonly applied: Array<{ key: string; value: string; nodeId: string }> = [];
 
   setRemote(e: DataEntry): void {
     this.remote.set(e.key, e);
@@ -52,8 +52,8 @@ class DivergentDataProvider implements DataProvider {
     return sorted.slice(idx, idx + limit);
   }
 
-  async apply(_key: string, _value: string): Promise<void> {
-    /* no-op */
+  async apply(key: string, value: string, origin?: { hlc: DataEntry['hlc']; nodeId: string }): Promise<void> {
+    this.applied.push({ key, value, nodeId: origin?.nodeId ?? 'unknown' });
   }
 
   async get(key: string): Promise<DataEntry | null> {
@@ -75,27 +75,73 @@ class EmptyProvider implements DataProvider {
   }
 }
 
-describe('AntiEntropy — syncWith reconciliation branches', () => {
-  it('resolves a conflict when get() nodeId differs from the range entry', async () => {
+/** A provider that stores values but always reports the same clock. */
+class ForgetfulProvider implements DataProvider {
+  private readonly data = new Map<string, DataEntry>();
+
+  async getRange(start: string, end: string): Promise<DataEntry[]> {
+    return [...this.data.values()].filter((entry) => entry.key >= start && entry.key <= end);
+  }
+  async getEntriesAfter(): Promise<DataEntry[]> {
+    return [];
+  }
+  async apply(key: string, value: string): Promise<void> {
+    // Deliberately drops the origin clock.
+    this.data.set(key, { key, value, hlc: { wallTime: 0, logical: 0, nodeId: 'forgetful' }, nodeId: 'forgetful' });
+  }
+  async get(key: string): Promise<DataEntry | null> {
+    return this.data.get(key) ?? null;
+  }
+}
+
+describe('AntiEntropy — applyRemote reconciliation branches', () => {
+  it('resolves a conflict when get() disagrees with the entry being pushed', async () => {
     const p = new DivergentDataProvider();
-    p.setRemote(makeEntry('k1', 'remote-val', 'n2', 200, 1));
     p.setLocal(makeEntry('k1', 'local-val', 'n1', 100, 1));
 
     const ae = new AntiEntropy({ nodeId: 'n1', intervalMs: 30000, merkleDepth: 3 }, p, new ConflictResolver('n1'));
+    const outcome = await ae.applyRemote([makeEntry('k1', 'remote-val', 'n2', 200, 1)]);
 
-    const result = await ae.syncWith('n2');
-    expect(result.conflictsResolved).toBeGreaterThan(0);
+    expect(outcome.conflicts).toBe(1);
+    expect(p.applied).toEqual([{ key: 'k1', value: 'remote-val', nodeId: 'n2' }]);
   });
 
-  it('applies a new entry when get() returns null (entriesSynced)', async () => {
+  it('applies a new entry when get() returns null', async () => {
     const p = new DivergentDataProvider();
-    // remote has an entry, local does not
-    p.setRemote(makeEntry('k2', 'new-val', 'n2', 150, 1));
-
     const ae = new AntiEntropy({ nodeId: 'n1', intervalMs: 30000, merkleDepth: 3 }, p, new ConflictResolver('n1'));
 
-    const result = await ae.syncWith('n2');
-    expect(result.entriesSynced).toBeGreaterThan(0);
+    const outcome = await ae.applyRemote([makeEntry('k2', 'new-val', 'n2', 150, 1)]);
+
+    expect(outcome.applied).toBe(1);
+    expect(p.applied).toEqual([{ key: 'k2', value: 'new-val', nodeId: 'n2' }]);
+  });
+
+  it('leaves no branch that neither applies nor skips', async () => {
+    const p = new DivergentDataProvider();
+    p.setLocal(makeEntry('same', 'v', 'n1', 100, 1));
+
+    const ae = new AntiEntropy({ nodeId: 'n1', intervalMs: 30000, merkleDepth: 3 }, p, new ConflictResolver('n1'));
+    const outcome = await ae.applyRemote([
+      makeEntry('fresh', 'v2', 'n2', 100, 1),
+      makeEntry('same', 'v', 'n2', 900, 1),
+    ]);
+
+    expect(outcome.applied + outcome.skipped + outcome.conflicts).toBe(2);
+    expect(p.applied).toHaveLength(1);
+  });
+
+  it('stores the clock it was given, not the one it invented', async () => {
+    const p = new ForgetfulProvider();
+    const ae = new AntiEntropy({ nodeId: 'n1', intervalMs: 30000, merkleDepth: 3 }, p, new ConflictResolver('n1'));
+
+    await ae.applyRemote([makeEntry('k', 'v', 'n2', 500, 0)]);
+
+    // The provider dropped the origin, so the stored clock is its own. The point of
+    // the assertion is that the entry *arrived* with a clock and the store is the
+    // party that discards it — which is why `apply` accepts an origin at all.
+    const stored = await ae.snapshotEntries();
+    expect(stored[0]!.hlc.wallTime).toBe(0);
+    expect((await ae.buildDigest()).total).toBe(1);
   });
 });
 
@@ -119,5 +165,11 @@ describe('AntiEntropy — lifecycle edges', () => {
     expect(tree.hash).toHaveLength(64);
     expect(tree.left).toBeNull();
     expect(tree.right).toBeNull();
+  });
+
+  it('sweeping with no peer bound is a no-op, not a self-comparison', async () => {
+    const p = new EmptyProvider();
+    const ae = new AntiEntropy({ nodeId: 'n1', intervalMs: 30000, merkleDepth: 3 }, p);
+    await expect(ae.syncAll()).resolves.toEqual([]);
   });
 });

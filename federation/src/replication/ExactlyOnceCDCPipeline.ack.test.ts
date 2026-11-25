@@ -224,6 +224,12 @@ describe('ExactlyOnceCDCPipeline — a delivery is the peer’s answer', () => {
   it('ACK.3: a silent peer costs a timeout, and the entry stays pending', async () => {
     const dir = makeDir();
     const remote = peer({ answer: 'silent' });
+    // Taken before the wait, not after it. Comparing the scheduled retry against
+    // `Date.now()` at assertion time measured the runner's load as much as the
+    // policy: on a busy worker the backoff window had already elapsed by the time
+    // the assertion ran, and a case about "the retry was scheduled rather than
+    // fired immediately" failed for having been scheduled correctly, just earlier.
+    const beforeTimeout = Date.now();
     const pipeline = await pipelineWithOneChange(dir, remote, { ackTimeoutMs: 40 });
 
     await waitFor(async () => (await pipeline.getMetrics()).ackTimeouts >= 1);
@@ -236,7 +242,7 @@ describe('ExactlyOnceCDCPipeline — a delivery is the peer’s answer', () => {
     // the next tick: a hot loop is not a retry policy.
     const [pending] = await pipeline['outbox'].fetchOldestPending(1);
     expect(pending?.attemptCount).toBe(1);
-    expect(pending?.nextAttemptAt).toBeGreaterThan(Date.now() - 1);
+    expect(pending?.nextAttemptAt).toBeGreaterThanOrEqual(beforeTimeout);
   });
 
   it('ACK.4: a refusal fails the entry on the spot, with the peer’s reason', async () => {

@@ -232,22 +232,40 @@ describe('FederationManager — AntiEntropy data provider closures', () => {
     await fm.stop();
   });
 
-  it('exercises the get closure via syncWith self-sync', async () => {
+  it('reaches a bound peer with its own digest and pushes the difference', async () => {
     const fm = makeManager();
     await fm.start();
 
     await fm.replicate('k:conflict', 'old', 'insert');
 
     const ae = fm.getAntiEntropy();
+    // A peer that holds nothing: every bucket this node fills is a bucket the peer
+    // is missing, so the sweep must hand them over. This is the shape the old
+    // self-sync could not produce — it had no peer to be different from.
+    const pushed: string[] = [];
+    ae.bindPeer('peer-1', {
+      exchange: async (shardId, mine) => ({
+        digest: {
+          shardId,
+          depth: mine.depth,
+          root: 'peer-root',
+          total: 0,
+          leaves: mine.leaves.map((leaf) => ({ prefix: leaf.prefix, hash: 'empty', count: 0 })),
+        },
+        want: [],
+      }),
+      push: async (_shardId, _prefix, entries) => {
+        pushed.push(...entries.map((entry) => entry.key));
+        return true;
+      },
+    });
+
     const result = await ae.syncWith('peer-1');
 
-    // Self-sync walks the leaf ranges; the existing entry matches itself, so
-    // it is skipped (the `get` closure runs, `apply` is not reached because
-    // there is no conflict and the entry already exists).
     expect(result.nodeId).toBe('peer-1');
-    expect(result.entriesSkipped).toBe(1);
-    expect(result.conflictsResolved).toBe(0);
-    expect(result.entriesSynced).toBe(0);
+    expect(result.peerReachable).toBe(true);
+    expect(pushed).toContain('k:conflict');
+    expect(result.pushed).toBe(1);
 
     await fm.stop();
   });
@@ -316,6 +334,25 @@ describe('FederationManager — buildDataProvider closures', () => {
     await provider.apply('k1', 'v2');
     expect(store.get('k1')!.value).toBe('v2');
     expect(store.size).toBe(1);
+  });
+
+  it('apply keeps the clock it was given instead of inventing one', async () => {
+    const fm = makeManager();
+    const store = new Map<string, DataEntry>();
+    const provider = fm['buildDataProvider'](store, 'node-a');
+
+    await provider.apply('k1', 'v1', { hlc: { wallTime: 42, logical: 7, nodeId: 'peer' }, nodeId: 'peer' });
+
+    // A store that stamped its own clock would make every applied entry newer
+    // than the one it came from, so the next sweep would classify this node as
+    // the divergent side and push the same bucket back for ever.
+    expect(store.get('k1')).toMatchObject({
+      key: 'k1',
+      value: 'v1',
+      hlc: { wallTime: 42, logical: 7, nodeId: 'peer' },
+      nodeId: 'peer',
+    });
+    expect(fm.getLsn()).toBe(1);
   });
 });
 

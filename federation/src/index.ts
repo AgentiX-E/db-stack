@@ -39,7 +39,7 @@ export type { ReplicationSlot } from './interfaces/replication/IReplicationSlotM
 export type { IReplicationSlotManager } from './interfaces/replication/IReplicationSlotManager';
 
 export type { AntiEntropyConfig } from './interfaces/replication/IAntiEntropy';
-export type { SyncResult } from './interfaces/replication/IAntiEntropy';
+export type { SyncResult, DatasetDigest, DigestLeaf } from './interfaces/replication/IAntiEntropy';
 export type { IAntiEntropy } from './interfaces/replication/IAntiEntropy';
 
 // DedupRing
@@ -58,6 +58,40 @@ export type { HealthMonitorConfig, TargetHealth, FederationHealth } from './moni
 export { DCSplitBrainDetector } from './core/DCSplitBrainDetector';
 export type { DCSplitBrainConfig } from './core/DCSplitBrainDetector';
 export type { DCHeartbeat, SplitBrainEvent } from './core/DCSplitBrainDetector';
+
+// Control protocols — anti-entropy, heartbeat and bootstrap over the transport.
+export { AntiEntropyProtocol } from './core/AntiEntropyProtocol';
+export type { AntiEntropyProtocolConfig, AntiEntropyProtocolStatus, PeerRootReport } from './core/AntiEntropyProtocol';
+export { HeartbeatProtocol } from './core/HeartbeatProtocol';
+export type { HeartbeatProtocolConfig, HeartbeatProtocolStatus, HeartbeatPeerReport } from './core/HeartbeatProtocol';
+export { SnapshotBootstrap } from './core/SnapshotBootstrap';
+export type {
+  SnapshotBootstrapConfig,
+  SnapshotBootstrapStatus,
+  BootstrapSource,
+  TransferReport,
+} from './core/SnapshotBootstrap';
+export { AE_SUMMARY_TYPE, AE_PUSH_TYPE, isAntiEntropyFrame } from './replication/antientropyFrames';
+export type { SummaryBody, SummaryRequestBody, SummaryReplyBody, PushBody } from './replication/antientropyFrames';
+export { HEARTBEAT_TYPE, isHeartbeatFrame } from './core/heartbeatFrame';
+export type { HeartbeatBody } from './core/heartbeatFrame';
+export {
+  BOOTSTRAP_REQUEST_TYPE,
+  BOOTSTRAP_CHUNK_TYPE,
+  BOOTSTRAP_DONE_TYPE,
+  HANDOFF_TYPE,
+  HANDOFF_END_TYPE,
+  BOOTSTRAP_FRAME_TYPES,
+  isBootstrapFrame,
+} from './replication/bootstrapFrames';
+export type {
+  BootstrapRequestBody,
+  BootstrapChunkBody,
+  BootstrapDoneBody,
+  HandoffEntryBody,
+  HandoffEndBody,
+  BootstrapFrame,
+} from './replication/bootstrapFrames';
 export { FederationManager } from './core/FederationManager';
 export type {
   FederationManagerConfig,
@@ -170,7 +204,15 @@ export { comparePositions, isSimulatedEngine } from './replication/ExactlyOnceCD
 
 // AntiEntropy
 export { AntiEntropy } from './replication/AntiEntropy';
-export type { MerkleNode, DataEntry, DataProvider } from './replication/AntiEntropy';
+export type {
+  MerkleNode,
+  DataEntry,
+  DataProvider,
+  ApplyOrigin,
+  MerklePeer,
+  DigestExchange,
+} from './replication/AntiEntropy';
+export { bucketPrefix } from './replication/AntiEntropy';
 
 // Integration Support
 export { TcpSecureTransport } from './transport/TcpSecureTransport';

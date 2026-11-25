@@ -132,13 +132,18 @@ solves three problems that a single consensus group cannot:
 ## Testing
 
 ```bash
-npm test    # 1 365 tests, 86 test files
+npm test    # 1 538 tests, 93 test files
 ```
 
-- **86 test files, 1 365 tests** — unit, integration, batch, performance, chaos
+- **93 test files, 1 538 tests** — unit, integration, batch, performance, chaos
 - **CDC exactly-once chaos tests** — crash & restart resilience
 - **Cross-repo end-to-end** — db-node + db-cluster + db-federation integration
 - **Stage isolation chaos** — fault injection & latency validation
+- **Control plane** — anti-entropy over a real transport (a peer's root is fetched, not
+  assumed), heartbeats as frames that can be lost, duplicated or late, and a snapshot
+  bootstrap that resumes at the chunk it stopped on and reports a handoff it cannot complete
+- **Coverage gate** — ≥95 % on lines, statements, functions and branches, per package *and*
+  per file; a package average is not a measurement of its parts
 
 ---
 

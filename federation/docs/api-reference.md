@@ -1051,20 +1051,54 @@ range go through the `ConflictResolver` when one is supplied.
 ```typescript
 class AntiEntropy implements IAntiEntropy {
   constructor(config: AntiEntropyConfig, dataProvider: DataProvider, conflictResolver?: ConflictResolver);
+
+  // A peer, and the socket behind it. Unbound peers are refused, not invented.
+  bindPeer(peerId: string, peer: MerklePeer): () => void;
+  getPeers(): string[];
+
   start(config?: AntiEntropyConfig): Promise<void>;
   stop(): Promise<void>;
   buildMerkleTree(): Promise<MerkleNode>;
-  syncWith(peerNodeId: string): Promise<SyncResult>;
-  syncAll(): Promise<SyncResult[]>;
+
+  // The comparison, and the repair it implies.
+  buildDigest(shardId?: string): Promise<DatasetDigest>;
+  diff(mine: DatasetDigest, theirs: DatasetDigest): { push: string[]; want: string[] };
+  entriesInBucket(prefix: string): Promise<DataEntry[]>;
+  snapshotEntries(): Promise<DataEntry[]>;
+  applyRemote(entries: DataEntry[]): Promise<{ applied: number; skipped: number; conflicts: number }>;
+
+  syncWith(peerNodeId: string, shardId?: string): Promise<SyncResult>;
+  syncAll(shardId?: string): Promise<SyncResult[]>;
   getMerkleRoot(shardId: string): Promise<string>;
   findDiffRanges(node: MerkleNode): Promise<Array<{ start: string; end: string }>>;
   getSyncHistory(): SyncResult[];
+  getLastError(): string | null;
 }
 ```
 
 `AntiEntropyConfig`: `nodeId`, `intervalMs`, `merkleDepth`. `SyncResult`:
-`{ nodeId, entriesSynced, entriesSkipped, conflictsResolved, durationMs,
-completedAt }`.
+`{ nodeId, entriesSynced, entriesSkipped, conflictsResolved, pushed,
+peerReachable, durationMs, completedAt }`.
+
+**Bucket names come from keys, not from entries.** `bucketPrefix(key, depth)` is
+the first `depth` bits of `SHA-256(key)`, so two nodes compute the same buckets
+from the same key space without having agreed on anything else. A tree whose
+leaves were derived from the entries each side happened to hold could not be
+compared bucket by bucket at all — which is why `syncWith()` used to build a
+digest, compare it with a digest of the same dataset, and always agree.
+
+**A digest lists every bucket, empty ones included.** Empty buckets share one
+constant hash. A digest that listed only the buckets it had data for made
+"absent" indistinguishable from "empty", so a peer missing a bucket and a peer
+running an older build read the same.
+
+**`diff()` compares hashes, not counts.** The same number of entries with
+different values is still a divergence.
+
+**`applyRemote()` keeps the origin clock it was given.** A store that stamped
+`Date.now()` made every applied entry look newer than its source, so the next
+sweep classified *this* node as the divergent side and pushed the same bucket
+back — a reconciliation loop that never converges and never reports an error.
 
 ### `MerkleNode`
 
@@ -1079,6 +1113,165 @@ The unit anti-entropy compares and applies: `{ key, value, hlc }`.
 
 The four-method interface above that a consumer implements against its own
 storage.
+
+## The control plane
+
+Three protocols that share one transport, one HLC and one node id. Each is
+agnostic about the others and about the storage: what a silence means, what a
+snapshot contains and what a divergence costs are all injected.
+
+### `AntiEntropyProtocol`
+
+The sweep, over the wire.
+
+```typescript
+class AntiEntropyProtocol {
+  constructor(transport: ITransport, hlc: HLC, antiEntropy: AntiEntropy, config: AntiEntropyProtocolConfig);
+  start(): void;                       // binds every target, owns the timer. Does not sweep.
+  stop(): void;                        // unbinds, and settles every outstanding round trip.
+  sweep(): Promise<void>;              // one sweep, one at a time.
+  handle(msg: InboundMessage): Promise<boolean>;
+  getStatus(): AntiEntropyProtocolStatus;
+}
+```
+
+`AntiEntropyProtocolConfig`: `nodeId`, `targets`, `shardId?`, `intervalMs?` (15 000,
+`0` leaves the timer off), `exchangeTimeoutMs?` (5 000), `maxEntriesPerFrame?` (500).
+
+`AntiEntropyProtocolStatus`: `sweeps`, `requestsSent`, `repliesSent`,
+`repliesReceived`, `pushesSent`, `pushesReceived`, `entriesApplied`,
+`entriesSkipped`, `conflicts`, `timeouts`, `malformed`, `unsolicited`, `selfRoot`,
+`peers` (per peer: `{ root, total, depth, at }`), `lastError`.
+
+Pushes are not acknowledged. A push is idempotent and a sweep repeats it, so the
+divergence is its own receipt; an ack would cost a second state machine with its
+own timeout, its own abort path and its own way of reporting a slow peer as a
+down one. A digest round trip *is* bounded: a digest that is never answered
+leaves this node unable to decide anything, while a push that is never
+acknowledged leaves it with a difference it will see again. A transport that
+refuses the frame ends the wait immediately — waiting out the budget would report
+a slow peer where there is an unreachable one.
+
+### `HeartbeatProtocol`
+
+The datacenter heartbeat as a frame.
+
+```typescript
+class HeartbeatProtocol {
+  constructor(transport: ITransport, hlc: HLC, detector: DCSplitBrainDetector, config: HeartbeatProtocolConfig);
+  start(): void;                       // starts the timer. Sends no beat.
+  stop(): void;
+  beat(): Promise<number>;             // one beat, one sequence, every target.
+  handle(msg: InboundMessage): boolean;
+  getStatus(): HeartbeatProtocolStatus;
+}
+```
+
+`HeartbeatProtocolConfig`: `nodeId`, `dcId`, `targets`, `intervalMs?` (1 000). It
+must match the detector's interval — the detector multiplies its own copy by the
+missed-beat threshold, so two numbers would make the expiry deadline describe a
+schedule nobody is running.
+
+A frame is subject to the three things a local emission is not, and each has a
+meaning the detector is allowed to draw a conclusion from:
+
+| Arrival | Verdict | Why |
+|---------|---------|-----|
+| nothing | silence | the detector's expiry scan reports it once |
+| `seq <= last` | `outOfOrder`, dropped | three copies of one interval must not look like three intervals |
+| `seq > last`, `sentAt < last` | accepted, recorded | refusing it would freeze the peer's liveness on the last good beat; a clock that stepped back is why the chain will look strange |
+
+The sequence advances **once per beat**, not once per frame: the same interval
+told to three peers is one observation, and three peers each receiving `n` is the
+only way "did I miss anything?" has one answer.
+
+### `SnapshotBootstrap`
+
+Both roles in one class, because whichever datacenter restarts is the receiver for
+that transfer and the other is the source — possibly simultaneously, for its own
+peer.
+
+```typescript
+interface BootstrapSource {
+  currentLsn(): Promise<number>;
+  entriesAfter(lsn: number, limit: number): Promise<Array<{ lsn: number; entry: DataEntry }>>;
+}
+
+class SnapshotBootstrap {
+  constructor(transport: ITransport, hlc: HLC, antiEntropy: AntiEntropy, source: BootstrapSource, config: SnapshotBootstrapConfig);
+  begin(peerId: string): Promise<string>;      // returns the transfer id, resumed or fresh.
+  handle(msg: InboundMessage): Promise<boolean>;
+  getStatus(): SnapshotBootstrapStatus;
+  getInboundTransfer(transferId: string): { expected: number; phase: string; highWaterMark: number } | null;
+}
+```
+
+`SnapshotBootstrapConfig`: `nodeId`, `shardId?`, `chunkSize?` (200),
+`handoffBatchSize?` (200), `resumeStatePath?`.
+
+Five frame types: `bootstrap_request`, `bootstrap_chunk`, `bootstrap_done`,
+`handoff_entry`, `handoff_end`. `HandoffEndBody.complete` defaults to `true` when
+absent, so a peer that predates the field is not read as having lost history.
+
+The properties, and what enforces each:
+
+- **Resumable** — the receiver persists `{transferId, nextChunk}` after every
+  chunk it accepts and its next request names that index. A sender that died can
+  be resumed against, because the request names the position rather than the
+  receiver's memory.
+- **Complete** — the snapshot position is read *before* the state, so a write that
+  lands during the read is in the snapshot *and* in the handoff; the other order
+  leaves it in neither. `highWaterMark` moves to `max(highWaterMark, snapshotLsn)`,
+  never down, so a peer already ahead cannot have its floor pulled down.
+- **Honest** — a handoff the sender cannot complete (its log was compacted past
+  the receiver's floor) is sent with `complete: false`; the receiver reports the
+  hole and drops its cursor so the next attempt starts against a fresh snapshot.
+- **Serial** — frames of one transfer are processed in order. With async handlers
+  interleaving, two chunks read the same `expected`, the second judged itself out
+  of order and asked for a re-send: measured as five gap requests and twelve chunk
+  frames carrying three chunks.
+
+### `FederationManager` — the control-plane surface
+
+```typescript
+manager.getAntiEntropyProtocol(): AntiEntropyProtocol;
+manager.getHeartbeat(): HeartbeatProtocol;
+manager.getBootstrap(): SnapshotBootstrap;
+manager.bootstrapFrom(peerNodeId?: string): Promise<string>;
+manager.getLsn(): number;
+manager.getProtocolStatus(): { antiEntropy, heartbeat, bootstrap, lsn };
+```
+
+`bootstrapFrom()` defaults to the first configured target. Control frames
+(`fed_heartbeat`, `fed_ae_summary`, `fed_ae_push` and the five bootstrap types)
+are routed to their protocol **before** the dedup ring and come back as
+`'protocol'` from `applyInbound()`; a control frame that no bound protocol claims
+is `'malformed'` with a reason, because "I do not know this frame" is a fact an
+operator can act on and silence is not.
+
+### Frame types and predicates
+
+The type string is the only thing that says which protocol owns a frame, so the
+constants are exported rather than spelled at each call site — a typo in a string
+literal routes a heartbeat into the replicate path and nothing reports it.
+
+| Constant | Value | Owner |
+| --- | --- | --- |
+| `HEARTBEAT_TYPE` | `fed_heartbeat` | `HeartbeatProtocol` |
+| `AE_SUMMARY_TYPE` | `fed_ae_summary` | `AntiEntropyProtocol` — digest request and reply |
+| `AE_PUSH_TYPE` | `fed_ae_push` | `AntiEntropyProtocol` — one bucket's entries |
+| `BOOTSTRAP_REQUEST_TYPE` | `bootstrap_request` | `SnapshotBootstrap` — source role |
+| `BOOTSTRAP_CHUNK_TYPE` | `bootstrap_chunk` | `SnapshotBootstrap` — receiver role |
+| `BOOTSTRAP_DONE_TYPE` | `bootstrap_done` | `SnapshotBootstrap` — receiver asks for the handoff |
+| `HANDOFF_TYPE` | `handoff_entry` | `SnapshotBootstrap` — one change after the snapshot |
+| `HANDOFF_END_TYPE` | `handoff_end` | `SnapshotBootstrap` — `complete: false` when the log could not reach back |
+
+`BOOTSTRAP_FRAME_TYPES` is the list of the five bootstrap types in one place.
+
+`isHeartbeatFrame(type)`, `isAntiEntropyFrame(type)` and `isBootstrapFrame(type)`
+answer "does this protocol own this frame?" and are what the router asks before it
+decodes anything. They are disjoint by construction: one type, one owner, so a
+frame cannot be applied twice by two protocols that both claimed it.
 
 ## Topology
 

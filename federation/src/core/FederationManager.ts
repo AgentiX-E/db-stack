@@ -34,7 +34,13 @@ import { DedupRing } from '../replication/DedupRing';
 import { buildAckFrame, CDC_ACK_TYPE } from '../replication/cdcAck';
 import { IncarnationLedger } from '../replication/epoch';
 import type { EpochStatus } from '../replication/epoch';
+import { isAntiEntropyFrame } from '../replication/antientropyFrames';
+import { isBootstrapFrame } from '../replication/bootstrapFrames';
 import { deriveRetention, type RetentionWindows } from '../storage/retention';
+import { AntiEntropyProtocol } from './AntiEntropyProtocol';
+import { HeartbeatProtocol } from './HeartbeatProtocol';
+import { SnapshotBootstrap, type BootstrapSource } from './SnapshotBootstrap';
+import { isHeartbeatFrame } from './heartbeatFrame';
 import type { InboundMessage } from '../interfaces/transport/InboundMessage';
 import type { DataEntry, DataProvider } from '../replication/AntiEntropy';
 import { EventEmitter } from 'events';
@@ -65,15 +71,17 @@ export interface ReplicatedEntry {
 /**
  * What became of an inbound frame.
  *
- * Six facts, not one boolean. `applied` and `duplicate` both mean "this node holds
- * the value"; `superseded` means it deliberately kept its own; `declined` means a
- * consumer could not put it into the local cluster; `malformed` means it could not
- * be read; `not-a-change` means the frame was a confirmation addressed to another
- * component; and `stale-epoch` means it came from an incarnation of the sender
- * that this node has already moved past.
+ * Eight facts, not one boolean. `applied` and `duplicate` both mean "this node
+ * holds the value"; `superseded` means it deliberately kept its own; `declined`
+ * means a consumer could not put it into the local cluster; `malformed` means it
+ * could not be read; `not-a-change` means the frame was a confirmation addressed
+ * to another component; `stale-epoch` means it came from an incarnation of the
+ * sender that this node has already moved past; and `protocol` means it belonged
+ * to one of the control protocols (anti-entropy, heartbeat, bootstrap) and was
+ * consumed there rather than applied as data.
  */
 export type InboundOutcome =
-  'applied' | 'duplicate' | 'superseded' | 'malformed' | 'declined' | 'not-a-change' | 'stale-epoch';
+  'applied' | 'duplicate' | 'superseded' | 'malformed' | 'declined' | 'not-a-change' | 'stale-epoch' | 'protocol';
 
 export interface ConflictEntry {
   /** The key that had a conflict */
@@ -147,6 +155,43 @@ export interface FederationManagerConfig {
    * replication and a window shorter than it is refused in the constructor.
    */
   dedupWindowMs?: number;
+  /**
+   * How often to compare Merkle digests with every target. Default 15 000. `0`
+   * turns the sweep off entirely — and with it the only mechanism that finds a
+   * divergence no write path reported.
+   */
+  antiEntropyIntervalMs?: number;
+  /** How long one digest round trip may take before it is counted as a timeout. Default 5 000. */
+  antiEntropyExchangeTimeoutMs?: number;
+  /**
+   * Datacenter heartbeat interval. Default 1 000.
+   *
+   * Also the interval the split-brain detector multiplies by its missed-beat
+   * threshold, so it is passed to both: two different numbers would make the
+   * expiry deadline describe a schedule nobody is running. `0` disables the beat,
+   * and with it detection by silence.
+   */
+  heartbeatIntervalMs?: number;
+  /** Entries per bootstrap snapshot chunk. Default 200. */
+  bootstrapChunkSize?: number;
+  /**
+   * File that remembers an interrupted bootstrap across a restart.
+   *
+   * Absent means a restart re-requests the snapshot from chunk zero, which is
+   * correct and slower. Present means the receiver resumes at the chunk it had
+   * accepted — the difference between a rebuild that takes seconds and one that
+   * takes the length of the dataset again.
+   */
+  bootstrapResumePath?: string;
+  /**
+   * How many recent changes the log handoff can reach back to. Default 10 000.
+   *
+   * A handoff starts at the receiver's floor, which is the position its snapshot
+   * corresponds to. A receiver that has been down longer than this many changes is
+   * told the handoff is incomplete, and bootstraps again from a fresh snapshot —
+   * the alternative would be a transfer that silently leaves a hole.
+   */
+  handoffLogLimit?: number;
 }
 
 export class FederationManager {
@@ -166,6 +211,21 @@ export class FederationManager {
   private _splitBrainDetector: DCSplitBrainDetector | null = null;
   private _conflictResolver: ConflictResolver | null = null;
   private _antiEntropy: AntiEntropy | null = null;
+  private _antiEntropyProtocol: AntiEntropyProtocol | null = null;
+  private _heartbeatProtocol: HeartbeatProtocol | null = null;
+  private _bootstrap: SnapshotBootstrap | null = null;
+
+  /**
+   * Position of this node's federation log, and the tail of that log.
+   *
+   * The federation layer has no log of its own — the cluster's Raft log is the
+   * durable one — but a bootstrapping peer needs an ordered answer to "what
+   * happened after position N", and this is that answer for the changes that
+   * crossed this layer. `handoffLogLimit` bounds it; a peer that fell further
+   * behind than that is told the handoff is incomplete and takes a fresh snapshot.
+   */
+  private _lsn = 0;
+  private readonly handoffLog: Array<{ lsn: number; entry: DataEntry }> = [];
 
   /**
    * The windows this side runs with, derived once from the sender's budget.
@@ -250,21 +310,64 @@ export class FederationManager {
     await this._cdcManager.start();
 
     // 3. Start Split-Brain Detector
+    //
+    // Its interval is the heartbeat's, because it is the same interval: the
+    // detector multiplies its own copy by the missed-beat threshold to decide when
+    // a peer has gone quiet, so a beat on one schedule and an expiry deadline on
+    // another would report silences that never happened.
+    const heartbeatIntervalMs = this.config.heartbeatIntervalMs ?? 1_000;
     this._splitBrainDetector = new DCSplitBrainDetector({
       nodeId: this.config.nodeId,
       dcId: this.config.dc,
       hlc: this.hlc,
+      heartbeatIntervalMs,
     });
     this._splitBrainDetector.start();
 
     // 4. Initialize ConflictResolver
     this._conflictResolver = new ConflictResolver(this.config.nodeId);
 
-    // 5. Start AntiEntropy with data provider
+    // 5. AntiEntropy, and the protocol that actually sweeps
+    //
+    // The algorithm object alone reconciles nothing: it needs a peer, and a peer
+    // needs a transport. `AntiEntropyProtocol` is the component that binds one to
+    // the other and owns the timer — which is what was missing when this class
+    // constructed an `AntiEntropy` and never started it.
     this._antiEntropy = new AntiEntropy(
       { nodeId: this.config.nodeId, merkleDepth: 4, intervalMs: 5000 },
       this.buildDataProvider(this.localStore, this.config.nodeId),
       this._conflictResolver,
+    );
+    const targets = this.config.replicationConfig.targets.map((target) => target.nodeId);
+    this._antiEntropyProtocol = new AntiEntropyProtocol(this.config.transport, this.hlc, this._antiEntropy, {
+      nodeId: this.config.nodeId,
+      targets,
+      intervalMs: this.config.antiEntropyIntervalMs ?? 15_000,
+      exchangeTimeoutMs: this.config.antiEntropyExchangeTimeoutMs ?? 5_000,
+    });
+    this._antiEntropyProtocol.start();
+
+    // 5b. The heartbeat is a frame, so it can be lost — which is the only way a
+    // silent datacenter becomes visible.
+    this._heartbeatProtocol = new HeartbeatProtocol(this.config.transport, this.hlc, this._splitBrainDetector, {
+      nodeId: this.config.nodeId,
+      dcId: this.config.dc,
+      targets,
+      intervalMs: heartbeatIntervalMs,
+    });
+    this._heartbeatProtocol.start();
+
+    // 5c. Bootstrap: the snapshot a joining datacenter never had.
+    this._bootstrap = new SnapshotBootstrap(
+      this.config.transport,
+      this.hlc,
+      this._antiEntropy,
+      this.buildBootstrapSource(),
+      {
+        nodeId: this.config.nodeId,
+        chunkSize: this.config.bootstrapChunkSize ?? 200,
+        resumeStatePath: this.config.bootstrapResumePath,
+      },
     );
 
     // 6. Start HealthMonitor
@@ -404,6 +507,16 @@ export class FederationManager {
       await this.answer(msg);
       return 'duplicate';
     }
+
+    // Control frames are not changes, and they are routed before the dedup ring
+    // for a reason that is not symmetry: a heartbeat that repeats a sequence is a
+    // duplicate *of an interval*, not of a change, and the ring would answer it
+    // with the wrong vocabulary. Each protocol carries its own idempotence — a
+    // chunk index, a sequence number, a digest that is computed again.
+    if (isHeartbeatFrame(msg.type) || isAntiEntropyFrame(msg.type) || isBootstrapFrame(msg.type)) {
+      return this.handleProtocolFrame(msg);
+    }
+
     this.dedup.put(msg.messageId);
 
     const decoded = decodeEnvelope(msg.payload, msg.type ?? 'replicate');
@@ -441,7 +554,7 @@ export class FederationManager {
       }
     }
 
-    this.localStore.set(decoded.key, {
+    const applied: DataEntry = {
       key: decoded.key,
       value: decoded.value,
       hlc: {
@@ -450,7 +563,12 @@ export class FederationManager {
         nodeId: remoteValue.hlc.nodeId,
       },
       nodeId: decoded.sourceNodeId,
-    });
+    };
+    this.localStore.set(decoded.key, applied);
+    // Recorded in the handoff log, not only in the store: an inbound change is
+    // state a bootstrapping peer may need, and the store cannot say *when* it
+    // arrived relative to anything else.
+    this.recordChange(applied);
 
     this._splitBrainDetector?.recordApply();
 
@@ -554,6 +672,13 @@ export class FederationManager {
    * key. All functions are pure with respect to the store.
    */
   private buildDataProvider(localStore: Map<string, DataEntry>, nodeId: string): DataProvider {
+    // Captured because every member below is a method of the provider object, not
+    // of this class: `this` inside them is the provider, so a direct call to
+    // `this.recordChange` would fail at runtime on the one path a bootstrap uses.
+    const record = (entry: DataEntry): void => {
+      this.recordChange(entry);
+    };
+
     return {
       async getRange(start: string, end: string): Promise<DataEntry[]> {
         const entries: DataEntry[] = [];
@@ -579,14 +704,133 @@ export class FederationManager {
         return localStore.get(key) ?? null;
       },
 
-      async apply(key: string, value: string): Promise<void> {
-        localStore.set(key, {
+      async apply(key: string, value: string, origin?): Promise<void> {
+        // The origin's clock is kept when it is given. A store that stamped
+        // `Date.now()` here would make every applied entry look newer than the one
+        // it came from, so the next anti-entropy sweep would classify this node as
+        // the divergent side and push the same bucket back — a reconciliation loop
+        // that never converges and never reports an error.
+        const entry: DataEntry = {
           key,
           value,
-          hlc: { wallTime: Date.now(), logical: 0, nodeId },
-          nodeId,
-        });
+          hlc: origin?.hlc ?? { wallTime: Date.now(), logical: 0, nodeId },
+          nodeId: origin?.nodeId ?? nodeId,
+        };
+        localStore.set(key, entry);
+        record(entry);
       },
+    };
+  }
+
+  /**
+   * Append one change to the handoff log and advance the position.
+   *
+   * Called from the three places a change becomes visible to this layer: a local
+   * write, an applied inbound frame, and an entry applied by anti-entropy or a
+   * bootstrap. The position is what a bootstrapping peer names when it says "hand
+   * me everything after this".
+   */
+  private recordChange(entry: DataEntry): number {
+    this._lsn += 1;
+    this.handoffLog.push({ lsn: this._lsn, entry });
+
+    const limit = this.config.handoffLogLimit ?? 10_000;
+    while (this.handoffLog.length > limit) this.handoffLog.shift();
+
+    return this._lsn;
+  }
+
+  /**
+   * The log a bootstrapping peer is handed off from.
+   *
+   * A gap is an error, not an empty answer. Returning `[]` for a position this
+   * node has already dropped would tell the bootstrap "handoff finished" and leave
+   * the receiver with state that has a hole in it and no way to know — the exact
+   * silent-loss shape this whole iteration exists to remove.
+   */
+  private buildBootstrapSource(): BootstrapSource {
+    return {
+      currentLsn: async () => this._lsn,
+      entriesAfter: async (lsn, limit) => {
+        const earliest = this.handoffLog[0]?.lsn;
+        if (earliest !== undefined && earliest > lsn + 1) {
+          throw new Error(
+            `this node's handoff log starts at ${earliest}, past the requested position ${lsn}: ` +
+              'the peer has been away longer than the log retains, so a snapshot is required',
+          );
+        }
+        return this.handoffLog.filter((record) => record.lsn > lsn).slice(0, limit);
+      },
+    };
+  }
+
+  /**
+   * Route a control frame to the protocol that owns it.
+   *
+   * Ordered cheapest-first, and total: a frame whose type belongs to a protocol
+   * this node has no handler for is reported as malformed rather than silently
+   * dropped, because "I do not know this frame" is a fact an operator can act on.
+   */
+  private async handleProtocolFrame(msg: InboundMessage): Promise<InboundOutcome> {
+    if (this._heartbeatProtocol?.handle(msg) === true) return 'protocol';
+    if (this._antiEntropyProtocol && (await this._antiEntropyProtocol.handle(msg))) return 'protocol';
+    if (this._bootstrap && (await this._bootstrap.handle(msg))) return 'protocol';
+
+    this._lastInboundError = `frame ${msg.messageId} is a control frame of type ${String(msg.type)} that no protocol consumed`;
+    return 'malformed';
+  }
+
+  /** The anti-entropy sweep, for a caller that wants to compare on demand. */
+  getAntiEntropyProtocol(): AntiEntropyProtocol {
+    if (!this._antiEntropyProtocol) throw new Error('AntiEntropyProtocol not started. Call start() first.');
+    return this._antiEntropyProtocol;
+  }
+
+  /** The heartbeat, for a caller that wants to beat on demand. */
+  getHeartbeat(): HeartbeatProtocol {
+    if (!this._heartbeatProtocol) throw new Error('HeartbeatProtocol not started. Call start() first.');
+    return this._heartbeatProtocol;
+  }
+
+  /** The bootstrap, for a caller that wants to bring a datacenter up to date. */
+  getBootstrap(): SnapshotBootstrap {
+    if (!this._bootstrap) throw new Error('SnapshotBootstrap not started. Call start() first.');
+    return this._bootstrap;
+  }
+
+  /**
+   * Ask a target to bring this datacenter up to date.
+   *
+   * Defaults to the first configured target, because the overwhelming majority of
+   * callers have exactly one and the alternative — making every caller read the
+   * topology config to find a node id — is how a rebuild script ends up with a
+   * hard-coded peer.
+   */
+  async bootstrapFrom(peerNodeId?: string): Promise<string> {
+    const peer = peerNodeId ?? this.config.replicationConfig.targets[0]?.nodeId;
+    if (!peer) {
+      throw new Error('no target configured to bootstrap from');
+    }
+    return this.getBootstrap().begin(peer);
+  }
+
+  /** The position of this node's federation log. */
+  getLsn(): number {
+    return this._lsn;
+  }
+
+  /** State of the three control protocols, for a status page or a test. */
+  getProtocolStatus(): {
+    antiEntropy: ReturnType<AntiEntropyProtocol['getStatus']> | null;
+    heartbeat: ReturnType<HeartbeatProtocol['getStatus']> | null;
+    bootstrap: ReturnType<SnapshotBootstrap['getStatus']> | null;
+    lsn: number;
+  } {
+    return {
+      antiEntropy: this._antiEntropyProtocol?.getStatus() ?? null,
+      heartbeat: this._heartbeatProtocol?.getStatus() ?? null,
+      bootstrap: this._bootstrap?.getStatus() ?? null,
+      lsn: this._lsn,
     };
   }
 
@@ -604,6 +848,11 @@ export class FederationManager {
     }
     this._dlqScanTimer = null;
     this._housekeepingTimer = null;
+    // Protocols first: they hold timers that would otherwise fire against a
+    // detector and an anti-entropy object that are about to be torn down.
+    this._heartbeatProtocol?.stop();
+    this._antiEntropyProtocol?.stop();
+    await this._antiEntropy?.stop();
     this.healthMonitor.stop();
     this._splitBrainDetector?.stop();
     await this._cdcManager?.stop();
@@ -658,7 +907,7 @@ export class FederationManager {
     }
 
     // Store locally (for AntiEntropy)
-    this.localStore.set(key, {
+    const stored: DataEntry = {
       key,
       value: data,
       hlc: {
@@ -667,7 +916,9 @@ export class FederationManager {
         nodeId: now.nodeId,
       },
       nodeId: this.config.nodeId,
-    });
+    };
+    this.localStore.set(key, stored);
+    this.recordChange(stored);
 
     // Record split-brain heartbeat
     this._splitBrainDetector?.recordApply();

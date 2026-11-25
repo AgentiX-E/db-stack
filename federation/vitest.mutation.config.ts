@@ -35,6 +35,23 @@ export default defineConfig({
       // asked to judge it, which is the opposite of what a mutation gate is for.
       'src/replication/epoch.test.ts',
       'src/core/FederationManager.epoch.test.ts',
+      // The control plane (IT-90). Its decisions are invisible when they are
+      // wrong: a heartbeat sequence compared with `>=` reports every interval as a
+      // duplicate so the detector never sees a silence, a chunk index compared
+      // with `!==` accepts a gap, and a Merkle bucket named from the entries
+      // rather than from the key hashes to a tree that agrees with itself. These
+      // files are the only ones that can judge those mutants; without them every
+      // one of them is reported with no coverage at all.
+      'src/replication/AntiEntropy.test.ts',
+      'src/replication/AntiEntropy.branches.test.ts',
+      'src/replication/antientropyFrames.test.ts',
+      'src/replication/bootstrapFrames.test.ts',
+      'src/core/heartbeatFrame.test.ts',
+      'src/core/AntiEntropyProtocol.test.ts',
+      'src/core/HeartbeatProtocol.test.ts',
+      'src/core/SnapshotBootstrap.test.ts',
+      'src/core/DCSplitBrainDetector.branches.test.ts',
+      'src/core/FederationManager.protocols.test.ts',
     ],
     exclude: [],
     // Derived from this suite's own measurement (2026-11-18): 90 cases in four
