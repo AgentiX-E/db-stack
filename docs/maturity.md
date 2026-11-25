@@ -221,10 +221,10 @@ would have pasted and watched fail. See §4.1 for what that found.
 
 Vitest v8 coverage, every dimension gated at ≥95 % in CI. Numbers below are from the last
 green run of this repository; the gate fails the build if any dimension drops below 95 %.
-All four rows are from the runs that accepted iterations 87 and 88, measured on the trees they
+All four rows are from the runs that accepted iterations 87, 88 and 89, measured on the trees they
 ship: `cluster` with the assemblers in it (99.47/98.34/99.72/99.47 over 147 files and 2 388 cases),
-`federation` with the query and schema modules it absorbed (99.50/98.61/100/99.50 over 84) and the
-harness (100/97.22/100/100). The `node` row is 99.75/98.84/99.87/99.75 over 3 240 cases in 160 files,
+`federation` with the query and schema modules it absorbed (99.50/98.63/100/99.50 over 86 files and
+1 365 cases) and the harness (100/97.22/100/100). The `node` row is 99.75/98.84/99.87/99.75 over 3 240 cases in 160 files,
 from `pnpm --filter @agentix-e/db-node run coverage` on the same tree the `Coverage (node)` job
 builds — because a change has to be measured on the tree it ships, and a row is reported as measured
 rather than as remembered. The previous four rows were from CI run `45339974392`, which accepted
@@ -238,7 +238,7 @@ code, and the row is reported as measured rather than as remembered.
 | Package         | Statements | Branches | Functions | Lines  |
 | --------------- | ---------- | -------- | --------- | ------ |
 | `cluster`       | 99.47%     | 98.34%   | 99.72%    | 99.47% |
-| `federation`    | 99.50%     | 98.61%   | 100%      | 99.50% |
+| `federation`    | 99.50%     | 98.63%   | 100%      | 99.50% |
 | `node`          | 99.75%     | 98.84%   | 99.87%    | 99.75% |
 | `e2e` (harness) | 100%       | 97.22%   | 100%      | 100%   |
 

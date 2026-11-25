@@ -568,3 +568,61 @@ describe('InProcessTransport — Multiple Registries', () => {
     a2.destroy();
   });
 });
+
+describe('InProcessTransport — the incarnation it stamps', () => {
+  afterEach(() => InProcessTransport.resetRegistry());
+
+  it('stamps every delivered frame, and never the caller’s object', async () => {
+    InProcessTransport.resetRegistry();
+    const sender = new InProcessTransport({ nodeId: 'node-a', registryKey: 'epoch', epoch: 4_242 });
+    const receiver = new InProcessTransport({ nodeId: 'node-b', registryKey: 'epoch' });
+    const received: TransportMessage[] = [];
+    receiver.onMessage((msg) => received.push(msg));
+
+    const original = makeMessage('node-a', 'node-b', 'stamped');
+    await sender.send(original);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]!.sourceEpoch).toBe(4_242);
+    // A copy, not a mutation: the caller owns the object it passed in, and a
+    // retry has to be stamped by the transport that sends *that* attempt.
+    expect(original.sourceEpoch).toBeUndefined();
+    expect(sender.getEpoch()).toBe(4_242);
+
+    sender.destroy();
+    receiver.destroy();
+  });
+
+  it('stamps a broadcast the same way, latency or not', async () => {
+    InProcessTransport.resetRegistry();
+    const sender = new InProcessTransport({ nodeId: 'node-a', registryKey: 'epoch-latency', epoch: 7, latencyMs: 5 });
+    const receiver = new InProcessTransport({ nodeId: 'node-b', registryKey: 'epoch-latency' });
+    const received: TransportMessage[] = [];
+    receiver.onMessage((msg) => received.push(msg));
+
+    expect(await sender.broadcast(makeMessage('node-a', '', 'fan-out'))).toBe(1);
+    // The delayed path delivers later, and it still has to carry the incarnation:
+    // a stamp attached only on the synchronous path is a stamp half the frames get.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]!.sourceEpoch).toBe(7);
+    expect(received[0]!.targetPeerId).toBe('node-b');
+
+    sender.destroy();
+    receiver.destroy();
+  });
+
+  it('defaults the incarnation to a number, so a frame is never unnameable', () => {
+    InProcessTransport.resetRegistry();
+    const transport = new InProcessTransport({ nodeId: 'node-a', registryKey: 'epoch-default' });
+
+    // `Date.now()` at construction: the best number available without asking, and
+    // never `undefined` — a peer that can name nothing is the case the receiver
+    // has to count, not the case a transport should produce by default.
+    expect(typeof transport.getEpoch()).toBe('number');
+    expect(Number.isFinite(transport.getEpoch())).toBe(true);
+
+    transport.destroy();
+  });
+});

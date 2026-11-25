@@ -1166,6 +1166,7 @@ class FederationManager {
   ): Promise<{ msgId: string }>;
   applyInbound(msg: InboundMessage): Promise<InboundOutcome>;
   getLastInboundError(): string | null;
+  getEpochStatus(): EpochStatus & { self: number | null };
   getLastAckError(): string | null;
   getLocalValue(key: string): string | undefined;
   getLocalStore(): Map<string, { key: string; value: string; hlc: IHLCTimestamp }>;
@@ -1191,7 +1192,7 @@ class FederationManager {
 
 ### `InboundOutcome`
 
-What became of an inbound frame. Six facts rather than one boolean, because a sender
+What became of an inbound frame. Seven facts rather than one boolean, because a sender
 retires an outbox entry on the answer and the answer has to be as strong as the claim
 it replaces.
 
@@ -1203,10 +1204,16 @@ it replaces.
 | `malformed` | the payload is not an envelope this build can read | `{ ok: false, error }` |
 | `declined` | a consumer could not propose it — no leader, this node is a follower, the proposal was rejected | `{ ok: false, error }` |
 | `not-a-change` | the frame is itself a confirmation; nothing was applied and nothing is answered | — |
+| `stale-epoch` | the frame came from an incarnation of the sender that this node has already moved past | `{ ok: false, error }` |
 
 `declined` releases the dedup id before it answers. Without that release the sender's
 retry would be read as a duplicate of a change that never landed — one refusal followed
 by one acknowledgement, which is a silent loss wearing two confirmations.
+
+`stale-epoch` is decided before the dedup ring is consulted, and its id is *not*
+recorded. A stale frame's id is one this node may well have applied in a previous
+incarnation of the sender; remembering it would answer the current incarnation's retry
+as a duplicate of a change that no longer exists.
 
 ### `AckTracker`
 
@@ -1234,6 +1241,53 @@ class AckTracker {
 peer's reply inside the same tick, and an answer that arrives with nothing to match it
 against is a lost answer — the entry would then wait out a budget the peer had already
 met.
+
+### `IncarnationLedger`
+
+Which incarnation of each peer this node has heard from. A datacenter that has been
+rebuilt, rolled back or re-keyed is a different incumbent of the same node id, and a
+frame from the previous one carries a world the rebuild has already replaced: applying
+it is how a deleted key comes back.
+
+```typescript
+class IncarnationLedger {
+  assess(peerId: string, epoch: number | null | undefined): EpochVerdict;
+  watermarkOf(peerId: string): number | null;
+  refusalFor(peerId: string, epoch: number): string;
+  getStatus(): EpochStatus;   // { peers, refused, advanced, epochless }
+}
+
+type EpochVerdict = 'current' | 'newer' | 'stale' | 'unnamed';
+```
+
+| Verdict | When | What happens |
+|---|---|---|
+| `current` | the epoch equals the watermark, or is the first heard from that peer | applied |
+| `newer` | a higher epoch than the watermark | applied, and the watermark rises |
+| `stale` | a lower epoch than the watermark | refused by name (`stale-epoch`), watermark unchanged |
+| `unnamed` | no epoch on the frame | applied and counted (`epochless`) |
+
+Epochs are compared only against the same peer's own watermark — never across nodes,
+because that would be a clock comparison dressed as a safety check. A peer that comes
+back *higher* is the peer rebuilt, and refusing it would take a datacenter out of
+service for having been restored. A peer that comes back *lower* is the case the
+resurrection comes from.
+
+`unnamed` is not a refusal: a peer on a build that predates the field cannot name its
+incarnation, and refusing it would make the upgrade itself the outage. It is counted
+so an operator can see how much of a fleet has not been rolled out.
+
+**Where the number comes from.** `ITransport.getEpoch()` returns the incarnation the
+transport stamps on every frame; `TcpSecureTransportOptions.epoch` (and
+`InProcessTransportConfig.epoch`) set it, defaulting to `Date.now()` at construction.
+Set it explicitly when the guarantee matters more than the default: a datacenter
+rebuilt on a host whose clock is behind the previous incarnation would otherwise take a
+number that reads as older to its peers. The number is a promise the deployment can
+keep; the default is the best one available without asking.
+
+On the wire the epoch travels on the frame's header (`FederationEnvelope.epoch`), and a
+receiver reads it into `InboundMessage.sourceEpoch`. A frame from a build that predates
+the field simply has no epoch.
 
 ### `IFederationConsumer`
 

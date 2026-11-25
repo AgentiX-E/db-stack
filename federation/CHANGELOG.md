@@ -41,6 +41,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a checkpoint, a replication worker retires or charges an entry.
   `CDCPipelineMetrics.acksReceived` / `ackTimeouts` now read the tracker's counters, so the two
   implementations cannot drift.
+- **Every frame names the incarnation that produced it, and a receiver refuses one from an
+  incarnation it has already moved past.** A datacenter that is rebuilt, rolled back or re-keyed is a
+  different incumbent of the same node id, and nothing on the wire said so: a change from the previous
+  incarnation — one the rebuild had since undone — was applied as if it had happened after the
+  rebuild, and the key it deleted came back. `FederationEnvelope.epoch` now carries the sender's
+  incarnation, `TcpSecureTransportOptions.epoch` / `InProcessTransportConfig.epoch` set it (default:
+  `Date.now()` at construction), and `IncarnationLedger` on the receiving side keeps the highest epoch
+  seen per peer and answers `stale-epoch` — a seventh `InboundOutcome` — for anything older, with the
+  reason naming the peer and both numbers. A peer that comes back *higher* is the peer rebuilt and is
+  accepted; refusing it would take a datacenter out of service for having been restored. A frame with
+  no epoch at all is applied and counted (`epochless`) rather than refused, because a peer running a
+  build that predates the field cannot name its incarnation and refusing it would make the upgrade
+  itself the outage. `getEpochStatus()` reports `{ self, peers, refused, advanced, epochless }`, with
+  `self` read from the transport so the number on the wire and the number in the report cannot
+  disagree. The check runs before the dedup ring and does not record the stale id, so the current
+  incarnation's retry of that id is applied rather than answered as a duplicate of a change that never
+  landed.
 
 ### Changed
 

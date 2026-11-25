@@ -106,6 +106,8 @@ export { buildAckFrame, CDC_ACK_TYPE, parseAck } from './replication/cdcAck';
 export type { CdcAckVerdict } from './replication/cdcAck';
 export { AckTracker } from './replication/AckTracker';
 export type { AckTrackerOptions } from './replication/AckTracker';
+export { IncarnationLedger } from './replication/epoch';
+export type { EpochVerdict, EpochStatus } from './replication/epoch';
 
 // CDC sinks. None of these were exported, so no consumer could implement a sink
 // or reach the retry/batching wrapper: the interface, the in-memory sink and the

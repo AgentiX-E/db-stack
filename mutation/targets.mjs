@@ -119,6 +119,11 @@ export const TARGETS = {
     mutate: [
       "federation/src/transport/TcpSecureTransport.ts",
       "federation/src/replication/cdcAck.ts",
+      // The epoch ledger is four comparisons and a watermark, and every one of them
+      // is a decision an operator would notice: `>` reversed refuses a rebuilt
+      // datacenter for ever, `===` widened to `>=` lets the stale frame through,
+      // and a watermark lowered on refusal makes every later frame stale too.
+      "federation/src/replication/epoch.ts",
     ],
     testConfig: "federation/vitest.mutation.config.ts",
     concurrency: 2,

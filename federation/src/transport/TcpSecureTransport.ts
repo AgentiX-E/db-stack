@@ -43,6 +43,12 @@ export interface FederationEnvelope {
   term: number;
   from: string;
   to: string;
+  /**
+   * The incarnation of the sender: `Date.now()` at construction unless the
+   * deployment names one. Absent on a frame from a build that predates this
+   * field, which the receiver counts rather than refuses.
+   */
+  epoch?: number;
   payload: unknown;
 }
 
@@ -107,6 +113,17 @@ export interface TcpSecureTransportConfig {
   initialRetryMs?: number;
   /** Max retry interval in ms (default 30000). */
   maxRetryMs?: number;
+  /**
+   * The incarnation this node stamps on every frame. Defaults to `Date.now()` at
+   * construction.
+   *
+   * Set it when the guarantee matters more than the default: a datacenter that is
+   * rebuilt from a backup, or redeployed on a host whose clock is behind the one
+   * it had, would otherwise take a number that reads as *older* to its peers and
+   * have every frame refused. The number is a promise the deployment can keep;
+   * the default is the best one available without asking.
+   */
+  epoch?: number;
   /** Test seam: inject a pre-built Raft transport instead of opening sockets. */
   _transportOverride?: IRaftTransport;
 }
@@ -138,6 +155,8 @@ export class TcpSecureTransport implements ITransport {
   private _uptimeStart = 0;
   /** Reason the most recent `send()` was refused, for diagnostics. */
   private _lastSendError: string | null = null;
+  /** The incarnation stamped on every frame this transport sends. */
+  private readonly epoch: number;
 
   // ── Reconnection state ──
   private readonly _retryTimers = new Map<string, NodeJS.Timeout>();
@@ -147,6 +166,7 @@ export class TcpSecureTransport implements ITransport {
   constructor(config: TcpSecureTransportConfig) {
     this.config = config;
     this._uptimeStart = Date.now();
+    this.epoch = config.epoch ?? Date.now();
     this.localId = requireNumericId(config.nodeId, config.transportNodeId, 'node');
 
     const peers = resolvePeers(config, this.localId);
@@ -338,6 +358,9 @@ export class TcpSecureTransport implements ITransport {
       term: 1,
       from: String(this.localId),
       to: String(targetId),
+      // On the header, not in the body: the epoch is a property of the frame that
+      // carries a change, and a body is something a sender can choose to send.
+      epoch: this.epoch,
       payload: {
         messageId: msg.messageId,
         sourcePeerId: msg.sourcePeerId,
@@ -418,6 +441,11 @@ export class TcpSecureTransport implements ITransport {
     return asString;
   }
 
+  /** The incarnation this transport stamps on every frame it sends. */
+  getEpoch(): number {
+    return this.epoch;
+  }
+
   /** Reason the most recent `send()` was refused (null when it succeeded). */
   getLastSendError(): string | null {
     return this._lastSendError;
@@ -472,6 +500,9 @@ export class TcpSecureTransport implements ITransport {
         createdAt: Date.now(),
         receivedAt: Date.now(),
         type: String(payload?.type ?? raftMsg.type),
+        // A peer on a build that predates the field sends nothing here, and
+        // `undefined` is the honest answer: this node cannot name that incarnation.
+        sourceEpoch: typeof raftMsg.epoch === 'number' ? raftMsg.epoch : undefined,
       };
 
       for (const subscriber of this.messageHandlers) subscriber(inbound);

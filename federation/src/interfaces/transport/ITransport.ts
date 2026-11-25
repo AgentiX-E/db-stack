@@ -30,4 +30,15 @@ export interface ITransport {
    * Get transport layer statistics.
    */
   getStats(): TransportStats;
+
+  /**
+   * The incarnation this transport stamps on every frame it sends.
+   *
+   * Optional because a transport that does not have one is exactly the case the
+   * receiver has to handle: a peer that cannot name its incarnation is counted
+   * (`epochless`) rather than refused. A composition root reports this rather
+   * than inventing a second number, so the epoch on the wire and the epoch in a
+   * status page cannot disagree.
+   */
+  getEpoch?(): number;
 }

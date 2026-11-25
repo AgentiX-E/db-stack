@@ -132,10 +132,10 @@ solves three problems that a single consensus group cannot:
 ## Testing
 
 ```bash
-npm test    # 1 338 tests, 84 test files
+npm test    # 1 365 tests, 86 test files
 ```
 
-- **84 test files, 1 338 tests** — unit, integration, batch, performance, chaos
+- **86 test files, 1 365 tests** — unit, integration, batch, performance, chaos
 - **CDC exactly-once chaos tests** — crash & restart resilience
 - **Cross-repo end-to-end** — db-node + db-cluster + db-federation integration
 - **Stage isolation chaos** — fault injection & latency validation

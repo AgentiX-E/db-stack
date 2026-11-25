@@ -35,6 +35,12 @@ export interface InProcessTransportConfig {
   dropRate?: number;
   /** Maximum jitter added to latency (ms) — default 0 */
   jitterMs?: number;
+  /**
+   * The incarnation this transport stamps on every frame. Defaults to
+   * `Date.now()` at construction; the same knob, and the same reason, as the
+   * TCP transport's.
+   */
+  epoch?: number;
 }
 
 export class InProcessTransport implements ITransport {
@@ -43,6 +49,8 @@ export class InProcessTransport implements ITransport {
   private readonly latencyMs: number;
   private readonly dropRate: number;
   private readonly jitterMs: number;
+  /** The incarnation stamped on every frame this transport delivers. */
+  private readonly epoch: number;
 
   private readonly emitter = new EventEmitter();
   private _connectedAt: number = 0;
@@ -63,6 +71,7 @@ export class InProcessTransport implements ITransport {
     this.latencyMs = config.latencyMs ?? 0;
     this.dropRate = Math.max(0, Math.min(1, config.dropRate ?? 0));
     this.jitterMs = config.jitterMs ?? 0;
+    this.epoch = config.epoch ?? Date.now();
 
     // Register in global registry
     let registry = globalRegistry.get(this.registryKey);
@@ -99,11 +108,11 @@ export class InProcessTransport implements ITransport {
       const delay = this.latencyMs + jitter;
 
       setTimeout(() => {
-        target._receive(message);
+        target._receive(this._stamped(message));
       }, delay);
     } else {
       // Synchronous delivery for zero-latency tests
-      target._receive(message);
+      target._receive(this._stamped(message));
     }
 
     this._stats.messagesSent++;
@@ -134,10 +143,10 @@ export class InProcessTransport implements ITransport {
         const jitter = this.jitterMs > 0 ? Math.floor(Math.random() * this.jitterMs) : 0;
         const delay = this.latencyMs + jitter;
         setTimeout(() => {
-          transport._receive(message);
+          transport._receive(this._stampedFor(message, peerId));
         }, delay);
       } else {
-        transport._receive(message);
+        transport._receive(this._stampedFor(message, peerId));
       }
 
       this._stats.messagesSent++;
@@ -146,6 +155,35 @@ export class InProcessTransport implements ITransport {
     }
 
     return sentCount;
+  }
+
+  /**
+   * The frame as this transport sends it: the caller's message plus this
+   * transport's incarnation.
+   *
+   * A copy rather than a mutation. The caller owns the object it passed in, and a
+   * retry that re-sends the same message has to be stamped by the transport that
+   * sends *that* attempt, not by the first one.
+   */
+  private _stamped(message: TransportMessage): TransportMessage {
+    return { ...message, sourceEpoch: this.epoch };
+  }
+
+  /**
+   * A broadcast frame as one named recipient receives it.
+   *
+   * `targetPeerId` is rewritten per recipient, which is what the TCP transport
+   * does with the same call: a subscriber that routes on the target id otherwise
+   * saw `''` here and its own id over a socket, and a sandbox that disagrees with
+   * production about the frame is a sandbox that hides the difference.
+   */
+  private _stampedFor(message: TransportMessage, peerId: string): TransportMessage {
+    return { ...this._stamped(message), targetPeerId: peerId };
+  }
+
+  /** The incarnation this transport stamps on every frame it delivers. */
+  getEpoch(): number {
+    return this.epoch;
   }
 
   /**

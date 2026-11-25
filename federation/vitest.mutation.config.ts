@@ -28,6 +28,13 @@ export default defineConfig({
       'src/transport/TcpSecureTransport.delivery.test.ts',
       'src/__tests__/chaos/tls-fault-injection.test.ts',
       'src/replication/ExactlyOnceCDCPipeline.ack.test.ts',
+      // Two suites for the epoch ledger: the unit file judges the comparisons and
+      // the watermark, and the manager file judges what a refusal does to a frame,
+      // an apply and a dedup id. Without them every mutant in the ledger is reported
+      // with no coverage at all — a decision file scored zero because nothing was
+      // asked to judge it, which is the opposite of what a mutation gate is for.
+      'src/replication/epoch.test.ts',
+      'src/core/FederationManager.epoch.test.ts',
     ],
     exclude: [],
     // Derived from this suite's own measurement (2026-11-18): 90 cases in four

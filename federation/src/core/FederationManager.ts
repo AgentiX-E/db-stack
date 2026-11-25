@@ -32,6 +32,8 @@ import { ConflictResolver, type ConflictValue, type ConflictStrategy } from '../
 import { AntiEntropy } from '../replication/AntiEntropy';
 import { DedupRing } from '../replication/DedupRing';
 import { buildAckFrame, CDC_ACK_TYPE } from '../replication/cdcAck';
+import { IncarnationLedger } from '../replication/epoch';
+import type { EpochStatus } from '../replication/epoch';
 import { deriveRetention, type RetentionWindows } from '../storage/retention';
 import type { InboundMessage } from '../interfaces/transport/InboundMessage';
 import type { DataEntry, DataProvider } from '../replication/AntiEntropy';
@@ -66,10 +68,12 @@ export interface ReplicatedEntry {
  * Six facts, not one boolean. `applied` and `duplicate` both mean "this node holds
  * the value"; `superseded` means it deliberately kept its own; `declined` means a
  * consumer could not put it into the local cluster; `malformed` means it could not
- * be read; and `not-a-change` means the frame was a confirmation addressed to
- * another component.
+ * be read; `not-a-change` means the frame was a confirmation addressed to another
+ * component; and `stale-epoch` means it came from an incarnation of the sender
+ * that this node has already moved past.
  */
-export type InboundOutcome = 'applied' | 'duplicate' | 'superseded' | 'malformed' | 'declined' | 'not-a-change';
+export type InboundOutcome =
+  'applied' | 'duplicate' | 'superseded' | 'malformed' | 'declined' | 'not-a-change' | 'stale-epoch';
 
 export interface ConflictEntry {
   /** The key that had a conflict */
@@ -176,6 +180,16 @@ export class FederationManager {
    * message id can arrive more than once (retry, reconnect, anti-entropy).
    */
   private readonly dedup: DedupRing;
+
+  /**
+   * Which incarnation of each peer this node has heard from.
+   *
+   * The dedup ring answers "have I applied this id"; the ledger answers "should I
+   * be listening to this sender at all". They are different questions with
+   * different lifetimes: a stale frame's id is one this node may well have
+   * applied, and releasing it as a duplicate would confirm the resurrection.
+   */
+  private readonly ledger = new IncarnationLedger();
   private _unsubInbound: (() => void) | null = null;
   private _unsubRecovered: (() => void) | null = null;
   private _dlqScanTimer: ReturnType<typeof setInterval> | null = null;
@@ -370,6 +384,20 @@ export class FederationManager {
       return 'malformed';
     }
 
+    // Before dedup, and before the payload is even looked at. A frame from an
+    // incarnation this node has moved past is not a change: it carries a world
+    // the rebuild has already replaced, and applying it is how a deleted key comes
+    // back. The id is *not* remembered either — the ring would then answer a later
+    // frame from the current incarnation as a duplicate of one from the old.
+    const epochVerdict = this.ledger.assess(msg.sourcePeerId, msg.sourceEpoch);
+    if (epochVerdict === 'stale') {
+      this._lastInboundError = this.ledger.refusalFor(msg.sourcePeerId, msg.sourceEpoch as number);
+      // Refused on the wire, not dropped: the sender is the only party that can
+      // stop retrying, and a frame that vanishes teaches it nothing.
+      await this.answer(msg, this._lastInboundError);
+      return 'stale-epoch';
+    }
+
     if (this.dedup.contains(msg.messageId)) {
       // Applied earlier — by this node, so the sender may stop retrying. Answered
       // rather than dropped: this is the retry the sender is waiting to hear about.
@@ -495,6 +523,17 @@ export class FederationManager {
   /** Reason the most recent inbound replication frame failed to apply. */
   getLastInboundError(): string | null {
     return this._lastInboundError;
+  }
+
+  /**
+   * The incarnations this node has heard from, and what it has done about them.
+   *
+   * `self` is read from the transport rather than kept here: the number on the
+   * wire and the number in this report have to be the same number, and a second
+   * copy is a second thing that can be wrong.
+   */
+  getEpochStatus(): EpochStatus & { self: number | null } {
+    return { self: this.config.transport.getEpoch?.() ?? null, ...this.ledger.getStatus() };
   }
 
   getLocalValue(key: string): string | undefined {

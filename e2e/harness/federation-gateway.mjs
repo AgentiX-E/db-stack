@@ -192,6 +192,10 @@ async function main() {
   transport = new TcpSecureTransport({
     nodeId: cfg.nodeId,
     transportNodeId: cfg.transportNodeId,
+    // The incarnation this gateway stamps on every frame. Defaulted by the
+    // transport when the suite does not name one; a scenario about a datacenter
+    // restored from an older backup has to be able to say which one it is.
+    epoch: cfg.epoch,
     listen: { host: cfg.listen.host, port: cfg.listen.port },
     peers: [
       {
@@ -336,6 +340,11 @@ async function main() {
             // the window it got is the one it set — otherwise a knob dropped on
             // the way in turns the suite into a test of the default.
             retention: federation.getRetention(),
+            // Which incarnation of each peer this gateway has heard from, and how
+            // many frames it refused for being older than one it had already
+            // passed: the only way a suite can see the epoch rule working from
+            // outside the process.
+            epochStatus: federation.getEpochStatus(),
           },
         });
       } else if (msg.cmd === 'retry-failed') {

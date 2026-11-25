@@ -150,6 +150,9 @@ function transport(override: Record<string, unknown>, extra: Partial<TcpSecureTr
     tls: TLS,
     initialRetryMs: 10,
     maxRetryMs: 40,
+    // Named rather than defaulted, so a case that asserts the stamp is asserting
+    // the configuration rather than the second the suite ran in.
+    epoch: 1_700_000_000_000,
     _transportOverride: override as never,
     ...extra,
   });
@@ -210,6 +213,9 @@ describe('TcpSecureTransport — the wire frame', () => {
       term: 1,
       from: '7',
       to: '5',
+      // On the header: the incarnation travels with the frame, not with the
+      // change inside it, so every frame family carries it the same way.
+      epoch: 1_700_000_000_000,
       payload: {
         messageId: 'msg-1',
         sourcePeerId: 'dc-east-7',
@@ -220,6 +226,41 @@ describe('TcpSecureTransport — the wire frame', () => {
     });
 
     await t.stop();
+  });
+
+  it('AC 47.1: the header carries the incarnation, and the receiver reads it back', async () => {
+    const h = harness({ connectedPeers: [5] });
+    const t = transport(h.override);
+    const received: Array<Record<string, unknown>> = [];
+    t.onMessage((msg) => received.push(msg as unknown as Record<string, unknown>));
+    await t.start();
+
+    expect(t.getEpoch()).toBe(1_700_000_000_000);
+    await t.send(message());
+    // The stamp is the transport's, not the caller's: `message()` does not carry
+    // one, and a change that had to remember to stamp itself is a change that can
+    // forget.
+    expect(h.recorded.sends[0]!.messages[0]!['epoch']).toBe(1_700_000_000_000);
+
+    h.emit({ ...inboundFrame(), epoch: 999 });
+    expect(received[0]!['sourceEpoch']).toBe(999);
+
+    // A peer on a build that predates the field. `undefined` is the honest
+    // answer — this node cannot name that incarnation — and the receiver counts
+    // it rather than refusing the peer out of service.
+    h.emit(inboundFrame());
+    expect(received[1]!['sourceEpoch']).toBeUndefined();
+
+    await t.stop();
+  });
+
+  it('AC 47.1: an epoch is what the deployment says, not what the clock says', () => {
+    // A rebuild on a host whose clock is behind takes a number that reads as
+    // older to every peer. The configuration is the promise the deployment can
+    // keep, so it wins over the default rather than being merged with it.
+    const h = harness();
+    const t = transport(h.override, { epoch: 12 });
+    expect(t.getEpoch()).toBe(12);
   });
 
   it('AC 47.1: a frame with no optional fields decodes to safe defaults', async () => {
