@@ -727,16 +727,14 @@ describe('FederationManager — what anti-entropy applies reaches the cluster', 
     types.length = 0;
     // A clock ahead of the local one, or last-write-wins keeps the local value and
     // the repair never reaches `apply()` at all.
-    await manager
-      .getAntiEntropy()
-      .applyRemote([
-        {
-          key: 'k',
-          value: 'v2',
-          hlc: { wallTime: Date.now() + 60_000, logical: 0, nodeId: 'node-b' },
-          nodeId: 'node-b',
-        },
-      ]);
+    await manager.getAntiEntropy().applyRemote([
+      {
+        key: 'k',
+        value: 'v2',
+        hlc: { wallTime: Date.now() + 60_000, logical: 0, nodeId: 'node-b' },
+        nodeId: 'node-b',
+      },
+    ]);
 
     // `insert` for a key that is already there is a claim about history that is
     // false, and a consumer that keys its own behaviour off the operation — an
