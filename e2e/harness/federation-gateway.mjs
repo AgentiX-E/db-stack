@@ -12,15 +12,29 @@
  * IPC contract
  * ------------
  *   parent → gateway : { cmd: 'replicate', key, value, type }
+ *                    | { cmd: 'adopt', key, value }
  *                    | { cmd: 'status' }
  *                    | { cmd: 'retry-failed' }
+ *                    | { cmd: 'sweep' }
+ *                    | { cmd: 'beat' }
+ *                    | { cmd: 'pause-beats' }
+ *                    | { cmd: 'resume-beats' }
+ *                    | { cmd: 'replay-heartbeat', back }
+ *                    | { cmd: 'bootstrap', peerId }
  *                    | { cmd: 'stop' }
- *   gateway → parent : { type: 'ready' | 'applied' | 'status' | 'error' | 'replicated' }
+ *   gateway → parent : { type: 'ready' | 'applied' | 'status' | 'error' | 'replicated'
+ *                             | 'adopted' | 'swept' | 'beat' | 'heartbeat-sent' | 'bootstrap' }
  */
 
 import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { RaftAdapter } from '@agentix-e/db-cluster';
-import { FederationManager, MultiLeaderReplication, OutboxStore, TcpSecureTransport } from '@agentix-e/db-federation';
+import {
+  FederationManager,
+  HEARTBEAT_TYPE,
+  MultiLeaderReplication,
+  OutboxStore,
+  TcpSecureTransport,
+} from '@agentix-e/db-federation';
 
 const RAW = process.env.FEDERATION_GATEWAY_CONFIG;
 if (!RAW) {
@@ -218,6 +232,32 @@ async function main() {
   stage('transport-start');
   await transport.start();
 
+  /**
+   * The last heartbeats this process actually wrote, in the order it wrote them.
+   *
+   * A duplicate and a late frame are things a transport does to a frame, and the
+   * only honest way to reproduce them is to send the frame again: the bytes are
+   * the product's, not a harness's reconstruction of the wire format. Recording
+   * at the transport seam is what makes that possible without the library having
+   * to publish a frame builder for a test's convenience.
+   */
+  const sentHeartbeats = [];
+  const federationTransport = new Proxy(transport, {
+    get(target, property, receiver) {
+      if (property === 'send') {
+        return async (message) => {
+          if (message?.type === HEARTBEAT_TYPE) {
+            sentHeartbeats.push(message);
+            if (sentHeartbeats.length > 32) sentHeartbeats.shift();
+          }
+          return target.send(message);
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+
   const outboxConfig = cfg.outbox ?? {};
   outbox = new OutboxStore({
     // Every knob the suite set, forwarded verbatim. This used to be four keys
@@ -263,10 +303,21 @@ async function main() {
     nodeId: cfg.nodeId,
     dc: cfg.dc,
     replicationConfig,
-    transport,
+    // The recording seam, so `replay-heartbeat` can send the product's own bytes.
+    transport: federationTransport,
     outbox,
     dlqScanIntervalMs: cfg.dlqScanIntervalMs ?? 500,
     outboxHousekeepingIntervalMs: cfg.outboxHousekeepingIntervalMs ?? 0,
+    // The control plane's intervals, forwarded verbatim from `controlPlane`.
+    //
+    // A suite that wants to watch a heartbeat expire, or to force a digest round
+    // trip in the seconds it has, has to be able to shorten the interval the
+    // protocol actually runs with. Copied key by key, a knob the manager renames
+    // would keep the production default and the scenario would measure the
+    // default instead of what it set — which is exactly the class of defect
+    // `assertGatewayConfig` exists to refuse. The parent validates the block
+    // against the manager's own configuration type before a process is spawned.
+    ...(cfg.controlPlane ?? {}),
   });
 
   stage('replication-ready');
@@ -281,6 +332,24 @@ async function main() {
     recoveredTargets.push(targetNodeId);
   });
   await federation.start();
+
+  // Tell the federation layer what this datacenter's engine already holds.
+  //
+  // The cluster is what survives a restart — it is checkpointed to `stateFile` and
+  // replayed from the Raft log — while the federation layer's replica map is
+  // derived state that starts empty. Without this replay the map is a copy of the
+  // engine only until the process restarts, and every mechanism that compares the
+  // two then compares a full store against a partial one: anti-entropy pushes back
+  // keys the datacenter already has, and a bootstrap resumed from a persisted
+  // cursor resumes into a map that is missing everything before the cursor.
+  //
+  // This is the composition root's job, not the library's: the engine is here, and
+  // the library's seam for "my engine already has this" is `adoptLocalChange`.
+  for (const [key, value] of state) {
+    await federation.adoptLocalChange(key, value, 'update');
+  }
+  stage(`replayed ${state.size} committed keys into the federation layer`);
+
   // After `start()`: the manager creates its change stream there, so the
   // accessor throws before it. No write has happened yet, so no event is lost
   // between the two statements.
@@ -325,6 +394,13 @@ async function main() {
             stateSize: state.size,
             state: Object.fromEntries(state),
             localStore: federation.getLocalStoreSize(),
+            // What the federation layer believes, key by key.
+            //
+            // `state` is what the local cluster committed; this is what
+            // anti-entropy compares. A repair that lands in one and not the other
+            // is state that a restart forgets, and a suite cannot see the
+            // difference without being able to read both.
+            localValues: Object.fromEntries([...federation.getLocalStore()].map(([key, entry]) => [key, entry.value])),
             transport: stats,
             pending: await replication.getPendingCounts(),
             replication: await replication.getStatus(),
@@ -345,8 +421,75 @@ async function main() {
             // passed: the only way a suite can see the epoch rule working from
             // outside the process.
             epochStatus: federation.getEpochStatus(),
+            // The control plane, as the three protocols see it: the root each
+            // peer claimed, how many digests were answered, how many heartbeats
+            // were dropped as out of order, how far a bootstrap got. A suite that
+            // asserts on convergence has to be able to name the mechanism that
+            // produced it, or a passing case only shows that *something* worked.
+            protocols: federation.getProtocolStatus(),
           },
         });
+      } else if (msg.cmd === 'adopt') {
+        // A change this datacenter applied without federation seeing it — what
+        // an application writing straight into the local engine produces. The
+        // write goes to the cluster first, exactly as the application's would,
+        // and only then is the federation layer told: the reverse order would
+        // claim a commit that had not happened.
+        //
+        // There is no outbox entry, so no retry and no dead letter can deliver
+        // it: the only mechanism that can is anti-entropy, which is what makes
+        // the convergence case a test of that mechanism rather than of the
+        // outbox.
+        const key = requireKey(msg.key);
+        await proposeWhenLeader(key, String(msg.value));
+        await federation.adoptLocalChange(key, String(msg.value), msg.type ?? 'update');
+        send({ type: 'adopted', nodeId: cfg.nodeId, data: { key } });
+      } else if (msg.cmd === 'sweep') {
+        await federation.getAntiEntropyProtocol().sweep();
+        send({
+          type: 'swept',
+          nodeId: cfg.nodeId,
+          data: federation.getAntiEntropyProtocol().getStatus(),
+        });
+      } else if (msg.cmd === 'beat') {
+        const delivered = await federation.getHeartbeat().beat();
+        // The sequence is reported because it is the only handle a suite has on
+        // the interval it just sent: re-sending the same frame is a duplicate,
+        // and re-sending it with a lower number is a late frame.
+        send({
+          type: 'beat',
+          nodeId: cfg.nodeId,
+          data: { delivered, seq: federation.getHeartbeat().getStatus().selfSeq },
+        });
+      } else if (msg.cmd === 'pause-beats') {
+        federation.getHeartbeat().stop();
+        send({ type: 'beat', nodeId: cfg.nodeId, data: { paused: true } });
+      } else if (msg.cmd === 'resume-beats') {
+        federation.getHeartbeat().start();
+        send({ type: 'beat', nodeId: cfg.nodeId, data: { paused: false } });
+      } else if (msg.cmd === 'replay-heartbeat') {
+        // Re-send a frame this process already wrote.
+        //
+        // `back: 0` is the most recent beat, so the peer receives the same interval
+        // twice — a transport duplicate. `back: 1` is the one before it, so the peer
+        // receives an interval it has already accepted, after a newer one — a late
+        // frame. Both are real: the payloads are the product's own, and the socket
+        // is the same mutually-authenticated one every other frame takes.
+        const back = Number(msg.back ?? 0);
+        const index = sentHeartbeats.length - 1 - back;
+        if (index < 0) {
+          throw new Error(`no heartbeat ${back} beats back (recorded: ${sentHeartbeats.length})`);
+        }
+        const frame = sentHeartbeats[index];
+        const delivered = await transport.send(frame);
+        send({
+          type: 'heartbeat-sent',
+          nodeId: cfg.nodeId,
+          data: { delivered, back, messageId: frame.messageId },
+        });
+      } else if (msg.cmd === 'bootstrap') {
+        const transferId = await federation.bootstrapFrom(msg.peerId);
+        send({ type: 'bootstrap', nodeId: cfg.nodeId, data: { transferId } });
       } else if (msg.cmd === 'retry-failed') {
         const revived = await federation.scanDeadLetters();
         send({ type: 'retry-failed', nodeId: cfg.nodeId, data: revived });

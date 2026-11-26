@@ -547,3 +547,46 @@ describe('AntiEntropy — lifecycle', () => {
     expect(a.getPeers()).toContain('n2');
   });
 });
+
+// ── What a digest is a digest of ──
+
+describe('AntiEntropy — a digest of the data, not of the data and its clocks', () => {
+  const entry = (key: string, value: string, wallTime: number, nodeId: string): DataEntry => ({
+    key,
+    value,
+    hlc: { wallTime, logical: 0, nodeId },
+    nodeId,
+  });
+
+  it('reports agreement between two nodes holding the same values from different clocks', async () => {
+    const mine = new InMemoryDataProvider();
+    const theirs = new InMemoryDataProvider();
+    mine.set('k', entry('k', 'v', 1, 'node-a'));
+    theirs.set('k', entry('k', 'v', 999, 'node-b'));
+
+    const a = new AntiEntropy({ nodeId: 'node-a', intervalMs: 60_000, merkleDepth: 4 }, mine);
+    const b = new AntiEntropy({ nodeId: 'node-b', intervalMs: 60_000, merkleDepth: 4 }, theirs);
+
+    // Every node stamps its own clock, so the same fact written through two paths
+    // — a local write here, an adopted change there, a bootstrap that kept the
+    // origin's clock — produces two different clocks. A digest that hashed them
+    // could never report agreement between two replicas that hold the same data,
+    // and the repair refuses to rewrite an equal value, so the divergence would be
+    // permanent and every sweep would burn the whole keyspace on it.
+    expect(await a.getMerkleRoot('default')).toBe(await b.getMerkleRoot('default'));
+  });
+
+  it('still sees a divergence when the values differ', async () => {
+    const mine = new InMemoryDataProvider();
+    const theirs = new InMemoryDataProvider();
+    mine.set('k', entry('k', 'v1', 1, 'node-a'));
+    theirs.set('k', entry('k', 'v2', 1, 'node-a'));
+
+    const a = new AntiEntropy({ nodeId: 'node-a', intervalMs: 60_000, merkleDepth: 4 }, mine);
+    const b = new AntiEntropy({ nodeId: 'node-b', intervalMs: 60_000, merkleDepth: 4 }, theirs);
+
+    // The clock is identical and the value is not: the case the digest exists for
+    // must not be lost to the one it was just taught to ignore.
+    expect(await a.getMerkleRoot('default')).not.toBe(await b.getMerkleRoot('default'));
+  });
+});

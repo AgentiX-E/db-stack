@@ -103,8 +103,8 @@ class InProcessTransport implements ITransport {
   getConnectedPeers(): PeerInfo[];
   getStats(): TransportStats;
   getDropStats(): { messagesDropped: number };
-  partition(): void;   // cut this node off from its registry
-  heal(): void;        // restore it
+  partition(): void; // cut this node off from its registry
+  heal(): void; // restore it
   destroy(): void;
   static resetRegistry(key?: string): void;
 }
@@ -209,7 +209,7 @@ creates the data directory, so a configuration whose windows do not contain each
 other is refused rather than opened: see [`deriveRetention`](#deriveretention).
 
 **The retry budget is time, not attempts.** A failure starts a window that is
-measured from the *first* failure — an entry that waited a minute behind a busy
+measured from the _first_ failure — an entry that waited a minute behind a busy
 peer has not spent that minute failing — and the entry is dead-lettered when the
 window is spent. Retries inside the window back off (doubling from
 `retryBackoffMs` to `retryBackoffMaxMs`), because a pump that retries the head of
@@ -283,12 +283,12 @@ had seen.
 ```typescript
 class HLC implements IHLCTimestamp {
   constructor(nodeId: string, initialWall?: bigint, initialLogical?: number);
-  readonly wallTime: bigint;   // milliseconds since epoch
-  readonly logical: number;    // tie-breaker within one millisecond
-  readonly nodeId: string;     // final tie-breaker
+  readonly wallTime: bigint; // milliseconds since epoch
+  readonly logical: number; // tie-breaker within one millisecond
+  readonly nodeId: string; // final tie-breaker
   now(): IHLCTimestamp;
   observe(remote: IHLCTimestamp): void;
-  compare(other: IHLCTimestamp): number;   // -1 | 0 | 1
+  compare(other: IHLCTimestamp): number; // -1 | 0 | 1
   serialize(): string;
   deserialize(data: string): IHLCTimestamp;
 }
@@ -358,12 +358,15 @@ class DedupRing {
   constructor(config?: DedupRingConfig);
   readonly size: number;
   contains(msgId: string): boolean;
-  put(msgId: string): boolean;    // true when the id was new, false when it was a duplicate
+  put(msgId: string): boolean; // true when the id was new, false when it was a duplicate
   delete(msgId: string): boolean;
   clear(): void;
   getStats(): {
-    size: number; totalSeen: number; totalDeduped: number;
-    totalEvicted: number; capacity: number;
+    size: number;
+    totalSeen: number;
+    totalDeduped: number;
+    totalEvicted: number;
+    capacity: number;
   };
   sweep(): void;
 }
@@ -541,7 +544,7 @@ interface ICDCSink {
 }
 ```
 
-Throwing from `emit` means *refused*. `CDCSubscriptionPump` turns a refusal into
+Throwing from `emit` means _refused_. `CDCSubscriptionPump` turns a refusal into
 a retry and, once the budget is spent, into a recorded failure; a sink that
 returns normally is taken to have accepted the batch.
 
@@ -637,7 +640,7 @@ Delivery rules, each of which is a test rather than a claim:
   batch.
 - **No silent loss.** A refusal is retried `maxEmitAttempts` times and then
   recorded in the bounded failure log (`getFailures()`) and reported as
-  `delivery_failed`. A queue that overflows drops the *newest* change — the
+  `delivery_failed`. A queue that overflows drops the _newest_ change — the
   consumer keeps a contiguous prefix — and reports `overflow` with the id of the
   first change that found no room.
 - **No stall.** A poisoned change leaves the queue after its budget is spent, so
@@ -708,11 +711,11 @@ thirteen applied, `refusals: 0`, `deadLetterCount: 0`. The pipeline now waits fo
 `cdc_ack` frame from the peer, matched by message id, and treats the four answers
 differently:
 
-| The peer's answer | What the pump does |
-|---|---|
-| applied | `markDelivered`, advance the checkpoint |
-| refused (`{ok:false, error}`) | `markFailed` at once, with the peer's reason in `lastError` |
-| silent past `ackTimeoutMs` | `markFailed`; the entry stays pending and its retry backs off |
+| The peer's answer                      | What the pump does                                                |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| applied                                | `markDelivered`, advance the checkpoint                           |
+| refused (`{ok:false, error}`)          | `markFailed` at once, with the peer's reason in `lastError`       |
+| silent past `ackTimeoutMs`             | `markFailed`; the entry stays pending and its retry backs off     |
 | nothing (the pipeline stopped waiting) | nothing — the entry keeps its place and is not charged an attempt |
 
 An ack is sent by the **receiver's caller**, after its own durable write:
@@ -724,7 +727,7 @@ retrying it.
 `processInbound()` refuses two things, and `reason` says which: `'duplicate'` (a
 confirmation is the right answer) and `'undecodable'` (it is not). An undecodable
 frame is also removed from the dedup ring, because the ring records what has been
-*applied* and this was not — left in it, the retry would look like a duplicate and a
+_applied_ and this was not — left in it, the retry would look like a duplicate and a
 caller that confirms duplicates would turn the refusal into a confirmation. A
 receiver answers an undecodable frame with `acknowledge(message, reason)`, which the
 sender treats as a refusal: the entry fails at once with the receiver's reason, and
@@ -734,7 +737,7 @@ One ordering rule is part of the contract: **a pump cycle ends at the first entr
 the peer did not confirm.** The outbox returns entries oldest-first, but a loop
 that keeps walking after a refusal sends the entries behind it, and the refused
 one's retry then lands after them — so a receiver that appends in arrival order
-records `5, 6, 4`. Entries sent behind an unconfirmed one are *not* marked
+records `5, 6, 4`. Entries sent behind an unconfirmed one are _not_ marked
 delivered even when their own acks arrived: marking them would let the checkpoint
 move past an entry that is still owed, and a duplicate is recoverable while a gap
 is not.
@@ -795,7 +798,7 @@ An empty payload is a confirmation — a peer that answered at all, on the frame
 was asked about, has said the only thing the sender needs. A body has to be JSON,
 and only an explicit `ok: false` is a refusal: treating a chatty acknowledgement as
 a failure would re-send a change that was already applied. A body that does not
-parse *is* a refusal, because taking an unreadable answer as a yes is how a lost
+parse _is_ a refusal, because taking an unreadable answer as a yes is how a lost
 change becomes an invisible one.
 
 ### The read end of the change stream
@@ -813,8 +816,8 @@ process wrote, read back through an interface any engine can implement.
 
 ### `IChangeLogReader`
 
-The seam between *where changes are recorded* and *what this package does with
-them*. Two properties are the contract: records come back in strictly
+The seam between _where changes are recorded_ and _what this package does with
+them_. Two properties are the contract: records come back in strictly
 increasing `lsn` order with none at or before the position asked for, and a
 record is only ever returned after it is durable — a record acknowledged to a
 writer and then lost in a crash is the failure this seam exists to rule out.
@@ -905,7 +908,7 @@ the tail deterministically instead of sleeping for one interval; concurrent
 calls collapse into one.
 
 Wire the engine into the pipeline with `engine` in
-`ExactlyOnceCDCPipelineConfig`, and read the resume point *before* the engine is
+`ExactlyOnceCDCPipelineConfig`, and read the resume point _before_ the engine is
 constructed:
 
 ```typescript
@@ -915,7 +918,7 @@ const checkpoint = ExactlyOnceCDCPipeline.readCheckpoint('/var/lib/app/outbox');
 const startAfterLsn = ExactlyOnceCDCPipeline.resumePosition(checkpoint);
 ```
 
-`resumePosition` returns the *earliest* position the checkpoint holds, not the
+`resumePosition` returns the _earliest_ position the checkpoint holds, not the
 latest: a tail has one cursor and a checkpoint has one position per table, so
 resuming at the latest would skip every row of a table that is behind. A replay
 is absorbed by the receiver's dedup ring; a gap is not.
@@ -1013,7 +1016,9 @@ class ConflictResolver {
   registerCustomResolver(predicate: ConflictPredicate, resolver: CustomResolver): void;
   unregisterCustomResolver(predicate: ConflictPredicate): void;
   resolve(
-    key: string, local: ConflictValue, remote: ConflictValue,
+    key: string,
+    local: ConflictValue,
+    remote: ConflictValue,
     defaultStrategy?: ConflictStrategy,
   ): Promise<ConflictResult>;
 }
@@ -1097,7 +1102,7 @@ different values is still a divergence.
 
 **`applyRemote()` keeps the origin clock it was given.** A store that stamped
 `Date.now()` made every applied entry look newer than its source, so the next
-sweep classified *this* node as the divergent side and pushed the same bucket
+sweep classified _this_ node as the divergent side and pushed the same bucket
 back — a reconciliation loop that never converges and never reports an error.
 
 ### `MerkleNode`
@@ -1127,9 +1132,9 @@ The sweep, over the wire.
 ```typescript
 class AntiEntropyProtocol {
   constructor(transport: ITransport, hlc: HLC, antiEntropy: AntiEntropy, config: AntiEntropyProtocolConfig);
-  start(): void;                       // binds every target, owns the timer. Does not sweep.
-  stop(): void;                        // unbinds, and settles every outstanding round trip.
-  sweep(): Promise<void>;              // one sweep, one at a time.
+  start(): void; // binds every target, owns the timer. Does not sweep.
+  stop(): void; // unbinds, and settles every outstanding round trip.
+  sweep(): Promise<void>; // one sweep, one at a time.
   handle(msg: InboundMessage): Promise<boolean>;
   getStatus(): AntiEntropyProtocolStatus;
 }
@@ -1146,7 +1151,7 @@ class AntiEntropyProtocol {
 Pushes are not acknowledged. A push is idempotent and a sweep repeats it, so the
 divergence is its own receipt; an ack would cost a second state machine with its
 own timeout, its own abort path and its own way of reporting a slow peer as a
-down one. A digest round trip *is* bounded: a digest that is never answered
+down one. A digest round trip _is_ bounded: a digest that is never answered
 leaves this node unable to decide anything, while a push that is never
 acknowledged leaves it with a difference it will see again. A transport that
 refuses the frame ends the wait immediately — waiting out the budget would report
@@ -1159,9 +1164,9 @@ The datacenter heartbeat as a frame.
 ```typescript
 class HeartbeatProtocol {
   constructor(transport: ITransport, hlc: HLC, detector: DCSplitBrainDetector, config: HeartbeatProtocolConfig);
-  start(): void;                       // starts the timer. Sends no beat.
+  start(): void; // starts the timer. Sends no beat.
   stop(): void;
-  beat(): Promise<number>;             // one beat, one sequence, every target.
+  beat(): Promise<number>; // one beat, one sequence, every target.
   handle(msg: InboundMessage): boolean;
   getStatus(): HeartbeatProtocolStatus;
 }
@@ -1175,11 +1180,11 @@ schedule nobody is running.
 A frame is subject to the three things a local emission is not, and each has a
 meaning the detector is allowed to draw a conclusion from:
 
-| Arrival | Verdict | Why |
-|---------|---------|-----|
-| nothing | silence | the detector's expiry scan reports it once |
-| `seq <= last` | `outOfOrder`, dropped | three copies of one interval must not look like three intervals |
-| `seq > last`, `sentAt < last` | accepted, recorded | refusing it would freeze the peer's liveness on the last good beat; a clock that stepped back is why the chain will look strange |
+| Arrival                       | Verdict               | Why                                                                                                                              |
+| ----------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| nothing                       | silence               | the detector's expiry scan reports it once                                                                                       |
+| `seq <= last`                 | `outOfOrder`, dropped | three copies of one interval must not look like three intervals                                                                  |
+| `seq > last`, `sentAt < last` | accepted, recorded    | refusing it would freeze the peer's liveness on the last good beat; a clock that stepped back is why the chain will look strange |
 
 The sequence advances **once per beat**, not once per frame: the same interval
 told to three peers is one observation, and three peers each receiving `n` is the
@@ -1198,8 +1203,14 @@ interface BootstrapSource {
 }
 
 class SnapshotBootstrap {
-  constructor(transport: ITransport, hlc: HLC, antiEntropy: AntiEntropy, source: BootstrapSource, config: SnapshotBootstrapConfig);
-  begin(peerId: string): Promise<string>;      // returns the transfer id, resumed or fresh.
+  constructor(
+    transport: ITransport,
+    hlc: HLC,
+    antiEntropy: AntiEntropy,
+    source: BootstrapSource,
+    config: SnapshotBootstrapConfig,
+  );
+  begin(peerId: string): Promise<string>; // returns the transfer id, resumed or fresh.
   handle(msg: InboundMessage): Promise<boolean>;
   getStatus(): SnapshotBootstrapStatus;
   getInboundTransfer(transferId: string): { expected: number; phase: string; highWaterMark: number } | null;
@@ -1207,7 +1218,16 @@ class SnapshotBootstrap {
 ```
 
 `SnapshotBootstrapConfig`: `nodeId`, `shardId?`, `chunkSize?` (200),
-`handoffBatchSize?` (200), `resumeStatePath?`.
+`handoffBatchSize?` (200), `resumeStatePath?`, `resumeAcrossRestarts?` (`false`).
+
+`resumeAcrossRestarts` is a statement about the consumer, not about this class: a
+cursor says "chunks 0..n-1 are already in my store", and only a store that outlives
+the process can honour it. The default refuses a cursor written by another
+instance — `lastError` says so and the transfer starts at chunk zero — because a
+`Map` inside the process does not survive it, and resuming at `n` against an empty
+map leaves everything before `n` missing while the transfer still reports
+`complete`. The in-memory `DataProvider` this package composes by default is exactly
+that case; an engine-backed provider is the other one.
 
 Five frame types: `bootstrap_request`, `bootstrap_chunk`, `bootstrap_done`,
 `handoff_entry`, `handoff_end`. `HandoffEndBody.complete` defaults to `true` when
@@ -1215,14 +1235,23 @@ absent, so a peer that predates the field is not read as having lost history.
 
 The properties, and what enforces each:
 
-- **Resumable** — the receiver persists `{transferId, nextChunk}` after every
-  chunk it accepts and its next request names that index. A sender that died can
-  be resumed against, because the request names the position rather than the
-  receiver's memory.
-- **Complete** — the snapshot position is read *before* the state, so a write that
-  lands during the read is in the snapshot *and* in the handoff; the other order
-  leaves it in neither. `highWaterMark` moves to `max(highWaterMark, snapshotLsn)`,
-  never down, so a peer already ahead cannot have its floor pulled down.
+- **Resumable** — the receiver persists `{transferId, nextChunk, instanceId}` after
+  every chunk it accepts and its next request names that index. A sender that died
+  can be resumed against, because the request names the position rather than the
+  receiver's memory; a _receiver_ that died can only be resumed when its store did
+  too (`resumeAcrossRestarts`).
+- **Complete** — the snapshot position is read _before_ the state, so a write that
+  lands during the read is in the snapshot _and_ in the handoff; the other order
+  leaves it in neither. The handoff floor is the sender's `snapshotLsn`, assigned
+  rather than maximised: two nodes' positions are counters that have never met, and
+  keeping the larger of the two asks the sender for entries after a position its
+  log never reached — an empty handoff reported as finished, over a hole.
+- **One snapshot per transfer** — a chunk carries the `snapshotLsn` it was cut
+  from, and a chunk from a different one restarts the transfer at zero
+  (`snapshotMoved`). Chunk 3 of a snapshot taken before three hundred writes is not
+  chunk 3 of the one taken after them, so splicing them skips exactly the entries
+  whose insertion shifted every boundary — and still finishes and reports
+  `complete`.
 - **Honest** — a handoff the sender cannot complete (its log was compacted past
   the receiver's floor) is sent with `complete: false`; the receiver reports the
   hole and drops its cursor so the next attempt starts against a fresh snapshot.
@@ -1255,16 +1284,16 @@ The type string is the only thing that says which protocol owns a frame, so the
 constants are exported rather than spelled at each call site — a typo in a string
 literal routes a heartbeat into the replicate path and nothing reports it.
 
-| Constant | Value | Owner |
-| --- | --- | --- |
-| `HEARTBEAT_TYPE` | `fed_heartbeat` | `HeartbeatProtocol` |
-| `AE_SUMMARY_TYPE` | `fed_ae_summary` | `AntiEntropyProtocol` — digest request and reply |
-| `AE_PUSH_TYPE` | `fed_ae_push` | `AntiEntropyProtocol` — one bucket's entries |
-| `BOOTSTRAP_REQUEST_TYPE` | `bootstrap_request` | `SnapshotBootstrap` — source role |
-| `BOOTSTRAP_CHUNK_TYPE` | `bootstrap_chunk` | `SnapshotBootstrap` — receiver role |
-| `BOOTSTRAP_DONE_TYPE` | `bootstrap_done` | `SnapshotBootstrap` — receiver asks for the handoff |
-| `HANDOFF_TYPE` | `handoff_entry` | `SnapshotBootstrap` — one change after the snapshot |
-| `HANDOFF_END_TYPE` | `handoff_end` | `SnapshotBootstrap` — `complete: false` when the log could not reach back |
+| Constant                 | Value               | Owner                                                                     |
+| ------------------------ | ------------------- | ------------------------------------------------------------------------- |
+| `HEARTBEAT_TYPE`         | `fed_heartbeat`     | `HeartbeatProtocol`                                                       |
+| `AE_SUMMARY_TYPE`        | `fed_ae_summary`    | `AntiEntropyProtocol` — digest request and reply                          |
+| `AE_PUSH_TYPE`           | `fed_ae_push`       | `AntiEntropyProtocol` — one bucket's entries                              |
+| `BOOTSTRAP_REQUEST_TYPE` | `bootstrap_request` | `SnapshotBootstrap` — source role                                         |
+| `BOOTSTRAP_CHUNK_TYPE`   | `bootstrap_chunk`   | `SnapshotBootstrap` — receiver role                                       |
+| `BOOTSTRAP_DONE_TYPE`    | `bootstrap_done`    | `SnapshotBootstrap` — receiver asks for the handoff                       |
+| `HANDOFF_TYPE`           | `handoff_entry`     | `SnapshotBootstrap` — one change after the snapshot                       |
+| `HANDOFF_END_TYPE`       | `handoff_end`       | `SnapshotBootstrap` — `complete: false` when the log could not reach back |
 
 `BOOTSTRAP_FRAME_TYPES` is the list of the five bootstrap types in one place.
 
@@ -1354,10 +1383,13 @@ class FederationManager {
   start(cdcTargets?: CDCTarget[]): Promise<void>;
   stop(): Promise<void>;
   replicate(
-    shardIdOrKey: number | string, valueOrData: string, type: string,
+    shardIdOrKey: number | string,
+    valueOrData: string,
+    type: string,
     remoteValue?: ConflictValue,
   ): Promise<{ msgId: string }>;
   applyInbound(msg: InboundMessage): Promise<InboundOutcome>;
+  adoptLocalChange(key: string, value: string, type?: 'insert' | 'update' | 'delete'): Promise<DataEntry>;
   getLastInboundError(): string | null;
   getEpochStatus(): EpochStatus & { self: number | null };
   getLastAckError(): string | null;
@@ -1381,7 +1413,41 @@ class FederationManager {
 ```
 
 `FederationManagerConfig`: `nodeId`, `dc`, `replicationConfig`, `transport`,
-`outbox`, `hlc?`, `healthConfig?`.
+`outbox`, `hlc?`, `healthConfig?`, `antiEntropyIntervalMs?`,
+`antiEntropyExchangeTimeoutMs?`, `heartbeatIntervalMs?`, `bootstrapChunkSize?`,
+`bootstrapResumePath?`, `bootstrapResumeAcrossRestarts?`, `handoffLogLimit?`,
+`dlqScanIntervalMs?`, `outboxHousekeepingIntervalMs?`, `dedupWindowMs?`.
+
+### `adoptLocalChange` — a change this layer never saw
+
+```typescript
+const entry = await manager.adoptLocalChange('user:1', 'alice', 'update');
+```
+
+Records a change that the local engine has **already committed**, and deliberately
+does not replicate it. A deployment does not write only through `replicate()`:
+applications write to the engine directly, and a change made that way is committed
+by the cluster and absent from this layer — so the replica map stops being a copy of
+the engine, and every component that compares the two compares a full store against
+a partial one. Anti-entropy then pushes back keys the datacenter already has, and a
+bootstrap resumed from a persisted cursor resumes into a map that is missing
+everything before the cursor.
+
+The method is what a composition root calls on boot to say what its engine already
+holds. There is no outbox entry, because the caller is stating that the change is
+already committed locally; sending it as well is `replicate()`.
+
+### `DataProvider.apply()` proposes before it stores
+
+`AntiEntropy` and the bootstrap apply entries through the manager's `DataProvider`,
+and that provider proposes the entry to every registered `IFederationConsumer`
+**before** writing the replica map. A value repaired into a datacenter is therefore
+committed by the cluster that hosts it, not only visible through `read()`: a local
+reader of the same key sees it, and it survives a restart because the state machine
+is what a restart replays. A refused proposal rejects the `apply()`, so the push
+that carried it fails and the next sweep repeats it — the reverse order would leave
+the map holding a value the cluster refused, and no sweep could see a difference
+again.
 
 ### `InboundOutcome`
 
@@ -1389,21 +1455,21 @@ What became of an inbound frame. Seven facts rather than one boolean, because a 
 retires an outbox entry on the answer and the answer has to be as strong as the claim
 it replaces.
 
-| Outcome | What happened | What is answered |
-|---|---|---|
-| `applied` | written to the converged store, and every consumer proposed it into the local cluster | `{ ok: true }` |
-| `duplicate` | this node already applied that message id | `{ ok: true }` |
-| `superseded` | the local value won the conflict; retrying would decide it the same way | `{ ok: true }` |
-| `malformed` | the payload is not an envelope this build can read | `{ ok: false, error }` |
-| `declined` | a consumer could not propose it — no leader, this node is a follower, the proposal was rejected | `{ ok: false, error }` |
-| `not-a-change` | the frame is itself a confirmation; nothing was applied and nothing is answered | — |
-| `stale-epoch` | the frame came from an incarnation of the sender that this node has already moved past | `{ ok: false, error }` |
+| Outcome        | What happened                                                                                   | What is answered       |
+| -------------- | ----------------------------------------------------------------------------------------------- | ---------------------- |
+| `applied`      | written to the converged store, and every consumer proposed it into the local cluster           | `{ ok: true }`         |
+| `duplicate`    | this node already applied that message id                                                       | `{ ok: true }`         |
+| `superseded`   | the local value won the conflict; retrying would decide it the same way                         | `{ ok: true }`         |
+| `malformed`    | the payload is not an envelope this build can read                                              | `{ ok: false, error }` |
+| `declined`     | a consumer could not propose it — no leader, this node is a follower, the proposal was rejected | `{ ok: false, error }` |
+| `not-a-change` | the frame is itself a confirmation; nothing was applied and nothing is answered                 | —                      |
+| `stale-epoch`  | the frame came from an incarnation of the sender that this node has already moved past          | `{ ok: false, error }` |
 
 `declined` releases the dedup id before it answers. Without that release the sender's
 retry would be read as a duplicate of a change that never landed — one refusal followed
 by one acknowledgement, which is a silent loss wearing two confirmations.
 
-`stale-epoch` is decided before the dedup ring is consulted, and its id is *not*
+`stale-epoch` is decided before the dedup ring is consulted, and its id is _not_
 recorded. A stale frame's id is one this node may well have applied in a previous
 incarnation of the sender; remembering it would answer the current incarnation's retry
 as a duplicate of a change that no longer exists.
@@ -1412,13 +1478,16 @@ as a duplicate of a change that no longer exists.
 
 The bounded wait for a confirmation, used by both senders — `ExactlyOnceCDCPipeline`
 and `MultiLeaderReplication`. It answers the question (a verdict, a timeout, or
-`aborted` when *we* stopped) and leaves the consequences to its caller: a pipeline
+`aborted` when _we_ stopped) and leaves the consequences to its caller: a pipeline
 moves a checkpoint, a replication worker retires or charges an entry.
 
 ```typescript
 class AckTracker {
-  constructor(options: { timeoutMs: number; onTimeout?: (id: string, ms: number) => void;
-                         onUnsolicited?: (id: string) => void });
+  constructor(options: {
+    timeoutMs: number;
+    onTimeout?: (id: string, ms: number) => void;
+    onUnsolicited?: (id: string) => void;
+  });
   expect(messageId: string): Promise<CdcAckVerdict>;
   handle(frame: TransportMessage): boolean;
   release(reason: string): void;
@@ -1447,23 +1516,23 @@ class IncarnationLedger {
   assess(peerId: string, epoch: number | null | undefined): EpochVerdict;
   watermarkOf(peerId: string): number | null;
   refusalFor(peerId: string, epoch: number): string;
-  getStatus(): EpochStatus;   // { peers, refused, advanced, epochless }
+  getStatus(): EpochStatus; // { peers, refused, advanced, epochless }
 }
 
 type EpochVerdict = 'current' | 'newer' | 'stale' | 'unnamed';
 ```
 
-| Verdict | When | What happens |
-|---|---|---|
-| `current` | the epoch equals the watermark, or is the first heard from that peer | applied |
-| `newer` | a higher epoch than the watermark | applied, and the watermark rises |
-| `stale` | a lower epoch than the watermark | refused by name (`stale-epoch`), watermark unchanged |
-| `unnamed` | no epoch on the frame | applied and counted (`epochless`) |
+| Verdict   | When                                                                 | What happens                                         |
+| --------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
+| `current` | the epoch equals the watermark, or is the first heard from that peer | applied                                              |
+| `newer`   | a higher epoch than the watermark                                    | applied, and the watermark rises                     |
+| `stale`   | a lower epoch than the watermark                                     | refused by name (`stale-epoch`), watermark unchanged |
+| `unnamed` | no epoch on the frame                                                | applied and counted (`epochless`)                    |
 
 Epochs are compared only against the same peer's own watermark — never across nodes,
 because that would be a clock comparison dressed as a safety check. A peer that comes
-back *higher* is the peer rebuilt, and refusing it would take a datacenter out of
-service for having been restored. A peer that comes back *lower* is the case the
+back _higher_ is the peer rebuilt, and refusing it would take a datacenter out of
+service for having been restored. A peer that comes back _lower_ is the case the
 resurrection comes from.
 
 `unnamed` is not a refusal: a peer on a build that predates the field cannot name its
@@ -1547,21 +1616,21 @@ class GraphVecFederationConsumer implements IFederationConsumer {
 
 ## Data types
 
-| Type | Where it is used |
-|------|------------------|
-| `TransportMessage` | Everything a transport carries: id, type, sender, target, payload |
-| `InboundMessage` | A received message plus the channel it arrived on |
-| `PeerInfo` | `peerId`, `address`, `connectedAt`, `latencyMs` |
-| `TransportStats` | Messages and bytes in both directions, peers connected, uptime |
-| `OutboxStats` | Total, pending and delivered entries, oldest pending timestamp |
-| `HLCStatus` | Physical and logical clock components with the owning node id |
-| `ReplicationTarget` | A replication peer: node id, DC, role, address |
-| `ReplicationStatus` | Per-target lag and pending counts |
-| `CDCChangeEvent` | One row change: table, operation, before/after, lsn, txId, HLC |
-| `CDCSubscription` / `ICDCPublication` | Slot-side bookkeeping |
-| `ReplicationSlot` / `IReplicationSlotManager` | The engine-neutral slot seam |
-| `CDCCheckpoint` | Per-table confirmed LSN, persisted across restarts |
-| `CDCPipelineMetrics` / `CDCPipelineEvent` | Pipeline counters and lifecycle events |
+| Type                                          | Where it is used                                                  |
+| --------------------------------------------- | ----------------------------------------------------------------- |
+| `TransportMessage`                            | Everything a transport carries: id, type, sender, target, payload |
+| `InboundMessage`                              | A received message plus the channel it arrived on                 |
+| `PeerInfo`                                    | `peerId`, `address`, `connectedAt`, `latencyMs`                   |
+| `TransportStats`                              | Messages and bytes in both directions, peers connected, uptime    |
+| `OutboxStats`                                 | Total, pending and delivered entries, oldest pending timestamp    |
+| `HLCStatus`                                   | Physical and logical clock components with the owning node id     |
+| `ReplicationTarget`                           | A replication peer: node id, DC, role, address                    |
+| `ReplicationStatus`                           | Per-target lag and pending counts                                 |
+| `CDCChangeEvent`                              | One row change: table, operation, before/after, lsn, txId, HLC    |
+| `CDCSubscription` / `ICDCPublication`         | Slot-side bookkeeping                                             |
+| `ReplicationSlot` / `IReplicationSlotManager` | The engine-neutral slot seam                                      |
+| `CDCCheckpoint`                               | Per-table confirmed LSN, persisted across restarts                |
+| `CDCPipelineMetrics` / `CDCPipelineEvent`     | Pipeline counters and lifecycle events                            |
 
 ## Where the exhaustive list lives
 

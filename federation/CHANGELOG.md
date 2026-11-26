@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Anti-entropy compares a peer's root instead of comparing this node's dataset with itself.**
   `AntiEntropy.syncWith(peerId)` never sent anything: it read the local dataset, built a second digest
-  from the *same* dataset, and reported the difference between two copies of one tree — which is always
+  from the _same_ dataset, and reported the difference between two copies of one tree — which is always
   nothing. The component could be constructed, `start()`ed and observed to agree with itself while no
   frame ever left the process. Three things had to change together, and the first is the one that
   mattered: the tree's leaf boundaries are now derived from the key alone (`bucketPrefix(key, depth)`
@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bucket and a peer running an older build read the same. `diff()` compares hashes rather than counts
   (the same number of entries with different values is still a divergence), `applyRemote()` keeps the
   origin clock it was given (a store that stamped `Date.now()` made every applied entry look newer than
-  its source, so the next sweep classified *this* node as the divergent side and pushed the same bucket
+  its source, so the next sweep classified _this_ node as the divergent side and pushed the same bucket
   back — a loop that never converges and never reports an error), and `syncWith()` throws for a peer it
   has not been bound to instead of returning a well-formed result describing nothing.
   `AntiEntropyProtocol` is the half that owns the socket: it binds a `MerklePeer` per target, runs the
@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never been configured. `HeartbeatProtocol` sends `fed_heartbeat` frames carrying a sequence number
   and the sender's HLC; a frame at or below the last accepted sequence is counted as `outOfOrder` and
   dropped, because three copies of one interval must not look like three intervals, and because a late
-  frame inserts a *past* clock into the detector's per-datacenter HLC chain — manufacturing exactly the
+  frame inserts a _past_ clock into the detector's per-datacenter HLC chain — manufacturing exactly the
   pattern a split brain produces. The sequence advances once per beat, not once per target: the same
   interval told to three peers is one observation. A higher sequence whose `sentAt` went backwards is
   accepted (refusing it would freeze the peer's liveness on the last good beat) and recorded, because a
@@ -51,9 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   roadmap. `SnapshotBootstrap` is both roles in one class, because whichever side restarts is the
   receiver for that transfer and the other is the source — possibly simultaneously, for its own peer.
   The position is read **before** the state, so a write that lands during the read is in the snapshot
-  *and* in the handoff; the other order leaves it in neither. The receiver persists
+  _and_ in the handoff; the other order leaves it in neither. The receiver persists
   `{transferId, nextChunk}` after every chunk it accepts, so a process that died at chunk 4 113 of ten
-  thousand resumes there, and — more importantly — a *sender* that died can be resumed against,
+  thousand resumes there, and — more importantly — a _sender_ that died can be resumed against,
   because the request names the position rather than the receiver's memory. `highWaterMark` moves to
   `max(highWaterMark, snapshotLsn)` rather than to `snapshotLsn`, so a peer already ahead of the
   snapshot cannot have its floor pulled down by someone else's older state. A handoff the sender
@@ -68,7 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bootstrapFrom(peerNodeId?)` brings this datacenter up to date (defaulting to the first configured
   target, because a rebuild script that has to read the topology to find a peer is a rebuild script
   with a hard-coded peer in it). Control frames are routed before the dedup ring, because a heartbeat
-  that repeats a sequence is a duplicate *of an interval*, not of a change, and the ring would answer
+  that repeats a sequence is a duplicate _of an interval_, not of a change, and the ring would answer
   it with the wrong vocabulary; each protocol carries its own idempotence — a chunk index, a sequence
   number, a digest that is computed again. `getLsn()` and the handoff log record every change that
   becomes visible to this layer (a local write, an applied inbound frame, an entry applied by
@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an outbox entry the moment `ITransport.send()` resolved `true`. That resolution is a statement about
   the sender's socket: a write into a connection whose peer has gone is accepted by the local kernel,
   so the queue reported deliveries the peer never made. `ReplicationConfig.acknowledgement` now
-  defaults to `'peer'`, and an entry leaves the queue on a `cdc_ack` that says *applied*; a refusal
+  defaults to `'peer'`, and an entry leaves the queue on a `cdc_ack` that says _applied_; a refusal
   fails it on the spot with the peer's reason, a silence fails it after `ackTimeoutMs`, and a stop
   releases the wait without charging an attempt. A batch is in flight at once — the wait is registered
   before each send and read after the batch — so a hundred entries cost a hundred sends and one
@@ -95,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `applied`, `duplicate` and `superseded` with `{ ok: true }`, `malformed` and `declined` with
   `{ ok: false, error }` naming what was wrong. `declined` is new and is the point — a consumer that
   cannot propose the entry into the local Raft cluster (no leader, this node is a follower, the
-  proposal was rejected) used to reject the call, which told the caller and told the *sender* nothing,
+  proposal was rejected) used to reject the call, which told the caller and told the _sender_ nothing,
   and the sender had already retired the entry. The refusal also releases the dedup id, so the retry
   is applied again rather than answered as a duplicate of a change that never landed: that pair — one
   refusal followed by one duplicate — is a silent loss wearing two acknowledgements. `not-a-change`
@@ -106,7 +106,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`AckTracker`** — the bounded wait, once. `ExactlyOnceCDCPipeline` grew the first copy (a waiter
   map, a timer per waiter, an abort path for shutdown, counters for an operator) and the replication
   worker needs the same behaviour for the same reason; two copies of "wait, but not for ever, and
-  answer `aborted` when *we* stopped" is two chances for one of them to charge a retry for our own
+  answer `aborted` when _we_ stopped" is two chances for one of them to charge a retry for our own
   shutdown. The tracker answers the question and the callers keep their consequences: a pipeline moves
   a checkpoint, a replication worker retires or charges an entry.
   `CDCPipelineMetrics.acksReceived` / `ackTimeouts` now read the tracker's counters, so the two
@@ -119,7 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   incarnation, `TcpSecureTransportOptions.epoch` / `InProcessTransportConfig.epoch` set it (default:
   `Date.now()` at construction), and `IncarnationLedger` on the receiving side keeps the highest epoch
   seen per peer and answers `stale-epoch` — a seventh `InboundOutcome` — for anything older, with the
-  reason naming the peer and both numbers. A peer that comes back *higher* is the peer rebuilt and is
+  reason naming the peer and both numbers. A peer that comes back _higher_ is the peer rebuilt and is
   accepted; refusing it would take a datacenter out of service for having been restored. A frame with
   no epoch at all is applied and counted (`epochless`) rather than refused, because a peer running a
   build that predates the field cannot name its incarnation and refusing it would make the upgrade
@@ -169,7 +169,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`CDCPipelineMetrics.acksReceived` / `ackTimeouts`**, exposed as
   `db_federation_cdc_pipeline_acks_total` and `..._ack_timeouts_total`. A rising timeout count beside
   a flat `sent` is a peer that is reachable and not applying, which no counter could say before.
-
 
 - **`@agentix-e/db-federation/testing`
   `CDCFailureInjector` implements `ICDCSink` and had no entry point and no production caller; it now
@@ -244,13 +243,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The outbox's retry budget is a window, not an attempt count.** A failed attempt now starts a
-  window measured from the *first* failure (default 60 s), retries inside it back off from
+  window measured from the _first_ failure (default 60 s), retries inside it back off from
   `retryBackoffMs` (default 50 ms) to `retryBackoffMaxMs` (default 2 s), and the head of the queue
   waits for its turn instead of being retried on every pump tick. `maxRetries` keeps its meaning as
   an optional hard cap and loses its default of 3 — at a 20 ms pump interval that default was sixty
   milliseconds of outage before changes started moving to the dead-letter queue, and a peer that was
   restarting came back to a queue of them.
-
 
 - **The documentation ships in the tarball.** `files` listed `dist`, `README.md` and
   `CHANGELOG.md`, so `docs/api-reference.md` and the new `docs/testing.md` were absent from
@@ -347,6 +345,35 @@ baseMs, maxMs, maxRetries)` is exported so the boundary can be asserted directly
 
 ### Fixed
 
+- **A digest that hashed the clock could never report agreement between two replicas holding the same
+  data.** `hashEntries` included `hlc.wallTime`, `hlc.logical` and `hlc.nodeId`, so two nodes that held
+  one identical value from two clocks — a local write here, an adopted change there, a bootstrap that
+  kept the origin's clock — produced two different hashes for one fact. `applyRemote` treats "same
+  value, different clock" as agreement and skips it, so the two halves of the protocol disagreed: every
+  sweep reported a divergent bucket, the repair refused to change it, and the divergence was permanent
+  while each interval burned the whole keyspace. The digest now covers the key and the value. The clock
+  is still what settles a conflict, and a conflict is a difference in the value.
+- **A bootstrapping datacenter pushed its own position into the sender's log and was handed nothing.**
+  `highWaterMark` was seeded from `currentLsn()` on the receiving side and then advanced with
+  `Math.max(receiver, sender)` — two counters that have never met. A receiver that had applied more
+  changes than the sender's snapshot covered kept its own larger number, asked for entries after a
+  position the sender's log never reached, received an empty handoff, and reported the transfer
+  complete over the gap. The floor is the sender's snapshot position, assigned rather than maximised,
+  and it starts at zero until a chunk says what it is.
+- **A transfer resumed against a different snapshot spliced two datasets together.** A chunk carries the
+  `snapshotLsn` it was cut from, and the receiver accepted one whose position did not match — chunk 3 of
+  a snapshot taken before three hundred writes is not chunk 3 of the one taken after them, so the
+  resumed transfer skipped exactly the entries whose insertion shifted every boundary, and finished and
+  reported `complete`. Counted as `snapshotMoved` in `SnapshotBootstrapStatus`, and the transfer now
+  restarts from chunk zero against the new snapshot, which is safe because re-applying an entry is
+  idempotent and keeps its original clock.
+- **A persisted bootstrap cursor was honoured by a process that could not vouch for it.** The cursor
+  says "chunks 0..n-1 are in my store", and a store that is a `Map` inside the process does not survive
+  it: resuming at chunk `n` against an empty map left the joining datacenter with everything after `n`
+  and nothing before it, and the transfer still reported success. Every cursor is now stamped with the
+  instance that wrote it, and a cursor written by another process is refused — with the reason in
+  `lastError` — unless the consumer has said its store is durable (`resumeAcrossRestarts`, default
+  `false`, exposed as `FederationManagerConfig.bootstrapResumeAcrossRestarts`).
 - **A dead peer was written off one entry per backoff, so an outage of any size outlasted the
   retry window it was supposed to be bounded by.** The replication worker charges the head of the
   queue when a send fails, and the batch used to end there: the entries behind it stayed pending

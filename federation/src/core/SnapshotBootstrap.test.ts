@@ -151,6 +151,12 @@ interface PeerOptions {
    */
   defaultChunkSize?: boolean;
   resumeStatePath?: string;
+  /**
+   * Say that the provider's store outlives the process, so a cursor written by
+   * another one may be honoured. The in-memory provider every case here uses does
+   * not, which is the default and is what most of these cases rely on.
+   */
+  resumeAcrossRestarts?: boolean;
   latencyMs?: number;
 }
 
@@ -162,6 +168,7 @@ function peer(id: string, registryKey: string, source: BootstrapSource, options:
     nodeId: id,
     ...(options.defaultChunkSize ? {} : { chunkSize: options.chunkSize ?? 2 }),
     resumeStatePath: options.resumeStatePath,
+    resumeAcrossRestarts: options.resumeAcrossRestarts,
   });
   const unsubscribe = transport.onMessage((msg) => {
     void bootstrap.handle(msg).catch(() => undefined);
@@ -336,7 +343,12 @@ describe('SnapshotBootstrap — resuming an interrupted transfer', () => {
 
     const source = keep(peer('dc-a', key, new MemoryLog(), { chunkSize: 1 }));
     for (let i = 0; i < 6; i += 1) source.provider.put(`k${i}`, `v${i}`);
-    const receiver = keep(peer('dc-b', key, new MemoryLog(), { chunkSize: 1, resumeStatePath: resumePath }));
+    // `resumeAcrossRestarts`: this case is about what a cursor *says*, and the
+    // store is asserted to back the claim. Without it the cursor is a stranger's,
+    // which the next case covers.
+    const receiver = keep(
+      peer('dc-b', key, new MemoryLog(), { chunkSize: 1, resumeStatePath: resumePath, resumeAcrossRestarts: true }),
+    );
 
     const transferId = await receiver.bootstrap.begin('dc-a');
     await waitFor(() => receiver.bootstrap.getStatus().completed.length === 1, 3_000, 'the resumed transfer');
@@ -361,13 +373,40 @@ describe('SnapshotBootstrap — resuming an interrupted transfer', () => {
     const source = keep(peer('dc-a', key, new MemoryLog(), { chunkSize: 1 }));
     source.provider.put('k0', 'v0');
     source.provider.put('k1', 'v1');
-    const receiver = keep(peer('dc-b', key, new MemoryLog(), { chunkSize: 1, resumeStatePath: resumePath }));
+    const receiver = keep(
+      peer('dc-b', key, new MemoryLog(), { chunkSize: 1, resumeStatePath: resumePath, resumeAcrossRestarts: true }),
+    );
 
     await receiver.bootstrap.begin('dc-a');
     await waitFor(() => receiver.bootstrap.getStatus().completed.length === 1, 3_000, 'the transfer to finish');
 
     expect(receiver.bootstrap.getStatus().chunksReceived).toBe(0);
     expect(receiver.bootstrap.getStatus().completed[0]).toMatchObject({ chunks: 2 });
+  });
+
+  it('refuses a cursor another process wrote, and says so', async () => {
+    const resumePath = join(dir, 'foreign.json');
+    // Exactly what a restart finds after a process died mid-transfer. The cursor is
+    // true about the process that wrote it and false about this one: the store it
+    // counted chunks into did not survive, so resuming at chunk 2 leaves the first
+    // two chunks missing and still reports the transfer complete.
+    writeFileSync(
+      resumePath,
+      JSON.stringify({ 'dc-a': { transferId: 'other-process', nextChunk: 2, instanceId: 'dead-instance' } }),
+    );
+
+    const source = keep(peer('dc-a', key, new MemoryLog(), { chunkSize: 1 }));
+    for (let i = 0; i < 3; i += 1) source.provider.put(`k${i}`, `v${i}`);
+    const receiver = keep(peer('dc-b', key, new MemoryLog(), { chunkSize: 1, resumeStatePath: resumePath }));
+
+    const transferId = await receiver.bootstrap.begin('dc-a');
+    await waitFor(() => receiver.bootstrap.getStatus().completed.length === 1, 3_000, 'the transfer');
+
+    expect(transferId).not.toBe('other-process');
+    expect(receiver.bootstrap.getStatus().lastError).toMatch(/written by another process/);
+    // All three, not just the one after the stranger's cursor.
+    expect(receiver.provider.data.size).toBe(3);
+    expect(receiver.bootstrap.getStatus().chunksReceived).toBe(3);
   });
 
   it('starts from zero when there is no cursor yet', async () => {
@@ -832,5 +871,117 @@ describe('SnapshotBootstrap — a link that goes away mid-transfer', () => {
     expect(receiver.provider.data.size).toBe(2);
 
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ── What a position means ──
+
+describe('SnapshotBootstrap — positions, and the snapshot they are positions in', () => {
+  const spares: InProcessTransport[] = [];
+  const peers: Peer[] = [];
+
+  afterEach(() => {
+    for (const opened of peers) opened.unsubscribe();
+    peers.length = 0;
+    for (const transport of spares) transport.destroy();
+    spares.length = 0;
+  });
+
+  it('restarts the transfer from zero when a chunk belongs to another snapshot', async () => {
+    const key = `bs-moved-${Math.random().toString(36).slice(2)}`;
+    // Somebody at the peer's address with nothing behind it: the receiver's
+    // requests are accepted by the transport and answered by nobody, so the order
+    // of chunks is the suite's rather than the sender's.
+    const silent = new InProcessTransport({ nodeId: 'dc-a', registryKey: key });
+    spares.push(silent);
+    const receiver = peer('dc-b', key, new MemoryLog(), { chunkSize: 10 });
+    peers.push(receiver);
+
+    const transferId = await receiver.bootstrap.begin('dc-a');
+    const chunk = (chunkIndex: number, snapshotLsn: number, entryKey: string) =>
+      frame(BOOTSTRAP_CHUNK_TYPE, 'dc-a', 'dc-b', {
+        transferId,
+        shardId: 'default',
+        chunkIndex,
+        totalChunks: 4,
+        snapshotLsn,
+        entries: [record(chunkIndex + 1, entryKey, `v-${entryKey}`).entry],
+      });
+
+    await receiver.bootstrap.handle(chunk(0, 5, 'a'));
+    await waitFor(() => receiver.bootstrap.getStatus().chunksReceived === 1, 3_000, 'the first chunk');
+    await receiver.bootstrap.handle(chunk(1, 5, 'b'));
+    await waitFor(() => receiver.bootstrap.getStatus().chunksReceived === 2, 3_000, 'the second chunk');
+
+    const halfway = receiver.bootstrap.getStatus();
+    expect(halfway.chunksReceived).toBe(2);
+    expect(halfway.transfers.inbound[0]?.expected).toBe(2);
+
+    // A third chunk of a snapshot taken four writes later. The index is a position
+    // in a dataset, and this is not that dataset: splicing it on would skip
+    // exactly the entries whose insertion shifted every boundary after them — and
+    // the transfer would still finish and report `complete`.
+    await receiver.bootstrap.handle(chunk(2, 9, 'c'));
+    await waitFor(() => receiver.bootstrap.getStatus().snapshotMoved === 1, 3_000, 'the restart');
+
+    const reset = receiver.bootstrap.getStatus();
+    expect(reset.snapshotMoved).toBe(1);
+    expect(reset.lastError).toMatch(/restarting from chunk 0/);
+    expect(reset.chunksReceived).toBe(2);
+    expect(reset.transfers.inbound[0]?.expected).toBe(0);
+    // The chunk of the other snapshot was never applied: half of a dataset with a
+    // hole in it is worse than none of it.
+    expect(receiver.provider.data.has('c')).toBe(false);
+
+    // And the new snapshot is transferable in full, from the position the transfer
+    // was reset to.
+    for (let index = 0; index < 4; index += 1) {
+      await receiver.bootstrap.handle(chunk(index, 9, `n${index}`));
+    }
+    await waitFor(() => receiver.bootstrap.getStatus().chunksReceived === 6, 3_000, 'the whole new snapshot');
+
+    const done = receiver.bootstrap.getStatus();
+    expect(done.chunksReceived).toBe(6);
+    expect(done.transfers.inbound[0]?.phase).toBe('handoff');
+    // The two entries of the abandoned snapshot stay: they were applied with their
+    // own clocks and a re-application is idempotent, so the restart costs work and
+    // not correctness. What must not happen is a hole, and there is none — the
+    // complete new snapshot is here as well.
+    expect(receiver.provider.data.size).toBe(6);
+    expect(receiver.provider.data.has('n3')).toBe(true);
+  });
+});
+
+describe('SnapshotBootstrap — the floor belongs to the sender', () => {
+  const peers: Peer[] = [];
+
+  afterEach(() => {
+    for (const opened of peers) opened.unsubscribe();
+    peers.length = 0;
+  });
+
+  it('asks for the handoff from the sender’s snapshot position, not its own', async () => {
+    const key = `bs-floor-${Math.random().toString(36).slice(2)}`;
+    // The sender's log is at position 1 and has one more change behind the
+    // snapshot; the receiver has written five changes of its own, so its own
+    // position is 5.
+    const source = peer('dc-a', key, new ScriptedLog(1, [record(2, 'after', 'v2')]), { chunkSize: 10 });
+    peers.push(source);
+    source.provider.put('in-snapshot', 'v1');
+
+    const receiverLog = new MemoryLog();
+    for (let i = 0; i < 5; i += 1) receiverLog.append(`local-${i}`, `v${i}`);
+    const receiver = peer('dc-b', key, receiverLog, { chunkSize: 10 });
+    peers.push(receiver);
+
+    await receiver.bootstrap.begin('dc-a');
+    await waitFor(() => receiver.bootstrap.getStatus().completed.length === 1, 3_000, 'the transfer');
+
+    // Two independent counters have never met: 5 here and 1 there are not ordered.
+    // Taking the larger asks the sender for changes after a position its log never
+    // reached, and the answer is nothing — a handoff that "completed" while
+    // dropping the one change the snapshot did not cover.
+    expect(receiver.bootstrap.getStatus().handoffApplied).toBe(1);
+    expect(receiver.provider.data.get('after')?.value).toBe('v2');
   });
 });

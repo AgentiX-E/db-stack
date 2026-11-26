@@ -16,7 +16,7 @@ import { join, resolve } from 'node:path';
 import { useTestTmpRoot } from '../../scripts/test-tmpdir.mjs';
 import { generateClusterCerts } from '@agentix-e/db-cluster/testing';
 import type { TestClusterCerts } from '@agentix-e/db-cluster/testing';
-import type { OutboxStoreConfig } from '@agentix-e/db-federation';
+import type { FederationManagerConfig, OutboxStoreConfig } from '@agentix-e/db-federation';
 
 const HARNESS_DIR = resolve(import.meta.dirname, '.');
 
@@ -48,7 +48,15 @@ export interface NodeMessage {
     | 'written'
     | 'done'
     // The CDC relay's answer to `release`, which lifts the receiver's `applyLimit`.
-    | 'released';
+    | 'released'
+    // The federation gateway's control-plane answers: a change adopted from the
+    // local engine, a sweep the suite asked for, a heartbeat it sent or injected,
+    // and the transfer id a bootstrap started with.
+    | 'adopted'
+    | 'swept'
+    | 'beat'
+    | 'heartbeat-sent'
+    | 'bootstrap';
   nodeId: number | string;
   data?: unknown;
   fatal?: boolean;
@@ -640,28 +648,71 @@ const OUTBOX_REQUEST_KEYS: ReadonlyArray<keyof OutboxStoreConfig> = [
  * needs a boot to discover is a 90-second way to read a message this function
  * can produce immediately.
  */
+/**
+ * The `controlPlane` keys a suite may set, named against the manager's own
+ * configuration type.
+ *
+ * Same rule as `OUTBOX_REQUEST_KEYS`: a field the manager renames stops compiling
+ * here instead of being quietly replaced by a production default at boot. The
+ * intervals are the point — a scenario that wants to see a heartbeat expire, or a
+ * digest round trip complete inside the seconds it has, must set the interval the
+ * protocol actually runs with, not the one the suite believes it set.
+ */
+const CONTROL_PLANE_REQUEST_KEYS: ReadonlyArray<keyof FederationManagerConfig> = [
+  'antiEntropyIntervalMs',
+  'antiEntropyExchangeTimeoutMs',
+  'heartbeatIntervalMs',
+  'bootstrapChunkSize',
+  'bootstrapResumePath',
+  'handoffLogLimit',
+  'dlqScanIntervalMs',
+  'outboxHousekeepingIntervalMs',
+];
+
 export function assertGatewayConfig(config: Record<string, unknown>): void {
-  const outbox = config.outbox;
-  if (outbox === undefined) return;
-  if (typeof outbox !== 'object' || outbox === null || Array.isArray(outbox)) {
-    const shape = outbox === null ? 'null' : Array.isArray(outbox) ? 'an array' : typeof outbox;
-    throw new Error(`gateway outbox must be an object, got ${shape}`);
-  }
-  const unknown = Object.keys(outbox).filter(
-    (key) => !(OUTBOX_REQUEST_KEYS as readonly string[]).includes(key) && !GATEWAY_OWNED_OUTBOX_KEYS.includes(key),
-  );
-  if (unknown.length > 0) {
-    throw new Error(
-      `gateway outbox has ${unknown.length === 1 ? 'a key' : 'keys'} the store does not read: ${unknown.join(', ')}` +
-        ` (accepted: ${OUTBOX_REQUEST_KEYS.join(', ')})`,
+  assertObjectBlock('outbox', config.outbox);
+  assertObjectBlock('controlPlane', config.controlPlane);
+
+  const outbox = config.outbox as Record<string, unknown> | undefined;
+  if (outbox) {
+    const unknown = Object.keys(outbox).filter(
+      (key) => !(OUTBOX_REQUEST_KEYS as readonly string[]).includes(key) && !GATEWAY_OWNED_OUTBOX_KEYS.includes(key),
     );
+    if (unknown.length > 0) {
+      throw new Error(
+        `gateway outbox has ${unknown.length === 1 ? 'a key' : 'keys'} the store does not read: ${unknown.join(', ')}` +
+          ` (accepted: ${OUTBOX_REQUEST_KEYS.join(', ')})`,
+      );
+    }
+    const owned = Object.keys(outbox).filter((key) => GATEWAY_OWNED_OUTBOX_KEYS.includes(key));
+    if (owned.length > 0) {
+      throw new Error(
+        `gateway outbox.${owned.join(', ')} ${owned.length === 1 ? 'is' : 'are'} set by the gateway, not by the suite` +
+          ' (the outbox directory comes from `outboxDir`)',
+      );
+    }
   }
-  const owned = Object.keys(outbox).filter((key) => GATEWAY_OWNED_OUTBOX_KEYS.includes(key));
-  if (owned.length > 0) {
-    throw new Error(
-      `gateway outbox.${owned.join(', ')} ${owned.length === 1 ? 'is' : 'are'} set by the gateway, not by the suite` +
-        ' (the outbox directory comes from `outboxDir`)',
+
+  const controlPlane = config.controlPlane as Record<string, unknown> | undefined;
+  if (controlPlane) {
+    const unknown = Object.keys(controlPlane).filter(
+      (key) => !(CONTROL_PLANE_REQUEST_KEYS as readonly string[]).includes(key),
     );
+    if (unknown.length > 0) {
+      throw new Error(
+        `gateway controlPlane has ${unknown.length === 1 ? 'a key' : 'keys'} the manager does not read: ` +
+          `${unknown.join(', ')} (accepted: ${CONTROL_PLANE_REQUEST_KEYS.join(', ')})`,
+      );
+    }
+  }
+}
+
+/** Refuse a block that is present but is not an object with keys. */
+function assertObjectBlock(name: string, block: unknown): void {
+  if (block === undefined) return;
+  if (typeof block !== 'object' || block === null || Array.isArray(block)) {
+    const shape = block === null ? 'null' : Array.isArray(block) ? 'an array' : typeof block;
+    throw new Error(`gateway ${name} must be an object, got ${shape}`);
   }
 }
 

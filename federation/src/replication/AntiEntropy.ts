@@ -355,6 +355,20 @@ export class AntiEntropy implements IAntiEntropy {
    * The prefix leads the hash so that the same entry set cannot be reported as
    * agreement when it moved: without it, a value that left bucket `01` for `10`
    * would leave both buckets' contents looking equal to a peer's.
+   *
+   * The key and the value, and nothing else. The clock is deliberately not hashed,
+   * because a digest that included it could never report agreement between two
+   * replicas that hold the same data: every node stamps its own clock, so the same
+   * value written through two paths — a local write here, an adopted change there,
+   * a bootstrap that kept the origin's clock — produces two different hashes for
+   * one fact. `applyRemote` already treats "same value, different clock" as
+   * agreement and skips it, so a clock-sensitive digest made the two halves of the
+   * protocol disagree: the sweep reported a divergent bucket for ever and the
+   * repair refused to change it, burning the whole keyspace every interval on a
+   * divergence that did not exist.
+   *
+   * The clock is still what settles a conflict, and a conflict is a difference in
+   * the *value* — which is what this hash sees.
    */
   private hashEntries(prefix: string, entries: DataEntry[]): string {
     if (entries.length === 0) return EMPTY_BUCKET_HASH;
@@ -363,9 +377,6 @@ export class AntiEntropy implements IAntiEntropy {
     for (const entry of entries) {
       hasher.update(entry.key);
       hasher.update(entry.value);
-      hasher.update(String(entry.hlc.wallTime));
-      hasher.update(String(entry.hlc.logical));
-      hasher.update(entry.hlc.nodeId);
     }
     return hasher.digest('hex');
   }

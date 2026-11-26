@@ -184,6 +184,15 @@ export interface FederationManagerConfig {
    */
   bootstrapResumePath?: string;
   /**
+   * Honour a bootstrap cursor this process did not write. Default `false`.
+   *
+   * A cursor claims the chunks before it are already in the store, and this
+   * manager's replica map is a `Map`: it does not survive the process. Set this
+   * only when the consumers behind `proposeReplicated` give the map a durable
+   * source to be re-derived from — see `SnapshotBootstrapConfig`.
+   */
+  bootstrapResumeAcrossRestarts?: boolean;
+  /**
    * How many recent changes the log handoff can reach back to. Default 10 000.
    *
    * A handoff starts at the receiver's floor, which is the position its snapshot
@@ -367,6 +376,7 @@ export class FederationManager {
         nodeId: this.config.nodeId,
         chunkSize: this.config.bootstrapChunkSize ?? 200,
         resumeStatePath: this.config.bootstrapResumePath,
+        resumeAcrossRestarts: this.config.bootstrapResumeAcrossRestarts ?? false,
       },
     );
 
@@ -679,6 +689,38 @@ export class FederationManager {
       this.recordChange(entry);
     };
 
+    /**
+     * Commit a repaired entry to the local cluster before adopting it here.
+     *
+     * Anti-entropy and the bootstrap wrote only to the replica map, so a value
+     * repaired into a datacenter was readable through federation and invisible to
+     * the cluster that hosts it: `read()` returned the repaired value while a
+     * local reader of the same key returned the old one, and a restart lost the
+     * repair because the state machine is what a restart replays. Two readings of
+     * one key disagreeing is the defect this whole layer exists to remove, so the
+     * proposal comes first and the map is written only once the cluster has it —
+     * a refused proposal leaves nothing changed here, and the next sweep repeats
+     * the push, whereas the reverse order would leave the map holding a value the
+     * cluster refused and no sweep able to see a difference again.
+     */
+    const commit = async (entry: DataEntry, type: 'insert' | 'update'): Promise<void> => {
+      const stamp = makeHLC(BigInt(entry.hlc.wallTime), entry.hlc.logical, entry.hlc.nodeId);
+      for (const consumer of this.consumers) {
+        await consumer.proposeReplicated({
+          key: entry.key,
+          data: entry.value,
+          type,
+          sourceDc: entry.nodeId,
+          sourceNodeId: entry.nodeId,
+          hlcTimestamp: stamp,
+        });
+      }
+    };
+
+    const recordApply = (): void => {
+      this._splitBrainDetector?.recordApply();
+    };
+
     return {
       async getRange(start: string, end: string): Promise<DataEntry[]> {
         const entries: DataEntry[] = [];
@@ -716,8 +758,10 @@ export class FederationManager {
           hlc: origin?.hlc ?? { wallTime: Date.now(), logical: 0, nodeId },
           nodeId: origin?.nodeId ?? nodeId,
         };
+        await commit(entry, localStore.has(key) ? 'update' : 'insert');
         localStore.set(key, entry);
         record(entry);
+        recordApply();
       },
     };
   }
@@ -857,6 +901,58 @@ export class FederationManager {
     this._splitBrainDetector?.stop();
     await this._cdcManager?.stop();
     await this.replication.stop();
+  }
+
+  /**
+   * Adopt a change this datacenter already applied, without replicating it.
+   *
+   * A deployment does not write only through `replicate()`. Applications write to
+   * the local engine directly, and a change made that way is committed by the
+   * cluster and absent from this layer — so the replica map stops being a copy of
+   * the engine, and anti-entropy compares a map that is missing entries against a
+   * peer that has them. Which way that resolves is then an accident of sweep
+   * direction rather than a decision: the peer's copy may be pushed back, or this
+   * node's missing entry may never be noticed at all.
+   *
+   * There is deliberately no outbox entry. The caller is stating that the change
+   * is already committed locally and what this layer needs is to know about it —
+   * sending it as well would be `replicate()`, which is the other method.
+   */
+  async adoptLocalChange(
+    key: string,
+    value: string,
+    type: 'insert' | 'update' | 'delete' = 'update',
+  ): Promise<DataEntry> {
+    const now = this.hlc.now();
+    const entry: DataEntry = {
+      key,
+      value,
+      hlc: { wallTime: Number(now.wallTime), logical: now.logical, nodeId: now.nodeId },
+      nodeId: this.config.nodeId,
+    };
+
+    this.localStore.set(key, entry);
+    const lsn = this.recordChange(entry);
+    this._splitBrainDetector?.recordApply();
+
+    // A change the CDCs of this datacenter have not seen either. Captured here
+    // rather than left to the caller, because the caller's reason for adopting is
+    // that the write bypassed this layer entirely — a sink that never receives it
+    // would be a second component with the same blind spot.
+    if (this._cdcManager?.isStarted()) {
+      await this._cdcManager.capture({
+        eventId: `adopted:${lsn}`,
+        key,
+        value,
+        type,
+        sourceNodeId: this.config.nodeId,
+        sourceDc: this.config.dc,
+        hlcTimestamp: { ...entry.hlc },
+        appliedAt: Date.now(),
+      });
+    }
+
+    return entry;
   }
 
   /**

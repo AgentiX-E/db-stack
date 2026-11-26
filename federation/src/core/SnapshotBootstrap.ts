@@ -86,6 +86,19 @@ export interface SnapshotBootstrapConfig {
    * the idempotent chunk application makes it safe either way.
    */
   resumeStatePath?: string;
+  /**
+   * Honour a cursor this process did not write. Default `false`.
+   *
+   * A cursor says "chunks 0..n-1 are already in my store". Only the store can
+   * vouch for that, and a store that is a `Map` inside the process does not
+   * survive it: resuming at chunk `n` against an empty map leaves everything
+   * before `n` missing, and the transfer still finishes and reports `complete`.
+   *
+   * Set this only when the data provider's backing store outlives the process —
+   * an engine-backed provider does, the in-memory default does not. It is a
+   * statement about the consumer, which is why it is the consumer's to make.
+   */
+  resumeAcrossRestarts?: boolean;
 }
 
 // ── State ──
@@ -140,6 +153,8 @@ export interface SnapshotBootstrapStatus {
   duplicateChunks: number;
   /** Requests sent because a chunk arrived out of order. */
   gapRequests: number;
+  /** Transfers restarted because the sender's snapshot changed under them. */
+  snapshotMoved: number;
   malformed: number;
   /** Frames for a transfer this node has no record of. */
   unknownTransfers: number;
@@ -158,6 +173,14 @@ export class SnapshotBootstrap {
   private readonly config: Required<Omit<SnapshotBootstrapConfig, 'resumeStatePath'>> & {
     resumeStatePath: string | null;
   };
+
+  /**
+   * This instance's identity, stamped on every cursor it writes.
+   *
+   * Not the node id: two processes of the same node are exactly the case where the
+   * store did not survive, and a node id would say the opposite.
+   */
+  private readonly instanceId = randomUUID();
   private readonly inbound = new Map<string, InboundTransfer>();
   private readonly outbound = new Map<string, OutboundTransfer>();
   private readonly completed: TransferReport[] = [];
@@ -182,6 +205,7 @@ export class SnapshotBootstrap {
   private chunksReceived = 0;
   private duplicateChunks = 0;
   private gapRequests = 0;
+  private snapshotMoved = 0;
   private malformed = 0;
   private unknownTransfers = 0;
   private entriesApplied = 0;
@@ -204,6 +228,7 @@ export class SnapshotBootstrap {
       chunkSize: config.chunkSize ?? 200,
       handoffBatchSize: config.handoffBatchSize ?? 200,
       resumeStatePath: config.resumeStatePath ?? null,
+      resumeAcrossRestarts: config.resumeAcrossRestarts ?? false,
     };
   }
 
@@ -229,7 +254,16 @@ export class SnapshotBootstrap {
       expected: nextChunk,
       totalChunks: null,
       snapshotLsn: fromLsn,
-      highWaterMark: fromLsn,
+      // Zero, not this node's own position.
+      //
+      // The floor is a position in the *sender's* log — the point its snapshot
+      // corresponds to — and two nodes' positions are counters that have never
+      // met. Seeding it from `currentLsn()` here made the handoff start at a
+      // number the sender had never issued: a receiver that had written more than
+      // the sender's snapshot covered would ask for entries past the end of the
+      // sender's log, be handed nothing, and report a completed transfer over the
+      // gap. The real value arrives with the first chunk and is the sender's.
+      highWaterMark: 0,
       // The chunks before the resume point are, by definition of the persisted
       // cursor, already applied. Re-applying them would be harmless and wasteful;
       // marking them applied is what makes a duplicate delivery of one of them a
@@ -303,6 +337,7 @@ export class SnapshotBootstrap {
       chunksReceived: this.chunksReceived,
       duplicateChunks: this.duplicateChunks,
       gapRequests: this.gapRequests,
+      snapshotMoved: this.snapshotMoved,
       malformed: this.malformed,
       unknownTransfers: this.unknownTransfers,
       entriesApplied: this.entriesApplied,
@@ -469,6 +504,34 @@ export class SnapshotBootstrap {
       return;
     }
 
+    if (transfer.totalChunks !== null && body.snapshotLsn !== transfer.snapshotLsn) {
+      // The sender's snapshot is not the one this transfer started on.
+      //
+      // A resumed transfer names a position, and a position is only meaningful
+      // against the dataset it was counted in. Chunk 3 of a snapshot taken before
+      // three hundred writes is not chunk 3 of the snapshot taken after them, so
+      // splicing the two would silently skip exactly the entries whose insertions
+      // shifted the boundaries — and it would still finish and report `complete`.
+      //
+      // Restarting from zero against the new snapshot is the only honest response,
+      // and it is safe: the entries already applied are re-applied idempotently
+      // with their original clocks.
+      this.snapshotMoved += 1;
+      this.lastError =
+        `transfer ${transfer.transferId} resumed against snapshot ${body.snapshotLsn} ` +
+        `but started on ${transfer.snapshotLsn}: restarting from chunk 0`;
+      transfer.applied.clear();
+      transfer.expected = 0;
+      transfer.entriesApplied = 0;
+      transfer.totalChunks = null;
+      transfer.snapshotLsn = body.snapshotLsn;
+      transfer.phase = 'snapshot';
+      transfer.updatedAt = Date.now();
+      this.persistResume(transfer);
+      await this.sendRequest(transfer.peerId, transfer.transferId, 0, transfer.highWaterMark);
+      return;
+    }
+
     if (body.chunkIndex !== transfer.expected) {
       // A gap. Asking for the chunk this side is missing is the whole of the
       // recovery: the sender serves from the named index, and no state on either
@@ -487,11 +550,14 @@ export class SnapshotBootstrap {
     transfer.expected += 1;
     transfer.totalChunks = body.totalChunks;
     transfer.snapshotLsn = body.snapshotLsn;
-    // The snapshot claims state as of `snapshotLsn`, so the floor moves to it —
-    // but never backwards. A receiver that was already ahead of the sender's
-    // snapshot would otherwise lower its own floor and re-apply changes it had
-    // applied before the transfer began.
-    transfer.highWaterMark = Math.max(transfer.highWaterMark, body.snapshotLsn);
+    // The snapshot claims state as of `snapshotLsn`, so the floor is it — assigned,
+    // not maximised. A `max` compared this node's clock with the sender's, and the
+    // two are independent counters: a receiver that had applied more changes than
+    // the sender's snapshot covered would keep its own larger number, ask for a
+    // position the sender's log never reached, and be handed nothing while the
+    // transfer reported success. All the chunks of one transfer carry one
+    // `snapshotLsn`, so there is nothing to reconcile within a transfer either.
+    transfer.highWaterMark = body.snapshotLsn;
     transfer.updatedAt = Date.now();
     this.persistResume(transfer);
 
@@ -623,6 +689,21 @@ export class SnapshotBootstrap {
       if (typeof record.transferId !== 'string') return null;
       if (typeof record.nextChunk !== 'number' || !Number.isInteger(record.nextChunk)) return null;
       if (record.nextChunk < 0) return null;
+
+      // A cursor is a claim about a store: "chunks 0..n-1 are already in it". A
+      // store that did not survive the process makes that claim false, and honouring
+      // it leaves the receiver with everything after chunk n and nothing before —
+      // a transfer that finishes and reports `complete` over a hole. The instance
+      // that wrote the cursor is the only one that can vouch for it, so a cursor
+      // written by another process is ignored unless the caller has said its store
+      // is durable (`resumeAcrossRestarts`).
+      if (this.config.resumeAcrossRestarts !== true && record.instanceId !== this.instanceId) {
+        this.lastError =
+          `a bootstrap cursor for ${peerId} was written by another process: ` +
+          'starting from chunk 0, because this one cannot vouch for the chunks it skips';
+        return null;
+      }
+
       return { transferId: record.transferId, nextChunk: record.nextChunk };
     } catch {
       // No file yet, or one this build cannot read. Starting from zero is correct
@@ -636,7 +717,11 @@ export class SnapshotBootstrap {
     if (!path) return;
 
     const current = this.readAllResume(path);
-    current[transfer.peerId] = { transferId: transfer.transferId, nextChunk: transfer.expected };
+    current[transfer.peerId] = {
+      transferId: transfer.transferId,
+      nextChunk: transfer.expected,
+      instanceId: this.instanceId,
+    };
     this.writeResume(path, current);
   }
 

@@ -677,3 +677,149 @@ describe('FederationManager — frame families are disjoint', () => {
     expect(BOOTSTRAP_DONE_TYPE).not.toBe(HEARTBEAT_TYPE);
   });
 });
+
+// ── A repair is state, not a hint ──
+
+describe('FederationManager — what anti-entropy applies reaches the cluster', () => {
+  it('commits a repaired entry to the local cluster before adopting it', async () => {
+    const { manager } = node('node-a');
+    await manager.start();
+
+    const proposed: Array<{ key: string; data: string; type: string; sourceNodeId: string }> = [];
+    manager.registerConsumer({
+      proposeReplicated: async (entry) => {
+        proposed.push({ key: entry.key, data: entry.data, type: entry.type, sourceNodeId: entry.sourceNodeId });
+      },
+      getHLC: () => manager.getHLC(),
+      onConflict: async () => undefined,
+    });
+
+    const outcome = await manager
+      .getAntiEntropy()
+      .applyRemote([
+        { key: 'repaired', value: 'v', hlc: { wallTime: 1, logical: 1, nodeId: 'node-b' }, nodeId: 'node-b' },
+      ]);
+
+    // The value is in the replica map *and* in the cluster. Before this, a repair
+    // landed in the map alone: `read()` returned it, a local reader of the same key
+    // returned the old value, and a restart lost it — because the state machine is
+    // what a restart replays.
+    expect(outcome.applied).toBe(1);
+    expect(proposed).toEqual([{ key: 'repaired', data: 'v', type: 'insert', sourceNodeId: 'node-b' }]);
+    expect(manager.getLocalValue('repaired')).toBe('v');
+    expect(manager.getLsn()).toBe(1);
+  });
+
+  it('calls a repair over an existing key an update, not an insert', async () => {
+    const { manager } = node('node-a');
+    await manager.start();
+
+    const types: string[] = [];
+    manager.registerConsumer({
+      proposeReplicated: async (entry) => {
+        types.push(entry.type);
+      },
+      getHLC: () => manager.getHLC(),
+      onConflict: async () => undefined,
+    });
+
+    await manager.replicate('k', 'v1', 'insert');
+    types.length = 0;
+    // A clock ahead of the local one, or last-write-wins keeps the local value and
+    // the repair never reaches `apply()` at all.
+    await manager
+      .getAntiEntropy()
+      .applyRemote([
+        {
+          key: 'k',
+          value: 'v2',
+          hlc: { wallTime: Date.now() + 60_000, logical: 0, nodeId: 'node-b' },
+          nodeId: 'node-b',
+        },
+      ]);
+
+    // `insert` for a key that is already there is a claim about history that is
+    // false, and a consumer that keys its own behaviour off the operation — an
+    // append-only log, an index that only maintains new keys — acts on it.
+    expect(types).toEqual(['update']);
+    expect(manager.getLocalValue('k')).toBe('v2');
+  });
+
+  it('leaves nothing behind when the cluster refuses the repair', async () => {
+    const { manager } = node('node-a');
+    await manager.start();
+
+    manager.registerConsumer({
+      proposeReplicated: async () => {
+        throw new Error('not leader');
+      },
+      getHLC: () => manager.getHLC(),
+      onConflict: async () => undefined,
+    });
+
+    await expect(
+      manager
+        .getAntiEntropy()
+        .applyRemote([
+          { key: 'refused', value: 'v', hlc: { wallTime: 1, logical: 1, nodeId: 'node-b' }, nodeId: 'node-b' },
+        ]),
+    ).rejects.toThrow(/not leader/);
+
+    // Nothing changed here, so the next sweep still sees the divergence and pushes
+    // again. Writing the map first would have made the two sides look equal while
+    // the cluster held neither value — a difference no sweep can ever see again.
+    expect(manager.getLocalValue('refused')).toBeUndefined();
+    expect(manager.getLsn()).toBe(0);
+  });
+});
+
+// ── A change federation never saw ──
+
+describe('FederationManager — adopting a change another writer committed', () => {
+  it('records the change without replicating it', async () => {
+    const { manager } = node('node-a');
+    await manager.start();
+
+    const entry = await manager.adoptLocalChange('adopted', 'v');
+
+    expect(entry).toMatchObject({ key: 'adopted', value: 'v', nodeId: 'node-a' });
+    expect(manager.getLocalValue('adopted')).toBe('v');
+    expect(manager.getLsn()).toBe(1);
+    // Replication is the other method: an application that already committed the
+    // write is telling this layer what its engine holds, not asking for a send.
+    expect(vi.mocked(manager.getReplication().replicate)).not.toHaveBeenCalled();
+  });
+
+  it('counts the adopted change as an apply the detector can see', async () => {
+    const { manager } = node('node-a');
+    await manager.start();
+
+    const before = manager.getSplitBrainDetector();
+    const seen: number[] = [];
+    const original = before.recordApply.bind(before);
+    before.recordApply = (): void => {
+      seen.push(Date.now());
+      original();
+    };
+
+    await manager.adoptLocalChange('adopted', 'v');
+
+    // A datacenter that is quietly applying writes is not a datacenter that has
+    // stopped: the detector's expiry timer reads this counter, and a change it
+    // never counts would make a busy node look idle.
+    expect(seen).toHaveLength(1);
+  });
+
+  it('makes the adopted change part of what a bootstrapping peer is handed', async () => {
+    const { manager } = node('node-a');
+    await manager.start();
+
+    await manager.replicate('native', 'v0', 'insert');
+    await manager.adoptLocalChange('adopted', 'v1');
+
+    // The handoff log is the only record of *when* a change arrived relative to
+    // anything else, and it is what a peer that joined after the fact is handed.
+    // A change the layer did not record is a change the peer never receives.
+    expect(manager.getLsn()).toBe(2);
+  });
+});
