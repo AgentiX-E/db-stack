@@ -161,6 +161,15 @@ export class EdgeReplica implements IEdgeReplica {
       // the stream a log rather than a last-write-wins cache.
       const decided = this._options.resolveConflict?.(lsn, existing, payload) ?? existing;
       this._data[existingIndex] = { lsn, payload: decided };
+
+      // The decision has to reach the event subscribers as well: an engine
+      // consumes the stream through onEvent, and without this a subscriber
+      // keeps the stale pre-arbitration value while getAllData() reports the
+      // decided one — two views of one LSN that disagree. A decision that
+      // keeps the existing value is not a new frame, so it is not republished.
+      if (!EdgeReplica.samePayload(existing, decided)) {
+        this._emitDataEvent(lsn, decided);
+      }
       return;
     }
 
@@ -172,22 +181,7 @@ export class EdgeReplica implements IEdgeReplica {
     this._status.receivedCount = this._data.length;
     this._status.lagLSN = this._status.sourceLSN! - this._status.lastLSN!;
 
-    const event: ReplicationEvent = {
-      type: 'data',
-      lsn,
-      payload,
-      timestamp: Date.now(),
-    };
-
-    for (const handler of this._eventHandlers) {
-      try {
-        handler(event);
-      } catch (err) {
-        // Isolation keeps the other handlers running; observability makes the
-        // failure a signal a caller can act on instead of a swallowed exception.
-        this._emitError(err instanceof Error ? err : new Error(String(err)));
-      }
-    }
+    this._emitDataEvent(lsn, payload);
 
     // Has the sync finished?
     if (this._status.lagLSN === 0) {
@@ -263,6 +257,28 @@ export class EdgeReplica implements IEdgeReplica {
       return JSON.stringify(a) === JSON.stringify(b);
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Publish one data frame to every event subscriber. Handler failures stay
+   * isolated but surface through onError, so a subscriber that throws cannot
+   * hide the frame from the others or fail silently. Shared by the append and
+   * the arbitration paths so both views of an LSN carry the same payload.
+   */
+  private _emitDataEvent(lsn: number, payload: unknown): void {
+    const event: ReplicationEvent = {
+      type: 'data',
+      lsn,
+      payload,
+      timestamp: Date.now(),
+    };
+    for (const handler of this._eventHandlers) {
+      try {
+        handler(event);
+      } catch (err) {
+        this._emitError(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   }
 

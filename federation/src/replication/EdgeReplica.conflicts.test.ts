@@ -224,3 +224,53 @@ describe('EdgeReplica — payload and failure edges', () => {
     edge.disconnect();
   });
 });
+
+describe('EdgeReplica — an arbitration decision is observable on the event stream', () => {
+  it('an incoming value that wins arbitration is published to onEvent', async () => {
+    const edge = new EdgeReplica({
+      resolveConflict: (_lsn, _existing, incoming) => incoming,
+    });
+    const seen: Array<{ lsn: number; payload: unknown }> = [];
+    edge.onEvent((event) => seen.push({ lsn: event.lsn, payload: event.payload }));
+    await edge.connect(SOURCE);
+
+    edge.receive(7, { key: 'k', value: 'from-a' });
+    edge.receive(7, { key: 'k', value: 'from-b' });
+
+    // The stream is append-only: the first frame was already published when it
+    // arrived. The contract is that the subscriber's *latest* view of this LSN
+    // agrees with getAllData() — the arbitrated value, not the stale first write.
+    expect(edge.getAllData()).toEqual([{ lsn: 7, payload: { key: 'k', value: 'from-b' } }]);
+    expect(seen[seen.length - 1]).toEqual({ lsn: 7, payload: { key: 'k', value: 'from-b' } });
+    expect(seen).toHaveLength(2); // the original frame, then the decision
+    edge.disconnect();
+  });
+
+  it('a decision that keeps the existing value is not published twice', async () => {
+    const edge = new EdgeReplica({
+      resolveConflict: (lsn, existing, _incoming) => existing,
+    });
+    const seen: unknown[] = [];
+    edge.onEvent((event) => seen.push(event.payload));
+    await edge.connect(SOURCE);
+
+    edge.receive(7, { key: 'k', value: 'first' });
+    edge.receive(7, { key: 'k', value: 'second' });
+
+    expect(seen).toEqual([{ key: 'k', value: 'first' }]);
+    edge.disconnect();
+  });
+
+  it('a byte-identical replay is not published again', async () => {
+    const edge = new EdgeReplica();
+    const seen: unknown[] = [];
+    edge.onEvent((event) => seen.push(event.payload));
+    await edge.connect(SOURCE);
+
+    edge.receive(7, { key: 'k', value: 'v' });
+    edge.receive(7, { key: 'k', value: 'v' });
+
+    expect(seen).toEqual([{ key: 'k', value: 'v' }]);
+    edge.disconnect();
+  });
+});

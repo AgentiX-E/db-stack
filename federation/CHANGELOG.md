@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A conflict decision now reaches every `EdgeReplica` event subscriber.** When
+  `resolveConflict(lsn, existing, incoming)` chose the incoming payload at a repeated LSN,
+  the replica replaced the row in `getAllData()` but published no `data` event — so an engine
+  consuming the stream through `onEvent()` kept the stale pre-arbitration value while
+  `getAllData()` reported the decided one: two views of one LSN that disagreed. The append and
+  arbitration paths now share one `_emitDataEvent()` publisher, and a decision that changes the
+  payload is published to subscribers; a byte-identical replay or a decision that keeps the
+  existing value is not republished, so a duplicate is still not a new frame. Handlers remain
+  isolated and report failures through `onError`.
+- **Custom conflict resolvers are selected deterministically, independent of registration order.**
+  `ConflictResolver.findCustomResolver()` returned the first matching entry in insertion order,
+  which made three wrong outcomes possible: a bare fallback registered first intercepted every
+  key; a table name matched a longer table sharing its prefix (`user` captured `users_archive`);
+  and a table and prefix registered with the same token shared one `Map` key, so the second
+  registration silently replaced the first. Resolvers are now stored in three namespaces
+  (`table:`, `prefix:`, fallback); selection prefers an exact table match (whole-token boundary),
+  then the longest matching prefix, then the fallback. Registering the same token as a table and
+  a prefix keeps both addressable, and unregistering one no longer removes the other.
+
 - **`EdgeReplica` accepts engine-agnostic callbacks for dialing and conflict arbitration.**
   `new EdgeReplica({ connectTransport, resolveConflict })` lets any engine own the real socket and the
   conflict policy without the replica knowing either: `connectTransport(source)` is awaited by

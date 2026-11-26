@@ -452,8 +452,13 @@ knows nothing about the engine behind either one:
 
 A repeated LSN is always one entry: a transport duplicate is ignored, a
 conflict is arbitrated in place, and `receivedCount` counts distinct positions.
-Handler exceptions are isolated — one throwing does not stop the others — and
-are reported through `onError` rather than swallowed.
+The decision reaches **both** views of the stream: when the resolver changes
+the payload, the arbitrated value is published to `onEvent` subscribers as
+well as stored in `getAllData()`, so a consumer following the event stream does
+not keep a stale pre-arbitration value. A byte-identical replay or a decision
+that keeps the existing value is not republished. Handler exceptions are
+isolated — one throwing does not stop the others — and are reported through
+`onError` rather than swallowed.
 
 ## Change data capture
 
@@ -1056,6 +1061,14 @@ class ConflictResolver {
 `ConflictResult`: `{ resolvedValue, strategyUsed, loserNodeIds, merged }`.
 `ConflictPredicate`: `{ tableName?, keyPrefix? }`.
 `CustomResolver`: `(key, local, remote) => Promise<ConflictResult>`.
+
+Custom-resolver selection is deterministic and independent of registration
+order. An **exact table match** wins first — a table name is a whole token, so
+`user` matches `user:1` but not `users_archive:1`. If no table matches, the
+**longest matching key prefix** wins. A bare `{}` predicate is a fallback that
+matches any key only when nothing above did. A table and a prefix registered
+with the same token are two distinct resolvers: registering the second does not
+replace the first, and unregistering either leaves the other addressable.
 
 ## Anti-entropy
 

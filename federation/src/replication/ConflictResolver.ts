@@ -66,30 +66,49 @@ export interface CRDTMapState {
 
 export class ConflictResolver {
   private readonly localNodeId: string;
+  /**
+   * Resolvers are keyed in three separate namespaces, not by the bare token.
+   * A table and a prefix that share a token (both "user") are two different
+   * predicates; a single `Map<string, …>` keyed on the token made the second
+   * registration silently overwrite the first, so unregistering one removed
+   * the other. The kind prefix keeps them addressable independently.
+   */
   private readonly customResolvers = new Map<
-    string, // table name or key prefix
-    { resolver: CustomResolver; predicate: ConflictPredicate }
+    string, // `${kind}:${token}` — "table:", "prefix:" or the fallback key
+    { resolver: CustomResolver; predicate: ConflictPredicate; token: string }
   >();
 
   constructor(localNodeId: string) {
     this.localNodeId = localNodeId;
   }
 
-  /**
-   * Register a custom resolver for a specific table or key prefix.
-   * AC 44.4
-   */
-  registerCustomResolver(predicate: ConflictPredicate, resolver: CustomResolver): void {
-    const key = predicate.tableName ?? predicate.keyPrefix ?? '__fallback__';
-    this.customResolvers.set(key, { resolver, predicate });
+  /** Namespace-qualified storage key; the token alone is not unique. */
+  private static resolverKey(predicate: ConflictPredicate): string {
+    if (predicate.tableName !== undefined) return `table:${predicate.tableName}`;
+    if (predicate.keyPrefix !== undefined) return `prefix:${predicate.keyPrefix}`;
+    return 'table:__fallback__';
   }
 
   /**
-   * Unregister a custom resolver.
+   * Register a custom resolver for a specific table or key prefix.
+   * AC 44.4
+   *
+   * When a predicate names both a table and a prefix, the table takes the
+   * storage key (matching the historical behaviour); the prefix is still
+   * honoured by the matcher through the predicate it stores.
+   */
+  registerCustomResolver(predicate: ConflictPredicate, resolver: CustomResolver): void {
+    const key = ConflictResolver.resolverKey(predicate);
+    const token = predicate.tableName ?? predicate.keyPrefix ?? '__fallback__';
+    this.customResolvers.set(key, { resolver, predicate, token });
+  }
+
+  /**
+   * Unregister a custom resolver. Only the exact predicate is removed; a
+   * resolver in a different namespace with the same token survives.
    */
   unregisterCustomResolver(predicate: ConflictPredicate): void {
-    const key = predicate.tableName ?? predicate.keyPrefix ?? '__fallback__';
-    this.customResolvers.delete(key);
+    this.customResolvers.delete(ConflictResolver.resolverKey(predicate));
   }
 
   /**
@@ -371,27 +390,45 @@ export class ConflictResolver {
   }
 
   /**
-   * Find a custom resolver for the given key.
+   * Find a custom resolver for the given key. Selection is deterministic and
+   * independent of registration order:
    *
-   * A resolver registered with a bare predicate (no tableName nor keyPrefix)
-   * is a fallback that matches any key. Otherwise the first resolver whose
-   * tableName or keyPrefix is a prefix of `key` wins.
+   *   1. an exact table match wins (a table is a whole token, so `user` must
+   *      not capture `users_archive`);
+   *   2. the longest matching key prefix wins (a broad prefix must not shadow
+   *      a more specific one that was registered earlier);
+   *   3. a bare fallback matches anything, but only when nothing above did.
+   *
+   * The three tiers are separate so a fallback registered before a specific
+   * resolver cannot intercept its keys — the defect this replaces returned
+   * the first entry in insertion order, which was the fallback.
    */
   private findCustomResolver(key: string): CustomResolver | null {
+    let fallback: CustomResolver | null = null;
+    let bestPrefix: { length: number; resolver: CustomResolver } | null = null;
+
     for (const [, entry] of this.customResolvers) {
       const { tableName, keyPrefix } = entry.predicate;
-      // Bare predicate → unconditional fallback resolver (registered under
-      // the synthesized "__fallback__" key).
       if (!tableName && !keyPrefix) {
+        fallback = entry.resolver;
+        continue;
+      }
+      // A table names a whole token in `table:key` / `table/key` keys.
+      // Without the boundary, `user` also matches `users_archive:1`.
+      if (tableName && ConflictResolver.matchesTable(key, tableName)) {
         return entry.resolver;
       }
-      if (tableName && key.startsWith(tableName)) {
-        return entry.resolver;
-      }
-      if (keyPrefix && key.startsWith(keyPrefix)) {
-        return entry.resolver;
+      if (keyPrefix && key.startsWith(keyPrefix) && (bestPrefix === null || keyPrefix.length > bestPrefix.length)) {
+        bestPrefix = { length: keyPrefix.length, resolver: entry.resolver };
       }
     }
-    return null;
+
+    if (bestPrefix !== null) return bestPrefix.resolver;
+    return fallback;
+  }
+
+  /** Whether `key` addresses table `table` rather than a table sharing its prefix. */
+  private static matchesTable(key: string, table: string): boolean {
+    return key === table || key.startsWith(`${table}:`) || key.startsWith(`${table}/`);
   }
 }
