@@ -168,3 +168,59 @@ describe('EdgeReplica — engine-agnostic connection callback', () => {
     edge.disconnect();
   });
 });
+
+describe('EdgeReplica — payload and failure edges', () => {
+  it('a payload replayed by reference is a duplicate without serialization', async () => {
+    const edge = new EdgeReplica();
+    await edge.connect(SOURCE);
+    const same = { key: 'k', value: 'v' };
+    edge.receive(1, same);
+    edge.receive(1, same); // identical reference → strict-equality fast path
+    expect(edge.getAllData()).toHaveLength(1);
+    edge.disconnect();
+  });
+
+  it('a circular payload is treated as a conflict, not a crash', async () => {
+    const consulted: unknown[] = [];
+    const edge = new EdgeReplica({
+      resolveConflict: (_lsn, existing, incoming) => {
+        consulted.push(incoming);
+        return existing;
+      },
+    });
+    await edge.connect(SOURCE);
+    const circular: Record<string, unknown> = { key: 'k' };
+    circular.self = circular; // JSON.stringify throws on this
+    edge.receive(1, { key: 'k' });
+    edge.receive(1, circular); // not serializable → conflict path, no throw
+    expect(consulted).toHaveLength(1);
+    expect(edge.getAllData()).toHaveLength(1);
+    edge.disconnect();
+  });
+
+  it('a handler that throws a non-Error value is reported as an Error', async () => {
+    const edge = new EdgeReplica();
+    const errors: Error[] = [];
+    edge.onError((e) => errors.push(e));
+    edge.onEvent(() => {
+      throw 'string-failure'; // eslint-disable-line no-throw-literal
+    });
+    await edge.connect(SOURCE);
+    edge.receive(1, 'x');
+    expect(errors.some((e) => e instanceof Error && e.message === 'string-failure')).toBe(true);
+    edge.disconnect();
+  });
+
+  it('a sync-complete handler that throws a non-Error value is reported', async () => {
+    const edge = new EdgeReplica();
+    const errors: Error[] = [];
+    edge.onError((e) => errors.push(e));
+    edge.onSyncComplete(() => {
+      throw 42; // eslint-disable-line no-throw-literal
+    });
+    await edge.connect(SOURCE);
+    edge.receive(1, 'x');
+    expect(errors.some((e) => e instanceof Error && e.message === '42')).toBe(true);
+    edge.disconnect();
+  });
+});
