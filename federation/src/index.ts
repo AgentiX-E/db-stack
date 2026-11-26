@@ -111,6 +111,17 @@ export type {
   CustomResolver,
 } from './replication/ConflictResolver';
 
+// Edge replica — engine-agnostic CDC intake. Exported now that dialing and
+// conflict arbitration are caller-supplied callbacks rather than a simulation.
+export { EdgeReplica } from './replication/EdgeReplica';
+export type {
+  EdgeReplicaOptions,
+  EdgeSourceConfig,
+  EdgeSyncStatus,
+  ReplicationEvent,
+  IEdgeReplica,
+} from './replication/EdgeReplica';
+
 // CDC
 export { CDCEngine } from './replication/CDCEngine';
 export type { CDCEngineConfig } from './replication/CDCEngine';

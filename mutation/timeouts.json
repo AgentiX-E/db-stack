@@ -56,8 +56,8 @@
           "id": "55",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30043ms",
-          "tail": "RUN  v3.2.6 /workspace/db-stack/federation ⏎ ✓ src/core/FederationManager.protocols.test.ts (19 tests | 18 skipped) 6ms"
+          "evidence": "30071ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation ⏎ ✓ src/core/FederationManager.protocols.test.ts (25 tests | 24 skipped) 7ms"
         },
         {
           "file": "federation/src/core/AntiEntropyProtocol.ts",
@@ -68,7 +68,7 @@
           "id": "110",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30054ms",
+          "evidence": "30097ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
         },
         {
@@ -80,7 +80,7 @@
           "id": "301",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30092ms",
+          "evidence": "30102ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
         },
         {
@@ -97,6 +97,18 @@
         },
         {
           "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 229,
+          "mutator": "LogicalOperator",
+          "replacement": "config.handoffBatchSize && 200",
+          "reason": "",
+          "id": "482",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30035ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation ⏎ ✓ src/core/FederationManager.epoch.test.ts (10 tests) 17ms"
+        },
+        {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
           "line": 363,
           "mutator": "AssignmentOperator",
           "replacement": "index -= 1",
@@ -105,6 +117,18 @@
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
           "evidence": "30095ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 398,
+          "mutator": "AssignmentOperator",
+          "replacement": "index -= 1",
+          "reason": "Hit limit reached (3601/3600)",
+          "id": "557",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30066ms",
           "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
         },
         {
@@ -145,6 +169,18 @@
         },
         {
           "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 443,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "reason": "Hit limit reached (2501/2500)",
+          "id": "576",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30086ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
           "line": 472,
           "mutator": "ConditionalExpression",
           "replacement": "true",
@@ -156,15 +192,99 @@
           "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
         },
         {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 473,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "reason": "Hit limit reached (2101/2100)",
+          "id": "592",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30099ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 473,
+          "mutator": "EqualityOperator",
+          "replacement": "batch.length >= batchSize",
+          "reason": "Hit limit reached (2101/2100)",
+          "id": "594",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30102ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 507,
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "reason": "Hit limit reached (13503/4500)",
+          "id": "612",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30089ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 507,
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "reason": "Hit limit reached (5102/1700)",
+          "id": "617",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30048ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 507,
+          "mutator": "EqualityOperator",
+          "replacement": "body.snapshotLsn === transfer.snapshotLsn",
+          "reason": "Hit limit reached (5102/1700)",
+          "id": "618",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30048ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 507,
+          "mutator": "LogicalOperator",
+          "replacement": "transfer.totalChunks !== null || body.snapshotLsn !== transfer.snapshotLsn",
+          "reason": "Hit limit reached (9003/4500)",
+          "id": "614",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30100ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation ⏎ ✓ src/core/FederationManager.protocols.test.ts (25 tests | 23 skipped) 29ms"
+        },
+        {
+          "file": "federation/src/core/SnapshotBootstrap.ts",
+          "line": 535,
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "reason": "Hit limit reached (13203/4400)",
+          "id": "626",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30049ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
           "file": "federation/src/replication/AntiEntropy.ts",
           "line": 160,
           "mutator": "AssignmentOperator",
           "replacement": "i -= 1",
-          "reason": "Hit limit reached (344603/344600)",
-          "id": "872",
+          "reason": "Hit limit reached (346203/346200)",
+          "id": "898",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "14751ms",
+          "evidence": "13846ms",
           "tail": "❯ MessagePort.<anonymous> node:internal/per_context/messageport:23:28 ⏎ ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ ⏎ Serialized Error: { code: 'ERR_IPC_CHANNEL_CLOSED' }"
         },
         {
@@ -173,11 +293,11 @@
           "mutator": "ConditionalExpression",
           "replacement": "false",
           "reason": "Hit limit reached (2901/2900)",
-          "id": "964",
+          "id": "990",
           "verdict": "failed",
           "detail": "src/replication/AntiEntropy.test.ts > AntiEntropy — Merkle tree construction > builds a valid tree from data",
-          "evidence": "2312ms",
-          "tail": "Tests  3 failed | 28 skipped (31) ⏎ Start at  14:32:44 ⏎ Duration  1.26s (transform 72ms, setup 27ms, collect 85ms, tests 13ms, environment 0ms, prepare 509ms)"
+          "evidence": "2023ms",
+          "tail": "Tests  3 failed | 30 skipped (33) ⏎ Start at  18:21:44 ⏎ Duration  1.07s (transform 77ms, setup 33ms, collect 61ms, tests 17ms, environment 0ms, prepare 370ms)"
         },
         {
           "file": "federation/src/replication/AntiEntropy.ts",
@@ -185,11 +305,11 @@
           "mutator": "ArithmeticOperator",
           "replacement": "remaining + 1",
           "reason": "Hit limit reached (1301/1300)",
-          "id": "982",
+          "id": "1008",
           "verdict": "failed",
           "detail": "src/replication/AntiEntropy.test.ts > AntiEntropy — Merkle tree construction > builds a valid tree from data",
-          "evidence": "1403ms",
-          "tail": "Tests  3 failed | 28 skipped (31) ⏎ Start at  14:32:45 ⏎ Duration  1.03s (transform 148ms, setup 25ms, collect 98ms, tests 13ms, environment 0ms, prepare 309ms)"
+          "evidence": "1385ms",
+          "tail": "Tests  3 failed | 30 skipped (33) ⏎ Start at  18:21:45 ⏎ Duration  1.00s (transform 68ms, setup 86ms, collect 54ms, tests 43ms, environment 0ms, prepare 215ms)"
         },
         {
           "file": "federation/src/replication/AntiEntropy.ts",
@@ -197,11 +317,11 @@
           "mutator": "ArithmeticOperator",
           "replacement": "remaining + 1",
           "reason": "Hit limit reached (1301/1300)",
-          "id": "984",
+          "id": "1010",
           "verdict": "failed",
           "detail": "src/replication/AntiEntropy.test.ts > AntiEntropy — Merkle tree construction > builds a valid tree from data",
-          "evidence": "5523ms",
-          "tail": "Tests  3 failed | 28 skipped (31) ⏎ Start at  14:32:47 ⏎ Duration  4.80s (transform 103ms, setup 23ms, collect 116ms, tests 3.75s, environment 0ms, prepare 294ms)"
+          "evidence": "3985ms",
+          "tail": "Tests  3 failed | 30 skipped (33) ⏎ Start at  18:21:46 ⏎ Duration  3.43s (transform 2.39s, setup 57ms, collect 2.29s, tests 182ms, environment 0ms, prepare 307ms)"
         },
         {
           "file": "federation/src/replication/AntiEntropy.ts",
@@ -213,6 +333,18 @@
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
           "evidence": "11477ms",
+          "tail": "❯ MessagePort.<anonymous> node:internal/per_context/messageport:23:28 ⏎ ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ ⏎ Serialized Error: { code: 'ERR_IPC_CHANNEL_CLOSED' }"
+        },
+        {
+          "file": "federation/src/replication/AntiEntropy.ts",
+          "line": 411,
+          "mutator": "AssignmentOperator",
+          "replacement": "index -= 1",
+          "reason": "Hit limit reached (158601/158600)",
+          "id": "1042",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "10122ms",
           "tail": "❯ MessagePort.<anonymous> node:internal/per_context/messageport:23:28 ⏎ ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ ⏎ Serialized Error: { code: 'ERR_IPC_CHANNEL_CLOSED' }"
         },
         {
@@ -253,6 +385,42 @@
         },
         {
           "file": "federation/src/replication/AntiEntropy.ts",
+          "line": 429,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "reason": "Hit limit reached (35103/35100)",
+          "id": "1055",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30080ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/replication/AntiEntropy.ts",
+          "line": 429,
+          "mutator": "EqualityOperator",
+          "replacement": "level.length >= 1",
+          "reason": "Hit limit reached (44003/44000)",
+          "id": "1053",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30097ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/replication/AntiEntropy.ts",
+          "line": 430,
+          "mutator": "ArrayDeclaration",
+          "replacement": "[\"Stryker was here\"]",
+          "reason": "Hit limit reached (35101/35100)",
+          "id": "1056",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30093ms",
+          "tail": "RUN  v3.2.6 /workspace/db-stack/federation"
+        },
+        {
+          "file": "federation/src/replication/AntiEntropy.ts",
           "line": 493,
           "mutator": "BlockStatement",
           "replacement": "{}",
@@ -276,16 +444,52 @@
           "tail": "↓ FederationManager — housekeeping and diagnostics > declines a change the receiving cluster would not take ⏎ ↓ FederationManager — housekeeping and diagnostics > still names the frame family in a heartbeat frame it could not read ⏎ ↓ FederationManager — frame families are disjoint > sends a bootstrap done frame of its own type"
         },
         {
+          "file": "federation/src/replication/AntiEntropy.ts",
+          "line": 504,
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "reason": "",
+          "id": "1112",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30040ms",
+          "tail": "↓ FederationManager — adopting a change another writer committed > records the change without replicating it ⏎ ↓ FederationManager — adopting a change another writer committed > counts the adopted change as an apply the detector can see ⏎ ↓ FederationManager — adopting a change another writer committed > makes the adopted change part of what a bootstrapping peer is handed"
+        },
+        {
+          "file": "federation/src/replication/AntiEntropy.ts",
+          "line": 511,
+          "mutator": "BooleanLiteral",
+          "replacement": "existing",
+          "reason": "",
+          "id": "1114",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30044ms",
+          "tail": "↓ FederationManager — adopting a change another writer committed > records the change without replicating it ⏎ ↓ FederationManager — adopting a change another writer committed > counts the adopted change as an apply the detector can see ⏎ ↓ FederationManager — adopting a change another writer committed > makes the adopted change part of what a bootstrapping peer is handed"
+        },
+        {
+          "file": "federation/src/replication/AntiEntropy.ts",
+          "line": 511,
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "reason": "",
+          "id": "1116",
+          "verdict": "stuck",
+          "detail": "no test reported anything before the cap",
+          "evidence": "30096ms",
+          "tail": "↓ FederationManager — adopting a change another writer committed > records the change without replicating it ⏎ ↓ FederationManager — adopting a change another writer committed > counts the adopted change as an apply the detector can see ⏎ ↓ FederationManager — adopting a change another writer committed > makes the adopted change part of what a bootstrapping peer is handed"
+        },
+        {
           "file": "federation/src/replication/bootstrapFrames.ts",
           "line": 249,
           "mutator": "ArrayDeclaration",
           "replacement": "[\"Stryker was here\"]",
-          "reason": "Hit limit reached (4401/4400)",
-          "id": "1476",
+          "reason": "Hit limit reached (5501/5500)",
+          "id": "1499",
           "verdict": "stuck",
           "detail": "no test reported anything before the cap",
-          "evidence": "30052ms",
-          "tail": "↓ FederationManager — housekeeping and diagnostics > declines a change the receiving cluster would not take ⏎ ↓ FederationManager — housekeeping and diagnostics > still names the frame family in a heartbeat frame it could not read ⏎ ↓ FederationManager — frame families are disjoint > sends a bootstrap done frame of its own type"
+          "evidence": "30099ms",
+          "tail": "↓ FederationManager — adopting a change another writer committed > records the change without replicating it ⏎ ↓ FederationManager — adopting a change another writer committed > counts the adopted change as an apply the detector can see ⏎ ↓ FederationManager — adopting a change another writer committed > makes the adopted change part of what a bootstrapping peer is handed"
         }
       ]
     },

@@ -55,9 +55,30 @@ export interface IEdgeReplica {
   onError(handler: (err: Error) => void): () => void;
 }
 
+/**
+ * Engine-agnostic hooks for the intake path. The replica knows nothing about
+ * the engine's value format or its conflict policy: it hands the two payloads
+ * at a repeated LSN to `resolveConflict` and stores whichever one comes back.
+ * No hook configured → a duplicate is ignored and a genuine conflict keeps the
+ * first payload, which keeps the old deterministic behaviour for engines that
+ * have no notion of a conflicting write.
+ */
+export interface EdgeReplicaOptions {
+  resolveConflict?: (lsn: number, existing: unknown, incoming: unknown) => unknown;
+  /**
+   * Engine-agnostic dial. Supplied by whatever owns the real socket (WebSocket,
+   * SSE, a cluster transport); the replica only observes whether it resolved.
+   * Without one, `connect()` uses the built-in simulated dial so the intake
+   * path stays usable in tests and engines that stream data in-process.
+   */
+  connectTransport?: (source: EdgeSourceConfig) => Promise<void>;
+}
+
 // ── Implementation ─────────────────────────────────────────────────
 
 export class EdgeReplica implements IEdgeReplica {
+  private readonly _options: EdgeReplicaOptions;
+
   private _status: EdgeSyncStatus = {
     state: 'disconnected',
     lastLSN: 0,
@@ -67,6 +88,12 @@ export class EdgeReplica implements IEdgeReplica {
   };
 
   private _data: Array<{ lsn: number; payload: unknown }> = [];
+  /** LSN → index into `_data`, so a repeated LSN is a decision, not a second row. */
+  private readonly _lsnIndex = new Map<number, number>();
+
+  constructor(options: EdgeReplicaOptions = {}) {
+    this._options = options;
+  }
 
   private _eventHandlers: Array<(event: ReplicationEvent) => void> = [];
   private _syncCompleteHandlers: Array<() => void> = [];
@@ -91,8 +118,13 @@ export class EdgeReplica implements IEdgeReplica {
     this._updateStatus('connecting');
 
     try {
-      // Simulated connect (a real deployment uses the WebSocket/SSE transport)
-      await this._simulateConnect(source);
+      // An injected transport dials for real; absent one, the simulated dial
+      // keeps in-process engines and the existing acceptance suite working.
+      if (this._options.connectTransport) {
+        await this._options.connectTransport(source);
+      } else {
+        await this._simulateConnect(source);
+      }
       this._connected = true;
       this._updateStatus('syncing');
       this._reconnectAttempts = 0;
@@ -114,10 +146,26 @@ export class EdgeReplica implements IEdgeReplica {
 
   // ── Events ──────────────────────────────────────────────────────
 
-  /** Simulate receiving CDC data */
+  /** Receive CDC data. A repeated LSN is arbitrated, never appended twice. */
   receive(lsn: number, payload: unknown): void {
     if (!this._connected) return;
 
+    const existingIndex = this._lsnIndex.get(lsn);
+    if (existingIndex !== undefined) {
+      const existing = this._data[existingIndex]!.payload;
+      // A transport duplicate carries the same bytes: it is not new data.
+      if (EdgeReplica.samePayload(existing, payload)) return;
+
+      // Two writers claimed the same position: let the engine arbitrate. With
+      // no resolver the first value stands, which is deterministic and keeps
+      // the stream a log rather than a last-write-wins cache.
+      const decided = this._options.resolveConflict?.(lsn, existing, payload) ?? existing;
+      this._data[existingIndex] = { lsn, payload: decided };
+      return;
+    }
+
+    const index = this._data.length;
+    this._lsnIndex.set(lsn, index);
     this._data.push({ lsn, payload });
     this._status.lastLSN = lsn;
     this._status.sourceLSN = Math.max(this._status.sourceLSN!, lsn);
@@ -134,8 +182,10 @@ export class EdgeReplica implements IEdgeReplica {
     for (const handler of this._eventHandlers) {
       try {
         handler(event);
-      } catch {
-        /* swallowed */
+      } catch (err) {
+        // Isolation keeps the other handlers running; observability makes the
+        // failure a signal a caller can act on instead of a swallowed exception.
+        this._emitError(err instanceof Error ? err : new Error(String(err)));
       }
     }
 
@@ -145,8 +195,8 @@ export class EdgeReplica implements IEdgeReplica {
       for (const handler of this._syncCompleteHandlers) {
         try {
           handler();
-        } catch {
-          /* swallowed */
+        } catch (err) {
+          this._emitError(err instanceof Error ? err : new Error(String(err)));
         }
       }
     }
@@ -200,6 +250,21 @@ export class EdgeReplica implements IEdgeReplica {
   }
 
   // ── Internal ────────────────────────────────────────────────────
+
+  /**
+   * Structural equality for the payloads a replication stream carries. JSON
+   * is the wire representation, so two values that serialize alike are the
+   * same frame replayed; a strict check alone would treat a re-parsed object
+   * as a conflict and ask the engine to arbitrate its own duplicate.
+   */
+  private static samePayload(a: unknown, b: unknown): boolean {
+    if (a === b) return true;
+    try {
+      return JSON.stringify(a) === JSON.stringify(b);
+    } catch {
+      return false;
+    }
+  }
 
   private _updateStatus(state: EdgeSyncStatus['state']): void {
     this._status.state = state;

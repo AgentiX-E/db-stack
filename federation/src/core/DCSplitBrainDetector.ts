@@ -22,7 +22,7 @@
  */
 
 import type { IHLCTimestamp } from '../interfaces/hlc/IHLCTimestamp';
-import { HLC, compareHLC } from '../hlc/HLC';
+import { HLC, compareHLC, makeHLC } from '../hlc/HLC';
 import { EventEmitter } from 'events';
 
 export interface DCHeartbeat {
@@ -306,17 +306,26 @@ export class DCSplitBrainDetector {
 
     const divergedList = Array.from(divergedDcs);
     if (divergedList.length >= 2) {
-      // Determine winner: highest HLC
+      // Determine winner: the causally latest HLC, compared with the same
+      // ordering the rest of the stack uses. `wallTime * 1000 + logical`
+      // overflows into the wall-time field once logical passes 999, which
+      // lets an older datacenter win a fence and drops the newer one's
+      // acknowledged writes (MA8). Compare the full timestamp instead.
       let winningDc = divergedList[0]!;
-      let maxHlc = -1;
+      let latest: { wallTime: number; logical: number } | null = null;
 
       for (const dcId of divergedList) {
         const chain = this.dcHlcChains.get(dcId);
         if (chain && chain.length > 0) {
           const last = chain[chain.length - 1]!;
-          const combined = last.wallTime * 1000 + last.logical;
-          if (combined > maxHlc) {
-            maxHlc = combined;
+          if (
+            latest === null ||
+            compareHLC(
+              makeHLC(BigInt(last.wallTime), last.logical, dcId),
+              makeHLC(BigInt(latest.wallTime), latest.logical, dcId),
+            ) > 0
+          ) {
+            latest = last;
             winningDc = dcId;
           }
         }

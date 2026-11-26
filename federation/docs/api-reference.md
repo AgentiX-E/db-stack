@@ -427,6 +427,34 @@ not about the peer's state — the weaker contract, chosen explicitly, for a pee
 cannot answer. `getAckStats()` is how a sender tells a slow peer from a silent one:
 `timeouts` rising beside a flat `received` is a reachable peer that is not applying.
 
+## Edge replicas
+
+### `EdgeReplica` / `IEdgeReplica`
+
+An in-process read replica of a CDC stream, addressed by LSN. It is an intake
+machine, not a socket: it takes frames from whatever calls `receive(lsn, payload)`
+and exposes the resulting state through `getSyncStatus()`, `getLag()` and
+`getAllData()`. `onEvent`, `onSyncComplete` and `onError` are the callbacks a
+consumer subscribes to; unsubscribing returns a function.
+
+`new EdgeReplica(options?)` takes two **engine-agnostic** hooks — the replica
+knows nothing about the engine behind either one:
+
+- `connectTransport?: (source: EdgeSourceConfig) => Promise<void>` — the real
+  dial, supplied by whoever owns the socket (WebSocket, SSE, a cluster
+  transport). `connect()` awaits it in place of the built-in simulated dial;
+  a rejection is emitted through `onError` and starts the backoff. Omit it for
+  an engine that streams data in-process.
+- `resolveConflict?: (lsn, existing, incoming) => unknown` — the policy for two
+  writers claiming the same LSN. Called only for a _genuine_ conflict; a
+  byte-identical replay is dropped before it gets here. Omit it and the first
+  payload at an LSN stands, which keeps the stream a log rather than a cache.
+
+A repeated LSN is always one entry: a transport duplicate is ignored, a
+conflict is arbitrated in place, and `receivedCount` counts distinct positions.
+Handler exceptions are isolated — one throwing does not stop the others — and
+are reported through `onError` rather than swallowed.
+
 ## Change data capture
 
 ### `ICDCEngine`
@@ -1618,6 +1646,8 @@ class GraphVecFederationConsumer implements IFederationConsumer {
 
 | Type                                          | Where it is used                                                  |
 | --------------------------------------------- | ----------------------------------------------------------------- |
+| `EdgeReplicaOptions` / `EdgeSyncStatus`       | Engine-agnostic dial and conflict callbacks; observable state     |
+| `EdgeSourceConfig` / `IEdgeReplica`           | A CDC endpoint and the intake surface a consumer codes against    |
 | `TransportMessage`                            | Everything a transport carries: id, type, sender, target, payload |
 | `InboundMessage`                              | A received message plus the channel it arrived on                 |
 | `PeerInfo`                                    | `peerId`, `address`, `connectedAt`, `latencyMs`                   |

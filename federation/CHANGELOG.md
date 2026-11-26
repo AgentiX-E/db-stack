@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`EdgeReplica` accepts engine-agnostic callbacks for dialing and conflict arbitration.**
+  `new EdgeReplica({ connectTransport, resolveConflict })` lets any engine own the real socket and the
+  conflict policy without the replica knowing either: `connectTransport(source)` is awaited by
+  `connect()` in place of the built-in simulated dial, and `resolveConflict(lsn, existing, incoming)`
+  decides which payload survives when two writers claim the same LSN. Both are optional — an engine
+  that streams data in-process keeps the old behaviour, so no consumer breaks. This is the intake
+  half of engine agnosticism: the middleware supplies the stream machinery, the engine supplies the
+  transport and the values.
 - **Anti-entropy compares a peer's root instead of comparing this node's dataset with itself.**
   `AntiEntropy.syncWith(peerId)` never sent anything: it read the local dataset, built a second digest
   from the _same_ dataset, and reported the difference between two copies of one tree — which is always
@@ -344,6 +352,23 @@ baseMs, maxMs, maxRetries)` is exported so the boundary can be asserted directly
   class no longer claims the interface; the registry is what implements it.
 
 ### Fixed
+
+- **A repeated LSN was appended twice, and a handler failure was invisible.** `EdgeReplica.receive()`
+  pushed every frame onto `_data`, so a transport duplicate inflated `receivedCount` and two writers
+  that claimed the same position both survived with no arbitration. The replica now indexes by LSN:
+  a byte-identical replay is ignored, a genuine conflict is put to `resolveConflict` (or keeps the
+  first payload when none is configured), and the position is updated in place. Separately, the two
+  `catch` blocks around event and sync-complete handlers swallowed their exceptions — isolation kept
+  the other handlers running but the failure reached nobody. They now emit through `onError` while
+  still isolating the remaining handlers.
+- **Split-brain could fence the wrong datacenter.** `DCSplitBrainDetector.checkDivergence` ranked the
+  winner with `last.wallTime * 1000 + last.logical`, an arithmetic that overflows the logical counter
+  into the wall-time field once it passes 999. A causally later DC (wallTime 101, logical 4) lost to an
+  older one (wallTime 100, logical 9000), so the fence removed the newer DC's acknowledged writes — a
+  direct violation of MA8. The winner is now chosen with `compareHLC`, the ordering the rest of the
+  stack already uses, over full HLC timestamps. Eleven decision tests pin the winner, the conflict
+  count, the losing set, the resolution label, and the two chain-progression guards that were never
+  asserted before.
 
 - **A digest that hashed the clock could never report agreement between two replicas holding the same
   data.** `hashEntries` included `hlc.wallTime`, `hlc.logical` and `hlc.nodeId`, so two nodes that held
