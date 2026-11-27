@@ -352,6 +352,63 @@ const coordinator = new HAFailoverCoordinator({
 });
 ```
 
+### Fencing tokens: a refusal the old primary cannot argue with
+
+A lease answers *"has this node heard from a leader?"*. That is a question the old
+primary answers about itself, and a partitioned primary that still hears one peer
+answers it wrongly. Nothing inside the cluster can settle the argument, because
+both sides reason from the same incomplete picture.
+
+The resource can settle it. A **fencing token** is the quorum's log position at the
+moment it granted the right to write — the term, and the index committed in that
+term:
+
+```typescript
+import { FencingTokenGuard, RaftGroup } from '@agentix-e/db-cluster';
+
+// The engine's write path asks the resource, not the leader.
+const guard = new FencingTokenGuard({
+  // Recovered from what the engine persisted. A resource that restarts with an
+  // empty memory re-admits the old primary during the one window the token
+  // exists to cover.
+  initial: loadHighestTokenFromDisk(),
+});
+
+const admission = guard.admit(token);
+if (!admission.admitted) {
+  // 'stale-token' — the resource has already accepted a later position.
+  // 'missing-token' — fail-closed: this writer cannot prove it is current.
+  throw new StaleFenceError(admission.detail);
+}
+```
+
+The token comes from the cluster, which mints it only when it can still reach a
+quorum and only from a term it has not already left behind:
+
+```typescript
+const group = new RaftGroup(0, config, replica, outbox);
+await group.init();
+
+if (await group.fencingRequest(true)) {
+  const token = group.getFencingToken(); // { term, index } — attach to every write
+}
+// A failed fence leaves the group read-only and drops the token: the resource then
+// answers "no token" rather than being handed a superseded position.
+```
+
+Rules a store should rely on:
+
+| Situation | Verdict | Why |
+| --- | --- | --- |
+| token equals the highest accepted | **admitted** | a retry is not a usurper; at-least-once delivery depends on it |
+| token below the highest accepted | **refused** (`stale-token`) | the resource has moved past this writer |
+| token above the highest accepted | **admitted**, highest advances | the right to write has moved on |
+| no token, `requireToken` on | **refused** (`missing-token`) | a writer that cannot prove it is current must not be assumed to be |
+
+`FencingManager` combines this with its heartbeat lease in one call, so a write
+path consults one gate that answers both questions: `checkWriteAllowed(shardId,
+token)`.
+
 ### Shard Management
 
 ```typescript
@@ -389,13 +446,13 @@ Every important operation emits structured logs and optional OTEL spans:
 ## Testing
 
 ```bash
-pnpm test                  # 2 388 tests, 147 test files
+pnpm test                  # 2 454 tests, 150 test files
 pnpm coverage              # the same, with per-file coverage gates
 pnpm test:perf             # performance benchmarks on a real 3-node TLS cluster
 pnpm tla-check             # TLA+ model checking
 ```
 
-- **147 test files, 2 388 tests** — unit, integration, boundary, chaos, LTS — 99.47 % lines,
+- **150 test files, 2 454 tests** — unit, integration, boundary, chaos, LTS — 99.47 % lines,
   99.72 % functions, 98.34 % branches, with a per-file floor of 95 %
 - **TLA+ formal verification** — JointConsensus elections + log replication
 - **Jepsen-style validation** — fuzzy register checker + end-state scanning

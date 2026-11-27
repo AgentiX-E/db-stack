@@ -16,6 +16,7 @@ import { RaftAdapter, RaftConfig, ShardSnapshotMeta } from './RaftAdapter';
 import { IShardReplica, ApplyEntry } from '../../interfaces/IShardReplica';
 import { IOutboxWriter, OutboxRecord } from '../../interfaces/IOutboxWriter';
 import { SqliteStorage } from '../storage/SqliteStorage';
+import { mintFencingToken, type FencingToken } from '../fencing/FencingToken';
 import { getErrorMessage } from '../helpers/errorUtils';
 import {
   RaftConsensusPhase,
@@ -110,6 +111,13 @@ export class RaftGroup {
   private _activePeerCleanupTimer: ReturnType<typeof setInterval> | null = null;
   /** Current fencing state. */
   private _fencingState: 'normal' | 'fencing' | 'minority' = 'normal';
+  /**
+   * The token the last successful fence minted, or null when this node has no
+   * right to write. It is handed to the engine, which presents it to the resource;
+   * the resource refuses anything below what it has already accepted, which is the
+   * only place a partitioned leader is actually stopped.
+   */
+  private _fencingToken: FencingToken | null = null;
   /** Optional health check callback invoked on severe failures. */
   private _onHealthCheck: ((message: string) => void) | null = null;
 
@@ -1387,6 +1395,11 @@ export class RaftGroup {
 
     this._readOnly = true;
     this._fencingState = 'minority';
+    // Losing the quorum loses the right to write. Keeping the old token around
+    // would let this node present a superseded position to a resource that has
+    // not yet seen the new leader's write; dropping it makes the resource refuse
+    // with "no token", which is the honest answer.
+    this._fencingToken = null;
     logger.warn(
       `[RaftGroup] Entering read-only mode (shard ${this.shardId}). ` +
         `Minority partition detected. Writes will be rejected.`,
@@ -1419,14 +1432,25 @@ export class RaftGroup {
   /**
    * Perform a fencing request.
    *
-   * Simulates a fencing check by verifying that we can hear from the
-   * majority of peers. If the majority responds (is active), we stay.
-   * If not, we step down as leader and enter read-only mode.
+   * The check answers two separate questions, and only one of them can be settled
+   * here:
+   *
+   *   1. Is this node's own view current? Its term must not be behind a term the
+   *      group has already observed. A node that is behind cannot mint a token —
+   *      the quorum has moved on without it — and enters read-only.
+   *   2. Can it hear a majority of its peers? That is a belief assembled from the
+   *      messages it happens to receive, and it is the weaker half of the check.
+   *
+   * When both hold, the fence mints a token from the term the group is in and the
+   * index it has committed. The token is what the *resource* compares: it refuses
+   * any write carrying a position below the highest it has accepted, which is the
+   * only place a partitioned leader can actually be stopped. `isInMajority()`
+   * alone cannot do that, because the old primary's own answer is "yes".
    *
    * The check respects `_fencingInterval` to avoid excessive checks.
    *
    * @param force - If true, skip the interval throttle
-   * @returns true if still in majority, false if stepped down
+   * @returns true if the fence succeeded and a token is held
    */
   async fencingRequest(force: boolean = false): Promise<boolean> {
     const now = Date.now();
@@ -1439,6 +1463,20 @@ export class RaftGroup {
 
     this._lastFencingCheck = now;
     this._fencingState = 'fencing';
+
+    // A term behind one already observed means the quorum has moved on: this node
+    // is the old primary, and no amount of peer chatter makes it current again.
+    const term = await this.raft.getTerm();
+    if (term < this._lastFencingTerm) {
+      logger.warn(
+        `[RaftGroup] Fencing check FAILED (shard ${this.shardId}). ` +
+          `Local term ${term} is behind the observed term ${this._lastFencingTerm}; ` +
+          `refusing to mint a fencing token.`,
+      );
+      await this.enterReadOnlyMode();
+      this._fencingState = 'minority';
+      return false;
+    }
 
     // Check if we're in majority
     const inMajority = this.isInMajority();
@@ -1455,15 +1493,32 @@ export class RaftGroup {
       return false;
     }
 
+    // We hold the quorum's position: mint the token the resource will compare.
+    const commitIndex = await this.raft.getCommitIndex();
+    this._fencingToken = mintFencingToken(term, commitIndex);
+    this._lastFencingTerm = term;
+
     // We're in majority — ensure read-only is disabled
     this._readOnly = false;
     this._fencingState = 'normal';
 
     logger.debug(
-      `[RaftGroup] Fencing check PASSED (shard ${this.shardId}). ` + `Active peers: ${this._activePeers.size}`,
+      `[RaftGroup] Fencing check PASSED (shard ${this.shardId}). ` +
+        `Active peers: ${this._activePeers.size}, token: ${term}/${commitIndex}`,
     );
 
     return true;
+  }
+
+  /**
+   * The token minted by the last successful fence, or null when this node has no
+   * right to write.
+   *
+   * An engine attaches it to every write it sends to the resource; the resource
+   * keeps the highest it has seen and refuses anything below it.
+   */
+  getFencingToken(): FencingToken | null {
+    return this._fencingToken;
   }
 
   /**
@@ -1475,6 +1530,7 @@ export class RaftGroup {
     connectedPeers: number;
     totalPeers: number;
     fencingState: string;
+    fencingToken: FencingToken | null;
   } {
     const config = (this.raft as any).config as RaftConfig | undefined;
     const totalPeers = config?.peers.length ?? 1;
@@ -1485,6 +1541,7 @@ export class RaftGroup {
       connectedPeers: this._activePeers.size,
       totalPeers,
       fencingState: this._fencingState,
+      fencingToken: this._fencingToken,
     };
   }
 

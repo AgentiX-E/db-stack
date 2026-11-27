@@ -59,7 +59,12 @@ export interface NodeMessage {
     | 'bootstrap'
     // The edge CDC source's acknowledgement of a `push`: how many frames it
     // put on the real TLS socket, and whether each send was accepted.
-    | 'pushed';
+    | 'pushed'
+    // The fenced store's answer to a write and its report of what it holds, plus
+    // the client it dropped because the CA did not vouch for it.
+    | 'reply'
+    | 'state'
+    | 'rejected-client';
   nodeId: number | string;
   data?: unknown;
   fatal?: boolean;
@@ -610,6 +615,27 @@ export function spawnAuditReader(config: Record<string, unknown>, label: string)
 export function spawnEdgeSource(config: Record<string, unknown>, label: string): ChildNode {
   const child = spawn(process.execPath, [join(HARNESS_DIR, 'edge-source.mjs')], {
     env: { ...process.env, EDGE_SOURCE_CONFIG: JSON.stringify(config) },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  return new ChildNode(label, child);
+}
+
+/**
+ * Spawn the fenced store process — a real resource that decides writes from its
+ * own durable record of the highest fencing token it has accepted.
+ */
+export function spawnFencedStore(config: Record<string, unknown>, label: string): ChildNode {
+  const child = spawn(process.execPath, [join(HARNESS_DIR, 'fenced-store.mjs')], {
+    env: { ...process.env, FENCED_STORE_CONFIG: JSON.stringify(config) },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  return new ChildNode(label, child);
+}
+
+/** Spawn a writer process that presents a fencing token over mTLS. */
+export function spawnFenceWriter(config: Record<string, unknown>, label: string): ChildNode {
+  const child = spawn(process.execPath, [join(HARNESS_DIR, 'fence-writer.mjs')], {
+    env: { ...process.env, FENCE_WRITER_CONFIG: JSON.stringify(config) },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   return new ChildNode(label, child);

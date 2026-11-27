@@ -56,6 +56,20 @@ export { ReadIndexManager } from './consensus/extensions/ReadIndexManager';
 export type { ReadIndexRequest } from './consensus/extensions/ReadIndexManager';
 export { FencingManager } from './consensus/fencing/FencingManager';
 export type { FencingConfig, FencingShardStatus, FencingStatus, FenceState } from './consensus/fencing/FencingManager';
+export {
+  FencingTokenGuard,
+  compareFencingTokens,
+  formatFencingToken,
+  mintFencingToken,
+  parseFencingToken,
+} from './consensus/fencing/FencingToken';
+export type {
+  FencingRefusalObserver,
+  FencingToken,
+  FencingTokenGuardOptions,
+  WriteAdmission,
+  WriteRefusalReason,
+} from './consensus/fencing/FencingToken';
 export { SessionManager } from './consensus/session/SessionManager';
 export type { SessionConfig, SessionEntry, ISessionManager } from './consensus/session/SessionManager';
 export { EventBus } from './consensus/events/EventBus';

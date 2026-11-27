@@ -41,6 +41,7 @@ const mockRaftAdapter: any = {
   isLeader: vi.fn().mockResolvedValue(true),
   getLeader: vi.fn().mockResolvedValue(1),
   getTerm: vi.fn().mockResolvedValue(1),
+  getCommitIndex: vi.fn().mockResolvedValue(0),
   getProgress: vi.fn().mockResolvedValue({ commit: 0, applied: 0 }),
   stop: vi.fn(),
   setForceLeader: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     isLeader = mockRaftAdapter.isLeader;
     getLeader = mockRaftAdapter.getLeader;
     getTerm = mockRaftAdapter.getTerm;
+    getCommitIndex = mockRaftAdapter.getCommitIndex;
     getProgress = mockRaftAdapter.getProgress;
     stop = mockRaftAdapter.stop;
     setForceLeader = mockRaftAdapter.setForceLeader;

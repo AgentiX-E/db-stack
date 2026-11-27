@@ -22,6 +22,13 @@
 import pino from 'pino';
 import { getErrorMessage } from '../helpers/errorUtils';
 import { resolveLogLevel } from '../../observability/logLevel';
+import {
+  FencingTokenGuard,
+  formatFencingToken,
+  mintFencingToken,
+  type FencingToken,
+  type WriteAdmission,
+} from './FencingToken';
 const logger = pino({ level: resolveLogLevel() });
 
 // ── Types ────────────────────────────────────────────────────────
@@ -34,6 +41,15 @@ export interface FencingConfig {
   checkIntervalMs: number;
   /** Action on fencing breach */
   action: 'block_writes' | 'block_all' | 'panic';
+  /**
+   * Require every write to carry a fencing token (default false).
+   *
+   * The lease alone cannot stop a leader that still hears one peer; a token can,
+   * because the resource compares it against durable state. Turning this on makes
+   * `checkWriteAllowed()` refuse untokened writes — fail-closed — which is only
+   * correct once the engine's write path actually carries a token.
+   */
+  requireToken?: boolean;
 }
 
 export type FenceState = 'fenced' | 'unfenced' | 'unknown';
@@ -54,6 +70,10 @@ export interface FencingStatus {
   shards: FencingShardStatus[];
   fenceCount: number;
   startedAt: number;
+  /** Writes refused because their fencing token was missing or already beaten. */
+  tokenRefusals: number;
+  /** The highest token this node has accepted or observed, if any. */
+  highestToken: FencingToken | null;
 }
 
 interface ShardFence {
@@ -84,9 +104,18 @@ export class FencingManager {
   private checkTimer: ReturnType<typeof setInterval> | null = null;
   private _fenceCount: number = 0;
   private _startedAt: number = 0;
+  /**
+   * The resource-layer memory of how far the right to write has advanced.
+   *
+   * The lease below says whether *this* node should stop; the guard says whether
+   * the *resource* may still accept it. Both must agree, and the guard is the one
+   * the old primary cannot talk out of its answer.
+   */
+  private readonly _tokens: FencingTokenGuard;
 
   constructor(config?: Partial<FencingConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this._tokens = new FencingTokenGuard({ requireToken: this.config.requireToken ?? false });
   }
 
   // ── Core lifecycle ─────────────────────────────────────────────
@@ -185,6 +214,11 @@ export class FencingManager {
         existing.leaderId = leaderId;
         existing.lastHeartbeatTs = now;
 
+        // A heartbeat from a higher term is the resource's own evidence that the
+        // right to write has moved on. Recording it here is what makes a token
+        // from the previous term stale even before the new leader writes anything.
+        this._observeTerm(term);
+
         if (wasFenced) {
           logger.info({ shardId, term, leaderId }, '[FencingManager] Shard recovered — new term from leader heartbeat');
         }
@@ -211,6 +245,7 @@ export class FencingManager {
         currentTerm: term,
         leaderId,
       });
+      this._observeTerm(term);
     }
   }
 
@@ -219,42 +254,86 @@ export class FencingManager {
   /**
    * Check if a write operation is allowed for the given shard.
    *
+   * Two independent questions, both of which must answer yes:
+   *
+   *   1. the lease — has this node heard from a leader recently? (a belief)
+   *   2. the token — has the resource already accepted a later position? (a fact)
+   *
+   * The lease is asked first so that a fenced node reports the lease as the
+   * reason; its token, if it has one, is not allowed to become evidence.
+   *
    * @param shardId - The shard to check (default: 0 for single-shard ops)
+   * @param token - The fencing token the writer carries, if its engine has one
    * @returns Object with `allowed` boolean and optional `reason` if blocked
    */
-  checkWriteAllowed(shardId: string | number): { allowed: boolean; reason?: string } {
-    if (!this.config.enabled) {
-      return { allowed: true };
-    }
-
+  checkWriteAllowed(shardId: string | number, token?: FencingToken | null): { allowed: boolean; reason?: string } {
     const sid = typeof shardId === 'string' ? parseInt(shardId, 10) : shardId;
 
-    const shard = this.shards.get(sid);
+    if (this.config.enabled) {
+      const shard = this.shards.get(sid);
 
-    if (!shard) {
-      // No shard info yet — allow in unknown state (optimistic)
-      return { allowed: true };
+      if (shard && shard.state === 'fenced') {
+        return {
+          allowed: false,
+          reason: `Node is fenced for shard ${sid}: no leader heartbeat for ${Date.now() - shard.lastHeartbeatTs}ms`,
+        };
+      }
+
+      // 'block_all' forbids every write on this node, even when the shard is
+      // still unfenced (e.g., during a decommissioning/shutdown transition).
+      // It is intentionally stricter than the default 'block_writes' action,
+      // which only rejects writes on shards that have actually been fenced.
+      if (shard && this.config.action === 'block_all') {
+        return {
+          allowed: false,
+          reason: `Writes are blocked by 'block_all' fencing action for shard ${sid}`,
+        };
+      }
     }
 
-    if (shard.state === 'fenced') {
-      return {
-        allowed: false,
-        reason: `Node is fenced for shard ${sid}: no leader heartbeat for ${Date.now() - shard.lastHeartbeatTs}ms`,
-      };
-    }
-
-    // 'block_all' forbids every write on this node, even when the shard is
-    // still unfenced (e.g., during a decommissioning/shutdown transition).
-    // It is intentionally stricter than the default 'block_writes' action,
-    // which only rejects writes on shards that have actually been fenced.
-    if (this.config.action === 'block_all') {
-      return {
-        allowed: false,
-        reason: `Writes are blocked by 'block_all' fencing action for shard ${sid}`,
-      };
+    const admission = this._tokens.admit(token, `shard ${sid}`);
+    if (!admission.admitted) {
+      const label = admission.reason === 'missing-token' ? 'missing token' : 'stale token';
+      return { allowed: false, reason: `${label}: ${admission.detail}` };
     }
 
     return { allowed: true };
+  }
+
+  /**
+   * Decide a fencing token on its own, for engines that keep their own lease
+   * bookkeeping and only want the resource-layer verdict.
+   *
+   * @param token - The token the writer carries
+   */
+  admitToken(token: FencingToken): WriteAdmission {
+    return this._tokens.admit(token);
+  }
+
+  /** The highest token this node has accepted or observed. */
+  getHighestToken(): FencingToken | null {
+    return this._tokens.getHighest();
+  }
+
+  /**
+   * Render the highest token for logs and status endpoints.
+   *
+   * A string is what an operator compares across nodes; the object is what the
+   * code compares.
+   */
+  getFormattedHighestToken(): string | null {
+    const highest = this._tokens.getHighest();
+    return highest ? formatFencingToken(highest) : null;
+  }
+
+  private _observeTerm(term: number): void {
+    // A term that is not a non-negative safe integer cannot be ordered, and the
+    // heartbeat path must not throw over it: skip the observation, keep the lease.
+    if (!Number.isSafeInteger(term) || term < 0) {
+      logger.warn({ term }, '[FencingManager] Ignoring a fencing term that is not a non-negative integer');
+      return;
+    }
+    this._tokens.observe(mintFencingToken(term, 0));
   }
 
   // ── Event subscriptions ────────────────────────────────────────
@@ -303,6 +382,8 @@ export class FencingManager {
       shards: shardStatuses,
       fenceCount: this._fenceCount,
       startedAt: this._startedAt,
+      tokenRefusals: this._tokens.getRefusalCount(),
+      highestToken: this._tokens.getHighest(),
     };
   }
 

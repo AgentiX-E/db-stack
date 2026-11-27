@@ -333,6 +333,11 @@ jobs:
       # and the case fails if the resolver is never consulted (AC-F13, P3-82).
       - name: Edge CDC intake over mTLS (AC-F13)
         run: pnpm --filter @agentix-e/db-stack-e2e run test:edge
+      # Its own invocation: this suite kills a quorum and cold-restarts nodes to
+      # supersede a fencing token, so it needs the machine to itself for the
+      # election timings to mean anything (AC-F22).
+      - name: Stale fencing token refused by the resource (AC-F22)
+        run: pnpm --filter @agentix-e/db-stack-e2e run test:fencing
       # Its own invocation: this suite kills a datacenter and cold-restarts it,
       # and the restart has to be the only thing competing for the machine's
       # sockets and CPU if the recovery timings are to mean anything.

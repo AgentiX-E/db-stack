@@ -59,6 +59,11 @@ export default defineConfig({
       'src/assemblers/scaling/__tests__/ClusterScalingExecutor.test.ts',
       'src/assemblers/rollout/__tests__/ClusterRolloutPlanner.test.ts',
       'src/assemblers/chaos/__tests__/RaftFaultTranslator.test.ts',
+      // The fencing decision and the files that depend on it. The token suite is
+      // the one that has to notice a reversed comparison; the manager suite is what
+      // notices the token half being dropped from `checkWriteAllowed()`.
+      'src/__tests__/unit/FencingToken.test.ts',
+      'src/__tests__/unit/FencingManager.token.test.ts',
     ],
     exclude: [],
     pool: 'forks',

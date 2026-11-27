@@ -102,6 +102,12 @@ export const TARGETS = {
       "cluster/src/assemblers/scaling/ClusterScalingExecutor.ts",
       "cluster/src/assemblers/rollout/ClusterRolloutPlanner.ts",
       "cluster/src/assemblers/chaos/RaftFaultTranslator.ts",
+      // The fencing decision. Three comparisons decide whether a partitioned
+      // primary's write lands: `<` reversed admits every stale token, `>` widened to
+      // `>=` refuses the current primary's retry, and `initial` dropped re-admits the
+      // old primary after a restart. Coverage sees all three executed; only a
+      // mutant shows whether a test would have objected.
+      "cluster/src/consensus/fencing/FencingToken.ts",
     ],
     testConfig: "cluster/vitest.mutation.config.ts",
     // Raised with the assemblers rather than lowered around them. Every file in

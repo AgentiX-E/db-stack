@@ -23,7 +23,8 @@
     "lint": "eslint .",
     "format:check": "prettier --check \"harness/**/*.{ts,mjs}\" \"tests/**/*.ts\" \"bench/**/*.ts\" \"*.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:recovery": "vitest run tests/federation-recovery.test.ts"
+    "test:recovery": "vitest run tests/federation-recovery.test.ts",
+    "test:fencing": "vitest run tests/cluster-fencing.test.ts"
   },
   "dependencies": {
     "@agentix-e/db-cluster": "workspace:*",

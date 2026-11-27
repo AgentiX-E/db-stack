@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`FencingTokenGuard` — the resource layer's own answer to "may this write land?" (F-22).** A
+  fencing check that decides from `isInMajority()` is a belief, and the old primary's belief is that
+  it is fine: it still hears one peer, so it answers yes and keeps writing. The only place a
+  partitioned leader is actually stopped is the resource it writes to, and the only fact that
+  resource can compare is a position the quorum issued. `admit(token)` refuses a token below the
+  highest the resource has already accepted (`stale-token`), admits an equal one (a retry is not a
+  usurper), advances on a greater one, and refuses an untokened write (`missing-token`) unless the
+  engine opts out with `requireToken: false`. `initial` seeds the highest token from durable state,
+  because a resource that restarts empty re-admits the old primary during exactly the window the
+  token exists to cover. `onRefused()` reports refusals for logging; a throwing observer cannot
+  change a decision.
+- **`mintFencingToken`, `compareFencingTokens`, `formatFencingToken`, `parseFencingToken`** — the
+  token itself: term and committed index, ordered totally (term first, then index), with a canonical
+  wire form. Non-integer, negative and unsafe coordinates are refused, so the ordering is never
+  ambiguous.
+- **`RaftGroup.fencingRequest()` now mints a token** and `getFencingToken()` hands it to the engine.
+  The check also refuses to mint when the group's own term is behind a term it has already observed:
+  the quorum has moved on without it, and no amount of peer chatter makes it current again. Falling
+  back to read-only drops the token, so the resource answers "no token" rather than honouring a
+  superseded position. `getSplitBrainStatus()` reports the token alongside the rest of the state.
+- **`FencingManager.checkWriteAllowed(shardId, token?)`** answers both questions in one call: the
+  lease (should this node stop?) and the token (may the resource still accept it?). `admitToken()`,
+  `getHighestToken()` and `getFormattedHighestToken()` expose the token half on its own, and
+  `getStatus()` counts token refusals. A heartbeat from a higher term records that term as the
+  resource's new floor, so a token from the previous term is already stale before the new leader
+  writes anything. `requireToken` is opt-in per config: an engine that cannot carry a token yet keeps
+  the behaviour it had.
+
 ## [2.1.0] — 2026-11-24
 
 ### Added
