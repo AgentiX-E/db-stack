@@ -80,7 +80,7 @@ const guard = new FencingTokenGuard({ requireToken: cfg.requireToken !== false, 
 let accepted = 0;
 let refused = 0;
 let protocol = null;
-let fd = openSync(cfg.dataFile, 'a');
+const fd = openSync(cfg.dataFile, 'a');
 
 function handleLine(socket, line) {
   let request;
