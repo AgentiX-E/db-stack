@@ -39,6 +39,9 @@ import { isBootstrapFrame } from '../replication/bootstrapFrames';
 import { deriveRetention, type RetentionWindows } from '../storage/retention';
 import { AntiEntropyProtocol } from './AntiEntropyProtocol';
 import { HeartbeatProtocol } from './HeartbeatProtocol';
+import { CatastrophicFailoverManager, type CatastrophicFailoverHooks } from './CatastrophicFailoverManager';
+import { FederationOrchestrator } from './FederationOrchestrator';
+import { TopologyManager } from '../topology/TopologyManager';
 import { SnapshotBootstrap, type BootstrapSource } from './SnapshotBootstrap';
 import { isHeartbeatFrame } from './heartbeatFrame';
 import type { InboundMessage } from '../interfaces/transport/InboundMessage';
@@ -201,6 +204,18 @@ export interface FederationManagerConfig {
    * the alternative would be a transfer that silently leaves a hole.
    */
   handoffLogLimit?: number;
+  /**
+   * Engine-agnostic recovery hooks for the catastrophic failover manager.
+   *
+   * F-17's gap was not a missing detector or failover manager but the absence
+   * of any production point connecting them. Supplying hooks here makes the
+   * manager build a {@link CatastrophicFailoverManager} and a
+   * {@link FederationOrchestrator}, wire the detector's expiry into a failure
+   * verdict and a peer's recovery into a real `recover()` call, and tear both
+   * down on `stop()`. Omitting this keeps the historical behaviour — no
+   * failover bookkeeping is constructed for engines that manage it themselves.
+   */
+  failover?: CatastrophicFailoverHooks & { dcTimeoutMs?: number };
 }
 
 export class FederationManager {
@@ -223,6 +238,9 @@ export class FederationManager {
   private _antiEntropyProtocol: AntiEntropyProtocol | null = null;
   private _heartbeatProtocol: HeartbeatProtocol | null = null;
   private _bootstrap: SnapshotBootstrap | null = null;
+  /** F-17: the failover bookkeeping and the point that drives it. */
+  private _failover: CatastrophicFailoverManager | null = null;
+  private _orchestrator: FederationOrchestrator | null = null;
 
   /**
    * Position of this node's federation log, and the tail of that log.
@@ -332,6 +350,41 @@ export class FederationManager {
       heartbeatIntervalMs,
     });
     this._splitBrainDetector.start();
+
+    // 3b. F-17 — connect detection to recovery.
+    //
+    // A detector that reports silence and a failover manager that can recover
+    // are useful only if something joins them. The orchestrator is that point:
+    // it feeds the detector's observed silence into the failover clock, turns a
+    // failed verdict into a failed DC, and turns a peer's recovery into a real
+    // resource-level `recover()` call before the DC is declared healthy again.
+    // It is built only when a caller supplies recovery hooks — an engine that
+    // manages failover itself pays nothing and keeps the historical behaviour.
+    if (this.config.failover) {
+      const peers = this.config.replicationConfig.targets;
+      const topology = new TopologyManager({
+        nodeId: this.config.nodeId,
+        dc: this.config.dc,
+        peers,
+      });
+      const dcByNode = new Map(peers.map((p) => [p.nodeId, p.dc]));
+      const { dcTimeoutMs, ...hooks } = this.config.failover;
+      // Align the failover timeout with the detector's own expiry deadline
+      // (interval × the detector's default missed-beat threshold of 3). Two
+      // different deadlines would let the detector report a silence the
+      // failover manager refuses to believe.
+      const failoverTimeout = dcTimeoutMs ?? heartbeatIntervalMs * 3;
+      this._failover = new CatastrophicFailoverManager(topology, failoverTimeout, hooks);
+      this._orchestrator = new FederationOrchestrator({
+        failureSource: this._splitBrainDetector,
+        recoverySource: this,
+        failover: this._failover,
+        resolveDc: (nodeId) => dcByNode.get(nodeId),
+        onReconfigure: () => undefined,
+        onError: hooks.onError,
+      });
+      this._orchestrator.start();
+    }
 
     // 4. Initialize ConflictResolver
     this._conflictResolver = new ConflictResolver(this.config.nodeId);
@@ -892,6 +945,9 @@ export class FederationManager {
     }
     this._dlqScanTimer = null;
     this._housekeepingTimer = null;
+    // The orchestrator holds subscriptions to the detector's expiry and this
+    // manager's recovery signal; release them before the detector is torn down.
+    this._orchestrator?.stop();
     // Protocols first: they hold timers that would otherwise fire against a
     // detector and an anti-entropy object that are about to be torn down.
     this._heartbeatProtocol?.stop();
@@ -1114,6 +1170,28 @@ export class FederationManager {
       throw new Error('DCSplitBrainDetector not started. Call start() first.');
     }
     return this._splitBrainDetector;
+  }
+
+  /**
+   * The failover bookkeeping built when `config.failover` was supplied.
+   * Absent when the engine manages failover itself (F-17).
+   */
+  getFailover(): CatastrophicFailoverManager {
+    if (!this._failover) {
+      throw new Error('CatastrophicFailoverManager not started. Supply config.failover before start().');
+    }
+    return this._failover;
+  }
+
+  /**
+   * The point that connects heartbeat expiry to recovery (F-17).
+   * Absent when `config.failover` was not supplied.
+   */
+  getOrchestrator(): FederationOrchestrator {
+    if (!this._orchestrator) {
+      throw new Error('FederationOrchestrator not started. Supply config.failover before start().');
+    }
+    return this._orchestrator;
   }
 
   /**

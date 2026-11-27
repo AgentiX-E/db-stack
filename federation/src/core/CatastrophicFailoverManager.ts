@@ -91,6 +91,22 @@ export class CatastrophicFailoverManager {
   }
 
   /**
+   * Feed an observed silence into a DC's clock before a failure verdict.
+   *
+   * `lastSeen` starts at construction time, which says nothing about when a
+   * peer truly last spoke — a detector that has watched a peer go quiet for
+   * minutes would otherwise be second-guessed by a clock that began counting
+   * when this object was built. Callers that have a real observation (the
+   * heartbeat detector's `silenceMs`) pass it here so `detectDCFailure` judges
+   * the world that was observed, not the world this manager assumed.
+   */
+  observeSilence(dcId: string, silenceMs: number): void {
+    const status = this.dcStatus.get(dcId);
+    if (!status) return;
+    status.lastSeen = Date.now() - silenceMs;
+  }
+
+  /**
    * Detect whether a DC has failed based on the last-seen timestamp.
    *
    * A DC is considered failed if it hasn't been heard from within

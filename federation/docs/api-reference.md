@@ -1317,6 +1317,48 @@ The properties, and what enforces each:
   of order and asked for a re-send: measured as five gap requests and twelve chunk
   frames carrying three chunks.
 
+### `FederationOrchestrator` — failure joined to recovery
+
+Detection and recovery are separate components, and a silent datacenter used to
+leave the failover bookkeeping green because nothing connected the two. The
+orchestrator is that connection, and it is engine-agnostic: the three
+collaborators are narrow interfaces a caller supplies, so no socket, cluster or
+storage type leaks into it.
+
+```typescript
+new FederationOrchestrator({
+  failureSource: FailureSignalSource;   // e.g. DCSplitBrainDetector
+  recoverySource: RecoverySignalSource; // e.g. FederationManager.onTargetRecovered
+  failover: FailoverActions;            // e.g. CatastrophicFailoverManager
+  resolveDc: (nodeId: string) => string | undefined;
+  onReconfigure?: (dcId: string, healthy: boolean) => void | Promise<void>;
+  onError?: (error: Error) => void;
+});
+orchestrator.start(): void;
+orchestrator.stop(): void;
+orchestrator.recordPending(dcId: string, count?: number): void;
+orchestrator.getStatus(): {
+  started, failedDcs, recoveries, recoveryFailures, ignoredRecoveries, coalescedRecoveries
+};
+```
+
+Policy: a heartbeat expiry feeds the detector's observed silence into the
+failover clock (`observeSilence`) before asking for a verdict, so a detector that
+watched a peer go quiet for minutes is not second-guessed by a clock that began
+at construction; a failed verdict marks the DC failed; a peer coming back drives
+a real `recover()` before the DC is declared healthy; a rejected recovery keeps
+it failed and reports through `onError`; and two recoveries for one DC at once
+collapse into one. A caller that omits reconfiguration hooks pays nothing for
+them.
+
+For an ordinary deployment the wiring is done by the manager: supplying
+`FederationManagerConfig.failover` (an optional `dcTimeoutMs` plus the
+`recover` / `onError` hooks) builds the `CatastrophicFailoverManager` and the
+orchestrator, connects the detector's expiry and the manager's own
+`onTargetRecovered` signal, and stops both on `stop()`. `manager.getFailover()`
+and `manager.getOrchestrator()` expose them; omitting `failover` keeps the
+historical behaviour for engines that manage recovery themselves.
+
 ### `FederationManager` — the control-plane surface
 
 ```typescript
@@ -1326,6 +1368,8 @@ manager.getBootstrap(): SnapshotBootstrap;
 manager.bootstrapFrom(peerNodeId?: string): Promise<string>;
 manager.getLsn(): number;
 manager.getProtocolStatus(): { antiEntropy, heartbeat, bootstrap, lsn };
+manager.getFailover(): CatastrophicFailoverManager;
+manager.getOrchestrator(): FederationOrchestrator;
 ```
 
 `bootstrapFrom()` defaults to the first configured target. Control frames

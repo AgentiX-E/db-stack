@@ -138,4 +138,21 @@ describe('CatastrophicFailoverManager — recovery consults the resource', () =>
     const fm = new CatastrophicFailoverManager(makeTopology(), 1_000);
     await expect(fm.recoverDC('unknown')).rejects.toThrow('not found');
   });
+
+  it('judges a failure against the observed silence, not the construction clock', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const fm = new CatastrophicFailoverManager(makeTopology(), 1_000);
+    // The detector watched this DC go quiet for 5 000 ms; the manager was only
+    // constructed a moment ago. Feeding the real silence must create a failure
+    // the manager's own clock would have refused to see.
+    fm.observeSilence('dc-east', 5_000);
+    expect(fm.detectDCFailure('dc-east')).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it('ignores an observed silence for an unknown DC instead of creating a phantom entry', () => {
+    const fm = new CatastrophicFailoverManager(makeTopology(), 1_000);
+    fm.observeSilence('does-not-exist', 5_000);
+    expect(fm.getDCHealth().has('does-not-exist')).toBe(false);
+  });
 });

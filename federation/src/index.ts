@@ -101,6 +101,21 @@ export type {
   ConflictEntry,
 } from './core/FederationManager';
 
+// F-17 — failure detection joined to resource-level recovery. `CatastrophicFailoverManager`
+// was the last component the package root did not export: it is no longer a simulation
+// since IT-94 wired its recover hook, and IT-96 connected it to the detector in production.
+export { CatastrophicFailoverManager } from './core/CatastrophicFailoverManager';
+export type { CatastrophicFailoverHooks, DCHealthStatus } from './core/CatastrophicFailoverManager';
+export { FederationOrchestrator } from './core/FederationOrchestrator';
+export type {
+  HeartbeatExpiredEvent,
+  FailureSignalSource,
+  RecoverySignalSource,
+  FailoverActions,
+  FederationOrchestratorConfig,
+  OrchestrationStatus,
+} from './core/FederationOrchestrator';
+
 // ConflictResolver
 export { ConflictResolver } from './replication/ConflictResolver';
 export type {
