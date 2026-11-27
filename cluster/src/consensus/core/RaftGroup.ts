@@ -16,7 +16,7 @@ import { RaftAdapter, RaftConfig, ShardSnapshotMeta } from './RaftAdapter';
 import { IShardReplica, ApplyEntry } from '../../interfaces/IShardReplica';
 import { IOutboxWriter, OutboxRecord } from '../../interfaces/IOutboxWriter';
 import { SqliteStorage } from '../storage/SqliteStorage';
-import { mintFencingToken, type FencingToken } from '../fencing/FencingToken';
+import { mintFencingToken, stampFencingTokenOnEntry, type FencingToken } from '../fencing/FencingToken';
 import { getErrorMessage } from '../helpers/errorUtils';
 import {
   RaftConsensusPhase,
@@ -899,7 +899,7 @@ export class RaftGroup {
    * @param createdAt Commit timestamp; defaults to now.
    */
   private buildOutboxRecord(
-    source: { msgId?: string; type?: string },
+    source: { msgId?: string; type?: string; fencingToken?: string },
     payload: string | Buffer,
     index: number,
     term: number,
@@ -917,12 +917,37 @@ export class RaftGroup {
     };
   }
 
+  /**
+   * Attach the quorum position that authorises a proposal.
+   *
+   * A token is a coordinate in the log — the term and the committed index at the
+   * moment the write is proposed — so it is minted here, on the write path, rather
+   * than taken from the last fence: between two fences the index advances, and a
+   * resource that remembers the highest coordinate it has seen must never be given
+   * a stale one by its own leader.
+   *
+   * A caller may also bring a token (an engine forwarding a client's position). It
+   * is honoured when it is at or above the group's own; below it, the proposal is
+   * refused before a log entry exists. Accepting a lower token would let a writer
+   * from an older position commit through a group that has already moved on —
+   * exactly the write a fence exists to stop. A malformed token is refused rather
+   * than guessed at: a position whose order is ambiguous is worse than no write.
+   */
+  private async stampFencingToken(entry: ApplyEntry): Promise<ApplyEntry> {
+    const term = await this.raft.getTerm();
+    const commitIndex = await this.raft.getCommitIndex();
+    // The seam is shared with engines driving the cluster directly, so the rules
+    // live in one engine-agnostic function rather than being restated here.
+    return stampFencingTokenOnEntry(entry, term, commitIndex);
+  }
+
   async propose(entry: ApplyEntry): Promise<void> {
     if (this._stopped) throw new Error('RaftGroup: group already stopped');
-    const committed = await this.raft.propose(JSON.stringify(entry));
+    const stamped = await this.stampFencingToken(entry);
+    const committed = await this.raft.propose(JSON.stringify(stamped));
 
     this.outboxManager.append(
-      this.buildOutboxRecord(entry, JSON.stringify(entry), Number(committed.index), Number(committed.term)),
+      this.buildOutboxRecord(stamped, JSON.stringify(stamped), Number(committed.index), Number(committed.term)),
     );
   }
 
@@ -939,14 +964,14 @@ export class RaftGroup {
   async proposeBatch(entries: ApplyEntry[]): Promise<void> {
     if (this._stopped) throw new Error('RaftGroup: group already stopped');
     const batchMsgId = crypto.randomUUID();
-    const batchEntry: Partial<ApplyEntry> = {
+    const batchEntry: ApplyEntry = await this.stampFencingToken({
       msgId: batchMsgId,
       type: 'exec',
       data: JSON.stringify({
         __batch: true,
         entries,
       }),
-    };
+    } as ApplyEntry);
     const committed = await this.raft.propose(JSON.stringify(batchEntry));
     this.outboxManager.append(
       this.buildOutboxRecord(
@@ -971,9 +996,10 @@ export class RaftGroup {
    */
   async proposeAndWait(entry: ApplyEntry): Promise<void> {
     if (this._stopped) throw new Error('RaftGroup: group already stopped');
-    const committed = await this.raft.proposeAndWait(JSON.stringify(entry));
+    const stamped = await this.stampFencingToken(entry);
+    const committed = await this.raft.proposeAndWait(JSON.stringify(stamped));
     this.outboxManager.append(
-      this.buildOutboxRecord(entry, JSON.stringify(entry), Number(committed.index), Number(committed.term)),
+      this.buildOutboxRecord(stamped, JSON.stringify(stamped), Number(committed.index), Number(committed.term)),
     );
   }
 

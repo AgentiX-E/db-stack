@@ -62,6 +62,7 @@ export {
   formatFencingToken,
   mintFencingToken,
   parseFencingToken,
+  stampFencingTokenOnEntry,
 } from './consensus/fencing/FencingToken';
 export type {
   FencingRefusalObserver,

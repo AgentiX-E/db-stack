@@ -10,6 +10,14 @@ export interface ApplyEntry {
   msgId?: string;
   /** PITR operation type */
   type?: string;
+  /**
+   * The quorum position that authorised this write, in the wire form
+   * `term/index`. Stamped by the consensus layer on every proposal, so an engine
+   * can hand it to its own resource guard without knowing anything about Raft.
+   * An engine-agnostic field: any storage implementation can carry it through to
+   * the thing it writes, and ignore it if it has no fence.
+   */
+  fencingToken?: string;
 }
 
 export interface IShardReplica {

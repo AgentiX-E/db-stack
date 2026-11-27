@@ -143,6 +143,48 @@ export function parseFencingToken(raw: string): FencingToken {
   return mintFencingToken(Number(rawTerm), Number(rawIndex));
 }
 
+/**
+ * Stamp the current quorum position onto an entry, in one engine-agnostic step.
+ *
+ * This is the write-path seam shared by `RaftGroup.propose()` and by engines that
+ * drive the cluster directly. It only knows the object has an optional
+ * `fencingToken` field; it does not know what a shard, a table or a socket is, so
+ * any storage implementation can use it without importing consensus internals.
+ *
+ * - no token on the entry → returned with the position `(term, index)` stamped;
+ *   the caller's object is never mutated.
+ * - token at or above the position → kept, so a retry is not rewritten.
+ * - token below the position → `Error`, because committing it would let an older
+ *   writer through a group that has already moved on.
+ * - malformed token → `Error`, because a position whose order is ambiguous is
+ *   worse than refusing the write.
+ */
+export function stampFencingTokenOnEntry<T extends object>(
+  entry: T,
+  term: number,
+  commitIndex: number,
+): T & { fencingToken: string } {
+  const own = mintFencingToken(term, commitIndex);
+  const current = (entry as { fencingToken?: string }).fencingToken;
+  if (current === undefined) {
+    return { ...entry, fencingToken: formatFencingToken(own) };
+  }
+
+  let presented: FencingToken;
+  try {
+    presented = parseFencingToken(current);
+  } catch (error) {
+    throw new Error(
+      `malformed fencing token ${JSON.stringify(current)}: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (compareFencingTokens(presented, own) < 0) {
+    throw new Error(`fencing token ${formatFencingToken(presented)} is behind this group's ${formatFencingToken(own)}`);
+  }
+  return entry as T & { fencingToken: string };
+}
+
 /** Canonical unsigned decimal: no sign, no fraction, no redundant leading zeros. */
 const UNSIGNED_DECIMAL = /^(0|[1-9][0-9]*)$/;
 

@@ -38,6 +38,9 @@ const mockRaftAdapter: any = {
   isLeader: vi.fn().mockResolvedValue(true),
   getLeader: vi.fn().mockResolvedValue(1),
   getTerm: vi.fn().mockResolvedValue(1),
+  // Every proposal now stamps the quorum position, so the adapter must be able
+  // to answer where the log is committed. The real one always can.
+  getCommitIndex: vi.fn().mockResolvedValue(5),
   getProgress: vi.fn().mockResolvedValue({ commit: 0, applied: 0 }),
   stop: vi.fn(),
   setForceLeader: vi.fn(),
@@ -57,6 +60,7 @@ vi.mock('../../consensus/core/RaftAdapter', () => ({
     isLeader = mockRaftAdapter.isLeader;
     getLeader = mockRaftAdapter.getLeader;
     getTerm = mockRaftAdapter.getTerm;
+    getCommitIndex = mockRaftAdapter.getCommitIndex;
     getProgress = mockRaftAdapter.getProgress;
     stop = mockRaftAdapter.stop;
     setForceLeader = mockRaftAdapter.setForceLeader;
@@ -123,6 +127,10 @@ describe('RaftGroup Concurrency Model', () => {
     vi.restoreAllMocks();
     mockRaftAdapter.propose.mockResolvedValue({ index: '5', term: '2' });
     mockRaftAdapter.isLeader.mockResolvedValue(true);
+    // restoreAllMocks drops the module-level defaults; the write path needs a
+    // valid quorum position to stamp on every proposal, so restore both.
+    mockRaftAdapter.getTerm.mockResolvedValue(1);
+    mockRaftAdapter.getCommitIndex.mockResolvedValue(5);
   });
 
   //

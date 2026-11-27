@@ -108,10 +108,11 @@ describe('RaftGroup — one synchronous proposal is one entry', () => {
     await group.proposeAndWait({ msgId: 'once', type: 'exec', data: '{}' });
 
     // Twice would mean two log entries for one write, and the record's position
-    // would be the position of an entry the caller never asked for.
+    // would be the position of an entry the caller never asked for. The one submit
+    // also carries the quorum position the resource will compare.
     expect(mockRaftAdapter.proposeAndWait).toHaveBeenCalledTimes(1);
     expect(mockRaftAdapter.proposeAndWait).toHaveBeenCalledWith(
-      JSON.stringify({ msgId: 'once', type: 'exec', data: '{}' }),
+      JSON.stringify({ msgId: 'once', type: 'exec', data: '{}', fencingToken: '3/77' }),
     );
   });
 

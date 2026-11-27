@@ -411,7 +411,7 @@ shard inside the lease, it stops accepting writes instead of serving a
 partition. `checkWriteAllowed()` is the gate the write path consults;
 `onFenceTriggered` and `onPanic` are the escalation hooks.
 
-The lease answers *"should this node stop?"* — a local decision taken from
+The lease answers _"should this node stop?"_ — a local decision taken from
 elapsed time. It is not enough on its own: a partitioned primary that still hears
 one peer has a valid lease and a wrong belief. `checkWriteAllowed(shardId, token)`
 therefore consults a second, independent gate, the `FencingTokenGuard` below, and
@@ -441,7 +441,7 @@ class FencingManager {
 
 ### `FencingTokenGuard`
 
-The resource layer's own answer to *"may this write land?"* — and the only place a
+The resource layer's own answer to _"may this write land?"_ — and the only place a
 partitioned primary is actually stopped.
 
 A token is the quorum's log position at the moment it granted the right to write:
@@ -465,14 +465,19 @@ function mintFencingToken(term: number, index: number): FencingToken;
 function compareFencingTokens(a: FencingToken, b: FencingToken): -1 | 0 | 1;
 function formatFencingToken(token: FencingToken): string;
 function parseFencingToken(raw: string): FencingToken;
+function stampFencingTokenOnEntry<T extends object>(
+  entry: T,
+  term: number,
+  commitIndex: number,
+): T & { fencingToken: string };
 ```
 
-| Decision | When | Why |
-| --- | --- | --- |
-| `missing-token` | no token, and `requireToken` (the default) | fail-closed: a resource that cannot tell whether a writer is current must not assume it is |
-| admitted | token equal to the highest | a retry is not a usurper; at-least-once delivery depends on it |
-| `stale-token` | token below the highest | the resource has already accepted a later position |
-| admitted, highest advances | token above the highest | the right to write has moved on |
+| Decision                   | When                                       | Why                                                                                        |
+| -------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `missing-token`            | no token, and `requireToken` (the default) | fail-closed: a resource that cannot tell whether a writer is current must not assume it is |
+| admitted                   | token equal to the highest                 | a retry is not a usurper; at-least-once delivery depends on it                             |
+| `stale-token`              | token below the highest                    | the resource has already accepted a later position                                         |
+| admitted, highest advances | token above the highest                    | the right to write has moved on                                                            |
 
 `mintFencingToken` validates the coordinates, `compareFencingTokens` is the total
 order (term first, then index), and `formatFencingToken` / `parseFencingToken` are
@@ -483,6 +488,15 @@ exactly one spelling and two nodes cannot disagree about whether they agree.
 restarts with an empty memory re-admits the old primary's writes during exactly
 the window the token exists to cover, so recovery from durable state is part of
 the contract rather than a convenience.
+
+`stampFencingTokenOnEntry` is the write-path seam. `RaftGroup.propose()` calls it
+with the group's current term and committed index before committing, so every
+entry carries the position that authorised it. An entry with no token is returned
+with one stamped (the caller's object is not mutated); a token at or above the
+position is kept, so a retry is not rewritten; a token below it, or a malformed
+one, is refused before a log entry exists. The function knows nothing about
+shards, tables or sockets, so an engine that drives the cluster directly can call
+the same seam its own write path needs.
 
 `RaftGroup.fencingRequest()` mints the token from the term the group is in and the
 index it has committed, and `getFencingToken()` hands it to the engine, which

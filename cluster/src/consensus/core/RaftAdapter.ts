@@ -94,8 +94,17 @@ function toApplyEntry(entry: LogEntryRecord): ApplyEntry {
   };
 }
 
-/** The idempotency fields an apply record may carry, when the payload is ours. */
-function decodeApplyKeys(data: string): { msgId?: string; type?: string } {
+/**
+ * The envelope fields an apply record may carry, when the payload is ours.
+ *
+ * `fencingToken` travels with the entry for the same reason `msgId` does: a
+ * learner replaying the log or a node restoring a snapshot has to hand the
+ * resource the same position the leader committed, or a stale write can be
+ * admitted after a restart. It is read back from the wire form rather than
+ * rebuilt, because rebuilding from this node's term and index would give a
+ * follower a different answer from the writer's.
+ */
+function decodeApplyKeys(data: string): { msgId?: string; type?: string; fencingToken?: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
@@ -103,10 +112,11 @@ function decodeApplyKeys(data: string): { msgId?: string; type?: string } {
     return {};
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-  const record = parsed as { msgId?: unknown; type?: unknown };
-  const keys: { msgId?: string; type?: string } = {};
+  const record = parsed as { msgId?: unknown; type?: unknown; fencingToken?: unknown };
+  const keys: { msgId?: string; type?: string; fencingToken?: string } = {};
   if (typeof record.msgId === 'string') keys.msgId = record.msgId;
   if (typeof record.type === 'string') keys.type = record.type;
+  if (typeof record.fencingToken === 'string') keys.fencingToken = record.fencingToken;
   return keys;
 }
 

@@ -37,6 +37,7 @@ export interface NodeMessage {
     | 'ready'
     | 'applied'
     | 'proposed'
+    | 'proposed:gated'
     | 'status'
     | 'error'
     | 'leader'
@@ -464,6 +465,30 @@ export class ChildNode {
     // raft assigned it, and a harness that invented `-1` would turn a broken reply
     // into a passing assertion about index -1.
     return { ok: true, index: (msg.data as { index: number }).index };
+  }
+
+  /**
+   * Propose a write through the product's fencing seam and read back the token it
+   * stamped. The child mints the position from its own quorum view using the
+   * published `stampFencingTokenOnEntry`, so the token is a product decision, not
+   * a harness guess.
+   */
+  async proposeGated(
+    key: string,
+    value: string,
+    token?: string,
+    timeoutMs = 30_000,
+  ): Promise<{ ok: true; index: number; token: string } | { ok: false; error: string }> {
+    const start = this.messages.length;
+    this.send({ cmd: 'propose:gated', key, value, msgId: `gated-${key}`, fencingToken: token });
+    const msg = await this.waitFor(
+      (m) => (m.type === 'proposed:gated' || m.type === 'error') && this.messages.indexOf(m) >= start,
+      timeoutMs,
+      'a gated proposal answer',
+    );
+    if (msg.type === 'error') return { ok: false, error: String(msg.data) };
+    const data = msg.data as { index: number; token: string };
+    return { ok: true, index: data.index, token: data.token };
   }
 
   /** What this node believes the committed configuration is. */

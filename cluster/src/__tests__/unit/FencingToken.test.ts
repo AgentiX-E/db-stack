@@ -21,6 +21,7 @@ import {
   formatFencingToken,
   mintFencingToken,
   parseFencingToken,
+  stampFencingTokenOnEntry,
   type FencingToken,
 } from '../../consensus/fencing/FencingToken';
 
@@ -269,5 +270,33 @@ describe('FencingTokenGuard — the resource refuses what it has already surpass
 
     guard.reset(token(8, 8));
     expect(guard.admit(token(8, 7)).admitted).toBe(false);
+  });
+});
+
+describe('stampFencingTokenOnEntry — the write-path seam', () => {
+  it('stamps a position from the term and committed index given to it', () => {
+    const stamped = stampFencingTokenOnEntry({ msgId: 'a', data: '{}' }, 4, 91);
+    expect(stamped).toEqual({ msgId: 'a', data: '{}', fencingToken: '4/91' });
+  });
+
+  it('leaves the caller entry untouched — it returns a new object', () => {
+    const entry = { msgId: 'b', data: '{}' };
+    const stamped = stampFencingTokenOnEntry(entry, 4, 91);
+    expect(entry).toEqual({ msgId: 'b', data: '{}' });
+    expect(stamped).not.toBe(entry);
+  });
+
+  it('keeps a caller token at or above the group position', () => {
+    expect(stampFencingTokenOnEntry({ fencingToken: '5/1' }, 4, 91).fencingToken).toBe('5/1');
+    expect(stampFencingTokenOnEntry({ fencingToken: '4/91' }, 4, 91).fencingToken).toBe('4/91');
+  });
+
+  it('refuses a caller token behind the group position', () => {
+    expect(() => stampFencingTokenOnEntry({ fencingToken: '3/999' }, 4, 91)).toThrow(/behind/i);
+    expect(() => stampFencingTokenOnEntry({ fencingToken: '5/0' }, 6, 1)).toThrow(/behind/i);
+  });
+
+  it('refuses a malformed caller token rather than guessing', () => {
+    expect(() => stampFencingTokenOnEntry({ fencingToken: 'nope' }, 4, 91)).toThrow(/malformed/i);
   });
 });

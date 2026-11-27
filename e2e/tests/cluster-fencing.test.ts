@@ -206,6 +206,72 @@ describe('Fencing tokens — the resource refuses the old primary', () => {
     expect(state.recovered).toBeNull();
   }, 150_000);
 
+  it('AC-F22-5: the cluster stamps a token on the hot path and replicates it to every node', async () => {
+    // The gated path mints the position from the leader's own term and commit
+    // index using the published stamping function — the same one RaftGroup.propose
+    // calls. The token therefore has to survive real Raft replication to reach
+    // every node's application callback, which is where an engine admits the write.
+    const leader = await findCommittingLeader();
+    const key = `gated/${Date.now()}`;
+    const answer = await leader.proposeGated(key, 'authorised-by-quorum');
+    expect(answer.ok).toBe(true);
+    if (!answer.ok) return;
+    expect(answer.token).toMatch(/^\d+\/\d+$/);
+
+    const { term, commitIndex } = await leader.status<NodeStatus>();
+    // The stamp is the quorum position at proposal time: the commit index read
+    // before this entry committed, so the token's index is at most the post-commit
+    // index and its term is the leader's current one.
+    const [stampedTerm, stampedIndex] = answer.token.split('/').map(Number);
+    expect(stampedTerm).toBe(term);
+    expect(stampedIndex).toBeLessThanOrEqual(commitIndex + 1);
+
+    // Every live node has to have applied the entry with the same token. A token
+    // that only the leader saw would be a return-value fiction, not a replicated
+    // fact an engine on a follower could use. Replication to followers is
+    // asynchronous, so wait for the state rather than sampling it once.
+    type FencedStatus = NodeStatus & { fencedApplied: Array<{ token: string; key: string }> };
+    const replicated = await waitUntil(
+      async () => {
+        const statuses = await Promise.all(activeNodes().map((node) => node.status<FencedStatus>()));
+        const complete = statuses.every((status) =>
+          status.fencedApplied.some((entry) => entry.key === key && entry.token === answer.token),
+        );
+        return complete ? statuses : undefined;
+      },
+      60_000,
+      'the stamped entry replicated to every node',
+      500,
+    );
+    for (const status of replicated) {
+      const record = status.fencedApplied.find((entry) => entry.key === key);
+      expect(record!.token).toBe(answer.token);
+    }
+  }, 180_000);
+
+  it('AC-F22-6: a proposal carrying a token below the group position is refused', async () => {
+    const leader = await findCommittingLeader();
+    const key = `stale/${Date.now()}`;
+    const before = await leader.status<NodeStatus>();
+
+    // An engine forwarding a client's old position must not be able to commit it
+    // through a group that has already moved on. The product's stamping function
+    // refuses it before the entry reaches the log.
+    const refused = await leader.proposeGated(key, 'must-not-commit', '0/0');
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error).toMatch(/behind/i);
+
+    const after = await leader.status<NodeStatus>();
+    expect(after.commitIndex).toBe(before.commitIndex);
+    const statuses = await Promise.all(
+      activeNodes().map((node) => node.status<NodeStatus & { fencedApplied: Array<{ key: string }> }>()),
+    );
+    for (const status of statuses) {
+      expect(status.fencedApplied.some((entry) => entry.key === key)).toBe(false);
+    }
+  }, 180_000);
+
   it('AC-F22-2: without a quorum the surviving node cannot advance the log', async () => {
     const leader = await findCommittingLeader();
     const casualties = [leader, activeNodes().find((node) => node !== leader)!];

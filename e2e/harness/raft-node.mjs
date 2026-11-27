@@ -23,7 +23,14 @@
 
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { RaftAdapter, MemoryStorageEngine, EngineBackedReplica } from '@agentix-e/db-cluster';
+import {
+  RaftAdapter,
+  MemoryStorageEngine,
+  EngineBackedReplica,
+  parseFencingToken,
+  formatFencingToken,
+  stampFencingTokenOnEntry,
+} from '@agentix-e/db-cluster';
 
 const RAW = process.env.RAFT_NODE_CONFIG;
 if (!RAW) {
@@ -33,6 +40,11 @@ if (!RAW) {
 
 const cfg = JSON.parse(RAW);
 const applied = [];
+// Entries proposed through the gated path carry the quorum position the product
+// stamped on them. Kept separately so an acceptance case can prove the token
+// survived Raft replication and reached the application, not just the leader's
+// return value.
+const fencedApplied = [];
 
 /**
  * The node's data lives in an engine behind the published SPI, not in a map owned
@@ -119,6 +131,23 @@ async function main() {
   await adapter.init(
     async (data, index, term) => {
       applied.push(data);
+      // Read the stamped position back off the wire, the way an engine would
+      // before admitting the write to its own resource. Parsing is done with the
+      // published reader, not a hand-written split, so a malformed token cannot
+      // pass this seam unnoticed.
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed && typeof parsed.fencingToken === 'string') {
+          fencedApplied.push({
+            token: formatFencingToken(parseFencingToken(parsed.fencingToken)),
+            key: parsed.key ?? null,
+            index,
+            term,
+          });
+        }
+      } catch {
+        // An opaque payload is a valid entry; it simply carries no token.
+      }
       // The node's encoder. The engine is deliberately strict — an unparseable
       // payload is a bug, not a write — so interpreting the application's command
       // format is this process's job, not the middleware's.
@@ -148,6 +177,30 @@ async function main() {
         }
         const result = await adapter.propose(msg.data);
         send({ type: 'proposed', nodeId: cfg.id, data: result });
+      } else if (msg.cmd === 'propose:gated') {
+        // A write that goes through the product's stamping seam: the token is
+        // minted from the quorum position the adapter reports, by the same
+        // function RaftGroup.propose uses. This is the hot path the acceptance
+        // case exercises over real TLS replication.
+        if (!(await adapter.isLeader())) {
+          send({ type: 'error', nodeId: cfg.id, data: 'not leader' });
+          return;
+        }
+        const [term, commitIndex] = await Promise.all([adapter.getTerm(), adapter.getCommitIndex()]);
+        let stamped;
+        try {
+          const presented = msg.fencingToken === undefined ? {} : { fencingToken: msg.fencingToken };
+          stamped = stampFencingTokenOnEntry(
+            { ...presented, key: msg.key, value: msg.value, msgId: msg.msgId },
+            term,
+            commitIndex,
+          );
+        } catch (error) {
+          send({ type: 'error', nodeId: cfg.id, data: String(error instanceof Error ? error.message : error) });
+          return;
+        }
+        const result = await adapter.propose(JSON.stringify(stamped));
+        send({ type: 'proposed:gated', nodeId: cfg.id, data: { ...result, token: stamped.fencingToken } });
       } else if (msg.cmd === 'read') {
         send({
           type: 'read',
@@ -180,6 +233,7 @@ async function main() {
             snapshot: raftStatus?.snapshot ?? null,
             appliedCount: applied.length,
             applied: applied.slice(),
+            fencedApplied: fencedApplied.slice(),
             stateSize: keys.length,
             keys,
             appliedIndex: replica.lastAppliedIndex(),
