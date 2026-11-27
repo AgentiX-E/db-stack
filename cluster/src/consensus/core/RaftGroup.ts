@@ -960,15 +960,17 @@ export class RaftGroup {
 
   /**
    * Propose and synchronously wait for Raft commit + local apply.
-   * Enterprise-grade path: guarantees durability on return.
+   *
+   * One submit, and the position it returns is the position the record carries.
+   * It used to submit twice: the first `await` was left over from when
+   * `IRaftNode.proposeAndWait` returned `void` and the position had to be asked for
+   * afterwards, and when the adapter grew a return value the first call stayed. That
+   * is two log entries per synchronous write — the record's position was the second
+   * entry's, so nothing looked wrong, and correctness rested on the apply path
+   * deduplicating the `msgId` rather than on the middleware not writing twice.
    */
   async proposeAndWait(entry: ApplyEntry): Promise<void> {
     if (this._stopped) throw new Error('RaftGroup: group already stopped');
-    await this.raft.proposeAndWait(JSON.stringify(entry));
-
-    // The entry is applied by the time this returns, so its position is known:
-    // the record used to be appended with `raftIndex: 0`, which left every
-    // synchronously proposed entry unpositioned for point-in-time recovery.
     const committed = await this.raft.proposeAndWait(JSON.stringify(entry));
     this.outboxManager.append(
       this.buildOutboxRecord(entry, JSON.stringify(entry), Number(committed.index), Number(committed.term)),
