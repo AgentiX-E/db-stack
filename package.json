@@ -29,6 +29,7 @@
     "check:package": "node scripts/check-package.mjs",
     "check:gates": "node scripts/check-gates.mjs",
     "check:hooks": "node scripts/check-hooks.mjs",
+    "check:push-receipt": "node scripts/check-push-receipt.mjs",
     "check:english": "node scripts/check-english.mjs",
     "check:esm-require": "node scripts/check-esm-require.mjs",
     "check:docs-api": "node scripts/check-docs-api.mjs",

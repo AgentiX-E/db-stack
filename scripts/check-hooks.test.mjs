@@ -30,7 +30,7 @@ import { STEPS } from "./preflight.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const HEALTHY = {
-  hookText: "#!/bin/sh\nexec pnpm preflight\n",
+  hookText: "#!/bin/sh\nset -e\npnpm preflight\nexec pnpm check:push-receipt\n",
   hookMode: 0o755,
   steps: STEPS.map((step) => step.script),
   prepare: "node scripts/install-hooks.mjs",
@@ -59,6 +59,19 @@ test("a hook that runs something else is a finding", () => {
     hookText: "#!/bin/sh\nexec pnpm lint\n",
   });
   assert.match(problems.join("\n"), /does not run `pnpm preflight`/);
+});
+
+test("a hook that preflights and never reads the receipt is a finding", () => {
+  // The shape the gate was added for: the gates run, the receipt is written, and
+  // nothing asks for it — so the push that skipped preflight elsewhere is not caught
+  // here either, and the record is the only thing anyone could cite.
+  const problems = audit({
+    ...HEALTHY,
+    hookText: "#!/bin/sh\nset -e\nexec pnpm preflight\n",
+  });
+  assert.equal(problems.length, 1);
+  assert.match(problems.join("\n"), /never `pnpm check:push-receipt`/);
+  assert.match(problems.join("\n"), /read by nothing/);
 });
 
 test("a preflight that lost a step is a finding, named by step", () => {

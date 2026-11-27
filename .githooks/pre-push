@@ -6,7 +6,14 @@
 # not the acceptance run — CI runs the suites, the coverage gate, the e2e harness
 # and the benchmark — it is the set of failures that are cheapest to catch here.
 #
+# It also writes `<git-dir>/preflight-receipt.json`, and `pnpm check:push-receipt` is
+# what reads it back: the receipt has to name *this* commit, *this* tree, a clean
+# worktree and every step, or the push stops. Two commands rather than one because the
+# second is the gate the Git Data API path cannot run a hook for, and stating it here is
+# what keeps the two paths checking the same thing.
+#
 # Installed by `pnpm install-hooks` (which sets core.hooksPath to this directory)
 # and run from the repository root, which is where git runs hooks from.
 set -e
-exec pnpm preflight
+pnpm preflight
+exec pnpm check:push-receipt

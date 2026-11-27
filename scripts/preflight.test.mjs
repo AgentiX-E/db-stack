@@ -14,22 +14,77 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import {
+  RECEIPT_NAME,
   STEPS,
   failureHint,
+  gitFacts,
   isEntryPoint,
   main,
+  readGit,
+  receiptFor,
+  receiptPath,
   runScript,
   runSteps,
+  sayReceipt,
   selectSteps,
   toStdout,
+  writeReceipt,
 } from "./preflight.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
+
+/** A commit and a tree, forty hex characters each, which is what git prints. */
+const HEAD_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const HEAD_TREE = "89abcdef0123456789abcdef0123456789abcdef";
+
+/**
+ * git, answered from a table instead of from a repository.
+ *
+ * The receipt is about a specific commit's bytes, so a case that does not control
+ * `rev-parse` cannot assert what the receipt says. Every call is recorded, so a
+ * case can also assert that nothing asked git the wrong question.
+ */
+function fakeGit(answers = {}) {
+  const calls = [];
+  const git = (...args) => {
+    const key = args.join(" ");
+    calls.push(key);
+    if (key === "rev-parse --absolute-git-dir")
+      return answers.gitDir ?? "/repo/.git\n";
+    if (key === "rev-parse HEAD") return `${answers.commit ?? HEAD_COMMIT}\n`;
+    if (key === "rev-parse HEAD^{tree}")
+      return `${answers.tree ?? HEAD_TREE}\n`;
+    if (key.startsWith("status --porcelain")) return answers.status ?? "";
+    throw new Error(`unexpected git call: ${key}`);
+  };
+  return { git, calls };
+}
+
+/** The receipt writer, captured instead of written. */
+function captureReceipt() {
+  const written = [];
+  return {
+    written,
+    record: (path, receipt) => {
+      written.push({ path, receipt });
+      return path;
+    },
+  };
+}
+
+/** A git that cannot answer at all, and one that throws something that is not an Error. */
+function blindGit() {
+  const git = () => {
+    throw new Error("fatal: not a git repository");
+  };
+  return git;
+}
 
 /** Collect what the runner said, in order. */
 function recorder() {
@@ -116,18 +171,29 @@ test("--list prints the steps in order and runs none of them", () => {
 
 test("a clean run says so, and says what it is not", () => {
   const printed = [];
+  const { git } = fakeGit();
   const code = main(
     [],
     () => true,
     (line) => printed.push(line),
+    {
+      git,
+      record: captureReceipt().record,
+      now: () => "2026-11-27T10:00:00.000Z",
+    },
   );
 
   assert.equal(code, 0);
+  // Steps, then the receipt, then the summary, then the sentence that keeps a passing
+  // preflight from being read as a green build — the strongest line is the last word.
+  assert.match(
+    printed.at(-3),
+    /^preflight: receipt at \/repo\/\.git\/preflight-receipt\.json \(0123456\)\.$/,
+  );
   assert.equal(
     printed.at(-2),
     `preflight: ${STEPS.length} steps passed (slowest: typecheck).`,
   );
-  // The sentence that keeps a passing preflight from being read as a green build.
   assert.match(printed.at(-1), /not the acceptance run/);
 });
 
@@ -140,6 +206,7 @@ test("the summary names the step that actually took longest", () => {
   let clock = 1_000;
   Date.now = () => clock;
   const printed = [];
+  const { git } = fakeGit();
   try {
     const code = main(
       ["--only", "lint,typecheck"],
@@ -148,18 +215,23 @@ test("the summary names the step that actually took longest", () => {
         return true;
       },
       (line) => printed.push(line),
+      { git, record: captureReceipt().record },
     );
     assert.equal(code, 0);
   } finally {
     Date.now = real;
   }
   // Declared order, so `lint` is the second step taken and the slowest one seen.
-  assert.equal(printed.at(-2), "preflight: 2 steps passed (slowest: lint).");
+  assert.match(
+    printed.at(-2),
+    /^preflight: 2 steps passed \(slowest: lint\)\.$/,
+  );
 });
 
 test("a failing run exits 1 and runs no further step", () => {
   const ran = [];
   const printed = [];
+  const { git } = fakeGit();
   const code = main(
     ["--only", "lint,typecheck"],
     (script) => {
@@ -167,11 +239,15 @@ test("a failing run exits 1 and runs no further step", () => {
       return script !== "typecheck";
     },
     (line) => printed.push(line),
+    { git, record: captureReceipt().record },
   );
 
   assert.equal(code, 1);
   assert.deepEqual(ran, ["typecheck"]);
-  assert.match(printed.at(-1), /preflight stopped at `pnpm typecheck`/);
+  // The hint comes before the receipt line: the receipt records the failure, it does
+  // not replace the message that names the step.
+  assert.match(printed.at(-2), /preflight stopped at `pnpm typecheck`/);
+  assert.match(printed.at(-1), /^preflight: receipt at /);
 });
 
 test("--only narrows the run, keeps the declared order, and refuses an unknown name", () => {
@@ -286,6 +362,212 @@ test("the gate that guards the loop is the first thing the loop checks", () => {
   // `check:hooks` verifies that the hook runs *this* command; if preflight did not
   // include it, the hook would be checked by nothing that runs on a push.
   assert.ok(STEPS.some((step) => step.script === "check:hooks"));
+});
+
+test("a passing run writes a receipt that names the tree and every step", () => {
+  // The receipt is the whole point of the last two iterations' push failures: a run
+  // that leaves no record of *which* tree it approved is a run a push has to take on
+  // trust. So the assertion is on the file's content, not on the fact that one exists.
+  const written = [];
+  const code = main(
+    [],
+    () => true,
+    () => {},
+    {
+      git: fakeGit().git,
+      record: (path, receipt) => {
+        written.push({ path, receipt });
+        return path;
+      },
+      now: () => "2026-11-27T10:00:00.000Z",
+    },
+  );
+
+  assert.equal(code, 0);
+  assert.equal(written.length, 1);
+  assert.equal(written[0].path, "/repo/.git/preflight-receipt.json");
+
+  const { steps, ...rest } = written[0].receipt;
+  assert.deepEqual(rest, {
+    commit: HEAD_COMMIT,
+    tree: HEAD_TREE,
+    clean: true,
+    passed: true,
+    node: process.version,
+    finishedAt: "2026-11-27T10:00:00.000Z",
+  });
+  // Every step, in the declared order, each with its own verdict — a receipt that
+  // listed the steps as a set could not tell a `--only` run from the whole one.
+  assert.deepEqual(
+    steps.map((step) => [step.script, step.ok]),
+    STEPS.map((step) => [step.script, true]),
+  );
+  assert.ok(steps.every((step) => typeof step.ms === "number"));
+});
+
+test("a failing run writes the failure, and only the steps that ran", () => {
+  const written = [];
+  const code = main(
+    ["--only", "typecheck,lint"],
+    (script) => script === "typecheck",
+    () => {},
+    {
+      git: fakeGit().git,
+      record: (path, receipt) => {
+        written.push({ path, receipt });
+        return path;
+      },
+    },
+  );
+
+  assert.equal(code, 1);
+  const receipt = written[0].receipt;
+  assert.equal(receipt.passed, false);
+  // Two steps, not the whole set: the receipt records what was attempted, which is
+  // what makes a narrowed run refusable rather than merely suspect.
+  assert.deepEqual(
+    receipt.steps.map((step) => step.script),
+    ["typecheck", "lint"],
+  );
+  assert.deepEqual(
+    receipt.steps.map((step) => step.ok),
+    [true, false],
+  );
+});
+
+test("a dirty worktree is recorded, and the reader is told to commit first", () => {
+  // Order matters for what a receipt can prove: run before the commit and preflight
+  // judged files that are not in HEAD. The receipt says so rather than the push
+  // finding out, because the push cannot see what preflight looked at.
+  const printed = [];
+  const written = [];
+  const { git } = fakeGit({ status: " M scripts/preflight.mjs\n" });
+  sayReceipt(
+    { ok: true, results: [{ script: "lint", ok: true, ms: 1 }] },
+    git,
+    (path, receipt) => {
+      written.push({ path, receipt });
+      return path;
+    },
+    (line) => printed.push(line),
+    {},
+  );
+
+  assert.equal(written[0].receipt.clean, false);
+  assert.match(printed.at(-1), /the worktree is not clean/);
+  assert.match(printed.at(-1), /Commit, then run preflight again/);
+});
+
+test("a tree git cannot name writes no receipt and says so", () => {
+  const printed = [];
+  const written = [];
+  const record = (path, receipt) => {
+    written.push({ path, receipt });
+    return path;
+  };
+
+  assert.equal(
+    sayReceipt(
+      { ok: true, results: [] },
+      blindGit(),
+      record,
+      (l) => printed.push(l),
+      {},
+    ),
+    null,
+  );
+  assert.match(
+    printed.at(-1),
+    /no receipt written \(fatal: not a git repository\)/,
+  );
+  // And a thrown value that is not an `Error` still produces a sentence rather than
+  // `[object Object]` in the middle of it. Bound to a name rather than thrown as a
+  // literal, so the case does not need a lint exception to exist.
+  const notAnError = { toString: () => "git is not installed" };
+  sayReceipt(
+    { ok: true, results: [] },
+    () => {
+      throw notAnError;
+    },
+    record,
+    (line) => printed.push(line),
+    {},
+  );
+  assert.match(printed.at(-1), /no receipt written \(git is not installed\)/);
+  assert.deepEqual(written, []);
+});
+
+test("--list writes no receipt", () => {
+  // A listing is not a run. A receipt from one would be an approval for a set of
+  // steps nothing executed.
+  let recorded = 0;
+  assert.equal(
+    main(
+      ["--list"],
+      () => assert.fail("nothing may run"),
+      () => {},
+      {
+        git: fakeGit().git,
+        record: () => {
+          recorded += 1;
+          return "x";
+        },
+      },
+    ),
+    0,
+  );
+  assert.equal(recorded, 0);
+});
+
+test("the receipt lives inside the git directory, where nothing can commit it", () => {
+  assert.equal(RECEIPT_NAME, "preflight-receipt.json");
+  assert.equal(
+    receiptPath("/repo/.git"),
+    resolve("/repo/.git/preflight-receipt.json"),
+  );
+  // A worktree's git directory is a file, so the receipt path is resolved against it
+  // rather than assumed to be `<root>/.git`.
+  assert.equal(
+    receiptPath("/repo/.git/worktrees/wt"),
+    resolve("/repo/.git/worktrees/wt/preflight-receipt.json"),
+  );
+});
+
+test("writeReceipt writes JSON with a trailing newline and creates the directory", () => {
+  const dir = mkdtempSync(join(tmpdir(), "preflight-receipt-"));
+  try {
+    const path = join(dir, "nested", "preflight-receipt.json");
+    assert.equal(writeReceipt(path, { passed: true }), path);
+    const text = readFileSync(path, "utf8");
+    assert.equal(text, '{\n  "passed": true\n}\n');
+    assert.deepEqual(JSON.parse(text), { passed: true });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("gitFacts reads the git directory, the commit and the tree from this repository", () => {
+  // The real reader, on the real repository: the four lines a fake git stands in for
+  // are the ones no injected case can prove are spelled correctly.
+  const facts = gitFacts(readGit);
+  assert.match(facts.path, /[\\/]\.git[\\/]preflight-receipt\.json$/);
+  assert.match(facts.head.commit, /^[0-9a-f]{40}$/);
+  assert.match(facts.head.tree, /^[0-9a-f]{40}$/);
+  assert.equal(typeof facts.head.clean, "boolean");
+  // The commit's own tree, not an abbreviation and not the commit itself.
+  assert.equal(facts.head.tree, readGit("rev-parse", "HEAD^{tree}").trim());
+});
+
+test("receiptFor stamps the default clock and the running node", () => {
+  // The defaults are what a real run uses; a case that only ever injects them leaves
+  // two-thirds of the receipt untested.
+  const receipt = receiptFor(
+    { ok: true, results: [{ script: "lint", ok: true, ms: 4 }] },
+    { commit: HEAD_COMMIT, tree: HEAD_TREE, clean: true },
+  );
+  assert.equal(receipt.node, process.version);
+  assert.equal(new Date(receipt.finishedAt).toISOString(), receipt.finishedAt);
+  assert.deepEqual(receipt.steps, [{ script: "lint", ok: true, ms: 4 }]);
 });
 
 test("the entry check answers false when there is no program path", () => {

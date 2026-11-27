@@ -14,9 +14,11 @@
  *   1. `.githooks/pre-push` exists and is executable;
  *   2. it invokes `pnpm preflight` — the same command CONTRIBUTING tells people to
  *      run, rather than a second list that can drift from it;
- *   3. `preflight` itself still lists the gates, so a hook that runs an empty
+ *   3. it also invokes `pnpm check:push-receipt`, because a receipt nothing reads is
+ *      a record, not a gate;
+ *   4. `preflight` itself still lists the gates, so a hook that runs an empty
  *      command is a finding rather than a green result;
- *   4. `package.json` has `prepare` → `install-hooks`, which is what puts the
+ *   5. `package.json` has `prepare` → `install-hooks`, which is what puts the
  *      versioned hooks in front of git after `pnpm install`.
  *
  * What it cannot check is whether *this* clone has `core.hooksPath` set — CI
@@ -37,6 +39,16 @@ const ROOT = resolve(import.meta.dirname, "..");
 
 /** The command the hook must run, and the reason it must be that one. */
 export const REQUIRED_COMMAND = "pnpm preflight";
+
+/**
+ * The second command, and the reason it is a rule rather than a suggestion.
+ *
+ * `preflight` writes the receipt; nothing reads it unless something is told to. The
+ * hook is the one place in the tracked tree where a push is visible, so it is where
+ * the receipt has to be read — otherwise the gate exists only inside `push_commit.py`,
+ * which no reviewer can see and which no test of this repository runs.
+ */
+export const REQUIRED_RECEIPT_COMMAND = "pnpm check:push-receipt";
 
 /** Gates a preflight without these would not be the preflight CONTRIBUTING describes. */
 export const REQUIRED_STEPS = [
@@ -72,6 +84,13 @@ export function audit({ hookText, hookMode, steps, prepare }) {
     if (!hookText.includes(REQUIRED_COMMAND)) {
       problems.push(
         `${HOOKS_DIR}/pre-push does not run \`${REQUIRED_COMMAND}\``,
+      );
+    } else if (!hookText.includes(REQUIRED_RECEIPT_COMMAND)) {
+      // A hook that runs the gates and never reads the receipt approves nothing: the
+      // receipt is the only thing a push can cite afterwards.
+      problems.push(
+        `${HOOKS_DIR}/pre-push runs \`${REQUIRED_COMMAND}\` and never \`${REQUIRED_RECEIPT_COMMAND}\`, ` +
+          "so the receipt it writes is read by nothing",
       );
     }
   }

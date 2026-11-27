@@ -115,8 +115,25 @@ latter is CI's job rather than a push's.
 
 Pushes made through the GitHub Git Data API — the path used by automation in an
 environment whose proxy allows only `api.github.com` — cannot run a client hook at all.
-There, `pnpm preflight` is the command, and `check:hooks` is what keeps the hook from
-rotting unnoticed.
+That used to be covered by a sentence here, and a sentence is not a gate: iteration 97
+landed a `prefer-const` in a new harness file on exactly that path, with every gate that
+had been _executed_ green, because `pnpm lint` was in the command and not in the run.
+
+So every preflight run now leaves a receipt at `<git-dir>/preflight-receipt.json` —
+which commit, which tree, whether the worktree was clean, and each step with its verdict
+— and `check:push-receipt` refuses a push that cannot cite one:
+
+```bash
+pnpm preflight            # writes the receipt; commit first, or it records a dirty tree
+pnpm check:push-receipt   # what push_commit.py runs before it creates a blob
+```
+
+The order is therefore **commit → preflight → push**. Run before the commit, the receipt
+is taken on a dirty worktree, it records `clean: false`, and the gate refuses it by
+name — because the bytes it judged are not the bytes being pushed. Run with `--only`,
+the receipt lists the steps that actually ran and is refused for the ones that did not.
+The receipt lives inside the git directory, so it cannot be committed and a committed
+approval from another machine is not a thing this repository can contain.
 
 One trap worth knowing before you add a case to `scripts/*.test.mjs`: do not produce a
 failing answer by asking pnpm for a script it does not define. The child fails, and it

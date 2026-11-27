@@ -17,14 +17,32 @@
  * contributor runs, CI is what decides. A preflight that passed is not a green
  * build; it is the absence of the failures that are cheapest to catch locally.
  *
+ * Every run also leaves a **receipt** in the git directory: which commit, which
+ * tree, whether the worktree was clean, which steps ran and how each ended. It is
+ * the difference between "I ran the gates" and "this tree passed them", and it
+ * exists because the first is a memory. Iteration 97 landed a `prefer-const` in a
+ * new harness file that every gate would have caught, on a push path that cannot
+ * run a git hook: `push_commit.py` speaks the Git Data API directly, so
+ * `.githooks/pre-push` never executes, and nothing asked whether preflight had
+ * been run at all. `scripts/check-push-receipt.mjs` is what asks, and
+ * `push_commit.py` calls it before it creates a blob.
+ *
+ * A receipt names the tree it checked, so the order is commit → preflight → push.
+ * Run before the commit, the worktree is dirty, the receipt records `clean: false`
+ * and says so: it checked bytes that are not HEAD's, and a push may not cite it.
+ * Run with `--only`, the receipt records the steps that actually ran and is
+ * refused for the ones that did not, so a narrowed run cannot be mistaken for the
+ * whole set.
+ *
  * Usage:
  *   pnpm preflight            # run every step, stop at the first failure
  *   pnpm preflight --list     # print the steps, one per line (used by check:hooks)
  *   pnpm preflight --only lint,format:check
  */
 
-import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -158,16 +176,111 @@ export function toStdout(line) {
   console.log(line);
 }
 
+/** The receipt's file name, inside the git directory and therefore never tracked. */
+export const RECEIPT_NAME = "preflight-receipt.json";
+
+/**
+ * The receipt that belongs to a git directory.
+ *
+ * Inside `.git` on purpose: a receipt in the worktree is a file someone can commit,
+ * and a committed approval is an approval from a machine that is not this one.
+ * `git status` does not see it, so writing it cannot make a clean worktree dirty.
+ */
+export function receiptPath(gitDir) {
+  return resolve(gitDir, RECEIPT_NAME);
+}
+
+/**
+ * What a push has to be able to name: the commit, and the tree it contains.
+ *
+ * Separate from `collectHead` in `check-push-receipt` only by what it is used for —
+ * the shape is the same, and the shape is the contract between the two commands.
+ */
+export function collectHead(git) {
+  return {
+    commit: git("rev-parse", "HEAD").trim(),
+    tree: git("rev-parse", "HEAD^{tree}").trim(),
+    clean:
+      git("status", "--porcelain", "--untracked-files=normal").trim() === "",
+  };
+}
+
+/**
+ * The receipt for a run: which tree, which steps, how each ended.
+ *
+ * `clean` is not a detail. A preflight run before the commit checks files that are
+ * not yet in HEAD, so its verdict is about bytes the receipt cannot name; recording
+ * that as `false` is what lets the receiving gate refuse it by name instead of
+ * trusting a verdict about something else. `steps` is the whole set that ran, in
+ * order, which is also the proof that a `--only` run is not mistaken for this one.
+ *
+ * @param {{ok: boolean, results: Array<{script: string, ok: boolean, ms: number}>}} executed
+ * @param {{commit: string, tree: string, clean: boolean}} head
+ * @param {{now?: () => string, node?: string}} [deps]
+ */
+export function receiptFor(executed, head, deps = {}) {
+  const now = deps.now ?? (() => new Date().toISOString());
+  return {
+    commit: head.commit,
+    tree: head.tree,
+    clean: head.clean,
+    passed: executed.ok,
+    steps: executed.results.map((result) => ({
+      script: result.script,
+      ok: result.ok,
+      ms: result.ms,
+    })),
+    node: deps.node ?? process.version,
+    finishedAt: now(),
+  };
+}
+
+/**
+ * Write the receipt, creating the directory if the git directory is unusual.
+ *
+ * `mkdirSync` is here for `git worktree`, where the git directory is a path
+ * `rev-parse --git-dir` prints and not necessarily one that exists yet.
+ */
+export function writeReceipt(path, receipt) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  return path;
+}
+
+/** git, read-only, from the repository root. The one call a test has to replace. */
+export function readGit(...args) {
+  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
+}
+
+/**
+ * The path the receipt belongs at, and the tree it has to name — read together.
+ *
+ * Together because they are one fact: a receipt is only meaningful inside the git
+ * directory whose HEAD it describes, and reading them apart produced two ways for a
+ * run to be green about nothing. One `try` here rather than two guards there.
+ */
+export function gitFacts(git) {
+  return {
+    path: receiptPath(git("rev-parse", "--absolute-git-dir").trim()),
+    head: collectHead(git),
+  };
+}
+
 /**
  * @param {string[]} argv
  * @param {(script: string) => boolean} execute  injected so a test can drive both outcomes
  * @param {(line: string) => void} say
+ * @param {{git?: Function, record?: Function, now?: () => string}} [deps]  the edges a test cannot own
  */
 export function main(
   argv = process.argv.slice(2),
   execute = runScript,
   say = toStdout,
+  deps = {},
 ) {
+  const git = deps.git ?? readGit;
+  const record = deps.record ?? writeReceipt;
+
   const selected = selectSteps(argv);
   if (selected.list) {
     for (const step of STEPS) say(step.script);
@@ -175,6 +288,7 @@ export function main(
   }
 
   const executed = runSteps(selected.steps, execute, say);
+  sayReceipt(executed, git, record, say, deps);
   if (!executed.ok) return 1;
 
   const slowest = executed.results.reduce((a, b) => (b.ms > a.ms ? b : a));
@@ -185,6 +299,38 @@ export function main(
     "This is not the acceptance run: CI runs the suites, the coverage gate and the e2e harness.",
   );
   return 0;
+}
+
+/**
+ * Record the verdict against the tree it is about, and say where it went.
+ *
+ * Every run writes one, passing or failing: a failing receipt is the one that
+ * matters most, because it is what turns "I already ran preflight" into a refusal
+ * naming the step that failed.
+ */
+export function sayReceipt(executed, git, record, say, deps) {
+  let facts;
+  try {
+    facts = gitFacts(git);
+  } catch (err) {
+    say(
+      `preflight: no receipt written (${err instanceof Error ? err.message : String(err)}) — ` +
+        "this tree cannot be named, so a push over the API path will refuse it.",
+    );
+    return null;
+  }
+
+  const receipt = receiptFor(executed, facts.head, deps);
+  say(
+    `preflight: receipt at ${record(facts.path, receipt)} (${facts.head.commit.slice(0, 7)}).`,
+  );
+  if (!facts.head.clean) {
+    say(
+      "preflight: the worktree is not clean, so this verdict is about files that are not in HEAD. " +
+        "Commit, then run preflight again — a push may only cite a receipt for its own tree.",
+    );
+  }
+  return receipt;
 }
 
 /**
