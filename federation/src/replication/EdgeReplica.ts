@@ -63,15 +63,22 @@ export interface IEdgeReplica {
  * first payload, which keeps the old deterministic behaviour for engines that
  * have no notion of a conflicting write.
  */
+/** A real transport the engine can close when the replica disconnects. */
+export interface EdgeTransportHandle {
+  dispose(): void | Promise<void>;
+}
+
 export interface EdgeReplicaOptions {
   resolveConflict?: (lsn: number, existing: unknown, incoming: unknown) => unknown;
   /**
    * Engine-agnostic dial. Supplied by whatever owns the real socket (WebSocket,
    * SSE, a cluster transport); the replica only observes whether it resolved.
-   * Without one, `connect()` uses the built-in simulated dial so the intake
-   * path stays usable in tests and engines that stream data in-process.
+   * A handle returned here is disposed on `disconnect()`, so a real socket can
+   * be torn down without the replica knowing its protocol. Without one,
+   * `connect()` uses the built-in simulated dial so the intake path stays
+   * usable in tests and engines that stream data in-process.
    */
-  connectTransport?: (source: EdgeSourceConfig) => Promise<void>;
+  connectTransport?: (source: EdgeSourceConfig) => Promise<void | EdgeTransportHandle>;
 }
 
 // ── Implementation ─────────────────────────────────────────────────
@@ -106,6 +113,23 @@ export class EdgeReplica implements IEdgeReplica {
   private _source: EdgeSourceConfig | null = null;
   private _connected = false;
   private _destroyed = false;
+  /**
+   * Frames delivered while the dial is in flight. A real socket can push
+   * bytes before `connectTransport` resolves; buffering them here (instead of
+   * dropping through `receive`'s disconnected guard) makes the dial window
+   * lossless. They are applied in order once the dial settles, and discarded
+   * if it fails — a failed dial commits no data.
+   */
+  private _pendingFrames: Array<{ lsn: number; payload: unknown }> = [];
+  /**
+   * Monotonic generation for the live dial. Every `connect()` bumps it, so a
+   * backoff timer or a slow dial from a superseded attempt can tell it is no
+   * longer the current connection and do nothing. This is what keeps a stale
+   * timer from re-dialling a replica that already disconnected.
+   */
+  private _generation = 0;
+  /** Handle from the engine's dial, disposed when this connection ends. */
+  private _transportHandle: EdgeTransportHandle | null = null;
 
   // ── Connection ──────────────────────────────────────────────────
 
@@ -114,41 +138,100 @@ export class EdgeReplica implements IEdgeReplica {
       throw new Error('EdgeReplica has been destroyed');
     }
 
+    // A new dial supersedes whatever came before it: cancel its backoff timer,
+    // retire its generation, and start a fresh buffer. Without this, an
+    // earlier failed attempt's timer can fire after a later attempt succeeded
+    // and dial the replica a second time (or re-dial one that disconnected).
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    const generation = ++this._generation;
+    this._pendingFrames = [];
     this._source = source;
     this._updateStatus('connecting');
 
     try {
       // An injected transport dials for real; absent one, the simulated dial
       // keeps in-process engines and the existing acceptance suite working.
-      if (this._options.connectTransport) {
-        await this._options.connectTransport(source);
-      } else {
-        await this._simulateConnect(source);
+      const handle = this._options.connectTransport
+        ? await this._options.connectTransport(source)
+        : await this._simulateConnect(source);
+
+      // A slow dial that settles after disconnect() or a newer connect() must
+      // not resurrect a connection or leak its socket.
+      if (generation !== this._generation) {
+        void this._disposeHandle(handle ?? null);
+        return;
       }
+
+      this._transportHandle = handle ?? null;
       this._connected = true;
       this._updateStatus('syncing');
       this._reconnectAttempts = 0;
+
+      // Flush everything the socket pushed during the dial, in arrival order.
+      // _connected is now true, so receive() applies them rather than buffering
+      // again. A frame that arrived twice across the boundary is still deduped
+      // by LSN.
+      const queued = this._pendingFrames;
+      this._pendingFrames = [];
+      for (const frame of queued) {
+        this.receive(frame.lsn, frame.payload);
+      }
     } catch (err) {
+      // Superseded attempts report nothing: their error belongs to a dial the
+      // caller has already replaced, and surfacing it would be a stale signal.
+      if (generation !== this._generation) return;
+      this._pendingFrames = [];
       this._updateStatus('error');
       this._emitError(err instanceof Error ? err : new Error(String(err)));
-      this._scheduleReconnect();
+      this._scheduleReconnect(generation);
     }
   }
 
   async disconnect(): Promise<void> {
+    // Bump the generation so an in-flight dial or a pending backoff timer
+    // cannot re-establish the connection after this teardown.
+    this._generation++;
     this._connected = false;
+    this._pendingFrames = [];
+    this._source = null;
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
     this._updateStatus('disconnected');
+
+    const handle = this._transportHandle;
+    this._transportHandle = null;
+    await this._disposeHandle(handle);
+  }
+
+  /** Close the engine's transport; a close failure must not break disconnect. */
+  private async _disposeHandle(handle: EdgeTransportHandle | null): Promise<void> {
+    if (!handle) return;
+    try {
+      await handle.dispose();
+    } catch (err) {
+      this._emitError(err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   // ── Events ──────────────────────────────────────────────────────
 
   /** Receive CDC data. A repeated LSN is arbitrated, never appended twice. */
   receive(lsn: number, payload: unknown): void {
-    if (!this._connected) return;
+    if (!this._connected) {
+      // Only the dial window buffers: a real socket delivers bytes before the
+      // dial promise resolves. Once connected, frames arriving while genuinely
+      // disconnected are still dropped (the pinned in-process contract), but
+      // during `connecting` they are retained until the dial settles.
+      if (this._status.state === 'connecting') {
+        this._pendingFrames.push({ lsn, payload });
+      }
+      return;
+    }
 
     const existingIndex = this._lsnIndex.get(lsn);
     if (existingIndex !== undefined) {
@@ -301,7 +384,7 @@ export class EdgeReplica implements IEdgeReplica {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
-  private _scheduleReconnect(): void {
+  private _scheduleReconnect(generation: number): void {
     if (this._reconnectAttempts >= this._maxReconnectAttempts) {
       this._emitError(new Error(`Max reconnect attempts (${this._maxReconnectAttempts}) reached`));
       return;
@@ -310,7 +393,10 @@ export class EdgeReplica implements IEdgeReplica {
     const delay = Math.min(1000 * Math.pow(2, this._reconnectAttempts), 30000);
     this._reconnectAttempts++;
     this._reconnectTimer = setTimeout(async () => {
-      if (this._source && !this._destroyed) {
+      this._reconnectTimer = null;
+      // The generation is checked again at fire time: a disconnect or a newer
+      // dial between scheduling and firing must make this timer a no-op.
+      if (generation === this._generation && this._source && !this._destroyed) {
         await this.connect(this._source);
       }
     }, delay);

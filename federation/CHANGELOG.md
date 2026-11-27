@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`EdgeReplica` now consumes a real TLS socket, with the lifecycle a real socket needs.** The engine-supplied `connectTransport(source)` hook may return an `EdgeTransportHandle` (`{ dispose() }`), which `disconnect()` awaits so a WebSocket/SSE/`TcpSecureTransport` can be closed without the replica knowing its protocol. Frames a socket pushes while the dial is still in flight are buffered and applied in order once it settles instead of being silently dropped (the simulated dial's latency window hid this). Each `connect()` retires the prior attempt's generation, so a slow dial or a stale backoff timer can no longer re-establish a connection after `disconnect()` or a newer `connect()`. A cross-process acceptance case (`AC-F13`) drives a real mTLS source in a second process that pushes two writers claiming one LSN: a custom resolver changes which value survives, and the no-resolver case keeps the first value — the decision is observable on both `onEvent` and `getAllData()`. Six lifecycle tests and three real-process tests added; federation 1 581 → 1 587 cases.
 - **A conflict decision now reaches every `EdgeReplica` event subscriber.** When
   `resolveConflict(lsn, existing, incoming)` chose the incoming payload at a repeated LSN,
   the replica replaced the row in `getAllData()` but published no `data` event — so an engine

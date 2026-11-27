@@ -63,7 +63,7 @@ describe('EdgeReplica — connect failure and reconnection', () => {
     const onError = vi.fn();
     edge.onError(onError);
 
-    edge['_scheduleReconnect']();
+    edge['_scheduleReconnect'](edge['_generation']);
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0]![0].message).toMatch(/Max reconnect attempts/);
@@ -77,7 +77,7 @@ describe('EdgeReplica — connect failure and reconnection', () => {
     // Establish a source and schedule a reconnect with minimal delay.
     edge['_source'] = SRC;
     edge['_reconnectAttempts'] = 0;
-    edge['_scheduleReconnect']();
+    edge['_scheduleReconnect'](edge['_generation']);
 
     // Advance past the backoff delay (2^0 * 1000 = 1000ms).
     await vi.advanceTimersByTimeAsync(1500);

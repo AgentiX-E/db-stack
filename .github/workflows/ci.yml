@@ -328,6 +328,11 @@ jobs:
         run: pnpm build
       - name: Cross-cluster sync over mTLS (AC-F1..F5)
         run: pnpm --filter @agentix-e/db-stack-e2e run test:federation
+      # An edge replica driven by a real TLS socket in a second process: a
+      # custom resolver changes the outcome of a genuine two-writer conflict,
+      # and the case fails if the resolver is never consulted (AC-F13, P3-82).
+      - name: Edge CDC intake over mTLS (AC-F13)
+        run: pnpm --filter @agentix-e/db-stack-e2e run test:edge
       # Its own invocation: this suite kills a datacenter and cold-restarts it,
       # and the restart has to be the only thing competing for the machine's
       # sockets and CPU if the recovery timings are to mean anything.

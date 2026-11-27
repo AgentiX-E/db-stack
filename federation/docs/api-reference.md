@@ -440,15 +440,31 @@ consumer subscribes to; unsubscribing returns a function.
 `new EdgeReplica(options?)` takes two **engine-agnostic** hooks — the replica
 knows nothing about the engine behind either one:
 
-- `connectTransport?: (source: EdgeSourceConfig) => Promise<void>` — the real
-  dial, supplied by whoever owns the socket (WebSocket, SSE, a cluster
-  transport). `connect()` awaits it in place of the built-in simulated dial;
-  a rejection is emitted through `onError` and starts the backoff. Omit it for
-  an engine that streams data in-process.
+- `connectTransport?: (source: EdgeSourceConfig) => Promise<void | EdgeTransportHandle>` —
+  the real dial, supplied by whoever owns the socket (WebSocket, SSE, a
+  `TcpSecureTransport`). `connect()` awaits it in place of the built-in
+  simulated dial; a rejection is emitted through `onError` and starts the
+  backoff. It may return an `EdgeTransportHandle` — an object whose `dispose()`
+  method is sync or async — which `disconnect()` awaits so a real socket can be
+  torn down without the replica knowing its protocol; a dispose failure is
+  reported through `onError`. Omit the hook for an engine that streams data
+  in-process.
 - `resolveConflict?: (lsn, existing, incoming) => unknown` — the policy for two
   writers claiming the same LSN. Called only for a _genuine_ conflict; a
   byte-identical replay is dropped before it gets here. Omit it and the first
   payload at an LSN stands, which keeps the stream a log rather than a cache.
+
+**Real-socket lifecycle.** A socket can deliver bytes before the dial promise
+resolves, so frames that arrive while `connect()` is in flight are buffered and
+applied in arrival order once it settles — they are not dropped. A dial that
+fails discards its buffer and emits through `onError`. Each `connect()` retires
+the previous attempt's generation, so a slow dial or a backoff timer that
+settles after `disconnect()` or a newer `connect()` becomes a no-op instead of
+re-establishing a connection nobody asked for. `disconnect()` clears the source
+and the pending backoff, then disposes the transport handle if one was supplied.
+The cross-process acceptance case (`AC-F13`) drives exactly this path: a real
+mTLS source in a second process pushes two writers claiming one LSN, and a
+custom resolver changes which value survives.
 
 A repeated LSN is always one entry: a transport duplicate is ignored, a
 conflict is arbitrated in place, and `receivedCount` counts distinct positions.

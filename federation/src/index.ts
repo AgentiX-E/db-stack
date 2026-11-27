@@ -116,6 +116,7 @@ export type {
 export { EdgeReplica } from './replication/EdgeReplica';
 export type {
   EdgeReplicaOptions,
+  EdgeTransportHandle,
   EdgeSourceConfig,
   EdgeSyncStatus,
   ReplicationEvent,

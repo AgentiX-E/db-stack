@@ -56,7 +56,10 @@ export interface NodeMessage {
     | 'swept'
     | 'beat'
     | 'heartbeat-sent'
-    | 'bootstrap';
+    | 'bootstrap'
+    // The edge CDC source's acknowledgement of a `push`: how many frames it
+    // put on the real TLS socket, and whether each send was accepted.
+    | 'pushed';
   nodeId: number | string;
   data?: unknown;
   fatal?: boolean;
@@ -598,6 +601,15 @@ export function spawnAuditWriter(config: Record<string, unknown>, label: string)
 export function spawnAuditReader(config: Record<string, unknown>, label: string): ChildNode {
   const child = spawn(process.execPath, [join(HARNESS_DIR, 'audit-reader.mjs')], {
     env: { ...process.env, AUDIT_READER_CONFIG: JSON.stringify(config) },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  return new ChildNode(label, child);
+}
+
+/** Spawn one edge CDC source process (a real mTLS socket that pushes frames). */
+export function spawnEdgeSource(config: Record<string, unknown>, label: string): ChildNode {
+  const child = spawn(process.execPath, [join(HARNESS_DIR, 'edge-source.mjs')], {
+    env: { ...process.env, EDGE_SOURCE_CONFIG: JSON.stringify(config) },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   return new ChildNode(label, child);
