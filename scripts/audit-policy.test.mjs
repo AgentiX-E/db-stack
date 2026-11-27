@@ -258,7 +258,7 @@ test("run replays a recording, prints the exceptions it granted, and fails on th
       /left-pad \(GHSA-1111-2222-3333\) — jsdom only — reviewed 2026-11-19/,
     );
     assert.deepEqual(errors[0], "Dependency policy failed:");
-    assert.match(errors[1], /^  - production: pg — high/);
+    assert.match(errors[1], /^ {2}- production: pg — high/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

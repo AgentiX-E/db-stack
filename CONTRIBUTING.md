@@ -68,6 +68,7 @@ relative and are rebuilt to the new depth only by a fresh install.
 ```bash
 pnpm check:gates      # configs and scripts wired to real files
 pnpm lint             # eslint, per package
+pnpm lint:root        # the same config over scripts/ and the root configs
 pnpm format:check     # prettier over sources and docs
 pnpm typecheck        # tsc --noEmit on the published surface, per package
 pnpm typecheck:tests  # the same, for every test and benchmark
@@ -125,7 +126,7 @@ which commit, which tree, whether the worktree was clean, and each step with its
 
 ```bash
 pnpm preflight            # writes the receipt; commit first, or it records a dirty tree
-pnpm check:push-receipt   # what push_commit.py runs before it creates a blob
+pnpm check:push-receipt   # what `pnpm push:commit` runs before it creates a blob
 ```
 
 The order is therefore **commit → preflight → push**. Run before the commit, the receipt

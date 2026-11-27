@@ -23,7 +23,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import {
-  applyEdits,
   auditPage,
   formatCount,
   measure,
@@ -84,9 +83,6 @@ npm test              # 3 files, 2 tests
 
 const measuredOf = () =>
   measure(reportOf([CORE, 2], [HEALTH, null], [FEDERATION, null]));
-
-const messages = (findings) =>
-  findings.map((finding) => finding.message).join("\n");
 
 test("counts cases and files per package", () => {
   const measured = measure(

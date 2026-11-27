@@ -6,7 +6,7 @@ import {
   writeFileSync,
   rmSync,
 } from "node:fs";
-import { join, dirname, relative } from "node:path";
+import { join, relative } from "node:path";
 import ts from "typescript";
 
 const ROOT = "/workspace/db-stack";

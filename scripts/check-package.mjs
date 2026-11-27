@@ -352,7 +352,7 @@ export function checkPublishedDocs(root, options = {}) {
       continue;
     }
 
-    let paths = [];
+    let paths;
     try {
       paths = JSON.parse(packed.stdout)[0].files.map((file) => file.path);
     } catch {

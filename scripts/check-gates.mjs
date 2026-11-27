@@ -29,7 +29,14 @@
  *      list and test set both resolve to real files, must carry a `break`
  *      threshold, and must be invoked by a workflow. The operations package
  *      shipped three separate hand-rolled mutation engines, none of which any
- *      workflow ran, while its README quoted the score of one of them.
+ *      workflow ran, while its README quoted the score of one of them;
+ *   8. a dependency patch is still applied, not just named in the manifest;
+ *   9. every directory holding JavaScript has a lint target that names it.
+ *      `pnpm lint` is `turbo run lint` — four packages each running `eslint .` in
+ *      their own directory — so the root `scripts/` sat outside all four for
+ *      dozens of iterations while a `prefer-const` shipped to CI. A gate that
+ *      checks the files a lint command *would* see has to ask which directories
+ *      no lint command sees at all.
  *
  * Usage: node scripts/check-gates.mjs [--verbose]
  */
@@ -50,7 +57,10 @@ function walk(dir, predicate) {
     if (
       entry.name === "node_modules" ||
       entry.name === "dist" ||
-      entry.name === "coverage"
+      entry.name === "coverage" ||
+      entry.name === ".git" ||
+      entry.name === ".stryker-tmp" ||
+      entry.name === "reports"
     )
       continue;
     const full = join(dir, entry.name);
@@ -665,6 +675,68 @@ export async function audit(root, options = {}) {
       );
     }
     notes.push(`patch ${dependency} -> ${patchPath}`);
+  }
+
+  // ── 9. every directory holding JavaScript has a lint target ────────
+  //
+  // `pnpm lint` is `turbo run lint`: each package runs `eslint .` from its own
+  // directory. Everything at the root is outside all of them. Checking what a lint
+  // command *would* find cannot see that hole — it is the absence of a command, not
+  // a finding inside one — so this rule reads the directory names from the manifests
+  // and compares them with the directories that actually hold script files.
+  //
+  // Only a trailing slash (or `.`) counts as a directory target: `--config
+  // eslint.shared.mjs` is a file argument to the same command and must not make the
+  // directory it lives in look linted.
+  /** @type {Set<string>} */
+  const linted = new Set();
+  for (const owner of scriptOwners) {
+    for (const [name, command] of Object.entries(owner.scripts)) {
+      if (!/^lint(?::|$)/.test(name)) continue;
+      const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+      for (const token of tokens.slice(1)) {
+        const clean = token.replace(/^["']|["']$/g, "");
+        if (clean === ".") {
+          linted.add(relative(root, owner.dir).replaceAll("\\", "/") || ".");
+        } else if (clean.endsWith("/")) {
+          linted.add(
+            relative(root, resolve(owner.dir, clean)).replaceAll("\\", "/"),
+          );
+        }
+      }
+    }
+  }
+
+  /** @type {Map<string, number>} */
+  const scriptCounts = new Map();
+  for (const file of walk(root, (path) => /\.(?:mjs|cjs|js)$/.test(path))) {
+    const rel = relative(root, file).replaceAll("\\", "/");
+    // A script at the root is a file, not a directory, and the rule is about the
+    // directories that fall between packages and the files they lint.
+    if (!rel.includes("/")) continue;
+    const dir = rel.split("/")[0];
+    scriptCounts.set(dir, (scriptCounts.get(dir) ?? 0) + 1);
+  }
+  for (const [dir, count] of [...scriptCounts].sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    if (linted.has(dir)) {
+      if (verbose) notes.push(`${dir}/ is covered by a lint script`);
+      continue;
+    }
+    failures.push(
+      `${dir}/: ${count} script file(s) but no lint script names the directory — ` +
+        "the files in it have never been linted",
+    );
+  }
+  // A local target that CI does not run is still a claim nobody checks. The same
+  // rule is already applied to mutation targets; the lint target over the root is
+  // no different, and this is the line that was absent for the whole time the
+  // directory went unlinted.
+  if (!/pnpm\s+lint:root\b/.test(workflowText)) {
+    failures.push(
+      'nothing in .github/workflows runs "pnpm lint:root" — a lint target no workflow executes is a claim nobody checks',
+    );
   }
 
   return { failures, notes, packages, turboTasks };

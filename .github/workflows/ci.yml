@@ -106,6 +106,8 @@ jobs:
         run: pnpm check:legacy-names
       - name: ESLint (one shared config for the whole workspace)
         run: pnpm lint
+      - name: ESLint on scripts and root configs (no package owns them)
+        run: pnpm lint:root
       - name: Prettier
         run: pnpm format:check
       - name: Prettier on the files no package owns (scripts, workflows, root pages)

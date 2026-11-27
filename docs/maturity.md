@@ -1910,7 +1910,7 @@ refuses a tree that cannot cite one. The next section is that mechanism; the
 answer to this table is that a trigger, like a gate, has to be something the tree
 can verify rather than something a person remembers.
 
-The hook chain itself is four files and the rule that binds them:
+The hook chain itself is five files and the rule that binds them:
 
 - `.githooks/pre-push` — two commands: `pnpm preflight`, then
   `pnpm check:push-receipt`. Versioned, so the hook git runs is the hook review
@@ -1919,14 +1919,22 @@ The hook chain itself is four files and the rule that binds them:
   refuses a tree with no hooks rather than configuring an empty directory.
   `--check` answers "is this clone configured" for a machine; CI cannot answer it
   and does not pretend to.
-- `scripts/preflight.mjs` — the fast end of `verify`: seventeen steps, ordered to
+- `scripts/preflight.mjs` — the fast end of `verify`: eighteen steps, ordered to
   fail fastest, stopping at the first failure so the message read is the cause
   rather than the cascade. It also writes `<git-dir>/preflight-receipt.json`: which
   commit, which tree, whether the worktree was clean, and each step with its
-  verdict.
+  verdict. The eighteenth is `lint:root`, added after iteration 97 found that
+  `pnpm lint` is `turbo run lint` — four packages linting their own directories —
+  and the root `scripts/` sat outside all four.
 - `scripts/check-push-receipt.mjs` — the gate that reads the receipt back and
-  refuses a tree the receipt does not name. It is the only piece of the chain that
-  the Git Data API path can run, because it is a command rather than a hook.
+  refuses a tree the receipt does not name. It is a command rather than a hook, so
+  the Git Data API path can run it too.
+- `scripts/push-commit.mjs` — the Git Data API push itself, moved out of
+  `.git/push_commit.py` in iteration 100. It calls the receipt gate before its
+  first request; its transport is injected, so a local HTTP server can exercise
+  the headers, retries and request order that previously only a real push could
+  reveal. Being in `scripts/` also puts it under `lint:root` and the script
+  coverage floor, which is where the defect that motivated the receipt was found.
 
 `check:hooks` reads the repository side of the chain — the hook exists, is
 executable, runs _that_ command, runs the receipt gate after it, and `prepare`

@@ -153,7 +153,7 @@ test("facts reads a hook that exists but cannot be executed", () => {
 test("the gate passes on the real repository", () => {
   const originalLog = console.log;
   const originalError = console.error;
-  let exitCode = null;
+  let exitCode;
   console.log = () => {};
   console.error = () => {};
   try {

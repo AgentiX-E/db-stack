@@ -79,12 +79,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import {

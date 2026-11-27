@@ -303,7 +303,7 @@ test("run reports every failure on stderr and exits 1", async () => {
 
   assert.equal(code, 1);
   assert.equal(errors[0], "\nCoverage gate FAILED:");
-  assert.match(errors[1], /^  - @scope\/one: lines 50\.00% < 95%$/);
+  assert.match(errors[1], /^ {2}- @scope\/one: lines 50\.00% < 95%$/);
 });
 
 test("run takes the threshold from its argument", async () => {

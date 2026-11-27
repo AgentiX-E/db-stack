@@ -55,8 +55,8 @@
  * Usage: node scripts/check-docs-api.mjs [--verbose]
  */
 
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 

@@ -45,8 +45,8 @@ export const REQUIRED_COMMAND = "pnpm preflight";
  *
  * `preflight` writes the receipt; nothing reads it unless something is told to. The
  * hook is the one place in the tracked tree where a push is visible, so it is where
- * the receipt has to be read — otherwise the gate exists only inside `push_commit.py`,
- * which no reviewer can see and which no test of this repository runs.
+ * the receipt has to be read — otherwise the gate exists only inside the push tool,
+ * where no reviewer can see it and no test of this repository runs it.
  */
 export const REQUIRED_RECEIPT_COMMAND = "pnpm check:push-receipt";
 
@@ -55,6 +55,7 @@ export const REQUIRED_STEPS = [
   "typecheck",
   "typecheck:tests",
   "lint",
+  "lint:root",
   "format:check",
   "check:gates",
 ];

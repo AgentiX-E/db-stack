@@ -58,7 +58,11 @@ const ROOT = resolve(import.meta.dirname, "..");
 export const STEPS = [
   { script: "typecheck", why: "every package compiles" },
   { script: "typecheck:tests", why: "the tests are code too" },
-  { script: "lint", why: "ESLint, one shared config" },
+  { script: "lint", why: "ESLint, one shared config, in the four packages" },
+  {
+    script: "lint:root",
+    why: "the same config over the scripts and configs no package owns",
+  },
   { script: "format:check", why: "Prettier over the packages" },
   {
     script: "format:check:repo",

@@ -475,13 +475,13 @@ test("run reports a subpath whose declared target has no source file", () => {
       assert.match(errors[0], /✗ public-types: 1 finding\(s\)/);
       assert.match(
         errors[1],
-        /^  cluster: publishes `\.\/shard` but \.\/dist\/shard\/index\.d\.ts has no source file$/,
+        /^ {2}cluster: publishes `\.\/shard` but \.\/dist\/shard\/index\.d\.ts has no source file$/,
       );
       // The note says what was measured, which is how a reader knows the gate
       // looked at the subpath at all.
       assert.match(
         lines[0],
-        /^  cluster: 1 exports, 2 entry\(s\), 0 unnameable type\(s\)$/,
+        /^ {2}cluster: 1 exports, 2 entry\(s\), 0 unnameable type\(s\)$/,
       );
     },
   );
@@ -511,7 +511,7 @@ test("run reports a type a public signature names and no published entry exports
       // was named, and which signature named it.
       assert.match(
         errors[1],
-        /^  cluster: `Hidden` appears in a public signature but no published entry exports it \(src\/index\.ts\)\n      via make\(\):/,
+        /^ {2}cluster: `Hidden` appears in a public signature but no published entry exports it \(src\/index\.ts\)\n {6}via make\(\):/,
       );
       assert.match(
         errors[2],

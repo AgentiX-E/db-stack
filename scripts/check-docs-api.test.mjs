@@ -702,8 +702,8 @@ test("report prints every finding through describe(), and returns 1", () => {
 
   assert.equal(code, 1);
   assert.match(err[0], /✗ docs-api: 2 finding\(s\)/);
-  assert.match(err[1], /^  a\.md:4 names `Foo`/);
-  assert.match(err[2], /^  README\.md does not link/);
+  assert.match(err[1], /^ {2}a\.md:4 names `Foo`/);
+  assert.match(err[2], /^ {2}README\.md does not link/);
   assert.match(err.at(-1), /An API reference is a promise about the package/);
 });
 

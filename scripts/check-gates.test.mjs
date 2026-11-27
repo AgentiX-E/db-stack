@@ -40,6 +40,7 @@ const FILES = {
     name: "fixture",
     scripts: {
       build: "tsc -p tsconfig.json",
+      "lint:scripts": "eslint scripts/ mutation/ *.mjs",
       "test:mutation:one": "node scripts/mutation.mjs one",
     },
   }),
@@ -64,11 +65,13 @@ const FILES = {
   ".github/workflows/ci.yml":
     "jobs:\n  build:\n    steps:\n" +
     "      - run: pnpm run build\n" +
+    "      - run: pnpm lint:root\n" +
     "      - run: pnpm -w run test:mutation:one\n",
   "one/package.json": JSON.stringify({
     name: "@scope/one",
     scripts: {
       build: "tsc -p tsconfig.json",
+      lint: "eslint .",
       test: "vitest run",
       "test:mutation": "pnpm -w run test:mutation:one",
     },
@@ -293,12 +296,12 @@ test("a turbo task no package implements would run nothing and pass", async () =
     write(
       dir,
       "turbo.json",
-      JSON.stringify({ tasks: { build: {}, test: {}, lint: {} } }),
+      JSON.stringify({ tasks: { build: {}, test: {}, orphan: {} } }),
     ),
   );
 
   assert.deepEqual(failures, [
-    'turbo.json declares task "lint" that no package implements — it would run nothing and pass',
+    'turbo.json declares task "orphan" that no package implements — it would run nothing and pass',
   ]);
 });
 
@@ -326,7 +329,7 @@ test("a workflow that runs a root script which does not exist is a finding", asy
     write(
       dir,
       ".github/workflows/ci.yml",
-      "jobs:\n  build:\n    steps:\n      - run: pnpm run build\n      - run: pnpm run nope\n",
+      "jobs:\n  build:\n    steps:\n      - run: pnpm run build\n      - run: pnpm run nope\n      - run: pnpm lint:root\n",
     ),
   );
 
@@ -343,7 +346,7 @@ test("a workflow that runs a script in a package which does not define it is a f
     write(
       dir,
       ".github/workflows/ci.yml",
-      "jobs:\n  build:\n    steps:\n      - run: pnpm --filter @scope/one run nope\n",
+      "jobs:\n  build:\n    steps:\n      - run: pnpm --filter @scope/one run nope\n      - run: pnpm lint:root\n",
     ),
   );
 
@@ -362,7 +365,7 @@ test("a workflow may name a package by directory, and a matrix expression is not
       ".github/workflows/ci.yml",
       "jobs:\n  build:\n    steps:\n      - run: pnpm --filter ./one run build\n" +
         "      - run: pnpm --filter ${{ matrix.package }} run build\n" +
-        "      - run: pnpm -w run test:mutation:one\n",
+        "      - run: pnpm -w run test:mutation:one\n      - run: pnpm lint:root\n",
     ),
   );
   assert.deepEqual(byDirectory.failures, []);
@@ -373,7 +376,7 @@ test("a workflow may name a package by directory, and a matrix expression is not
       dir,
       ".github/workflows/ci.yml",
       "jobs:\n  build:\n    steps:\n      - run: pnpm --filter ./one... run build\n" +
-        "      - run: pnpm -w run test:mutation:one\n",
+        "      - run: pnpm -w run test:mutation:one\n      - run: pnpm lint:root\n",
     ),
   );
   assert.deepEqual(turboSyntax.failures, []);
@@ -384,7 +387,7 @@ test("a filter naming no package is reported rather than ignored", async () => {
     write(
       dir,
       ".github/workflows/ci.yml",
-      "jobs:\n  build:\n    steps:\n      - run: pnpm --filter ghcr.io/nope run build\n",
+      "jobs:\n  build:\n    steps:\n      - run: pnpm --filter ghcr.io/nope run build\n      - run: pnpm lint:root\n",
     ),
   );
 
@@ -402,7 +405,7 @@ test("a workflow turbo step must name a declared task that some package implemen
       dir,
       ".github/workflows/ci.yml",
       "jobs:\n  build:\n    steps:\n      - run: pnpm --filter=@scope/one turbo run nope\n" +
-        "      - run: pnpm -w run test:mutation:one\n",
+        "      - run: pnpm -w run test:mutation:one\n      - run: pnpm lint:root\n",
     ),
   );
   assert.deepEqual(undeclared.failures, [
@@ -414,18 +417,18 @@ test("a workflow turbo step must name a declared task that some package implemen
       dir,
       "turbo.json",
       JSON.stringify({
-        tasks: { build: {}, test: {}, lint: { extends: ["build"] } },
+        tasks: { build: {}, test: {}, orphan: { extends: ["build"] } },
       }),
     );
     write(
       dir,
       ".github/workflows/ci.yml",
-      "jobs:\n  build:\n    steps:\n      - run: pnpm --filter=@scope/one turbo run lint\n" +
-        "      - run: pnpm -w run test:mutation:one\n",
+      "jobs:\n  build:\n    steps:\n      - run: pnpm --filter=@scope/one turbo run orphan\n" +
+        "      - run: pnpm -w run test:mutation:one\n      - run: pnpm lint:root\n",
     );
   });
   assert.deepEqual(unimplemented.failures, [
-    'ci.yml:4 runs turbo task "lint" that no package implements',
+    'ci.yml:4 runs turbo task "orphan" that no package implements',
   ]);
 });
 
@@ -436,7 +439,7 @@ test("a commented-out command is prose, not a command", async () => {
       ".github/workflows/ci.yml",
       "jobs:\n  build:\n    steps:\n      # - run: pnpm run nope\n" +
         "      - run: pnpm run build\n" +
-        "      - run: pnpm -w run test:mutation:one\n",
+        "      - run: pnpm -w run test:mutation:one\n      - run: pnpm lint:root\n",
     ),
   );
 
@@ -628,7 +631,7 @@ test("a target no workflow invokes is a claim nobody checks", async () => {
     write(
       dir,
       ".github/workflows/ci.yml",
-      "jobs:\n  build:\n    steps:\n      - run: pnpm run build\n",
+      "jobs:\n  build:\n    steps:\n      - run: pnpm run build\n      - run: pnpm lint:root\n",
     ),
   );
 
@@ -848,7 +851,13 @@ test("a manifest without a name or scripts falls back to its directory, and to n
 
 test("a root manifest with no name, no scripts and no patches is a small root, not a crash", async () => {
   const { failures } = await withTree(
-    { ...FILES, "package.json": JSON.stringify({ name: "fixture" }) },
+    {
+      ...FILES,
+      "package.json": JSON.stringify({
+        name: "fixture",
+        scripts: { "lint:scripts": "eslint scripts/ mutation/" },
+      }),
+    },
     (dir) => audit(dir),
   );
 
@@ -864,6 +873,7 @@ test("a root manifest with no name, no scripts and no patches is a small root, n
       "package.json": JSON.stringify({
         scripts: {
           build: "tsc -p tsconfig.json",
+          "lint:scripts": "eslint scripts/ mutation/",
           "test:mutation:one": "node scripts/mutation.mjs one",
         },
       }),
@@ -979,6 +989,22 @@ test("a repository with no workflows directory still checks the mutation targets
 
   assert.deepEqual(failures, [
     'nothing in .github/workflows runs "test:mutation:one" — a gate no workflow executes is a claim nobody checks',
+    'nothing in .github/workflows runs "pnpm lint:root" — a lint target no workflow executes is a claim nobody checks',
+  ]);
+});
+
+test("a root lint target CI does not run is a finding", async () => {
+  const workflow = FILES[".github/workflows/ci.yml"].replace(
+    "      - run: pnpm lint:root\n",
+    "",
+  );
+  const { failures } = await withTree(
+    { ...FILES, ".github/workflows/ci.yml": workflow },
+    (dir) => audit(dir),
+  );
+
+  assert.deepEqual(failures, [
+    'nothing in .github/workflows runs "pnpm lint:root" — a lint target no workflow executes is a claim nobody checks',
   ]);
 });
 
@@ -996,4 +1022,61 @@ test("a question mark in a glob matches one character, not any run of them", asy
   );
 
   assert.deepEqual(failures, []);
+});
+
+/** The root manifest with a different `lint:scripts` body, or without one. */
+function withRootLint(body) {
+  const json = JSON.parse(FILES["package.json"]);
+  if (body === null) delete json.scripts["lint:scripts"];
+  else json.scripts["lint:scripts"] = body;
+  return JSON.stringify(json);
+}
+
+test("a directory holding JavaScript with no lint target is a finding", async () => {
+  const { failures } = await withTree(
+    { ...FILES, "package.json": withRootLint(null) },
+    (dir) => audit(dir),
+  );
+
+  assert.deepEqual(failures, [
+    "mutation/: 1 script file(s) but no lint script names the directory — the files in it have never been linted",
+    "scripts/: 1 script file(s) but no lint script names the directory — the files in it have never been linted",
+  ]);
+});
+
+test("a lint target covers only the directory it names", async () => {
+  const { failures } = await withTree(
+    { ...FILES, "package.json": withRootLint("eslint scripts/ *.mjs") },
+    (dir) => audit(dir),
+  );
+
+  assert.deepEqual(failures, [
+    "mutation/: 1 script file(s) but no lint script names the directory — the files in it have never been linted",
+  ]);
+});
+
+test("a directory with only TypeScript is not a lint-coverage finding", async () => {
+  const { failures } = await withTree(
+    { ...FILES, "docs-tools/helper.ts": "export const helper = 1;\n" },
+    (dir) => audit(dir),
+  );
+
+  assert.deepEqual(failures, []);
+});
+
+test("a package's eslint . covers its own directory", async () => {
+  const one = JSON.parse(FILES["one/package.json"]);
+  delete one.scripts.lint;
+  const { failures } = await withTree(
+    {
+      ...FILES,
+      "one/tool.mjs": "export const tool = 1;\n",
+      "one/package.json": JSON.stringify(one),
+    },
+    (dir) => audit(dir),
+  );
+
+  assert.deepEqual(failures, [
+    "one/: 1 script file(s) but no lint script names the directory — the files in it have never been linted",
+  ]);
 });
