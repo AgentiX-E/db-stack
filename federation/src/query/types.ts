@@ -62,6 +62,60 @@ export type QueryIntent = 'read' | 'write' | 'analytics';
 /** Consistency level for cross-node reads. */
 export type ConsistencyLevel = 'eventual' | 'strong' | 'read_your_writes';
 
+/**
+ * Freshness of one node, supplied by the engine through a {@link FreshnessProvider}.
+ *
+ * `appliedLsn` is the highest log sequence number the node has durably applied;
+ * `lagMs` is the age of the oldest owed entry (0 when fully caught up). The
+ * router does not know what a log or a replica is — it only compares these two
+ * numbers against the query's requirement, so any engine can plug in.
+ */
+export interface NodeFreshness {
+  /** Highest LSN the node has durably applied. */
+  appliedLsn: number;
+  /** Age in ms of the oldest owed entry; 0 when fully caught up. */
+  lagMs: number;
+}
+
+/**
+ * Engine-agnostic callback that reports a node's freshness.
+ *
+ * Returning `undefined` means the engine has no signal for that node; a node
+ * without a signal is blocked from a consistency-gated read rather than served
+ * optimistically. The router never constructs a provider — the caller injects
+ * one from whatever storage or cluster layer it runs on.
+ */
+export type FreshnessProvider = (nodeId: string) => NodeFreshness | undefined;
+
+/** Why a consistency-gated route could not be satisfied. */
+export type ConsistencyRejectReason =
+  'stale-replica' | 'no-freshness-signal' | 'lag-exceeded' | 'missing-session-lsn' | 'no-eligible-node';
+
+/**
+ * The decision the router made for one query's requested consistency level.
+ *
+ * Named fields rather than a boolean so a caller can answer "which node, at
+ * which LSN, at which lag, and why" without re-deriving the comparison.
+ */
+export interface ConsistencyVerdict {
+  /** The requested level. */
+  level: ConsistencyLevel;
+  /** The minimum applied LSN the query requires. */
+  requiredLsn: number;
+  /** True when at least one node can serve the query at this level. */
+  satisfied: boolean;
+  /** Whether a provider was consulted for this level (false for eventual / no provider). */
+  gateActive: boolean;
+  /** Nodes that passed the gate, in candidate order. */
+  eligibleNodeIds: string[];
+  /** Nodes that failed the gate, in candidate order. */
+  blockedNodeIds: string[];
+  /** Named reason when unsatisfied. */
+  reason?: ConsistencyRejectReason;
+  /** Human-readable detail naming the decisive numbers. */
+  detail?: string;
+}
+
 /** A federated query with routing metadata. */
 export interface FederatedQuery {
   /** Unique query ID. */
@@ -72,6 +126,13 @@ export interface FederatedQuery {
   intent: QueryIntent;
   /** Requested consistency level. */
   consistency: ConsistencyLevel;
+  /**
+   * Minimum applied LSN the serving node must have reached. For
+   * `read_your_writes` this is the session's last observed write LSN; for
+   * `strong` it is the freshness floor. Absent means 0 for `strong` and a
+   * named refusal for `read_your_writes`.
+   */
+  minLsn?: number;
   /** Target shard IDs (empty = all). */
   targetShards: string[];
   /** Parameters for parameterized queries. */
@@ -132,6 +193,12 @@ export interface RoutingPolicy {
   preferredRegion?: string;
   /** Cost thresholds for cost_based strategy. */
   costThreshold?: CostThreshold;
+  /**
+   * Maximum tolerated freshness lag in ms for consistency-gated reads. A node
+   * reporting a larger lag is blocked. Unset means lag is not a gate (LSN alone
+   * decides); set it to bound how stale a `strong` read may be.
+   */
+  maxLagMs?: number;
 }
 
 /** Cost-based routing thresholds. */
@@ -223,6 +290,18 @@ export interface IFederatedQueryRouter {
 
   /** Set the routing policy. */
   setRoutingPolicy(policy: Partial<RoutingPolicy>): void;
+
+  /** Inject the engine's freshness source, activating the consistency gate. */
+  setFreshnessProvider(provider: FreshnessProvider): void;
+
+  /**
+   * Decide whether the query's consistency level can be met, without executing.
+   * Pure with respect to routing counters — safe to call for inspection.
+   */
+  getConsistencyVerdict(query: FederatedQuery): ConsistencyVerdict;
+
+  /** The verdict computed by the most recent planQuery/executeQuery, if any. */
+  getLastConsistencyVerdict(): ConsistencyVerdict | undefined;
 
   /** Build a query plan for the given query. */
   planQuery(query: FederatedQuery): QueryPlan;

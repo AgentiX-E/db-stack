@@ -29,6 +29,10 @@ import type {
   NodeExecutor,
   FailoverEvent,
   RouterStats,
+  NodeFreshness,
+  FreshnessProvider,
+  ConsistencyVerdict,
+  ConsistencyRejectReason,
 } from './types.js';
 
 // ── Router Implementation ────────────────────────────────────
@@ -46,6 +50,8 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
   private totalExecTimeMs = 0;
   private lastQueryTimestamp: number | null = null;
   private roundRobinCounter = 0;
+  private _freshnessProvider: FreshnessProvider | undefined;
+  private _lastConsistencyVerdict: ConsistencyVerdict | undefined;
 
   // Injectable clock for deterministic timing. Defaults to the real monotonic
   // nanosecond clock (`_nowNs`) and wall-clock milliseconds (`Date.now`).
@@ -53,11 +59,12 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
   // division (`/`) become precisely assertable.
   private readonly _clock: { nowNs: () => number; nowMs: () => number };
 
-  constructor(clock?: { nowNs?: () => number; nowMs?: () => number }) {
+  constructor(clock?: { nowNs?: () => number; nowMs?: () => number }, freshnessProvider?: FreshnessProvider) {
     this._clock = {
       nowNs: clock?.nowNs ?? _nowNs,
       nowMs: clock?.nowMs ?? Date.now,
     };
+    this._freshnessProvider = freshnessProvider;
   }
 
   // ── Node Management ───────────────────────────────────────
@@ -86,11 +93,118 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     this.policy = { ...DEFAULT_POLICY, ...policy };
   }
 
+  // ── Consistency gate ──────────────────────────────────────
+
+  setFreshnessProvider(provider: FreshnessProvider): void {
+    this._freshnessProvider = provider;
+  }
+
+  getLastConsistencyVerdict(): ConsistencyVerdict | undefined {
+    return this._lastConsistencyVerdict;
+  }
+
+  /**
+   * Evaluate a query's requested consistency against the freshness the engine
+   * reports for each registered node. `eventual` and a missing provider keep
+   * the historical behaviour (gate inactive, every candidate eligible), so an
+   * engine that manages consistency outside the router is unaffected. For
+   * `strong` / `read_your_writes` the gate compares `appliedLsn >= minLsn` and,
+   * when configured, `lagMs <= maxLagMs`; a node with no signal is blocked.
+   */
+  getConsistencyVerdict(query: FederatedQuery): ConsistencyVerdict {
+    const level = query.consistency;
+    const isGated = level !== 'eventual' && this._freshnessProvider !== undefined;
+
+    if (!isGated) {
+      const ids = Array.from(this.nodes.keys());
+      return {
+        level,
+        requiredLsn: query.minLsn ?? 0,
+        satisfied: true,
+        gateActive: false,
+        eligibleNodeIds: ids,
+        blockedNodeIds: [],
+      };
+    }
+
+    // read_your_writes needs the session's last LSN; without one there is no
+    // "your writes" to promise, so refuse by name rather than guess.
+    if (level === 'read_your_writes' && query.minLsn === undefined) {
+      return {
+        level,
+        requiredLsn: 0,
+        satisfied: false,
+        gateActive: true,
+        eligibleNodeIds: [],
+        blockedNodeIds: Array.from(this.nodes.keys()),
+        reason: 'missing-session-lsn',
+        detail: 'read_your_writes requires minLsn (the session last write LSN)',
+      };
+    }
+
+    const requiredLsn = query.minLsn ?? 0;
+    const maxLagMs = this.policy.maxLagMs;
+    const eligibleNodeIds: string[] = [];
+    const blockedNodeIds: string[] = [];
+    const blockers: string[] = [];
+
+    for (const node of this.nodes.values()) {
+      const signal = this._freshnessProvider!(node.id);
+      if (signal === undefined) {
+        blockedNodeIds.push(node.id);
+        blockers.push(`${node.id}: no-freshness-signal`);
+        continue;
+      }
+      if (signal.appliedLsn < requiredLsn) {
+        blockedNodeIds.push(node.id);
+        blockers.push(`${node.id}: appliedLsn=${signal.appliedLsn} below minLsn=${requiredLsn}`);
+        continue;
+      }
+      if (maxLagMs !== undefined && signal.lagMs > maxLagMs) {
+        blockedNodeIds.push(node.id);
+        blockers.push(`${node.id}: lagMs=${signal.lagMs} above maxLagMs=${maxLagMs}`);
+        continue;
+      }
+      eligibleNodeIds.push(node.id);
+    }
+
+    const satisfied = eligibleNodeIds.length > 0;
+    const detail = blockers.join('; ') || undefined;
+    if (satisfied) {
+      return {
+        level,
+        requiredLsn,
+        satisfied: true,
+        gateActive: true,
+        eligibleNodeIds,
+        blockedNodeIds,
+        detail,
+      };
+    }
+
+    const reason: ConsistencyRejectReason = this.nodes.size === 0 ? 'no-eligible-node' : _classifyBlock(blockers);
+    return {
+      level,
+      requiredLsn,
+      satisfied: false,
+      gateActive: true,
+      eligibleNodeIds,
+      blockedNodeIds,
+      reason,
+      detail: detail ?? 'no nodes registered',
+    };
+  }
+
   // ── Query Planning ────────────────────────────────────────
 
   planQuery(query: FederatedQuery): QueryPlan {
     const startNs = this._clock.nowNs();
-    const assignments = this._computeAssignments(query, this.policy.strategy);
+    const verdict = this.getConsistencyVerdict(query);
+    this._lastConsistencyVerdict = verdict;
+    // A gated query may only be assigned to nodes that passed the gate. When
+    // the gate is inactive this is the full candidate set, i.e. no change.
+    const allowed = verdict.gateActive ? new Set(verdict.eligibleNodeIds) : undefined;
+    const assignments = this._computeAssignments(query, this.policy.strategy, [], allowed);
     const cost = this._estimateCost(assignments);
 
     const plan: QueryPlan = {
@@ -113,6 +227,27 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
   async executeQuery(query: FederatedQuery, executor: NodeExecutor): Promise<FederatedResult> {
     this.totalQueries++;
     this.lastQueryTimestamp = Date.now();
+
+    // A consistency gate that cannot be met is a named refusal, not a silent
+    // fallback to whatever replica happened to be round-robin's next pick.
+    // The verdict is computed once and shared with planQuery below so inspection
+    // and execution cannot disagree.
+    const verdict = this.getConsistencyVerdict(query);
+    if (verdict.gateActive && !verdict.satisfied) {
+      this._lastConsistencyVerdict = verdict;
+      this.failedQueries++;
+      return {
+        queryId: query.id,
+        success: false,
+        rows: [],
+        totalRowCount: 0,
+        nodeResults: [],
+        totalDurationMs: 0,
+        successCount: 0,
+        failCount: 1,
+        error: `consistency ${verdict.level} refused (${verdict.reason}): ${verdict.detail ?? ''}`,
+      };
+    }
 
     let plan = this.planQuery(query);
     let lastError: string | undefined;
@@ -270,8 +405,16 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
     query: FederatedQuery,
     strategy: RoutingStrategy,
     excludeNodeIds: string[] = [],
+    allowedNodeIds?: Set<string>,
   ): NodeAssignment[] {
     let candidates = Array.from(this.nodes.values());
+
+    // Consistency gate: only nodes that passed the freshness comparison are
+    // eligible. an undefined set means the gate is inactive (no provider or
+    // eventual consistency), in which case every node remains a candidate.
+    if (allowedNodeIds !== undefined) {
+      candidates = candidates.filter((n) => allowedNodeIds.has(n.id));
+    }
 
     // Filter out unhealthy nodes if policy says so
     if (this.policy.skipUnhealthy) {
@@ -602,6 +745,14 @@ const DEFAULT_POLICY: RoutingPolicy = {
 };
 
 // ── Helpers ─────────────────────────────────────────────────
+
+/** Pick the dominant named reason from a list of per-node block descriptions. */
+function _classifyBlock(blockers: string[]): ConsistencyRejectReason {
+  if (blockers.some((b) => b.includes('no-freshness-signal'))) return 'no-freshness-signal';
+  if (blockers.some((b) => b.includes('appliedLsn='))) return 'stale-replica';
+  if (blockers.some((b) => b.includes('lagMs='))) return 'lag-exceeded';
+  return 'no-eligible-node';
+}
 
 function _nowNs(): number {
   const [s, ns] = process.hrtime();
