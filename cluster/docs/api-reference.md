@@ -1394,11 +1394,50 @@ class HealthProbe {
   register(name: string, probe: () => ProbeResult): void;
   markStartupComplete(): void;
   recordFatalError(): void;
+  recordListenerFailure(source: string, error?: unknown, at?: number): void;
+  readonly listenerFailures: readonly ListenerFailure[];
   liveness(): ProbeResult;
   readiness(): ProbeResult;
   startup(): ProbeResult;
   fullStatus(): HealthStatus;
 }
+```
+
+A swallowed listener failure is **not** a fatal error: it degrades `readiness()`
+(the node should not take new traffic until its health signals are trustworthy)
+but leaves `liveness()` untouched, because a broken observer does not mean the
+process is dead.
+
+### `createClusterHealth`
+
+The engine-agnostic composition root: one `HealthProbe` and one reporter that
+every listener-owning component can share. Pass the returned `reporter` to a
+component's `onListenerFailure` hook; a swallowed exception then degrades
+readiness with the component's name attached. Accepts an optional `now` clock.
+
+```typescript
+function createClusterHealth(options?: { now?: () => number }): {
+  health: HealthProbe;
+  reporter: ListenerFailureReporter;
+};
+```
+
+### `createHealthFailureReporter`
+
+Adapts a `HealthProbe` into a `ListenerFailureReporter`, for applications that
+own their probe and only need the adapter.
+
+```typescript
+function createHealthFailureReporter(health: HealthProbe): ListenerFailureReporter;
+```
+
+### `ignoreListenerFailure`
+
+The inert default reporter. Components use it when no hook is supplied, so an
+application that does not wire health keeps the historical behaviour exactly.
+
+```typescript
+const ignoreListenerFailure: ListenerFailureReporter;
 ```
 
 ### `LoggingAdapter`

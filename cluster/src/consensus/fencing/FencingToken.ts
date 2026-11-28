@@ -75,6 +75,12 @@ export interface FencingTokenGuardOptions {
    * a crash, which is the one moment the token exists to cover.
    */
   initial?: FencingToken | null;
+  /**
+   * Sink for an exception thrown by a refusal observer (C-04). Observers stay
+   * isolated from the admission decision; this makes the exception observable.
+   * Absent by default so existing callers are unchanged.
+   */
+  onObserverFailure?: (failure: { source: string; error?: unknown; at?: number }) => void;
 }
 
 /** An observer told about every refusal, for logging and alerting. */
@@ -208,10 +214,12 @@ export class FencingTokenGuard {
   private _refusals = 0;
   private readonly _observers = new Set<FencingRefusalObserver>();
   private readonly _requireToken: boolean;
+  private readonly _report: NonNullable<FencingTokenGuardOptions['onObserverFailure']>;
 
   constructor(options: FencingTokenGuardOptions = {}) {
     this._requireToken = options.requireToken ?? true;
     this._highest = options.initial ? normalize(options.initial) : null;
+    this._report = options.onObserverFailure ?? (() => {});
   }
 
   /**
@@ -326,8 +334,13 @@ export class FencingTokenGuard {
     for (const observer of this._observers) {
       try {
         observer(decided);
-      } catch {
-        // An observer that throws is a broken observer, not a reason to admit.
+      } catch (error) {
+        // A broken observer is not a reason to admit (C-04: report it).
+        try {
+          this._report({ source: 'FencingTokenGuard.observer', error, at: Date.now() });
+        } catch {
+          // A broken reporter must not change the admission decision either.
+        }
       }
     }
     return decided;

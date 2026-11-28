@@ -158,6 +158,18 @@ export interface IEventBus {
 
 // ── Implementation ─────────────────────────────────────────────────
 
+import type { ListenerFailureReporter } from '../../observability/ListenerFailureReporter';
+
+/** Options for {@link EventBus}. */
+export interface EventBusOptions {
+  /**
+   * Sink for exceptions thrown by subscribers (C-04). The bus still isolates a
+   * crashing subscriber; this only makes the failure observable. Absent by
+   * default so existing construction sites keep their exact behaviour.
+   */
+  onListenerFailure?: ListenerFailureReporter;
+}
+
 /**
  * EventBus — high-performance consensus event bus.
  *
@@ -166,11 +178,17 @@ export interface IEventBus {
  * 2. Asynchronous subscribers are deferred through setImmediate (off the critical path)
  * 3. Every callback is wrapped in try/catch (one crashed subscriber cannot affect the others)
  * 4. Disposable pattern (zero-leak assertions in the test suite)
+ * 5. A swallowed exception is reported to an optional, engine-agnostic sink
  */
 export class EventBus implements IEventBus {
   // Map<eventType, Set<{handler, async}>>
   private _subscribers = new Map<string, Set<EventSubscription>>();
   private _emitInProgress = new Map<string, boolean>();
+  private readonly _report: ListenerFailureReporter;
+
+  constructor(options: EventBusOptions = {}) {
+    this._report = options.onListenerFailure ?? (() => {});
+  }
 
   emit(event: ConsensusEvent): void {
     const subs = this._subscribers.get(event.type);
@@ -189,15 +207,17 @@ export class EventBus implements IEventBus {
             setImmediate(() => {
               try {
                 sub.handler(event);
-              } catch {
-                /* swallowed */
+              } catch (error) {
+                // C-04: isolated, but no longer silent.
+                this._safeReport('EventBus.async', error, event.type);
               }
             });
           } else {
             sub.handler(event);
           }
-        } catch {
-          // One crashed subscriber must not affect the others
+        } catch (error) {
+          // One crashed subscriber must not affect the others (C-04: report it).
+          this._safeReport('EventBus.sync', error, event.type);
           continue;
         }
         if (sub.once) {
@@ -212,6 +232,19 @@ export class EventBus implements IEventBus {
       for (const s of subs) {
         if (s.handler === h) subs.delete(s);
       }
+    }
+  }
+
+  /**
+   * Report a swallowed subscriber exception without letting a broken reporter
+   * become a second failure. Isolation is the bus's first duty; observability is
+   * the second, and must never cost the first.
+   */
+  private _safeReport(source: string, error: unknown, _eventType: string): void {
+    try {
+      this._report({ source, error, at: Date.now() });
+    } catch {
+      // A reporter that throws is a broken reporter, not a reason to stop the bus.
     }
   }
 

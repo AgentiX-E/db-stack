@@ -66,12 +66,18 @@ export class ReshardPlanner implements IReshardPlanner {
   /** migrationId → planId, the direction the coordinator's events arrive in. */
   private planOf = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
+  private readonly _report: (failure: { source: string; error?: unknown; at?: number }) => void;
 
   /**
    * @param migration the coordinator that performs the copy; without one there is
    * nothing to execute and `executePlan` says so instead of advancing a timer
+   * @param onListenerFailure sink for a swallowed progress callback (C-04)
    */
-  constructor(private readonly migration?: IOnlineShardMigration) {
+  constructor(
+    private readonly migration?: IOnlineShardMigration,
+    onListenerFailure?: (failure: { source: string; error?: unknown; at?: number }) => void,
+  ) {
+    this._report = onListenerFailure ?? (() => {});
     if (!migration) return;
     this.unsubscribe = migration.onProgress((event: MigrationProgressEvent) => {
       this.absorb(event.migrationId, event.status);
@@ -379,8 +385,13 @@ export class ReshardPlanner implements IReshardPlanner {
     for (const cb of this.progressCallbacks) {
       try {
         cb({ ...progress });
-      } catch {
-        // callback errors should not interrupt migration
+      } catch (error) {
+        // A callback's bug is not the migration's failure (C-04: report it).
+        try {
+          this._report({ source: 'ReshardPlanner.progress', error, at: Date.now() });
+        } catch {
+          // A broken reporter must not interrupt the migration either.
+        }
       }
     }
   }

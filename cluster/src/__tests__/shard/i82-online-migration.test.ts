@@ -368,3 +368,35 @@ describe('OnlineShardMigration — measured against the shard', () => {
     expect(status.caughtUpVersion).toBe(5);
   });
 });
+
+describe('OnlineShardMigration — C-04 listener failure reporting', () => {
+  it('a throwing progress listener is reported and does not abort the migration', async () => {
+    const reported: unknown[] = [];
+    const migration = new OnlineShardMigration(seeded(5), new MemoryShardSink(), (failure) => reported.push(failure));
+    migration.onProgress(() => {
+      throw new Error('listener-boom');
+    });
+
+    const { migrationId } = await migration.startMigration(config());
+    const status = await migration.waitForCompletion(migrationId);
+
+    // The listener's exception never changed the migration's own outcome.
+    expect(status.phase).toBe('completed');
+    // But it was reported, with the component named.
+    expect(reported.length).toBeGreaterThan(0);
+    expect((reported[0] as { source: string }).source).toBe('OnlineShardMigration.listener');
+  });
+
+  it('a broken reporter cannot abort the migration', async () => {
+    const migration = new OnlineShardMigration(seeded(3), new MemoryShardSink(), () => {
+      throw new Error('reporter-boom');
+    });
+    migration.onProgress(() => {
+      throw new Error('listener-boom');
+    });
+
+    const { migrationId } = await migration.startMigration(config());
+    const status = await migration.waitForCompletion(migrationId);
+    expect(status.phase).toBe('completed');
+  });
+});

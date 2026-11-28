@@ -117,10 +117,15 @@ export class OnlineShardMigration implements IOnlineShardMigration {
    * @param source the shard being copied — enumerated by version, read by key
    * @param sink the node that will own it — applied to, then counted
    */
+  private readonly _report: (failure: { source: string; error?: unknown; at?: number }) => void;
+
   constructor(
     private readonly source: IShardMigrationSource,
     private readonly sink: IShardMigrationSink,
-  ) {}
+    onListenerFailure?: (failure: { source: string; error?: unknown; at?: number }) => void,
+  ) {
+    this._report = onListenerFailure ?? (() => {});
+  }
 
   // ── Lifecycle ─────────────────────────────────────────────
 
@@ -368,8 +373,13 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     for (const listener of this.listeners) {
       try {
         listener(event);
-      } catch {
-        // A consumer's bug is not the migration's failure.
+      } catch (error) {
+        // A consumer's bug is not the migration's failure (C-04: report it).
+        try {
+          this._report({ source: 'OnlineShardMigration.listener', error, at: Date.now() });
+        } catch {
+          // A broken reporter must not abort the copy either.
+        }
       }
     }
   }

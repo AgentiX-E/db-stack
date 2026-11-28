@@ -179,3 +179,10 @@ test("the entry check answers false when there is no program path", () => {
     true,
   );
 });
+
+test("P3-97: both format gates are in the hook contract", () => {
+  // The package gate and the root-only glob are disjoint. A preflight that drops
+  // either is green locally and red in CI, so both names must be required.
+  assert.ok(REQUIRED_STEPS.includes("format:check"));
+  assert.ok(REQUIRED_STEPS.includes("format:check:repo"));
+});

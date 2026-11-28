@@ -415,3 +415,43 @@ describe('I86: what happens when the copy does not land', () => {
     await expect(planner.listActivePlans()).resolves.toEqual([]);
   });
 });
+
+describe('ReshardPlanner — C-04 progress callback reporting', () => {
+  it('a throwing progress callback is reported with its source', async () => {
+    const store = new MemoryStore();
+    for (let i = 0; i < 3; i += 1) store.put(`k${i}`, `v${i}`);
+    const migration = new OnlineShardMigration(new MemoryShardSource(store), new MemoryShardSink());
+    const reported: unknown[] = [];
+    const planner = new ReshardPlanner(migration, (failure) => reported.push(failure));
+    planner.onProgress(() => {
+      throw new Error('consumer bug');
+    });
+
+    const plan = await planner.createMovePlan(1, 'node-b', 'node-a');
+    const planId = await planner.executePlan(plan);
+    const progress = await settled(planner, planId);
+
+    expect(progress.status).toBe('completed');
+    expect(reported.length).toBeGreaterThan(0);
+    expect((reported[0] as { source: string }).source).toBe('ReshardPlanner.progress');
+  });
+});
+
+describe('ReshardPlanner — C-04 broken reporter isolation', () => {
+  it('a reporter that throws cannot interrupt the copy', async () => {
+    const store = new MemoryStore();
+    for (let i = 0; i < 3; i += 1) store.put(`k${i}`, `v${i}`);
+    const migration = new OnlineShardMigration(new MemoryShardSource(store), new MemoryShardSink());
+    const planner = new ReshardPlanner(migration, () => {
+      throw new Error('reporter bug');
+    });
+    planner.onProgress(() => {
+      throw new Error('consumer bug');
+    });
+
+    const plan = await planner.createMovePlan(1, 'node-b', 'node-a');
+    const planId = await planner.executePlan(plan);
+    const progress = await settled(planner, planId);
+    expect(progress.status).toBe('completed');
+  });
+});

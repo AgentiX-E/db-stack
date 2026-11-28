@@ -223,4 +223,55 @@ describe('EventBus', () => {
     expect(crashAsync).toHaveBeenCalledTimes(1);
     expect(normalHandler).toHaveBeenCalledTimes(1);
   });
+
+  // ── C-04: a swallowed subscriber failure is reported, not lost ───
+
+  it('a throwing synchronous subscriber is reported with the event type', () => {
+    const reported = vi.fn();
+    const local = new EventBus({ onListenerFailure: reported });
+    local.on('leader.elected', () => {
+      throw new Error('sync-boom');
+    });
+
+    expect(() => local.emit({ type: 'leader.elected', timestamp: 1, nodeId: 1, term: 1, leaderId: 1 })).not.toThrow();
+
+    expect(reported).toHaveBeenCalledTimes(1);
+    expect(reported.mock.calls[0]![0]).toMatchObject({
+      source: 'EventBus.sync',
+      error: expect.any(Error),
+    });
+  });
+
+  it('a throwing async subscriber is reported after the deferred call', async () => {
+    const reported = vi.fn();
+    const local = new EventBus({ onListenerFailure: reported });
+    local.onAsync('leader.elected', () => {
+      throw new Error('async-boom');
+    });
+
+    local.emit({ type: 'leader.elected', timestamp: 1, nodeId: 1, term: 1, leaderId: 1 });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(reported).toHaveBeenCalledTimes(1);
+    expect(reported.mock.calls[0]![0]).toMatchObject({
+      source: 'EventBus.async',
+      error: expect.any(Error),
+    });
+  });
+
+  it('a reporter that itself throws cannot break the bus', () => {
+    const local = new EventBus({
+      onListenerFailure: () => {
+        throw new Error('reporter-boom');
+      },
+    });
+    const other = vi.fn();
+    local.on('leader.elected', () => {
+      throw new Error('sync-boom');
+    });
+    local.on('leader.elected', other);
+
+    expect(() => local.emit({ type: 'leader.elected', timestamp: 1, nodeId: 1, term: 1, leaderId: 1 })).not.toThrow();
+    expect(other).toHaveBeenCalledTimes(1);
+  });
 });

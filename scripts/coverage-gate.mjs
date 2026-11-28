@@ -20,7 +20,8 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -170,6 +171,85 @@ export function evaluate(packages, summaries, threshold) {
   };
 }
 
+/**
+ * The wall-clock time HEAD was committed, in milliseconds.
+ *
+ * A report written before this instant cannot describe the code now in the tree:
+ * the suite that produced it ran against a different HEAD. The comparison is
+ * deliberately coarse — seconds, not nanoseconds — because the point is to make a
+ * stale read *visible*, not to turn the gate into a clock synchronisation check.
+ * Returns `null` when git cannot answer (no repository, shallow clone), and a
+ * caller that cannot get a HEAD time must not call any report stale.
+ */
+export function gitHeadTime(root, exec = execFileSync) {
+  try {
+    const out = exec("git", ["log", "-1", "--format=%cI"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const ms = Date.parse(out.trim());
+    return Number.isFinite(ms) ? ms : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One row per package: the mtime of its report, or null when there is none.
+ * `stat`, `exists` and `head` are injected so a case can drive a stale report,
+ * a missing one and an unreadable HEAD without touching the filesystem or git.
+ */
+export async function readFreshness(root, packages, options = {}) {
+  const stat = options.stat ?? statSync;
+  const exists = options.exists ?? existsSync;
+  const rows = [];
+  for (const pkg of packages) {
+    const file = resolve(root, pkg.dir, "coverage", "coverage-summary.json");
+    let mtimeMs = null;
+    if (exists(file)) {
+      try {
+        mtimeMs = stat(file).mtimeMs;
+      } catch {
+        mtimeMs = null;
+      }
+    }
+    rows.push({ name: pkg.name, dir: pkg.dir, mtimeMs });
+  }
+  return rows;
+}
+
+/**
+ * The freshness table. A report older than HEAD is named STALE; one written after
+ * HEAD is fresh; a missing report and an unknown HEAD are reported without a
+ * verdict, because neither is evidence about staleness.
+ */
+export function freshnessTable(rows, headMs) {
+  const when = (ms) => (ms === null ? "unknown" : new Date(ms).toISOString());
+  const lines = [
+    "",
+    "## Report freshness (report mtime vs HEAD commit time)",
+    "",
+    "| Package | Report mtime | Verdict |",
+    "|---|---|:--|",
+  ];
+  for (const row of rows) {
+    let verdict;
+    if (row.mtimeMs === null) verdict = "no report";
+    else if (headMs === null) verdict = "HEAD unavailable";
+    else if (row.mtimeMs < headMs) verdict = "STALE — report predates HEAD";
+    else verdict = "fresh";
+    lines.push(`| ${row.name} | ${when(row.mtimeMs)} | ${verdict} |`);
+  }
+  lines.push(
+    "",
+    headMs === null
+      ? "HEAD time unavailable; staleness was not judged."
+      : `HEAD committed at ${when(headMs)}.`,
+  );
+  return lines.join("\n");
+}
+
 export async function run(argv = process.argv.slice(2), options = {}) {
   // `?? console.log` rather than a wrapper: a wrapper is a function defined in
   // this file that no test can reach without printing, and it exists only to
@@ -191,6 +271,15 @@ export async function run(argv = process.argv.slice(2), options = {}) {
   const { table, detail, failures } = evaluate(packages, summaries, threshold);
   log(table);
   if (detail) log(detail);
+
+  // Make a stale report visible. The verdict above is unchanged — a fresh run
+  // writes a fresh report — but an operator who invoked the gate without
+  // regenerating first now sees *which* report predates HEAD rather than a green
+  // table that cannot be trusted (P3-98).
+  const freshness = options.freshness ?? (() => readFreshness(root, packages));
+  const headMs =
+    options.head !== undefined ? options.head() : gitHeadTime(root);
+  log(freshnessTable(await freshness(), headMs));
 
   if (failures.length > 0) {
     error("\nCoverage gate FAILED:");

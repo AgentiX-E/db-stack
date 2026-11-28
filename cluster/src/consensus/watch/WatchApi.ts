@@ -8,6 +8,7 @@
  */
 
 import type { IEventBus, IDisposable, ConsensusEvent, ProposalCommittedEvent } from '../events/EventBus';
+import type { ListenerFailureReporter } from '../../observability/ListenerFailureReporter';
 
 // ── Interfaces ─────────────────────────────────────────────────────
 
@@ -96,6 +97,7 @@ function parseValueFromData(data: string): string {
  */
 export class WatchApi implements IWatchApi {
   private _eventBus: IEventBus;
+  private readonly _report: ListenerFailureReporter;
   private _watches = new Map<
     string,
     {
@@ -106,8 +108,9 @@ export class WatchApi implements IWatchApi {
   >();
   private _shutdown = false;
 
-  constructor(eventBus: IEventBus) {
+  constructor(eventBus: IEventBus, onListenerFailure?: ListenerFailureReporter) {
     this._eventBus = eventBus;
+    this._report = onListenerFailure ?? (() => {});
   }
 
   watch(keyPrefix: string, handler: WatchHandler, options: WatchOptions = {}): IDisposable {
@@ -136,8 +139,13 @@ export class WatchApi implements IWatchApi {
             timestamp: committed.timestamp,
           };
           handler(watchEvent);
-        } catch {
-          // A throwing handler must not affect other watches
+        } catch (error) {
+          // C-04: isolate the other watches, but make this failure observable.
+          try {
+            this._report({ source: 'WatchApi.handler', error, at: Date.now() });
+          } catch {
+            // A broken reporter must not affect other watches either.
+          }
         }
       }
     });

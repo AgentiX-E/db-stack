@@ -26,6 +26,7 @@
 
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -49,6 +50,49 @@ export function runOne(target, forwarded, options = {}) {
   const spawnFn = options.spawn ?? spawn;
   const error = options.error ?? console.error;
 
+  // P3-96: a mutation run killed mid-flight can leave an in-place edit behind.
+  // The worktree guard is opt-in through `files`: when named, a snapshot is taken
+  // before the child starts and any file that changed during the run is restored
+  // and reported. All three operations are injected so a case can drive a dirty
+  // tree without launching Stryker or touching the repository.
+  const guarded = Array.isArray(options.files) && options.files.length > 0;
+  const snapshot = options.snapshot ?? (() => new Map());
+  const changed = options.changed ?? (() => []);
+  const restore = options.restore ?? (() => {});
+  let before = null;
+  if (guarded) {
+    try {
+      before = snapshot(options.files);
+    } catch (cause) {
+      error(`mutation: could not snapshot the worktree — ${cause.message}`);
+    }
+  }
+
+  const settleGuarded = (code) => {
+    if (!guarded || before === null) return code;
+    let touched;
+    try {
+      touched = changed(before);
+    } catch (cause) {
+      error(`mutation: could not diff the worktree — ${cause.message}`);
+      return code;
+    }
+    if (touched.length === 0) return code;
+    error(
+      `mutation: source tree was modified by the mutation run: ${touched.join(", ")}`,
+    );
+    try {
+      restore(before, touched);
+      error(
+        `mutation: restored ${touched.length} file(s) to their pre-run state`,
+      );
+    } catch (cause) {
+      error(`mutation: could not restore the worktree — ${cause.message}`);
+    }
+    // A run that edited its own source is never a pass, even if the child exited 0.
+    return 1;
+  };
+
   return new Promise((settle) => {
     const child = spawnFn(
       options.execPath ?? process.execPath,
@@ -62,16 +106,77 @@ export function runOne(target, forwarded, options = {}) {
     child.on("close", (code, signal) => {
       if (signal) {
         error(`mutation: ${target} was killed by ${signal}`);
-        settle(1);
+        settle(settleGuarded(1));
       } else {
-        settle(code ?? 1);
+        settle(settleGuarded(code ?? 1));
       }
     });
     child.on("error", (cause) => {
       error(`mutation: could not start the ${target} run — ${cause.message}`);
-      settle(1);
+      settle(settleGuarded(1));
     });
   });
+}
+
+/**
+ * The worktree guard's default I/O.
+ *
+ * The snapshot is the file's **bytes**, not its git blob and not an instruction
+ * to `git checkout --`. That distinction was learned the hard way: a first
+ * implementation restored a file from HEAD while a contributor was formatting
+ * it concurrently, and silently destroyed an hour of uncommitted work. Restoring
+ * the bytes captured at the start puts back exactly what was there when the run
+ * began — no more (a mutation residue) and no less (a legitimate edit).
+ */
+const FS = {
+  exists: existsSync,
+  read: (path) => readFileSync(path, "utf8"),
+  write: (path, text) => writeFileSync(path, text, "utf8"),
+  unlink: unlinkSync,
+};
+
+/** Capture the exact bytes of each named file; `null` means it did not exist. */
+export function snapshotFiles(files, root, fs = FS) {
+  const before = new Map();
+  for (const file of files) {
+    const path = resolve(root, file);
+    try {
+      before.set(file, fs.exists(path) ? fs.read(path) : null);
+    } catch {
+      // An unreadable file is recorded as absent: a later write is still a change.
+      before.set(file, null);
+    }
+  }
+  return before;
+}
+
+/** Name the files whose bytes moved since the snapshot. */
+export function changedFiles(before, root, fs = FS) {
+  const touched = [];
+  for (const [file, was] of before) {
+    const path = resolve(root, file);
+    let now;
+    try {
+      now = fs.exists(path) ? fs.read(path) : null;
+    } catch {
+      now = null;
+    }
+    if (now !== was) touched.push(file);
+  }
+  return touched;
+}
+
+/** Put back the bytes captured at the start, removing a file that did not exist. */
+export function restoreFiles(before, files, root, fs = FS) {
+  for (const file of files) {
+    const path = resolve(root, file);
+    const was = before.get(file) ?? null;
+    if (was === null) {
+      if (fs.exists(path)) fs.unlink(path);
+    } else {
+      fs.write(path, was);
+    }
+  }
 }
 
 /**
@@ -115,8 +220,24 @@ export async function main(argv = process.argv.slice(2), options = {}) {
   const queue = requested === "all" ? names : [requested];
   // The default runner is `runOne` with the *caller's* options, so it is reachable
   // from a test that injects `spawn` and `bin` — a default nobody can reach is a
-  // default nobody has measured.
-  const run = options.run ?? ((target) => runOne(target, forwarded, options));
+  // default nobody has measured. When the target names the files it mutates, the
+  // worktree guard is wired to git; a target with no `mutate` list runs without it.
+  const run =
+    options.run ??
+    ((target) => {
+      const files = Array.isArray(targets[target]?.mutate)
+        ? targets[target].mutate
+        : [];
+      return runOne(target, forwarded, {
+        ...options,
+        files,
+        snapshot: options.snapshot ?? ((paths) => snapshotFiles(paths, root)),
+        changed: options.changed ?? ((before) => changedFiles(before, root)),
+        restore:
+          options.restore ??
+          ((before, paths) => restoreFiles(before, paths, root)),
+      });
+    });
   for (const target of queue) {
     const code = await run(target);
     if (code !== 0) return code;
@@ -125,5 +246,13 @@ export async function main(argv = process.argv.slice(2), options = {}) {
 }
 
 if (isEntryPoint(process.argv[1])) {
-  main().then((code) => process.exit(code));
+  // No arrow wrapper here: a `.then((code) => ...)` is a function the in-process
+  // suite can never call (the entry guard is false under the test runner), and a
+  // function nobody can reach is a function nobody can cover. `process.exitCode`
+  // lets the event loop drain and keeps the CLI verdict identical.
+  main().then(setExitCode);
+}
+
+export function setExitCode(code) {
+  process.exitCode = code;
 }

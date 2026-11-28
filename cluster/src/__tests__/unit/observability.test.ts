@@ -251,6 +251,32 @@ describe('HealthProbe (OBS3)', () => {
     const status = health.fullStatus();
     expect(status.status).toBe('degraded');
   });
+
+  // ── C-04: a swallowed listener failure must reach the health verdict ──
+
+  it('OBS3.9: a recorded listener failure degrades readiness and names its source', () => {
+    health.markStartupComplete();
+    health.register('raft', () => ({ ok: true, latencyMs: 1 }));
+    health.recordListenerFailure('WatchApi.handler', new Error('boom'));
+    const r = health.readiness();
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('WatchApi.handler');
+  });
+
+  it('OBS3.10: listener failures are readable and do not affect liveness', () => {
+    health.recordListenerFailure('EventBus.sync', new Error('boom'));
+    expect(health.listenerFailures).toHaveLength(1);
+    expect(health.listenerFailures[0]!.source).toBe('EventBus.sync');
+    // A broken listener is not a dead process; liveness stays honest.
+    expect(health.liveness().ok).toBe(true);
+  });
+
+  it('OBS3.11: recordListenerFailure defaults error and timestamp', () => {
+    health.recordListenerFailure('FencingTokenGuard.observer');
+    const f = health.listenerFailures[0]!;
+    expect(f.error).toBeUndefined();
+    expect(Number.isFinite(f.at)).toBe(true);
+  });
 });
 
 // ── Trace Context ───────────────────────────────────────────

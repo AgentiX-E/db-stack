@@ -245,6 +245,38 @@ describe('FencingTokenGuard — the resource refuses what it has already surpass
     expect(guard.admit(token(1, 1)).admitted).toBe(true);
   });
 
+  it('C-04: a throwing refusal observer is reported, not lost', () => {
+    const reported = vi.fn();
+    const guard = new FencingTokenGuard({ onObserverFailure: reported });
+    guard.admit(token(2, 10));
+    guard.onRefused(() => {
+      throw new Error('observer exploded');
+    });
+
+    const decision = guard.admit(token(1, 1)); // stale → refusal → observer fires
+    expect(decision.admitted).toBe(false);
+    expect(reported).toHaveBeenCalledTimes(1);
+    expect(reported.mock.calls[0]![0]).toMatchObject({
+      source: 'FencingTokenGuard.observer',
+      error: expect.any(Error),
+    });
+  });
+
+  it('C-04: a broken reporter cannot change the admission decision', () => {
+    const guard = new FencingTokenGuard({
+      onObserverFailure: () => {
+        throw new Error('reporter exploded');
+      },
+    });
+    guard.admit(token(2, 10));
+    guard.onRefused(() => {
+      throw new Error('observer exploded');
+    });
+
+    expect(() => guard.admit(token(1, 1))).not.toThrow();
+    expect(guard.admit(token(1, 1)).admitted).toBe(false);
+  });
+
   it('stops notifying an unsubscribed observer', () => {
     const guard = new FencingTokenGuard();
     guard.admit(token(1, 1));

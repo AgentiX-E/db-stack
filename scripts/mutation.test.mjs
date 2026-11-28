@@ -22,7 +22,16 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { isEntryPoint, main, runOne, strykerBin } from "./mutation.mjs";
+import {
+  changedFiles,
+  isEntryPoint,
+  main,
+  restoreFiles,
+  runOne,
+  setExitCode,
+  snapshotFiles,
+  strykerBin,
+} from "./mutation.mjs";
 import { TARGETS as REPOSITORY_TARGETS } from "../mutation/targets.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -312,4 +321,373 @@ test("the entry check answers for this module, another file, and no file at all"
   assert.equal(isEntryPoint(resolve(ROOT, "scripts/mutation.mjs")), true);
   assert.equal(isEntryPoint(resolve(ROOT, "scripts/check-english.mjs")), false);
   assert.equal(isEntryPoint(undefined), false);
+});
+
+// ── P3-96: an interrupted run must not leave the source tree edited ──
+
+test("runOne records a worktree snapshot before the child and restores it after any exit", async () => {
+  const { spawn } = fakeSpawn({}, 1);
+  const events = [];
+  const files = ["federation/src/a.ts", "federation/src/b.ts"];
+  const snapshot = (paths) => {
+    events.push(`snapshot:${paths.join(",")}`);
+    return new Map(paths.map((p) => [p, `hash-${p}`]));
+  };
+  const changed = () => {
+    events.push("changed");
+    // b.ts was left edited by the killed child
+    return ["federation/src/b.ts"];
+  };
+  const restore = (_before, paths) => events.push(`restore:${paths.join(",")}`);
+
+  const code = await runOne("federation", [], {
+    spawn,
+    bin: "/s.js",
+    files,
+    snapshot,
+    changed,
+    restore,
+  });
+
+  assert.equal(code, 1);
+  assert.deepEqual(events, [
+    "snapshot:federation/src/a.ts,federation/src/b.ts",
+    "changed",
+    "restore:federation/src/b.ts",
+  ]);
+});
+
+test("runOne restores even when the child is killed by a signal", async () => {
+  const { spawn } = fakeSpawn({ signal: "SIGKILL" }, 0);
+  const restored = [];
+  const errors = [];
+
+  await runOne("cluster", [], {
+    spawn,
+    bin: "/s.js",
+    files: ["cluster/src/a.ts"],
+    snapshot: (paths) => new Map(paths.map((p) => [p, "h"])),
+    changed: () => ["cluster/src/a.ts"],
+    restore: (_before, paths) => restored.push(...paths),
+    error: (line) => errors.push(line),
+  });
+
+  assert.deepEqual(restored, ["cluster/src/a.ts"]);
+  assert.match(errors.join("\n"), /restored 1 file\(s\)/);
+});
+
+test("runOne does not restore a clean tree", async () => {
+  const { spawn } = fakeSpawn({}, 0);
+  let restores = 0;
+  const errors = [];
+
+  await runOne("cluster", [], {
+    spawn,
+    bin: "/s.js",
+    files: ["cluster/src/a.ts"],
+    snapshot: () => new Map(),
+    changed: () => [],
+    restore: () => {
+      restores += 1;
+    },
+    error: (line) => errors.push(line),
+  });
+
+  assert.equal(restores, 0);
+  assert.doesNotMatch(errors.join("\n"), /restored/);
+});
+
+test("a restored file is reported as a failure, not a silent fix", async () => {
+  const { spawn } = fakeSpawn({}, 0);
+  const errors = [];
+
+  const code = await runOne("cluster", [], {
+    spawn,
+    bin: "/s.js",
+    files: ["cluster/src/a.ts"],
+    snapshot: () => new Map(),
+    changed: () => ["cluster/src/a.ts"],
+    restore: () => {},
+    error: (line) => errors.push(line),
+  });
+
+  assert.equal(
+    code,
+    1,
+    "a mutated source tree must fail the gate even after restore",
+  );
+  assert.match(
+    errors.join("\n"),
+    /source tree was modified by the mutation run/,
+  );
+});
+
+test("a snapshot that throws does not hide the child's verdict", async () => {
+  const { spawn } = fakeSpawn({}, 5);
+  const errors = [];
+
+  const code = await runOne("cluster", [], {
+    spawn,
+    bin: "/s.js",
+    files: ["cluster/src/a.ts"],
+    snapshot: () => {
+      throw new Error("git unavailable");
+    },
+    error: (line) => errors.push(line),
+  });
+
+  assert.equal(code, 5, "the child's exit code survives a failed snapshot");
+  assert.match(errors.join("\n"), /could not snapshot the worktree/);
+});
+
+// ── P3-96: the byte-snapshot guard, driven by an injected filesystem ──
+
+/** An in-memory filesystem: path -> text, with absent meaning "does not exist". */
+function fakeFs(initial = {}) {
+  const store = new Map(Object.entries(initial));
+  const writes = [];
+  const unlinks = [];
+  return {
+    store,
+    writes,
+    unlinks,
+    fs: {
+      exists: (path) => store.has(path),
+      read: (path) => store.get(path),
+      write: (path, text) => {
+        writes.push({ path, text });
+        store.set(path, text);
+      },
+      unlink: (path) => {
+        unlinks.push(path);
+        store.delete(path);
+      },
+    },
+  };
+}
+
+test("snapshotFiles records exact bytes and a missing file as null", () => {
+  const { fs } = fakeFs({ "/repo/a.ts": "original bytes\n" });
+
+  const before = snapshotFiles(["a.ts", "gone.ts"], "/repo", fs);
+
+  assert.deepEqual(
+    before,
+    new Map([
+      ["a.ts", "original bytes\n"],
+      ["gone.ts", null],
+    ]),
+  );
+});
+
+test("changedFiles names files whose bytes moved, including one that vanished", () => {
+  const { fs } = fakeFs({ "/repo/a.ts": "same", "/repo/b.ts": "new bytes" });
+  const before = new Map([
+    ["a.ts", "same"], // unchanged
+    ["b.ts", "old"], // changed
+    ["gone.ts", "blob-gone"], // vanished
+  ]);
+
+  assert.deepEqual(changedFiles(before, "/repo", fs), ["b.ts", "gone.ts"]);
+});
+
+test("restoreFiles writes back the snapshot bytes, not HEAD", () => {
+  // The file on disk holds a mutation residue; the snapshot holds a legitimate
+  // uncommitted edit. Restore must put back the edit — the defect this replaced
+  // used `git checkout --` and destroyed the edit.
+  const { fs, store } = fakeFs({ "/repo/a.ts": "MUTATION RESIDUE" });
+  const before = new Map([["a.ts", "legitimate uncommitted edit\n"]]);
+
+  restoreFiles(before, ["a.ts"], "/repo", fs);
+
+  assert.equal(store.get("/repo/a.ts"), "legitimate uncommitted edit\n");
+});
+
+test("restoreFiles removes a file that did not exist at snapshot time", () => {
+  const { fs, store, unlinks } = fakeFs({
+    "/repo/new.ts": "created by mutant",
+  });
+  const before = new Map([["new.ts", null]]);
+
+  restoreFiles(before, ["new.ts"], "/repo", fs);
+
+  assert.equal(store.has("/repo/new.ts"), false);
+  assert.deepEqual(unlinks, ["/repo/new.ts"]);
+});
+
+test("main wires the worktree guard for a target that declares mutate files", async () => {
+  const { spawn, calls } = fakeSpawn({}, 0);
+  const files = ["federation/src/a.ts"];
+  const targets = { federation: { mutate: files } };
+
+  const code = await main(["federation"], {
+    targets,
+    cwd: ROOT,
+    root: ROOT,
+    spawn,
+    bin: "/s.js",
+    snapshot: () => new Map([["federation/src/a.ts", "h"]]),
+    changed: () => [],
+    restore: () => {},
+  });
+
+  assert.equal(code, 0);
+  assert.equal(calls.length, 1);
+});
+
+test("a worktree that cannot be diffed does not hide the child's verdict", async () => {
+  const { spawn } = fakeSpawn({}, 4);
+  const errors = [];
+
+  const code = await runOne("cluster", [], {
+    spawn,
+    bin: "/s.js",
+    files: ["a.ts"],
+    snapshot: () => new Map([["a.ts", "h"]]),
+    changed: () => {
+      throw new Error("diff failed");
+    },
+    restore: () => {},
+    error: (line) => errors.push(line),
+  });
+
+  assert.equal(code, 4);
+  assert.match(errors.join("\n"), /could not diff the worktree — diff failed/);
+});
+
+test("a restore that throws is reported and still fails the gate", async () => {
+  const { spawn } = fakeSpawn({}, 0);
+  const errors = [];
+
+  const code = await runOne("cluster", [], {
+    spawn,
+    bin: "/s.js",
+    files: ["a.ts"],
+    snapshot: () => new Map([["a.ts", "h"]]),
+    changed: () => ["a.ts"],
+    restore: () => {
+      throw new Error("checkout failed");
+    },
+    error: (line) => errors.push(line),
+  });
+
+  assert.equal(code, 1);
+  assert.match(
+    errors.join("\n"),
+    /could not restore the worktree — checkout failed/,
+  );
+});
+
+test("the default runner builds a byte-snapshot guard when none is injected", async () => {
+  const { spawn, calls } = fakeSpawn({}, 0);
+
+  // No `run`, no `snapshot`/`changed`/`restore`: the default runner must build all
+  // three from the filesystem. A file that exists in this repository has identical
+  // bytes before and after, so the guard sees a clean tree and stays green.
+  const code = await main(["cluster"], {
+    targets: { cluster: { mutate: ["package.json"] } },
+    cwd: ROOT,
+    root: ROOT,
+    spawn,
+    bin: "/s.js",
+    error: () => {},
+  });
+
+  assert.equal(code, 0);
+  assert.equal(calls.length, 1);
+});
+
+test("the default snapshot and diff helpers treat a guarded run with no hooks as clean", async () => {
+  const { spawn } = fakeSpawn({}, 0);
+  const errors = [];
+
+  // `files` enables the guard, but no snapshot/changed/restore are injected: the
+  // default arrows are the ones under test. They report a clean tree.
+  const code = await runOne("cluster", [], {
+    spawn,
+    bin: "/s.js",
+    files: ["a.ts"],
+    error: (line) => errors.push(line),
+  });
+
+  assert.equal(code, 0);
+  assert.doesNotMatch(errors.join("\n"), /modified/);
+});
+
+test("the default restore helper is reached on a dirty tree", async () => {
+  const { spawn } = fakeSpawn({}, 0);
+  const errors = [];
+
+  // snapshot and changed are injected to declare a dirty tree; restore is left
+  // to its default arrow, which must run without throwing.
+  await runOne("cluster", [], {
+    spawn,
+    bin: "/s.js",
+    files: ["a.ts"],
+    snapshot: () => new Map([["a.ts", "old"]]),
+    changed: () => ["a.ts"],
+    error: (line) => errors.push(line),
+  });
+
+  assert.match(errors.join("\n"), /restored 1 file\(s\)/);
+});
+
+test("setExitCode translates the runner verdict into the process verdict", () => {
+  const original = process.exitCode;
+  try {
+    setExitCode(7);
+    assert.equal(process.exitCode, 7);
+    setExitCode(0);
+    assert.equal(process.exitCode, 0);
+  } finally {
+    process.exitCode = original;
+  }
+});
+
+test("the default runner's byte-snapshot restore arrow runs on a dirty tree", async () => {
+  const { spawn } = fakeSpawn({}, 0);
+  const errors = [];
+
+  // `changed` is injected to force the dirty path; `restore` is left to the
+  // default runner's byte-snapshot arrow. It writes back the captured bytes of
+  // package.json, which this suite never edits — a safe no-op on the live tree.
+  // What is asserted is that the arrow ran, via the restore report.
+  const code = await main(["cluster"], {
+    targets: { cluster: { mutate: ["package.json"] } },
+    cwd: ROOT,
+    root: ROOT,
+    spawn,
+    bin: "/s.js",
+    error: (line) => errors.push(line),
+    changed: () => ["package.json"],
+  });
+
+  assert.equal(code, 1);
+  assert.match(errors.join("\n"), /restored 1 file\(s\)/);
+});
+
+test("snapshotFiles records null for a file whose read throws", () => {
+  const fs = {
+    exists: () => true,
+    read: () => {
+      throw new Error("EACCES");
+    },
+  };
+
+  const before = snapshotFiles(["locked.ts"], "/repo", fs);
+  assert.equal(before.get("locked.ts"), null);
+});
+
+test("changedFiles treats an unreadable file as absent", () => {
+  const fs = {
+    exists: () => true,
+    read: () => {
+      throw new Error("EACCES");
+    },
+  };
+  // The file had bytes at snapshot time; now reading it throws, so it is
+  // treated as gone and named as changed.
+  const before = new Map([["locked.ts", "bytes"]]);
+
+  assert.deepEqual(changedFiles(before, "/repo", fs), ["locked.ts"]);
 });

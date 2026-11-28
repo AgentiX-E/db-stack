@@ -68,6 +68,8 @@ export default defineConfig({
       // suites, colocated with the code they exercise as the federation suites are.
       'src/consensus/routing/LogicalPrimaryResolver.test.ts',
       'src/consensus/idempotency/Idempotency.test.ts',
+      // IT-104: the C-04 composition root is judged by its own colocated suite.
+      'src/observability/ClusterHealth.test.ts',
     ],
     exclude: [],
     pool: 'forks',

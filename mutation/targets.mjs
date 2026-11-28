@@ -113,6 +113,10 @@ export const TARGETS = {
       // replica must be caught by a mutant, not only by a coverage line.
       "cluster/src/consensus/routing/LogicalPrimaryResolver.ts",
       "cluster/src/consensus/idempotency/Idempotency.ts",
+      // IT-104: the composition root that turns a swallowed listener failure into
+      // a health verdict. A mutant that drops the timestamp, ignores the source,
+      // or never records the failure must be caught by a mutant, not only coverage.
+      "cluster/src/observability/ClusterHealth.ts",
     ],
     testConfig: "cluster/vitest.mutation.config.ts",
     // Raised with the assemblers rather than lowered around them. Every file in

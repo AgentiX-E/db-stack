@@ -23,6 +23,13 @@ export interface HealthStatus {
   probes: Record<string, ProbeResult>;
 }
 
+/** One listener failure routed to the health verdict (C-04). */
+export interface ListenerFailure {
+  source: string;
+  error?: unknown;
+  at: number;
+}
+
 /**
  * HealthProbe registry — aggregates multiple IHealthProbe instances.
  */
@@ -30,6 +37,7 @@ export class HealthProbe {
   private readonly _probes: Map<string, () => ProbeResult> = new Map();
   private _fatalErrors = 0;
   private _startupComplete = false;
+  private readonly _listenerFailures: ListenerFailure[] = [];
 
   register(name: string, probe: () => ProbeResult): void {
     this._probes.set(name, probe);
@@ -41,6 +49,21 @@ export class HealthProbe {
 
   recordFatalError(): void {
     this._fatalErrors++;
+  }
+
+  /**
+   * Record a failure a listener swallowed (C-04). Kept distinct from a fatal
+   * error: a broken observer degrades readiness — the node should not take new
+   * work until its health signals are trustworthy — but it does not mean the
+   * process is dead, so liveness stays honest.
+   */
+  recordListenerFailure(source: string, error?: unknown, at: number = Date.now()): void {
+    this._listenerFailures.push({ source, error, at });
+  }
+
+  /** The listener failures recorded so far, newest last. */
+  get listenerFailures(): readonly ListenerFailure[] {
+    return this._listenerFailures;
   }
 
   /** Liveness: is the process alive? (no I/O) */
@@ -65,12 +88,23 @@ export class HealthProbe {
       results[name] = r;
       if (!r.ok) allOk = false;
     }
+    const problems: string[] = [];
     if (!allOk) {
       const failed = Object.entries(results)
         .filter(([, r]) => !r.ok)
         .map(([n]) => n)
         .join(', ');
-      return { ok: false, reason: `unhealthy probes: ${failed}`, latencyMs: performance.now() - t0 };
+      problems.push(`unhealthy probes: ${failed}`);
+    }
+    if (this._listenerFailures.length > 0) {
+      // Name each distinct source: a readiness that says "a listener failed"
+      // spends an operator's time finding which one. The sources are exactly what
+      // the reporter was told, so the verdict stays engine-agnostic.
+      const sources = [...new Set(this._listenerFailures.map((f) => f.source))].join(', ');
+      problems.push(`swallowed listener failures: ${sources}`);
+    }
+    if (problems.length > 0) {
+      return { ok: false, reason: problems.join('; '), latencyMs: performance.now() - t0 };
     }
     return { ok: true, latencyMs: performance.now() - t0 };
   }

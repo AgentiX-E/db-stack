@@ -57,6 +57,11 @@ export const REQUIRED_STEPS = [
   "lint",
   "lint:root",
   "format:check",
+  // P3-97: the package gates (`format:check` via turbo) and the root-level files
+  // no package owns (`format:check:repo`) are two non-overlapping globs. A hook
+  // that runs only one can be green while CI's other gate is red, so both names
+  // belong in the contract the hook is checked against.
+  "format:check:repo",
   "check:gates",
 ];
 

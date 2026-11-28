@@ -152,6 +152,24 @@ describe('WatchApi', () => {
     expect(good).toHaveLength(1);
   });
 
+  it('C-04: a throwing watch handler is reported with its source', () => {
+    const reported = vi.fn();
+    const local = new WatchApi(bus, reported);
+    local.watch('crash:', () => {
+      throw new Error('handler-boom');
+    });
+
+    expect(() => {
+      bus.emit(createCommittedEvent(1, JSON.stringify({ key: 'crash:1', value: 'x' })));
+    }).not.toThrow();
+
+    expect(reported).toHaveBeenCalledTimes(1);
+    expect(reported.mock.calls[0]![0]).toMatchObject({
+      source: 'WatchApi.handler',
+      error: expect.any(Error),
+    });
+  });
+
   // ── Value parsing ──────────────────────────────────────────────
 
   it('the value is parsed from JSON data', () => {
@@ -183,5 +201,27 @@ describe('WatchApi', () => {
 
     d2.dispose();
     expect(watch.activeWatchCount()).toBe(0);
+  });
+});
+
+describe('WatchApi — C-04 broken reporter isolation', () => {
+  it('a reporter that throws cannot affect other watches', () => {
+    const localBus = new EventBus();
+    const local = new WatchApi(localBus, () => {
+      throw new Error('reporter boom');
+    });
+    const good: WatchEvent[] = [];
+    local.watch('crash:', () => {
+      throw new Error('handler boom');
+    });
+    local.watch('good:', (e) => {
+      good.push(e);
+    });
+
+    expect(() => {
+      localBus.emit(createCommittedEvent(1, JSON.stringify({ key: 'crash:1', value: 'x' })));
+      localBus.emit(createCommittedEvent(2, JSON.stringify({ key: 'good:1', value: 'y' })));
+    }).not.toThrow();
+    expect(good).toHaveLength(1);
   });
 });

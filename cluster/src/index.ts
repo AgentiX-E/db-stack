@@ -89,6 +89,7 @@ export type {
   MembershipChangedEvent,
   IEventBus,
   IDisposable,
+  EventBusOptions,
 } from './consensus/events/EventBus';
 export { WatchApi } from './consensus/watch/WatchApi';
 export type { WatchOptions } from './consensus/watch/WatchApi';
@@ -186,7 +187,11 @@ export type { PITRCheckpoint, PITRRestoreResult, WALEntry } from './pitr/PITRMan
 
 // ── Observability ─────────────────────────────────────────
 export { HealthProbe } from './observability/HealthProbe';
-export type { HealthStatus, ProbeResult } from './observability/HealthProbe';
+export type { HealthStatus, ProbeResult, ListenerFailure } from './observability/HealthProbe';
+export { createHealthFailureReporter, ignoreListenerFailure } from './observability/ListenerFailureReporter';
+export type { ListenerFailureEvent, ListenerFailureReporter } from './observability/ListenerFailureReporter';
+export { createClusterHealth } from './observability/ClusterHealth';
+export type { ClusterHealth, ClusterHealthOptions } from './observability/ClusterHealth';
 export { LoggingAdapter, traceContext } from './observability/LoggingAdapter';
 export type { ILogger } from './observability/interfaces';
 export { RaftMetricsCollector } from './observability/RaftMetricsCollector';

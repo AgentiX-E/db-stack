@@ -25,7 +25,9 @@ import { spawnSync } from "node:child_process";
 
 import {
   evaluate,
+  freshnessTable,
   pct,
+  readFreshness,
   readSummary,
   run,
   summarise,
@@ -445,4 +447,76 @@ test("the command line exits with the gate's verdict", () => {
   assert.equal(child.status, 1);
   assert.match(child.stdout, /Coverage gate — threshold 101%/);
   assert.match(child.stderr, /Coverage gate FAILED/);
+});
+
+// ── P3-98: a stale report must be visible, not silently judged ──────
+
+test("freshnessTable names a report older than HEAD as stale", () => {
+  const head = 1_000_000;
+  const rows = [
+    { name: "@scope/one", dir: "one", mtimeMs: 900_000 },
+    { name: "@scope/two", dir: "two", mtimeMs: 1_100_000 },
+  ];
+
+  const table = freshnessTable(rows, head);
+
+  assert.match(table, /@scope\/one/);
+  assert.match(table, /STALE/);
+  assert.match(table, /@scope\/two/);
+  assert.match(table, /fresh/);
+});
+
+test("freshnessTable reports a missing report and an unreadable HEAD", () => {
+  const rows = [{ name: "@scope/one", dir: "one", mtimeMs: null }];
+
+  const missing = freshnessTable(rows, 1_000);
+  assert.match(missing, /no report/);
+
+  const noHead = freshnessTable(
+    [{ name: "@scope/one", dir: "one", mtimeMs: 500 }],
+    null,
+  );
+  assert.match(noHead, /HEAD unavailable/);
+  // Without a HEAD time nothing can be called stale — that would be a guess.
+  assert.doesNotMatch(noHead, /STALE/);
+});
+
+test("readFreshness reads each report's mtime and the HEAD commit time, both injected", async () => {
+  const root = "/repo";
+  const packages = [
+    { name: "@scope/one", dir: "one" },
+    { name: "@scope/two", dir: "two" },
+  ];
+  const stat = (path) => {
+    if (path.endsWith("one/coverage/coverage-summary.json"))
+      return { mtimeMs: 700 };
+    throw new Error("missing two");
+  };
+  const exists = (path) => path.includes("one/");
+  const head = () => 800;
+
+  const rows = await readFreshness(root, packages, { stat, exists, head });
+
+  assert.deepEqual(rows, [
+    { name: "@scope/one", dir: "one", mtimeMs: 700 },
+    { name: "@scope/two", dir: "two", mtimeMs: null },
+  ]);
+});
+
+test("run prints the freshness table beside the verdict", async () => {
+  const summaries = new Map([["one", summary(99)]]);
+  const lines = [];
+  const packages = [{ name: "@scope/one", dir: "one" }];
+
+  await run([], {
+    packages,
+    summaries,
+    log: (line) => lines.push(line),
+    error: () => {},
+    freshness: async () => [{ name: "@scope/one", dir: "one", mtimeMs: 900 }],
+    head: () => 1000,
+  });
+
+  assert.match(lines.join("\n"), /STALE/);
+  assert.match(lines.join("\n"), /freshness|Report freshness/i);
 });
