@@ -8,7 +8,7 @@
  * @module @agentix-e/db-node/health/interfaces
  */
 
-import type { IHealthProbe } from './IHealthProbe.js';
+import type { IHealthProbe, ProbeAnswer } from './IHealthProbe.js';
 import type { ComponentHealth } from '../../core/types.js';
 
 /**
@@ -53,7 +53,7 @@ export interface IComponentRegistrar {
   /**
    * Get the health of all registered components.
    */
-  getComponentHealth(): ComponentHealth[];
+  getComponentHealth(): Promise<ComponentHealth[]>;
 
   /**
    * Get the summary health of all components (aggregate status).
@@ -63,10 +63,10 @@ export interface IComponentRegistrar {
    * - 'degraded' if some components report warning or one is unhealthy
    * - 'unhealthy' if all components are unhealthy
    */
-  getAggregateStatus(): {
+  getAggregateStatus(): Promise<{
     status: 'healthy' | 'degraded' | 'unhealthy';
     count: number;
-  };
+  }>;
 }
 
 export interface ComponentRegistrationOptions {
@@ -85,10 +85,11 @@ export interface FunctionalCheckResult {
 
 /**
  * The probe functions a component supplies when it registers by function
- * reference rather than by implementing `IHealthProbe`.
+ * reference rather than by implementing `IHealthProbe`. Any of the three may
+ * return a promise; the orchestrator awaits it before aggregating a verdict.
  */
 export interface FunctionalChecks {
-  liveness: () => FunctionalCheckResult;
-  readiness?: () => FunctionalCheckResult;
-  startup?: () => FunctionalCheckResult;
+  liveness: () => ProbeAnswer;
+  readiness?: () => ProbeAnswer;
+  startup?: () => ProbeAnswer;
 }

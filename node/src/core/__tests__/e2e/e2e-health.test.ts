@@ -6,25 +6,25 @@ describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$na
     await factory.cleanup();
   });
 
-  it('should create a health probe with liveness ok', () => {
+  it('should create a health probe with liveness ok', async () => {
     const probe = factory.createHealthProbe();
-    const result = probe.liveness();
+    const result = await probe.liveness();
     expect(result.ok).toBe(true);
   });
 
-  it('should create a health probe with readiness ok', () => {
+  it('should create a health probe with readiness ok', async () => {
     const probe = factory.createHealthProbe();
-    const result = probe.readiness();
+    const result = await probe.readiness();
     expect(result.ok).toBe(true);
   });
 
-  it('should create a health orchestrator', () => {
+  it('should create a health orchestrator', async () => {
     const orch = factory.createHealthOrchestrator();
-    const status = orch.liveness();
+    const status = await orch.liveness();
     expect(status.ok).toBe(true);
   });
 
-  it('should aggregate component health correctly', () => {
+  it('should aggregate component health correctly', async () => {
     const orch = factory.createHealthOrchestrator();
     orch.registerFunctional('comp-1', 'Component 1', {
       liveness: () => ({ ok: true }),
@@ -34,26 +34,26 @@ describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$na
       liveness: () => ({ ok: true }),
       readiness: () => ({ ok: false, message: 'not ready' }),
     });
-    const overall = orch.readiness();
+    const overall = await orch.readiness();
     expect(overall.ok).toBe(false);
     expect(overall.errors).toHaveLength(1);
   });
 
-  it('should return health status with uptime', () => {
+  it('should return health status with uptime', async () => {
     const orch = factory.createHealthOrchestrator();
-    const status = orch.getHealthStatus();
+    const status = await orch.getHealthStatus();
     expect(status.status).toBeDefined();
     expect(status.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 
-  it('should return summary string', () => {
+  it('should return summary string', async () => {
     const orch = factory.createHealthOrchestrator();
-    const summary = orch.getSummary();
+    const summary = await orch.getSummary();
     expect(typeof summary).toBe('string');
     expect(summary.length).toBeGreaterThan(0);
   });
 
-  it('should unregister component', () => {
+  it('should unregister component', async () => {
     const orch = factory.createHealthOrchestrator();
     orch.registerFunctional('temp', 'Temporary', {
       liveness: () => ({ ok: true }),
@@ -63,48 +63,48 @@ describe.each([{ name: 'InMemory', factory: new InMemoryEngineFactory() }])('$na
     expect(orch.hasComponent('temp')).toBe(false);
   });
 
-  it('should handle probe with configuration metadata', () => {
+  it('should handle probe with configuration metadata', async () => {
     const probe = factory.createHealthProbe();
-    expect(probe.liveness().ok).toBe(true);
-    expect(probe.readiness().ok).toBe(true);
+    expect((await probe.liveness()).ok).toBe(true);
+    expect((await probe.readiness()).ok).toBe(true);
   });
 
-  it('should check startup probe', () => {
+  it('should check startup probe', async () => {
     const probe = factory.createHealthProbe();
-    const result = probe.startup();
+    const result = await probe.startup();
     expect(result.ok).toBe(true);
   });
 
-  it('getComponentHealth returns array of component healths', () => {
+  it('getComponentHealth returns array of component healths', async () => {
     const orch = factory.createHealthOrchestrator();
-    const healths = orch.getComponentHealth();
+    const healths = await orch.getComponentHealth();
     expect(Array.isArray(healths)).toBe(true);
   });
 });
 
-it('should handle empty health orchestrator', () => {
+it('should handle empty health orchestrator', async () => {
   const factory2 = new InMemoryEngineFactory();
   const orch = factory2.createHealthOrchestrator();
-  expect(orch.liveness().ok).toBe(true);
+  expect((await orch.liveness()).ok).toBe(true);
 });
 
-it('should register and check multiple components', () => {
+it('should register and check multiple components', async () => {
   const factory2 = new InMemoryEngineFactory();
   const orch = factory2.createHealthOrchestrator();
-  expect(orch.liveness().ok).toBe(true);
-  expect(orch.readiness().ok).toBe(true);
+  expect((await orch.liveness()).ok).toBe(true);
+  expect((await orch.readiness()).ok).toBe(true);
 });
 
-it('should return health with status field', () => {
+it('should return health with status field', async () => {
   const factory2 = new InMemoryEngineFactory();
   const orch = factory2.createHealthOrchestrator();
-  const health = orch.getHealthStatus();
+  const health = await orch.getHealthStatus();
   expect(health.status).toBeDefined();
 });
 
-it('should handle probe startup check', () => {
+it('should handle probe startup check', async () => {
   const factory2 = new InMemoryEngineFactory();
   const probe = factory2.createHealthProbe();
-  const result = probe.startup();
+  const result = await probe.startup();
   expect(result).toBeDefined();
 });

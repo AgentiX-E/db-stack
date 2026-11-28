@@ -29,7 +29,7 @@ describe('Logger (OBS6)', () => {
     logger = new InMemoryLogger('obs6-test');
   });
 
-  it('OBS6.1: should capture log entries', () => {
+  it('OBS6.1: should capture log entries', async () => {
     logger.info('Proposal submitted');
     const entries = logger.getEntries();
     expect(entries.length).toBeGreaterThanOrEqual(1);
@@ -37,7 +37,7 @@ describe('Logger (OBS6)', () => {
     expect(entries[0]?.message).toBe('Proposal submitted');
   });
 
-  it('OBS6.2: child logger inherits context bindings', () => {
+  it('OBS6.2: child logger inherits context bindings', async () => {
     const child = logger.child({ requestId: 'req-1' });
     child.info('child message');
     // Child logger has its own entry buffer
@@ -45,7 +45,7 @@ describe('Logger (OBS6)', () => {
     expect(childEntries.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('OBS6.3: all log levels recorded', () => {
+  it('OBS6.3: all log levels recorded', async () => {
     logger.trace('t');
     logger.debug('d');
     logger.info('i');
@@ -60,7 +60,7 @@ describe('Logger (OBS6)', () => {
     expect(levels).toContain('fatal');
   });
 
-  it('OBS6.4: error entries capture error details', () => {
+  it('OBS6.4: error entries capture error details', async () => {
     const err = new Error('boom');
     logger.error(err, 'something broke');
     const errEntries = logger.getByLevel('error');
@@ -68,7 +68,7 @@ describe('Logger (OBS6)', () => {
     expect(errEntries[0]?.message).toBe('something broke');
   });
 
-  it('OBS6.5: getByLevel filters correctly', () => {
+  it('OBS6.5: getByLevel filters correctly', async () => {
     logger.debug('debug 1');
     logger.info('info 1');
     logger.debug('debug 2');
@@ -77,7 +77,7 @@ describe('Logger (OBS6)', () => {
     expect(logger.getByLevel('warn').length).toBe(0);
   });
 
-  it('OBS6.6: clear empties entries', () => {
+  it('OBS6.6: clear empties entries', async () => {
     logger.info('msg');
     expect(logger.getEntries().length).toBeGreaterThanOrEqual(1);
     logger.clear();
@@ -133,8 +133,8 @@ describe('HealthOrchestrator (OBS7)', () => {
     orchestrator.registerComponent(probe2);
   });
 
-  it('OBS7.1: getComponentHealth returns component statuses', () => {
-    const components = orchestrator.getComponentHealth();
+  it('OBS7.1: getComponentHealth returns component statuses', async () => {
+    const components = await orchestrator.getComponentHealth();
     expect(components.length).toBeGreaterThanOrEqual(2);
     // Verify each component has liveness/readiness probes
     for (const c of components) {
@@ -143,25 +143,25 @@ describe('HealthOrchestrator (OBS7)', () => {
     }
   });
 
-  it('OBS7.2: liveness probe can be independently checked', () => {
-    const result = probe1.liveness();
+  it('OBS7.2: liveness probe can be independently checked', async () => {
+    const result = await probe1.liveness();
     expect(result.ok).toBe(true);
     probe1.setLiveness({ ok: false, message: 'test failure' });
-    expect(probe1.liveness().ok).toBe(false);
+    expect((await probe1.liveness()).ok).toBe(false);
   });
 
-  it('OBS7.3: getComponentHealth returns all registered components', () => {
-    const components = orchestrator.getComponentHealth();
+  it('OBS7.3: getComponentHealth returns all registered components', async () => {
+    const components = await orchestrator.getComponentHealth();
     expect(components.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('OBS7.4: componentProbe factory creates valid probe', () => {
+  it('OBS7.4: componentProbe factory creates valid probe', async () => {
     const probe = componentProbe('test', 'TestComponent', {
       liveness: () => ({ ok: true }),
       readiness: () => ({ ok: true }),
       startup: () => ({ ok: true }),
     });
-    expect(probe.liveness().ok).toBe(true);
+    expect((await probe.liveness()).ok).toBe(true);
     expect(probe.probeId).toBe('test');
     expect(probe.componentName).toBe('TestComponent');
   });
@@ -176,7 +176,7 @@ describe('Metrics + Prometheus (OBS8)', () => {
     registry = new MetricsRegistry();
   });
 
-  it('OBS8.1: counter increments and reads correctly', () => {
+  it('OBS8.1: counter increments and reads correctly', async () => {
     const c: ICounter = registry.counter('requests_total');
     c.inc();
     c.inc();
@@ -184,7 +184,7 @@ describe('Metrics + Prometheus (OBS8)', () => {
     expect(c.get()).toBe(7);
   });
 
-  it('OBS8.2: counter reset works', () => {
+  it('OBS8.2: counter reset works', async () => {
     const c = registry.counter('resettable');
     c.inc();
     c.inc();
@@ -192,7 +192,7 @@ describe('Metrics + Prometheus (OBS8)', () => {
     expect(c.get()).toBe(0);
   });
 
-  it('OBS8.3: gauge sets and adjusts', () => {
+  it('OBS8.3: gauge sets and adjusts', async () => {
     const g: IGauge = registry.gauge('active_connections');
     g.set(42);
     expect(g.get()).toBe(42);
@@ -205,7 +205,7 @@ describe('Metrics + Prometheus (OBS8)', () => {
     expect(g.get()).toBe(51);
   });
 
-  it('OBS8.4: histogram observes and counts', () => {
+  it('OBS8.4: histogram observes and counts', async () => {
     const h: IHistogram = registry.histogram('latency_ms', undefined, [10, 50, 100]);
     h.observe(5);
     h.observe(25);
@@ -213,7 +213,7 @@ describe('Metrics + Prometheus (OBS8)', () => {
     expect(h.getCount()).toBe(3);
   });
 
-  it('OBS8.5: PrometheusPushExporter constructs with config', () => {
+  it('OBS8.5: PrometheusPushExporter constructs with config', async () => {
     const exporter = new PrometheusPushExporter(registry, {
       pushGatewayUrl: 'http://localhost:9091',
       job: 'db-stack',
@@ -224,7 +224,7 @@ describe('Metrics + Prometheus (OBS8)', () => {
     expect(typeof exporter).toBe('object');
   });
 
-  it('OBS8.6: labeled metrics independently counted', () => {
+  it('OBS8.6: labeled metrics independently counted', async () => {
     const a = registry.counter('labeled', { env: 'prod' });
     const b = registry.counter('labeled', { env: 'dev' });
     a.inc();
@@ -234,7 +234,7 @@ describe('Metrics + Prometheus (OBS8)', () => {
     expect(b.get()).toBe(2);
   });
 
-  it('OBS8.7: histogram reset works', () => {
+  it('OBS8.7: histogram reset works', async () => {
     const h = registry.histogram('reset_hist', undefined, [10, 50]);
     h.observe(5);
     h.observe(25);
@@ -247,7 +247,7 @@ describe('Metrics + Prometheus (OBS8)', () => {
 // ── Distributed Tracer (OBS9) ──────────────────────────────
 
 describe('DistributedTracer + W3CTraceContext (OBS9)', () => {
-  it('OBS9.1: W3CTraceContextProvider generates unique trace IDs', () => {
+  it('OBS9.1: W3CTraceContextProvider generates unique trace IDs', async () => {
     const a = new W3CTraceContextProvider();
     const b = new W3CTraceContextProvider();
     const idA = a.getTraceId();
@@ -257,7 +257,7 @@ describe('DistributedTracer + W3CTraceContext (OBS9)', () => {
     expect(idA).not.toBe(idB);
   });
 
-  it('OBS9.2: InMemoryDistributedTracer starts spans', () => {
+  it('OBS9.2: InMemoryDistributedTracer starts spans', async () => {
     const tracer = new InMemoryDistributedTracer();
     tracer.startSpan('http.request', { traceId: 'trace-001' });
     tracer.startSpan('db.query', { traceId: 'trace-001' });
@@ -265,7 +265,7 @@ describe('DistributedTracer + W3CTraceContext (OBS9)', () => {
     expect(typeof tracer).toBe('object');
   });
 
-  it('OBS9.3: W3CTraceContextProvider traceId is valid hex string', () => {
+  it('OBS9.3: W3CTraceContextProvider traceId is valid hex string', async () => {
     const provider = new W3CTraceContextProvider();
     const tp = provider.getTraceId();
     expect(tp).toBeDefined();
@@ -274,7 +274,7 @@ describe('DistributedTracer + W3CTraceContext (OBS9)', () => {
     expect(tp).toMatch(/^[0-9a-f]{32}$/i);
   });
 
-  it('OBS9.4: span trace context links parent to child', () => {
+  it('OBS9.4: span trace context links parent to child', async () => {
     const tracer = new InMemoryDistributedTracer();
     const parent = tracer.startSpan('parent', { traceId: 't2' });
     tracer.startSpan('child', { traceId: 't2', parentSpanId: parent.spanId });
@@ -286,13 +286,13 @@ describe('DistributedTracer + W3CTraceContext (OBS9)', () => {
 // ── Monitor components (OBS10) ─────────────────────────────
 
 describe('Monitor components (OBS10)', () => {
-  it('OBS10.1: InMemoryDeadlockDetector starts empty', () => {
+  it('OBS10.1: InMemoryDeadlockDetector starts empty', async () => {
     const detector = new InMemoryDeadlockDetector();
     expect(detector.getDeadlockCount()).toBe(0);
     expect(detector.detectDeadlocks().length).toBe(0);
   });
 
-  it('OBS10.2: detectDeadlocks returns empty when no deadlocks', () => {
+  it('OBS10.2: detectDeadlocks returns empty when no deadlocks', async () => {
     const detector = new InMemoryDeadlockDetector();
     const deadlocks = detector.detectDeadlocks();
     expect(deadlocks.length).toBe(0);
@@ -325,7 +325,7 @@ describe('Monitor components (OBS10)', () => {
     expect(Array.isArray(recent)).toBe(true);
   });
 
-  it('OBS10.5: getRecentSlowQueries returns most recent', () => {
+  it('OBS10.5: getRecentSlowQueries returns most recent', async () => {
     const recorder = new InMemorySlowQueryRecorder(100);
     // Construct proper SlowQueryRecord objects via record()
     // For sync access, getRecentSlowQueries may be empty initially
@@ -333,12 +333,12 @@ describe('Monitor components (OBS10)', () => {
     expect(Array.isArray(recent)).toBe(true);
   });
 
-  it('OBS10.6: SlowQueryRecorder getThreshold returns configured value', () => {
+  it('OBS10.6: SlowQueryRecorder getThreshold returns configured value', async () => {
     const recorder = new InMemorySlowQueryRecorder(250);
     expect(recorder.getThreshold()).toBe(250);
   });
 
-  it('OBS10.7: DeadlockDetector getRawDeadlockEvents returns empty array', () => {
+  it('OBS10.7: DeadlockDetector getRawDeadlockEvents returns empty array', async () => {
     const detector = new InMemoryDeadlockDetector();
     expect(detector.getRawDeadlockEvents().length).toBe(0);
   });
@@ -347,22 +347,22 @@ describe('Monitor components (OBS10)', () => {
 // ── Health shutdown (OBS11) ────────────────────────────────
 
 describe('HealthOrchestrator lifecycle (OBS11)', () => {
-  it('OBS11.1: probe can report unhealthy on shutdown', () => {
+  it('OBS11.1: probe can report unhealthy on shutdown', async () => {
     const probe = new MockProbe('component');
-    expect(probe.readiness().ok).toBe(true);
+    expect((await probe.readiness()).ok).toBe(true);
     probe.setReadiness({ ok: false, message: 'shutting down' });
-    expect(probe.readiness().ok).toBe(false);
-    expect(probe.readiness().message).toBe('shutting down');
+    expect((await probe.readiness()).ok).toBe(false);
+    expect((await probe.readiness()).message).toBe('shutting down');
   });
 
-  it('OBS11.2: unregisterComponent removes probe', () => {
+  it('OBS11.2: unregisterComponent removes probe', async () => {
     const orchestrator = new HealthOrchestrator();
     const probe = new MockProbe('temp');
     orchestrator.registerComponent(probe);
-    expect(orchestrator.getComponentHealth().length).toBe(1);
+    expect((await orchestrator.getComponentHealth()).length).toBe(1);
 
     orchestrator.unregisterComponent('temp');
-    const after = orchestrator.getComponentHealth();
+    const after = await orchestrator.getComponentHealth();
     expect(after.find((c) => c.componentId === 'temp')).toBeUndefined();
   });
 });

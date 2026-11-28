@@ -48,7 +48,7 @@ describe('Section 1: Concurrent Counter Contention', () => {
     registry = new MetricsRegistry();
   });
 
-  it('100 concurrent counter.inc() → exact 100', () => {
+  it('100 concurrent counter.inc() → exact 100', async () => {
     const counter = registry.counter('ops');
     for (let i = 0; i < 100; i++) {
       counter.inc();
@@ -56,7 +56,7 @@ describe('Section 1: Concurrent Counter Contention', () => {
     expect(counter.get()).toBe(100);
   });
 
-  it('100 concurrent gauge.inc() → exact 100', () => {
+  it('100 concurrent gauge.inc() → exact 100', async () => {
     const gauge = registry.gauge('conns');
     for (let i = 0; i < 100; i++) {
       gauge.inc();
@@ -64,7 +64,7 @@ describe('Section 1: Concurrent Counter Contention', () => {
     expect(gauge.get()).toBe(100);
   });
 
-  it('50 concurrent inc() + 50 concurrent dec() on same gauge → net 0', () => {
+  it('50 concurrent inc() + 50 concurrent dec() on same gauge → net 0', async () => {
     const gauge = registry.gauge('balance');
     for (let i = 0; i < 50; i++) {
       gauge.inc();
@@ -73,7 +73,7 @@ describe('Section 1: Concurrent Counter Contention', () => {
     expect(gauge.get()).toBe(0);
   });
 
-  it('100 concurrent counter.incBy(2) → exact 200', () => {
+  it('100 concurrent counter.incBy(2) → exact 200', async () => {
     const counter = registry.counter('ops');
     for (let i = 0; i < 100; i++) {
       counter.incBy(2);
@@ -81,7 +81,7 @@ describe('Section 1: Concurrent Counter Contention', () => {
     expect(counter.get()).toBe(200);
   });
 
-  it('Concurrent inc() + snapshot() → snapshot value is one of the intermediate states', () => {
+  it('Concurrent inc() + snapshot() → snapshot value is one of the intermediate states', async () => {
     const counter = registry.counter('ops');
     // Synchronous inc and snapshot — both are sync, so no interleaving
     // After 50 incs, value is deterministic
@@ -106,14 +106,14 @@ describe('Section 2: Concurrent InMemoryLogger', () => {
     logger = new InMemoryLogger('test', 1000);
   });
 
-  it('50 concurrent info() calls → getEntries().length === 50', () => {
+  it('50 concurrent info() calls → getEntries().length === 50', async () => {
     for (let i = 0; i < 50; i++) {
       logger.info(`message ${i}`);
     }
     expect(logger.getEntries()).toHaveLength(50);
   });
 
-  it('50 concurrent info() + concurrent getEntries() → no crash, no duplicate entries', () => {
+  it('50 concurrent info() + concurrent getEntries() → no crash, no duplicate entries', async () => {
     for (let i = 0; i < 50; i++) {
       logger.info(`msg ${i}`);
     }
@@ -125,7 +125,7 @@ describe('Section 2: Concurrent InMemoryLogger', () => {
     expect(messages.size).toBe(50);
   });
 
-  it('Concurrent child() creation + logging → entries have correct context', () => {
+  it('Concurrent child() creation + logging → entries have correct context', async () => {
     const child = logger.child({ childKey: 'childVal' });
     for (let i = 0; i < 25; i++) {
       child.info(`child msg ${i}`);
@@ -149,7 +149,7 @@ describe('Section 3: Concurrent DeadlockDetector', () => {
     detector = new InMemoryDeadlockDetector();
   });
 
-  it('10 concurrent reportLockWait() on different tx+resource pairs → all registered', () => {
+  it('10 concurrent reportLockWait() on different tx+resource pairs → all registered', async () => {
     for (let i = 0; i < 10; i++) {
       detector.reportLockWait(`tx-${i}`, `resource-${i}`);
     }
@@ -160,7 +160,7 @@ describe('Section 3: Concurrent DeadlockDetector', () => {
     expect(detector.getDeadlockCount()).toBe(0);
   });
 
-  it('Concurrent reportLockWait(A→B) + reportLockWait(B→A) → deadlock detected', () => {
+  it('Concurrent reportLockWait(A→B) + reportLockWait(B→A) → deadlock detected', async () => {
     // Create a classic deadlock: A waits for B's resource, B waits for A's resource
     detector.reportLockAcquired('tx-A', 'resource-B');
     detector.reportLockAcquired('tx-B', 'resource-A');
@@ -176,7 +176,7 @@ describe('Section 3: Concurrent DeadlockDetector', () => {
     expect(deadlock.transactions).toContain('tx-B');
   });
 
-  it('50 concurrent reportLockWait/reportLockAcquired alternating → no crash, consistent graph', () => {
+  it('50 concurrent reportLockWait/reportLockAcquired alternating → no crash, consistent graph', async () => {
     // Set up a scenario with alternating wait/acquired patterns
     for (let i = 0; i < 25; i++) {
       const tx = `tx-alt-${i}`;
@@ -188,7 +188,7 @@ describe('Section 3: Concurrent DeadlockDetector', () => {
     expect(Array.isArray(events)).toBe(true);
   });
 
-  it('Concurrent detectDeadlocks() while transactions are running → no crash', () => {
+  it('Concurrent detectDeadlocks() while transactions are running → no crash', async () => {
     // Start some transactions
     for (let i = 0; i < 10; i++) {
       detector.reportLockAcquired(`tx-act-${i}`, `res-${i}`);
@@ -209,7 +209,7 @@ describe('Section 3: Concurrent DeadlockDetector', () => {
     expect(events.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('Rapid cycle (A→B, B→A, A acquires, B acquires) → detection still accurate', () => {
+  it('Rapid cycle (A→B, B→A, A acquires, B acquires) → detection still accurate', async () => {
     // Complete a rapid cycle
     detector.reportLockAcquired('tx-A', 'res-B');
     detector.reportLockAcquired('tx-B', 'res-A');
@@ -284,7 +284,7 @@ describe('Section 4: Concurrent AlertRuleManager', () => {
     expect(result[0]!.value).toBe(95);
   });
 
-  it('Concurrent enable/disable + evaluate → rule state eventually consistent', () => {
+  it('Concurrent enable/disable + evaluate → rule state eventually consistent', async () => {
     const rule: import('../../monitor/interfaces/index.js').AlertRule = {
       name: 'toggle-rule',
       metric: 'test_metric',
@@ -488,7 +488,7 @@ describe('Section 7: Concurrent RateLimiter', () => {
     limiter = new InMemoryRateLimiter();
   });
 
-  it('100 concurrent check() with maxRequests=10 → exactly 10 allowed, 90 denied', () => {
+  it('100 concurrent check() with maxRequests=10 → exactly 10 allowed, 90 denied', async () => {
     const results: ReturnType<typeof limiter.check>[] = [];
     for (let i = 0; i < 100; i++) {
       results.push(limiter.check('test-key', { maxRequests: 10, windowMs: 60000 }));
@@ -500,7 +500,7 @@ describe('Section 7: Concurrent RateLimiter', () => {
     expect(denied).toHaveLength(90);
   });
 
-  it('Concurrent check + reset → no crash', () => {
+  it('Concurrent check + reset → no crash', async () => {
     // Fill the rate limiter
     for (let i = 0; i < 10; i++) {
       limiter.check('key', { maxRequests: 10, windowMs: 60000 });
@@ -513,7 +513,7 @@ describe('Section 7: Concurrent RateLimiter', () => {
     expect(result.remaining).toBe(9);
   });
 
-  it('10 concurrent check() with different keys → each limited independently', () => {
+  it('10 concurrent check() with different keys → each limited independently', async () => {
     const results: ReturnType<typeof limiter.check>[] = [];
     for (let i = 0; i < 10; i++) {
       results.push(limiter.check(`key-${i}`, { maxRequests: 5, windowMs: 60000 }));
@@ -565,7 +565,7 @@ describe('Section 8: Cross-package Concurrent Scenario', () => {
   });
 
   describe('HealthOrchestrator with 10 components → concurrent liveness() calls', () => {
-    it('should return consistent results from concurrent liveness calls', () => {
+    it('should return consistent results from concurrent liveness calls', async () => {
       const orchestrator = new HealthOrchestrator();
 
       // Register 10 healthy components
@@ -581,9 +581,9 @@ describe('Section 8: Cross-package Concurrent Scenario', () => {
       }
 
       // Multiple concurrent liveness calls
-      const results: ReturnType<typeof orchestrator.liveness>[] = [];
+      const results: Awaited<ReturnType<typeof orchestrator.liveness>>[] = [];
       for (let i = 0; i < 10; i++) {
-        results.push(orchestrator.liveness());
+        results.push(await orchestrator.liveness());
       }
 
       // All should return same result
@@ -595,7 +595,7 @@ describe('Section 8: Cross-package Concurrent Scenario', () => {
   });
 
   describe('MetricsRegistry + Logger cross: concurrent operations → both states consistent', () => {
-    it('should maintain consistent state across concurrent metric and logger operations', () => {
+    it('should maintain consistent state across concurrent metric and logger operations', async () => {
       const metrics = new MetricsRegistry();
       const logger = new InMemoryLogger('cross', 1000);
 
@@ -611,7 +611,7 @@ describe('Section 8: Cross-package Concurrent Scenario', () => {
   });
 
   describe('DeadlockDetector + SlowQueryRecorder: concurrent simulations → both accurate', () => {
-    it('should maintain accuracy under concurrent deadlock and slow query simulations', () => {
+    it('should maintain accuracy under concurrent deadlock and slow query simulations', async () => {
       const detector = new InMemoryDeadlockDetector();
       const recorder = new InMemorySlowQueryRecorder(50, 1000);
 
@@ -704,7 +704,7 @@ describe('Section 8: Cross-package Concurrent Scenario', () => {
 
 describe('Section 9: Large-Scale Stress', () => {
   describe('Create 1000 components, run liveness() → fast (<500ms)', () => {
-    it('should handle 1000 components quickly', () => {
+    it('should handle 1000 components quickly', async () => {
       const orchestrator = new HealthOrchestrator();
 
       const start = performance.now();
@@ -720,7 +720,7 @@ describe('Section 9: Large-Scale Stress', () => {
         orchestrator.registerComponent(probe);
       }
 
-      const result = orchestrator.liveness();
+      const result = await orchestrator.liveness();
       const duration = performance.now() - start;
 
       expect(result.ok).toBe(true);
@@ -777,7 +777,7 @@ describe('Section 9: Large-Scale Stress', () => {
   });
 
   describe('1000 metrics (100 names × 10 labels) → snapshot has 1000 points', () => {
-    it('should snapshot 1000 metric points', () => {
+    it('should snapshot 1000 metric points', async () => {
       const metrics = new MetricsRegistry();
 
       for (let n = 0; n < 100; n++) {
@@ -793,7 +793,7 @@ describe('Section 9: Large-Scale Stress', () => {
   });
 
   describe('1000 spans created and ended → getCompletedSpans correct length', () => {
-    it('should track 1000 completed spans', () => {
+    it('should track 1000 completed spans', async () => {
       const tracer = new InMemoryDistributedTracer();
 
       const spanIds: string[] = [];

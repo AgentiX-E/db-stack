@@ -36,20 +36,20 @@ describe('HealthOrchestrator', () => {
   });
 
   describe('component registration', () => {
-    it('should register and retrieve a component', () => {
+    it('should register and retrieve a component', async () => {
       const probe = createProbe('disk', 'Disk Monitor');
       orchestrator.registerComponent(probe);
       expect(orchestrator.hasComponent('disk')).toBe(true);
     });
 
-    it('should unregister a component', () => {
+    it('should unregister a component', async () => {
       const probe = createProbe('disk', 'Disk Monitor');
       orchestrator.registerComponent(probe);
       orchestrator.unregisterComponent('disk');
       expect(orchestrator.hasComponent('disk')).toBe(false);
     });
 
-    it('should register a functional probe', () => {
+    it('should register a functional probe', async () => {
       orchestrator.registerFunctional('mem', 'Memory Monitor', {
         liveness: () => ({ ok: true }),
         readiness: () => ({ ok: true }),
@@ -59,16 +59,16 @@ describe('HealthOrchestrator', () => {
   });
 
   describe('liveness', () => {
-    it('should return ok when all probes pass', () => {
+    it('should return ok when all probes pass', async () => {
       orchestrator.registerComponent(createProbe('a', 'A'));
       orchestrator.registerComponent(createProbe('b', 'B'));
 
-      const result = orchestrator.liveness();
+      const result = await orchestrator.liveness();
       expect(result.ok).toBe(true);
       expect(result.errors).toEqual([]);
     });
 
-    it('should return failed when a probe fails', () => {
+    it('should return failed when a probe fails', async () => {
       orchestrator.registerComponent(createProbe('good', 'Good'));
       orchestrator.registerComponent(
         createProbe('bad', 'Bad', {
@@ -76,14 +76,14 @@ describe('HealthOrchestrator', () => {
         }),
       );
 
-      const result = orchestrator.liveness();
+      const result = await orchestrator.liveness();
       expect(result.ok).toBe(false);
       expect(result.errors).toHaveLength(1);
       expect(result.errors[0]).toContain('bad');
       expect(result.errors[0]).toContain('Service not responding');
     });
 
-    it('should catch thrown errors from probes', () => {
+    it('should catch thrown errors from probes', async () => {
       orchestrator.registerComponent({
         probeId: 'bad',
         componentName: 'Bad Probe',
@@ -94,69 +94,69 @@ describe('HealthOrchestrator', () => {
         startup: () => ({ ok: true }),
       });
 
-      const result = orchestrator.liveness();
+      const result = await orchestrator.liveness();
       expect(result.ok).toBe(false);
       expect(result.errors[0]).toContain('OOM');
     });
 
-    it('should return ok when no components registered', () => {
-      const result = orchestrator.liveness();
+    it('should return ok when no components registered', async () => {
+      const result = await orchestrator.liveness();
       expect(result.ok).toBe(true);
       expect(result.errors).toEqual([]);
     });
   });
 
   describe('readiness', () => {
-    it('should return ok when all probes pass liveness + readiness', () => {
+    it('should return ok when all probes pass liveness + readiness', async () => {
       orchestrator.registerComponent(createProbe('a', 'A'));
       orchestrator.registerComponent(createProbe('b', 'B'));
 
-      const result = orchestrator.readiness();
+      const result = await orchestrator.readiness();
       expect(result.ok).toBe(true);
     });
 
-    it('should fail when readiness fails even if liveness passes', () => {
+    it('should fail when readiness fails even if liveness passes', async () => {
       orchestrator.registerComponent(
         createProbe('a', 'A', {
           readiness: { ok: false, message: 'Leader not elected' },
         }),
       );
 
-      const result = orchestrator.readiness();
+      const result = await orchestrator.readiness();
       expect(result.ok).toBe(false);
       expect(result.errors[0]).toContain('Leader not elected');
     });
   });
 
   describe('startup', () => {
-    it('should return ok when all probes complete startup', () => {
+    it('should return ok when all probes complete startup', async () => {
       orchestrator.registerComponent(createProbe('a', 'A'));
-      orchestrator.startup();
-      orchestrator.startup();
+      await orchestrator.startup();
+      await orchestrator.startup();
 
-      const r1 = orchestrator.startup();
+      const r1 = await orchestrator.startup();
       expect(r1.ok).toBe(true);
     });
 
-    it('should return ok once and cache the result', () => {
+    it('should return ok once and cache the result', async () => {
       orchestrator.registerComponent(createProbe('a', 'A'));
-      orchestrator.startup(); // First call — completes startup
-      const r2 = orchestrator.startup(); // Second call — cached
+      await orchestrator.startup(); // First call — completes startup
+      const r2 = await orchestrator.startup(); // Second call — cached
       expect(r2.ok).toBe(true);
     });
   });
 
   describe('getHealthStatus', () => {
-    it('should return healthy when all components pass', () => {
+    it('should return healthy when all components pass', async () => {
       orchestrator.registerComponent(createProbe('a', 'A'));
       orchestrator.registerComponent(createProbe('b', 'B'));
 
-      const status = orchestrator.getHealthStatus();
+      const status = await orchestrator.getHealthStatus();
       expect(status.status).toBe('healthy');
       expect(status.components).toHaveLength(2);
     });
 
-    it('should return degraded when at least one component fails', () => {
+    it('should return degraded when at least one component fails', async () => {
       orchestrator.registerComponent(createProbe('good', 'Good'));
       orchestrator.registerComponent(
         createProbe('bad', 'Bad', {
@@ -164,11 +164,11 @@ describe('HealthOrchestrator', () => {
         }),
       );
 
-      const status = orchestrator.getHealthStatus();
+      const status = await orchestrator.getHealthStatus();
       expect(status.status).toBe('degraded');
     });
 
-    it('should return unhealthy when all components fail', () => {
+    it('should return unhealthy when all components fail', async () => {
       orchestrator.registerComponent(
         createProbe('a', 'A', {
           liveness: { ok: false },
@@ -182,19 +182,19 @@ describe('HealthOrchestrator', () => {
         }),
       );
 
-      const status = orchestrator.getHealthStatus();
+      const status = await orchestrator.getHealthStatus();
       expect(status.status).toBe('unhealthy');
     });
 
-    it('should include uptime', () => {
+    it('should include uptime', async () => {
       orchestrator.registerComponent(createProbe('a', 'A'));
-      const status = orchestrator.getHealthStatus();
+      const status = await orchestrator.getHealthStatus();
       expect(status.uptimeSeconds).toBeGreaterThanOrEqual(0);
     });
   });
 
   describe('getComponentHealth', () => {
-    it('should return detailed per-component health', () => {
+    it('should return detailed per-component health', async () => {
       orchestrator.registerComponent(
         createProbe('rpc', 'RPC Server', {
           liveness: { ok: true },
@@ -202,7 +202,7 @@ describe('HealthOrchestrator', () => {
         }),
       );
 
-      const components = orchestrator.getComponentHealth();
+      const components = await orchestrator.getComponentHealth();
       expect(components).toHaveLength(1);
       expect(components[0]).toMatchObject({
         componentId: 'rpc',
@@ -216,67 +216,67 @@ describe('HealthOrchestrator', () => {
   });
 
   describe('getAggregateStatus', () => {
-    it('should return healthy when empty', () => {
-      expect(orchestrator.getAggregateStatus().status).toBe('healthy');
+    it('should return healthy when empty', async () => {
+      expect((await orchestrator.getAggregateStatus()).status).toBe('healthy');
     });
 
-    it('should return healthy when all healthy', () => {
+    it('should return healthy when all healthy', async () => {
       orchestrator.registerComponent(createProbe('a', 'A'));
       orchestrator.registerComponent(createProbe('b', 'B'));
-      expect(orchestrator.getAggregateStatus().status).toBe('healthy');
+      expect((await orchestrator.getAggregateStatus()).status).toBe('healthy');
     });
 
-    it('should return degraded when mixed', () => {
+    it('should return degraded when mixed', async () => {
       orchestrator.registerComponent(createProbe('good', 'Good'));
       orchestrator.registerComponent(
         createProbe('bad', 'Bad', {
           liveness: { ok: false },
         }),
       );
-      expect(orchestrator.getAggregateStatus().status).toBe('degraded');
+      expect((await orchestrator.getAggregateStatus()).status).toBe('degraded');
     });
   });
 
   describe('getSummary', () => {
-    it('should return a concise string', () => {
+    it('should return a concise string', async () => {
       orchestrator.registerComponent(createProbe('a', 'A'));
-      const summary = orchestrator.getSummary();
+      const summary = await orchestrator.getSummary();
 
       expect(typeof summary).toBe('string');
       expect(summary).toContain('healthy');
     });
 
-    it('should include failing count when components fail', () => {
+    it('should include failing count when components fail', async () => {
       orchestrator.registerComponent(
         createProbe('bad', 'Bad', {
           liveness: { ok: false },
         }),
       );
-      const summary = orchestrator.getSummary();
+      const summary = await orchestrator.getSummary();
 
       expect(summary).toContain('Failing');
     });
   });
 
   describe('componentProbe helper', () => {
-    it('should create a probe with correct metadata', () => {
+    it('should create a probe with correct metadata', async () => {
       const probe = componentProbe('test', 'Test Component', {
         liveness: () => ({ ok: true }),
       });
 
       expect(probe.probeId).toBe('test');
       expect(probe.componentName).toBe('Test Component');
-      expect(probe.liveness()).toEqual({ ok: true });
+      expect(await probe.liveness()).toEqual({ ok: true });
     });
 
-    it('should fallback liveness to readiness and startup', () => {
+    it('should fallback liveness to readiness and startup', async () => {
       const probe = componentProbe('test', 'Test', {
         liveness: () => ({ ok: false, message: 'fail' }),
       });
 
       // Should all return liveness result
-      expect(probe.readiness()).toEqual({ ok: false, message: 'fail' });
-      expect(probe.startup()).toEqual({ ok: false, message: 'fail' });
+      expect(await probe.readiness()).toEqual({ ok: false, message: 'fail' });
+      expect(await probe.startup()).toEqual({ ok: false, message: 'fail' });
     });
   });
 });

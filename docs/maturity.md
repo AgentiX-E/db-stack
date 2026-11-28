@@ -161,7 +161,7 @@ under `node/docs/`.
 | Module           | Capability                                                           | Verification  |
 | ---------------- | -------------------------------------------------------------------- | ------------- |
 | `core`           | Base types, provider registry, error hierarchy                       | U · I         |
-| `health`         | Liveness/readiness orchestration, dependency graph                   | U · I         |
+| `health`         | Awaited liveness/readiness/startup probes, dependency graph          | U · I         |
 | `logger`         | Structured logging, levels, child loggers, backends                  | U · I         |
 | `metrics`        | Counters, gauges, histograms, sink fan-out                           | U · I         |
 | `monitor`        | Alert rules, thresholds, de-duplication                              | U · I         |

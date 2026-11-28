@@ -513,7 +513,10 @@ optional `term()`), so it is engine-agnostic and knows nothing about Raft or
 storage. Each `resolve()` reads the callbacks afresh.
 
 ```ts
-interface PrimaryMember { id: string; role: 'leader' | 'follower' | 'candidate' | 'learner' }
+interface PrimaryMember {
+  id: string;
+  role: 'leader' | 'follower' | 'candidate' | 'learner';
+}
 
 interface LogicalPrimaryDeps {
   leader(): Promise<number | string | null>;
@@ -524,7 +527,7 @@ interface LogicalPrimaryDeps {
 class LogicalPrimaryResolver {
   constructor(name: string, deps: LogicalPrimaryDeps);
   resolve(): Promise<PrimaryResolution>;
-  epoch(): number;         // 0 before the first successful resolution
+  epoch(): number; // 0 before the first successful resolution
   lastMemberId(): string | null;
 }
 
@@ -1391,17 +1394,23 @@ receive traffic), `startup()` (has it finished initialising).
 
 ```typescript
 class HealthProbe {
-  register(name: string, probe: () => ProbeResult): void;
+  register(name: string, probe: () => ProbeAnswer): void;
   markStartupComplete(): void;
   recordFatalError(): void;
   recordListenerFailure(source: string, error?: unknown, at?: number): void;
   readonly listenerFailures: readonly ListenerFailure[];
   liveness(): ProbeResult;
-  readiness(): ProbeResult;
+  readiness(): Promise<ProbeResult>;
   startup(): ProbeResult;
-  fullStatus(): HealthStatus;
+  fullStatus(): Promise<HealthStatus>;
 }
 ```
+
+`ProbeAnswer` is `ProbeResult | Promise<ProbeResult>`. A registered readiness
+probe may therefore reach a peer; the orchestrator awaits it and names both the
+probe and its reason in the verdict. Liveness and startup stay synchronous — a
+check that can hang cannot detect a hung process. Both `readiness()` and
+`fullStatus()` are awaited by callers.
 
 A swallowed listener failure is **not** a fatal error: it degrades `readiness()`
 (the node should not take new traffic until its health signals are trustworthy)

@@ -12,20 +12,10 @@
  */
 
 import type { IHealthOrchestrator } from '../interfaces/IHealthOrchestrator.js';
-import type { IHealthProbe } from '../interfaces/IHealthProbe.js';
+import type { IHealthProbe, ProbeAnswer } from '../interfaces/IHealthProbe.js';
 import type { FunctionalChecks } from '../interfaces/IComponentRegistrar.js';
 import type { ComponentHealth, ComponentRegistrationOptions, HealthStatus, ProbeResult } from '../../core/types.js';
 import { componentProbe } from './ComponentProbe.js';
-
-/**
- * Whether a value is a promise-like object.
- *
- * `instanceof Promise` misses a thenable from another realm and a hand-rolled
- * deferred, and both are the same mistake at this call site.
- */
-function isThenable(value: unknown): boolean {
-  return typeof value === 'object' && value !== null && typeof (value as { then?: unknown }).then === 'function';
-}
 
 interface ProbeEntry {
   probe: IHealthProbe;
@@ -79,11 +69,11 @@ export class HealthOrchestrator implements IHealthOrchestrator {
 
   // ── Probe Aggregation ──────────────────────────────────────
 
-  liveness(): { ok: boolean; errors: string[] } {
+  async liveness(): Promise<{ ok: boolean; errors: string[] }> {
     const errors: string[] = [];
     for (const [, entry] of this._probes) {
       try {
-        const result = this._answer(() => entry.probe.liveness());
+        const result = await this._answer(() => entry.probe.liveness());
         if (!result.ok) {
           errors.push(`[${entry.probe.probeId}] ${result.message ?? 'liveness failed'}`);
           entry.lastError = result.message ?? 'liveness failed';
@@ -99,11 +89,11 @@ export class HealthOrchestrator implements IHealthOrchestrator {
     return { ok: errors.length === 0, errors };
   }
 
-  readiness(): { ok: boolean; errors: string[] } {
-    const { errors } = this.liveness();
+  async readiness(): Promise<{ ok: boolean; errors: string[] }> {
+    const { errors } = await this.liveness();
     for (const [, entry] of this._probes) {
       try {
-        const result = this._answer(() => entry.probe.readiness());
+        const result = await this._answer(() => entry.probe.readiness());
         if (!result.ok) {
           errors.push(`[${entry.probe.probeId}] ${result.message ?? 'readiness failed'}`);
           entry.lastError = result.message ?? 'readiness failed';
@@ -117,15 +107,15 @@ export class HealthOrchestrator implements IHealthOrchestrator {
     return { ok: errors.length === 0, errors };
   }
 
-  startup(): { ok: boolean; errors: string[] } {
+  async startup(): Promise<{ ok: boolean; errors: string[] }> {
     if (this._startupComplete) {
       return { ok: true, errors: [] };
     }
 
-    const { errors } = this.readiness();
+    const { errors } = await this.readiness();
     for (const [, entry] of this._probes) {
       try {
-        const result = this._answer(() => entry.probe.startup());
+        const result = await this._answer(() => entry.probe.startup());
         if (!result.ok) {
           errors.push(`[${entry.probe.probeId}] ${result.message ?? 'startup not complete'}`);
         }
@@ -149,11 +139,11 @@ export class HealthOrchestrator implements IHealthOrchestrator {
 
   // ── Structured Health Status ───────────────────────────────
 
-  getComponentHealth(): ComponentHealth[] {
+  async getComponentHealth(): Promise<ComponentHealth[]> {
     const results: ComponentHealth[] = [];
     for (const [, entry] of this._probes) {
-      const livenessResult = this._safeProbe(() => entry.probe.liveness());
-      const readinessResult = this._safeProbe(() => entry.probe.readiness());
+      const livenessResult = await this._safeProbe(() => entry.probe.liveness());
+      const readinessResult = await this._safeProbe(() => entry.probe.readiness());
       const elapsedMs = Date.now() - entry.registeredAt;
       const componentUptimeS = Math.trunc(elapsedMs / 1000);
       results.push({
@@ -168,11 +158,11 @@ export class HealthOrchestrator implements IHealthOrchestrator {
     return results;
   }
 
-  getAggregateStatus(): {
+  async getAggregateStatus(): Promise<{
     status: 'healthy' | 'degraded' | 'unhealthy';
     count: number;
-  } {
-    const components = this.getComponentHealth();
+  }> {
+    const components = await this.getComponentHealth();
     const total = components.length;
     if (total === 0) return { status: 'healthy', count: 0 };
 
@@ -184,8 +174,8 @@ export class HealthOrchestrator implements IHealthOrchestrator {
     return { status: 'degraded', count: total };
   }
 
-  getHealthStatus(): HealthStatus {
-    const components = this.getComponentHealth();
+  async getHealthStatus(): Promise<HealthStatus> {
+    const components = await this.getComponentHealth();
     const total = components.length;
     const healthy = components.filter((c) => c.liveness.ok && c.readiness.ok).length;
     const allUnhealthy = total > 0 && components.every((c) => !(c.liveness.ok || c.readiness.ok));
@@ -206,8 +196,8 @@ export class HealthOrchestrator implements IHealthOrchestrator {
     };
   }
 
-  getSummary(): string {
-    const status = this.getHealthStatus();
+  async getSummary(): Promise<string> {
+    const status = await this.getHealthStatus();
     const total = status.components.length;
     const healthy = status.components.filter((c) => c.liveness.ok && c.readiness.ok).length;
     const failing = total - healthy;
@@ -225,9 +215,9 @@ export class HealthOrchestrator implements IHealthOrchestrator {
 
   // ── Private ────────────────────────────────────────────────
 
-  private _safeProbe(fn: () => ProbeResult): ProbeResult {
+  private async _safeProbe(fn: () => ProbeAnswer): Promise<ProbeResult> {
     try {
-      return this._answer(fn);
+      return await this._answer(fn);
     } catch (err) {
       return {
         ok: false,
@@ -237,17 +227,17 @@ export class HealthOrchestrator implements IHealthOrchestrator {
   }
 
   /**
-   * Run one probe and return the answer it gave, refusing a promise.
+   * Run one probe and await whatever it answered with.
    *
-   * `IHealthProbe` declares every probe as `() => ProbeResult`, and nothing
-   * checks that at runtime. A caller who writes `async () => ({ ok: true })` —
-   * which the `registerFunctional` docblock used to show, and which is the
-   * natural shape for a probe that queries a database — stores a promise in the
-   * registry. `result.ok` is then `undefined`, the component is unhealthy on
-   * every call, and the message says "readiness failed" about a check that never
-   * completed. The answer is not an answer, so it is refused by name: a caller
-   * reading `/readyz` learns that the probe is wrong rather than that the
-   * database is.
+   * A promise used to be refused by name, because the type said `ProbeResult`
+   * and reading `undefined.ok` reported a healthy database as down. That fixed
+   * the diagnosis but not the product: a readiness check that needs to reach
+   * storage had no way to express itself. The type now admits either shape and
+   * this method awaits it, so a thenable from another realm or a hand-written
+   * deferred is handled the same way as a native promise — `await` is the only
+   * judgement that does not depend on the object's origin. What is still
+   * refused is an answer that is not a result at all: reporting `undefined` as
+   * "unhealthy" hides a broken probe behind a verdict about the database.
    *
    * The probe is invoked through a thunk rather than passed as a value, so a
    * class probe that reads its own state keeps its receiver. Passing
@@ -255,11 +245,11 @@ export class HealthOrchestrator implements IHealthOrchestrator {
    * touched a private field threw inside `_safeProbe` and reported the component
    * as unhealthy — the same silent verdict this method exists to stop.
    */
-  private _answer(fn: () => ProbeResult): ProbeResult {
-    const result = fn();
-    if (isThenable(result)) {
+  private async _answer(fn: () => ProbeAnswer): Promise<ProbeResult> {
+    const result = await fn();
+    if (result === null || typeof result !== 'object' || typeof (result as ProbeResult).ok !== 'boolean') {
       throw new Error(
-        'the probe returned a promise; probes are synchronous, so a value that has to be awaited must be refreshed elsewhere and read from there',
+        'the probe returned a value that is not a ProbeResult: an answer must be an object with a boolean ok',
       );
     }
     return result;

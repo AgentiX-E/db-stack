@@ -1,6 +1,6 @@
 {
   "name": "@agentix-e/db-node",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Everything a single database node needs — operations, audit, backup, security, metrics — in one package with twenty subpaths",
   "type": "module",
   "private": false,

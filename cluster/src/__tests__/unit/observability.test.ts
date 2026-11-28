@@ -22,7 +22,7 @@ describe('LoggingAdapter (OBS1, OBS5)', () => {
     adapter = createLogger('TestComponent', { env: 'test' });
   });
 
-  it('OBS1.1: should implement all ILogger methods without throwing', () => {
+  it('OBS1.1: should implement all ILogger methods without throwing', async () => {
     // This test verifies the adapter is callable; pino handles output.
     // We validate that no method throws.
 
@@ -34,12 +34,12 @@ describe('LoggingAdapter (OBS1, OBS5)', () => {
     expect(() => adapter.fatal('fatal msg')).not.toThrow();
   });
 
-  it('OBS1.2: should support context objects', () => {
+  it('OBS1.2: should support context objects', async () => {
     expect(() => adapter.info({ key: 'val' }, 'with context')).not.toThrow();
     expect(() => adapter.warn({ code: 503 }, 'service unavailable')).not.toThrow();
   });
 
-  it('OBS1.3: should support Error objects', () => {
+  it('OBS1.3: should support Error objects', async () => {
     const err = new Error('test error');
     expect(() => adapter.error(err)).not.toThrow();
     expect(() => adapter.error(err, 'with message')).not.toThrow();
@@ -48,46 +48,46 @@ describe('LoggingAdapter (OBS1, OBS5)', () => {
     expect(() => adapter.fatal(err, 'fatal with message')).not.toThrow();
   });
 
-  it('OBS1.3b: fatal supports context + Error + message three-arg form', () => {
+  it('OBS1.3b: fatal supports context + Error + message three-arg form', async () => {
     const err = new Error('fatal context error');
     expect(() => adapter.fatal({ code: 500 }, err, 'fatal with context')).not.toThrow();
   });
 
-  it('OBS1.3c: fatal supports a plain context object and message', () => {
+  it('OBS1.3c: fatal supports a plain context object and message', async () => {
     expect(() => adapter.fatal({ requestId: 'r1' }, 'fatal without error')).not.toThrow();
   });
 
-  it('OBS1.3d: error supports a plain context object and message (no Error)', () => {
+  it('OBS1.3d: error supports a plain context object and message (no Error)', async () => {
     expect(() => adapter.error({ requestId: 'r2' }, 'error without error object')).not.toThrow();
   });
 
-  it('OBS1.3e: error/fatal with context + Error but no message (undefined msg)', () => {
+  it('OBS1.3e: error/fatal with context + Error but no message (undefined msg)', async () => {
     const err = new Error('no message');
     // Two-arg form (context, Error) leaves arg3 undefined → `arg3 || ''` fallback.
     expect(() => adapter.error({ code: 501 }, err)).not.toThrow();
     expect(() => adapter.fatal({ code: 502 }, err)).not.toThrow();
   });
 
-  it('OBS5.1: child logger inherits component and adds bindings', () => {
+  it('OBS5.1: child logger inherits component and adds bindings', async () => {
     const child = adapter.child({ requestId: 'req-1' });
     expect(() => child.info('child msg')).not.toThrow();
     expect(() => child.error(new Error('child err'), 'child error')).not.toThrow();
   });
 
-  it('OBS5.2: deeply nested child loggers do not throw', () => {
+  it('OBS5.2: deeply nested child loggers do not throw', async () => {
     const c1 = adapter.child({ layer: 1 });
     const c2 = c1.child({ layer: 2 });
     const c3 = c2.child({ layer: 3 });
     expect(() => c3.info('nested')).not.toThrow();
   });
 
-  it('OBS1.4: raw() returns underlying pino instance', () => {
+  it('OBS1.4: raw() returns underlying pino instance', async () => {
     const raw = adapter.raw();
     expect(raw).toBeDefined();
     expect(typeof raw.info).toBe('function');
   });
 
-  it('OBS1.5: createLogger factory produces distinct instances', () => {
+  it('OBS1.5: createLogger factory produces distinct instances', async () => {
     const a = createLogger('A');
     const b = createLogger('B');
     expect(a).not.toBe(b);
@@ -103,7 +103,7 @@ describe('RaftMetricsCollector (OBS2)', () => {
     metrics = new RaftMetricsCollector();
   });
 
-  it('OBS2.1: counters start at zero', () => {
+  it('OBS2.1: counters start at zero', async () => {
     const s = metrics.snapshot();
     expect(s.leaderChanges).toBe(0);
     expect(s.proposalsTotal).toBe(0);
@@ -111,13 +111,13 @@ describe('RaftMetricsCollector (OBS2)', () => {
     expect(s.currentTerm).toBe(0);
   });
 
-  it('OBS2.2: recordLeaderChange increments correctly', () => {
+  it('OBS2.2: recordLeaderChange increments correctly', async () => {
     metrics.recordLeaderChange();
     metrics.recordLeaderChange();
     expect(metrics.snapshot().leaderChanges).toBe(2);
   });
 
-  it('OBS2.3: recordProposal tracks success and failure', () => {
+  it('OBS2.3: recordProposal tracks success and failure', async () => {
     metrics.recordProposal(true);
     metrics.recordProposal(true);
     metrics.recordProposal(false);
@@ -128,7 +128,7 @@ describe('RaftMetricsCollector (OBS2)', () => {
     expect(s.proposalsFailed).toBe(2);
   });
 
-  it('OBS2.4: gauge setters work', () => {
+  it('OBS2.4: gauge setters work', async () => {
     metrics.setTerm(7);
     metrics.setLogSizeBytes(102400);
     metrics.setPeerCount(5);
@@ -138,7 +138,7 @@ describe('RaftMetricsCollector (OBS2)', () => {
     expect(s.peerCount).toBe(5);
   });
 
-  it('OBS2.5: commit latency histogram with known values', () => {
+  it('OBS2.5: commit latency histogram with known values', async () => {
     // 10 samples: 5 in bucket 1ms, 3 in bucket 5ms, 1 in bucket 50ms, 1 in bucket 500ms
     const samples = [0.5, 0.7, 1.0, 1.2, 0.8, 3, 4, 4.5, 45, 450];
     for (const ms of samples) {
@@ -155,7 +155,7 @@ describe('RaftMetricsCollector (OBS2)', () => {
     expect(s.commitLatencyMs).toBeGreaterThan(0);
   });
 
-  it('OBS2.6: percentiles are computed correctly', () => {
+  it('OBS2.6: percentiles are computed correctly', async () => {
     for (let i = 1; i <= 100; i++) {
       metrics.recordCommitLatency(i);
     }
@@ -166,7 +166,7 @@ describe('RaftMetricsCollector (OBS2)', () => {
     expect(s.commitLatencyP99).toBeGreaterThanOrEqual(98);
   });
 
-  it('OBS2.7: toPrometheus produces valid metric lines', () => {
+  it('OBS2.7: toPrometheus produces valid metric lines', async () => {
     metrics.recordLeaderChange();
     metrics.recordProposal(true);
     const text = metrics.toPrometheus();
@@ -176,7 +176,7 @@ describe('RaftMetricsCollector (OBS2)', () => {
     expect(text).toContain('db_cluster_commit_latency_seconds_bucket{le=');
   });
 
-  it('OBS2.8: reset clears all state', () => {
+  it('OBS2.8: reset clears all state', async () => {
     metrics.recordLeaderChange();
     metrics.recordProposal(true);
     metrics.recordCommitLatency(50);
@@ -197,73 +197,73 @@ describe('HealthProbe (OBS3)', () => {
     health = new HealthProbe();
   });
 
-  it('OBS3.1: liveness returns ok when no fatal errors', () => {
+  it('OBS3.1: liveness returns ok when no fatal errors', async () => {
     const r = health.liveness();
     expect(r.ok).toBe(true);
     expect(r.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('OBS3.2: liveness returns fail after fatal errors', () => {
+  it('OBS3.2: liveness returns fail after fatal errors', async () => {
     health.recordFatalError();
     const r = health.liveness();
     expect(r.ok).toBe(false);
   });
 
-  it('OBS3.3: readiness fails before startup complete', () => {
-    const r = health.readiness();
+  it('OBS3.3: readiness fails before startup complete', async () => {
+    const r = await health.readiness();
     expect(r.ok).toBe(false);
     expect(r.reason).toContain('startup');
   });
 
-  it('OBS3.4: readiness succeeds after startup + probes pass', () => {
+  it('OBS3.4: readiness succeeds after startup + probes pass', async () => {
     health.markStartupComplete();
     health.register('raft', () => ({ ok: true, latencyMs: 1 }));
-    const r = health.readiness();
+    const r = await health.readiness();
     expect(r.ok).toBe(true);
   });
 
-  it('OBS3.5: readiness fails if any registered probe fails', () => {
+  it('OBS3.5: readiness fails if any registered probe fails', async () => {
     health.markStartupComplete();
     health.register('raft', () => ({ ok: true, latencyMs: 1 }));
     health.register('storage', () => ({ ok: false, reason: 'disk full', latencyMs: 2 }));
-    const r = health.readiness();
+    const r = await health.readiness();
     expect(r.ok).toBe(false);
     expect(r.reason).toContain('storage');
   });
 
-  it('OBS3.6: startup probe reflects initialization state', () => {
+  it('OBS3.6: startup probe reflects initialization state', async () => {
     expect(health.startup().ok).toBe(false);
     health.markStartupComplete();
     expect(health.startup().ok).toBe(true);
   });
 
-  it('OBS3.7: fullStatus returns aggregated JSON', () => {
+  it('OBS3.7: fullStatus returns aggregated JSON', async () => {
     health.markStartupComplete();
     health.register('raft', () => ({ ok: true, latencyMs: 1 }));
-    const status = health.fullStatus();
+    const status = await health.fullStatus();
     expect(status.status).toBe('healthy');
     expect(status.probes.liveness!.ok).toBe(true);
     expect(status.probes.readiness!.ok).toBe(true);
     expect(status.probes.startup!.ok).toBe(true);
   });
 
-  it('OBS3.8: fullStatus degraded when startup not complete', () => {
-    const status = health.fullStatus();
+  it('OBS3.8: fullStatus degraded when startup not complete', async () => {
+    const status = await health.fullStatus();
     expect(status.status).toBe('degraded');
   });
 
   // ── C-04: a swallowed listener failure must reach the health verdict ──
 
-  it('OBS3.9: a recorded listener failure degrades readiness and names its source', () => {
+  it('OBS3.9: a recorded listener failure degrades readiness and names its source', async () => {
     health.markStartupComplete();
     health.register('raft', () => ({ ok: true, latencyMs: 1 }));
     health.recordListenerFailure('WatchApi.handler', new Error('boom'));
-    const r = health.readiness();
+    const r = await health.readiness();
     expect(r.ok).toBe(false);
     expect(r.reason).toContain('WatchApi.handler');
   });
 
-  it('OBS3.10: listener failures are readable and do not affect liveness', () => {
+  it('OBS3.10: listener failures are readable and do not affect liveness', async () => {
     health.recordListenerFailure('EventBus.sync', new Error('boom'));
     expect(health.listenerFailures).toHaveLength(1);
     expect(health.listenerFailures[0]!.source).toBe('EventBus.sync');
@@ -271,7 +271,7 @@ describe('HealthProbe (OBS3)', () => {
     expect(health.liveness().ok).toBe(true);
   });
 
-  it('OBS3.11: recordListenerFailure defaults error and timestamp', () => {
+  it('OBS3.11: recordListenerFailure defaults error and timestamp', async () => {
     health.recordListenerFailure('FencingTokenGuard.observer');
     const f = health.listenerFailures[0]!;
     expect(f.error).toBeUndefined();
@@ -282,11 +282,11 @@ describe('HealthProbe (OBS3)', () => {
 // ── Trace Context ───────────────────────────────────────────
 
 describe('traceContext (OBS4)', () => {
-  it('OBS4.1: getTraceId returns undefined when no context active', () => {
+  it('OBS4.1: getTraceId returns undefined when no context active', async () => {
     expect(traceContext.getTraceId()).toBeUndefined();
   });
 
-  it('OBS4.2: runWith sets traceId synchronously', () => {
+  it('OBS4.2: runWith sets traceId synchronously', async () => {
     traceContext.runWith('trace-abc', () => {
       expect(traceContext.getTraceId()).toBe('trace-abc');
     });
@@ -302,7 +302,7 @@ describe('traceContext (OBS4)', () => {
     expect(traceContext.getTraceId()).toBeUndefined();
   });
 
-  it('OBS4.4: nested runWith preserves inner context', () => {
+  it('OBS4.4: nested runWith preserves inner context', async () => {
     traceContext.runWith('outer', () => {
       expect(traceContext.getTraceId()).toBe('outer');
       traceContext.runWith('inner', () => {

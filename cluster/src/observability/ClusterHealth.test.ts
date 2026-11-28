@@ -12,31 +12,31 @@ import { describe, it, expect } from 'vitest';
 import { createClusterHealth } from './ClusterHealth';
 
 describe('createClusterHealth (C-04/C-07)', () => {
-  it('returns a health probe and a reporter bound to it', () => {
+  it('returns a health probe and a reporter bound to it', async () => {
     const { health, reporter } = createClusterHealth();
     health.markStartupComplete();
-    expect(health.readiness().ok).toBe(true);
+    expect((await health.readiness()).ok).toBe(true);
 
     reporter({ source: 'WatchApi.handler', error: new Error('boom') });
 
-    expect(health.readiness().ok).toBe(false);
-    expect(health.readiness().reason).toContain('WatchApi.handler');
+    expect((await health.readiness()).ok).toBe(false);
+    expect((await health.readiness()).reason).toContain('WatchApi.handler');
   });
 
-  it('the reporter is shared: failures from different components aggregate', () => {
+  it('the reporter is shared: failures from different components aggregate', async () => {
     const { health, reporter } = createClusterHealth();
     health.markStartupComplete();
 
     reporter({ source: 'EventBus.sync', error: new Error('a') });
     reporter({ source: 'OnlineShardMigration.listener', error: new Error('b') });
 
-    const reason = health.readiness().reason ?? '';
+    const reason = (await health.readiness()).reason ?? '';
     expect(reason).toContain('EventBus.sync');
     expect(reason).toContain('OnlineShardMigration.listener');
     expect(health.listenerFailures).toHaveLength(2);
   });
 
-  it('accepts an injected clock so a deployment can supply its own time source', () => {
+  it('accepts an injected clock so a deployment can supply its own time source', async () => {
     const { health, reporter } = createClusterHealth({ now: () => 12345 });
     reporter({ source: 'x' });
     expect(health.listenerFailures[0]!.at).toBe(12345);

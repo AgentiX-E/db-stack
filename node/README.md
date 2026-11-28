@@ -1,6 +1,6 @@
 # @agentix-e/db-node
 
-**Everything a single database node needs — 20 modules, 3 240 test cases in 160 files, every
+**Everything a single database node needs — 20 modules, 3 245 test cases in 161 files, every
 coverage dimension at or above 95 %.**
 
 Twenty modules that operate on **one node**, in one package. A probe probes its own
@@ -22,42 +22,42 @@ node.health.HealthOrchestrator;
 
 ## Modules
 
-| Module | What it is | Cases |
-| --- | --- | --- |
-| [`core`](./src/core/) | The shared base: 40+ types and the provider registry. | 550 |
-| [`audit`](./src/audit/) | Append-only audit log: crash-safe segments, a hash chain per writer, rotation, export, query, verification. | 309 |
-| [`auth`](./src/auth/) | Authentication interfaces. Interfaces only — `security` implements them. | 32 |
-| [`autoscaler`](./src/autoscaler/) | Scaling decisions from multi-dimensional metrics. | 167 |
-| [`autotuner`](./src/autotuner/) | Tuning recommendations for engine parameters. | 27 |
-| [`backup`](./src/backup/) | Real capture, digests, bucket confirmation, a durable inventory, chains, PITR. | 333 |
-| [`chaosengine`](./src/chaosengine/) | Fault definitions and the scenario runner. | 128 |
-| [`circuitbreaker`](./src/circuitbreaker/) | Breaker state per call site. | 15 |
-| [`configwatcher`](./src/configwatcher/) | Configuration watching and change notification. | 128 |
-| [`health`](./src/health/) | Liveness, readiness and startup probes. | 82 |
-| [`logger`](./src/logger/) | The `ILogger` port and an in-memory implementation. | 55 |
-| [`maintenance`](./src/maintenance/) | VACUUM / ANALYZE / REINDEX scheduling. | 387 |
-| [`memoryguard`](./src/memoryguard/) | Heap-pressure guard. | 13 |
-| [`metrics`](./src/metrics/) | Counters, gauges and histograms. | 38 |
-| [`monitor`](./src/monitor/) | Slow-query, connection-pool and deadlock detection. | 129 |
-| [`observability`](./src/observability/) | W3C trace context and spans. | 44 |
-| [`otel`](./src/otel/) | The OpenTelemetry bridge. | 16 |
-| [`rollingupgrade`](./src/rollingupgrade/) | Upgrade plans, batching, version verification and health gating. | 145 |
-| [`security`](./src/security/) | TLS, RBAC and encryption at rest — the implementation of `auth`. | 629 |
-| [`slacollector`](./src/slacollector/) | SLA event collection. | 13 |
+| Module                                    | What it is                                                                                                  | Cases |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----- |
+| [`core`](./src/core/)                     | The shared base: 40+ types and the provider registry.                                                       | 550   |
+| [`audit`](./src/audit/)                   | Append-only audit log: crash-safe segments, a hash chain per writer, rotation, export, query, verification. | 309   |
+| [`auth`](./src/auth/)                     | Authentication interfaces. Interfaces only — `security` implements them.                                    | 32    |
+| [`autoscaler`](./src/autoscaler/)         | Scaling decisions from multi-dimensional metrics.                                                           | 167   |
+| [`autotuner`](./src/autotuner/)           | Tuning recommendations for engine parameters.                                                               | 27    |
+| [`backup`](./src/backup/)                 | Real capture, digests, bucket confirmation, a durable inventory, chains, PITR.                              | 333   |
+| [`chaosengine`](./src/chaosengine/)       | Fault definitions and the scenario runner.                                                                  | 128   |
+| [`circuitbreaker`](./src/circuitbreaker/) | Breaker state per call site.                                                                                | 15    |
+| [`configwatcher`](./src/configwatcher/)   | Configuration watching and change notification.                                                             | 128   |
+| [`health`](./src/health/)                 | Liveness, readiness and startup probes, awaited.                                                            | 87    |
+| [`logger`](./src/logger/)                 | The `ILogger` port and an in-memory implementation.                                                         | 55    |
+| [`maintenance`](./src/maintenance/)       | VACUUM / ANALYZE / REINDEX scheduling.                                                                      | 387   |
+| [`memoryguard`](./src/memoryguard/)       | Heap-pressure guard.                                                                                        | 13    |
+| [`metrics`](./src/metrics/)               | Counters, gauges and histograms.                                                                            | 38    |
+| [`monitor`](./src/monitor/)               | Slow-query, connection-pool and deadlock detection.                                                         | 129   |
+| [`observability`](./src/observability/)   | W3C trace context and spans.                                                                                | 44    |
+| [`otel`](./src/otel/)                     | The OpenTelemetry bridge.                                                                                   | 16    |
+| [`rollingupgrade`](./src/rollingupgrade/) | Upgrade plans, batching, version verification and health gating.                                            | 145   |
+| [`security`](./src/security/)             | TLS, RBAC and encryption at rest — the implementation of `auth`.                                            | 629   |
+| [`slacollector`](./src/slacollector/)     | SLA event collection.                                                                                       | 13    |
 
-**Total: `pnpm coverage` reports 160 files and 3 240 tests, 0 failures** (`test:unit`: 141 files /
-2 908; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
+**Total: `pnpm coverage` reports 161 files and 3 245 tests, 0 failures** (`test:unit`: 142 files /
+2 913; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
 column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
 any of these numbers disagrees with it — a number in prose has no compiler, so this gate is that
 compiler.
 
 ## Quality
 
-| Measure | Result |
-| --- | --- |
-| Coverage — lines / statements / functions / branches | 99.48 % / 99.48 % / 99.87 % / 98.61 %, every file gated at 95 % |
+| Measure                                              | Result                                                                                                                                                |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Coverage — lines / statements / functions / branches | 99.70 % / 99.70 % / 99.87 % / 98.79 %, every file gated at 95 %                                                                                       |
 | Mutation — sixteen files in four modules, gate at 86 | each mutant read against the tests the report attributes to it; the score and the survivor arguments are in [`docs/maturity.md`](../docs/maturity.md) |
-| Published surface | 22 entry points, 375 exports, 69 documents, and `pnpm check:docs-api` fails if a documented symbol is not exported |
+| Published surface                                    | 22 entry points, 375 exports, 69 documents, and `pnpm check:docs-api` fails if a documented symbol is not exported                                    |
 
 The sixteen mutated files — in `backup`, `audit`, `security` and `maintenance` — are the ones
 that decide what gets deleted, whether a backup can be restored, which key material survives at
@@ -68,7 +68,7 @@ oversight, published in [`docs/maturity.md`](../docs/maturity.md) §5.
 
 ## What is not here
 
-Anything that has to reason about a *set* of nodes. Which node is removed first,
+Anything that has to reason about a _set_ of nodes. Which node is removed first,
 how many may be down at once without losing quorum, what a fault on node 3 means
 for the leader — all of that lives in
 [`@agentix-e/db-cluster`](../cluster), and the modules above expose the
@@ -77,7 +77,7 @@ data those decisions are computed from (`ScalingPolicy.minNodes`,
 
 Two consequences worth knowing:
 
-- `autoscaler` produces a `ScaleAction` whose `targetCount` is the count *it*
+- `autoscaler` produces a `ScaleAction` whose `targetCount` is the count _it_
   believes in. Applying it to a live group is `ClusterScalingExecutor`'s job,
   because only that side can see how many members actually exist.
 - `rollingupgrade` batches the node list it is given, in the order it is given.
@@ -97,7 +97,7 @@ the one to read first: it states what the module decides and what it deliberatel
 does not.
 
 ```bash
-npm test              # 160 files, 3 240 tests
+npm test              # 161 files, 3 245 tests
 npm run coverage      # writes coverage/test-report.json, the file check:test-counts reads
 ```
 

@@ -20,12 +20,12 @@ afterAll(async () => {
 });
 
 describe.each(ENGINE_CASES)('$name E2E: Logger', ({ factory }) => {
-  it('should create a logger', () => {
+  it('should create a logger', async () => {
     const logger = factory.createLogger();
     expect(logger).toBeDefined();
   });
 
-  it('should support log levels', () => {
+  it('should support log levels', async () => {
     const logger = factory.createLogger();
     expect(typeof logger.trace).toBe('function');
     expect(typeof logger.debug).toBe('function');
@@ -35,14 +35,14 @@ describe.each(ENGINE_CASES)('$name E2E: Logger', ({ factory }) => {
     expect(typeof logger.fatal).toBe('function');
   });
 
-  it('should create child loggers', () => {
+  it('should create child loggers', async () => {
     const logger = factory.createLogger();
     const child = logger.child({ module: 'backup' });
     expect(child).toBeDefined();
     expect(child).not.toBe(logger);
   });
 
-  it('should log without throwing', () => {
+  it('should log without throwing', async () => {
     const logger = factory.createLogger();
     expect(() => {
       logger.info('test message');
@@ -51,7 +51,7 @@ describe.each(ENGINE_CASES)('$name E2E: Logger', ({ factory }) => {
     }).not.toThrow();
   });
 
-  it('child logger should have different identity', () => {
+  it('child logger should have different identity', async () => {
     const logger = factory.createLogger();
     const child1 = logger.child({ component: 'backup' });
     const child2 = logger.child({ component: 'metrics' });
@@ -98,7 +98,7 @@ describe.each(ENGINE_CASES)('$name E2E: EngineWiring', ({ factory }) => {
     expect(logger).toBeDefined();
   });
 
-  it('should wire health probe into orchestrator', () => {
+  it('should wire health probe into orchestrator', async () => {
     const orch = factory.createHealthOrchestrator();
     expect(orch).toBeDefined();
     expect(typeof orch.registerFunctional).toBe('function');
@@ -106,12 +106,12 @@ describe.each(ENGINE_CASES)('$name E2E: EngineWiring', ({ factory }) => {
 
   it('should support full create+operate+cleanup cycle', async () => {
     const probe = await factory.createHealthProbe();
-    expect(probe.liveness().ok).toBe(true);
+    expect((await probe.liveness()).ok).toBe(true);
     // Cleanup at end
     await factory.cleanup();
     // After cleanup, should be able to create new components
     const probe2 = await factory.createHealthProbe();
-    expect(probe2.liveness().ok).toBe(true);
+    expect((await probe2.liveness()).ok).toBe(true);
   });
 
   it('should produce meaningful probe names', async () => {

@@ -36,7 +36,7 @@ describe('E2E: Full Operational Lifecycle', () => {
   // E2E1 — Cluster Bootstrap: Health + Metrics + Logger
   // ═══════════════════════════════════════════════════════════════
 
-  it('E2E1: health orchestrator reports ready after bootstrap', () => {
+  it('E2E1: health orchestrator reports ready after bootstrap', async () => {
     const health = factory.getHealthOrchestrator();
     const metrics = factory.getMetricsRegistry();
     const logger = factory.getLogger();
@@ -56,19 +56,19 @@ describe('E2E: Full Operational Lifecycle', () => {
     );
 
     // Liveness and readiness
-    const live = health.liveness();
+    const live = await health.liveness();
     expect(live.ok).toBe(true);
 
-    const ready = health.readiness();
+    const ready = await health.readiness();
     expect(ready.ok).toBe(true);
 
     // Structured status
-    const status = health.getHealthStatus();
+    const status = await health.getHealthStatus();
     expect(status.status).toBeDefined();
     expect(status.components.length).toBeGreaterThanOrEqual(2);
 
     // Aggregate status
-    const aggregate = health.getAggregateStatus();
+    const aggregate = await health.getAggregateStatus();
     expect(['healthy', 'degraded', 'unhealthy']).toContain(aggregate.status);
 
     // Metrics registry is operational
@@ -84,7 +84,7 @@ describe('E2E: Full Operational Lifecycle', () => {
   // E2E2 — RBAC bootstrap
   // ═══════════════════════════════════════════════════════════════
 
-  it('E2E2: auth + RBAC roles grant permissions after bootstrap', () => {
+  it('E2E2: auth + RBAC roles grant permissions after bootstrap', async () => {
     const rbac = factory.getRBACProvider();
 
     // Register operational roles
@@ -206,7 +206,7 @@ describe('E2E: Full Operational Lifecycle', () => {
     expect(stats.events.some((e) => e.type === 'upgrade_completed')).toBe(true);
 
     // Health orchestrator still functional
-    const componentHealth = health.getComponentHealth();
+    const componentHealth = await health.getComponentHealth();
     expect(componentHealth.length).toBeGreaterThanOrEqual(4);
   });
 
@@ -350,7 +350,7 @@ describe('E2E: Full Operational Lifecycle', () => {
         readiness: () => ({ ok: true }),
       }),
     );
-    const live = health.liveness();
+    const live = await health.liveness();
     expect(live.ok).toBe(true);
 
     // ── 2. RBAC ───────────────────────────────────────

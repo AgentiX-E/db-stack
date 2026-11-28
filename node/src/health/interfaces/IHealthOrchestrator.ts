@@ -19,34 +19,38 @@ import type { IComponentRegistrar } from './IComponentRegistrar.js';
  * - `readiness()` runs all registered probes + deeper checks. Returns PASS/FAIL.
  * - `getHealthStatus()` returns a structured HealthStatus for monitoring dashboards.
  * - `getSummary()` returns a concise status string suitable for logging or CLI.
+ *
+ * Every answer is awaited, because a probe may legitimately reach a dependency.
+ * A caller that wants a Kubernetes exec probe must await the result as well;
+ * the verdict is only as old as the answers it aggregated.
  */
 export interface IHealthOrchestrator extends IComponentRegistrar {
   /**
    * K8s-style liveness check.
    * Fails if any registered component fails its liveness probe.
    */
-  liveness(): { ok: boolean; errors: string[] };
+  liveness(): Promise<{ ok: boolean; errors: string[] }>;
 
   /**
    * K8s-style readiness check.
    * Fails if any registered component fails its readiness probe.
    * Also fails if the overall status is 'unhealthy'.
    */
-  readiness(): { ok: boolean; errors: string[] };
+  readiness(): Promise<{ ok: boolean; errors: string[] }>;
 
   /**
    * K8s-style startup check.
    * Checks that all registered components have completed startup.
    */
-  startup(): { ok: boolean; errors: string[] };
+  startup(): Promise<{ ok: boolean; errors: string[] }>;
 
   /**
    * Get structured health status with all component details.
    */
-  getHealthStatus(): HealthStatus;
+  getHealthStatus(): Promise<HealthStatus>;
 
   /**
    * Get a concise one-line summary string.
    */
-  getSummary(): string;
+  getSummary(): Promise<string>;
 }

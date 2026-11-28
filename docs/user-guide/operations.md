@@ -44,7 +44,7 @@ to know how many nodes exist?**
 
 - `@agentix-e/db-node` — no. Twenty modules, one process each.
 - `@agentix-e/db-cluster` — yes. A member set, a leader, a majority.
-- `@agentix-e/db-federation` — a set of *datacenters*.
+- `@agentix-e/db-federation` — a set of _datacenters_.
 
 ### 2.1 `@agentix-e/db-node` — twenty modules
 
@@ -75,15 +75,15 @@ Import the module, not the package root: `@agentix-e/db-node/audit`.
 
 ### 2.2 `@agentix-e/db-cluster` — the multi-node half
 
-| Export                   | The question it answers                                                                  |
-| ------------------------ | ---------------------------------------------------------------------------------------- |
-| `ClusterScalingExecutor` | A scaler said "five nodes". What does the cluster actually have, and which members leave? |
-| `ClusterRolloutPlanner`  | Which batch runs first, and does the group still commit while it does?                    |
-| `RaftFaultTranslator`    | A fault says "partition `n1`". Which transports does that mean, in which direction?       |
-| `InMemoryClusterTopology`| The reference `IClusterTopology` for a fixed member set.                                  |
-| `quorumOf`, `tolerableFailures`, `holdsQuorumOf` | Majority arithmetic, in one place.                              |
+| Export                                           | The question it answers                                                                   |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `ClusterScalingExecutor`                         | A scaler said "five nodes". What does the cluster actually have, and which members leave? |
+| `ClusterRolloutPlanner`                          | Which batch runs first, and does the group still commit while it does?                    |
+| `RaftFaultTranslator`                            | A fault says "partition `n1`". Which transports does that mean, in which direction?       |
+| `InMemoryClusterTopology`                        | The reference `IClusterTopology` for a fixed member set.                                  |
+| `quorumOf`, `tolerableFailures`, `holdsQuorumOf` | Majority arithmetic, in one place.                                                        |
 
-`autoscaler` and `rollingupgrade` produce *decisions*; the two assemblers above apply them
+`autoscaler` and `rollingupgrade` produce _decisions_; the two assemblers above apply them
 to a live member set. That separation is why the node modules can be used by a single-node
 deployment without dragging a consensus system in, and why a cluster deployment does not
 reimplement quorum arithmetic per caller.
@@ -96,11 +96,11 @@ nothing to remove.
 
 ### 2.3 `@agentix-e/db-federation` — cross-datacenter
 
-| Export                 | What it gives you                                    |
-| ---------------------- | ---------------------------------------------------- |
-| `FederatedNode`        | A node bound to shard ids and roles across DCs       |
-| `FederatedQueryRouter` | Fan-out query planning over federated shards         |
-| schema federation      | Migration descriptors and plans shared across DCs    |
+| Export                 | What it gives you                                 |
+| ---------------------- | ------------------------------------------------- |
+| `FederatedNode`        | A node bound to shard ids and roles across DCs    |
+| `FederatedQueryRouter` | Fan-out query planning over federated shards      |
+| schema federation      | Migration descriptors and plans shared across DCs |
 
 ---
 
@@ -109,37 +109,36 @@ nothing to remove.
 ### 3.1 Health that distinguishes liveness from readiness
 
 ```ts
-import {
-  HealthOrchestrator,
-  componentProbe,
-} from "@agentix-e/db-node/health";
+import { HealthOrchestrator, componentProbe } from "@agentix-e/db-node/health";
 
 const health = new HealthOrchestrator();
 
 health.registerComponent(
   componentProbe("storage", "Storage", {
     liveness: () => ({ ok: storage.isEventLoopResponsive() }),
-    readiness: () => {
-      const lag = storage.replicaLagMs();
+    readiness: async () => {
+      const lag = await storage.replicaLagMs();
       return { ok: lag < 5_000, message: `replica lag ${lag} ms` };
     },
   }),
 );
 
-health.liveness();        // { ok: true, errors: [] }
-health.readiness();       // { ok: false, errors: ["storage: replica lag 8 200 ms"] }
-health.getHealthStatus(); // structured, for a dashboard
+await health.liveness(); // { ok: true, errors: [] }
+await health.readiness(); // { ok: false, errors: ["[storage] replica lag 8 200 ms"] }
+await health.getHealthStatus(); // structured, for a dashboard
 ```
 
 A failing **liveness** probe means "restart me". A failing **readiness** probe means "stop
 sending traffic". Wiring both to the same check is the most common way to turn a slow
 replica into a restart loop.
 
-`IHealthProbe` is **synchronous** — `liveness()`, `readiness()` and `startup()` return a
-`ProbeResult`, not a promise. That is a deliberate constraint, not an oversight: a probe that
-awaits is a probe that can hang, and a liveness check that blocks on I/O is the failure it was
-supposed to detect. A component whose readiness genuinely needs a round trip keeps the answer in
-a field an in-process sample updates, and the probe reads the field.
+`IHealthProbe` answers may be **synchronous or asynchronous**: each of `liveness()`,
+`readiness()` and `startup()` returns a `ProbeResult` or a promise of one, and the orchestrator
+awaits the answer before it aggregates a verdict. Readiness is the reason — it asks whether a
+dependency is reachable, and reachability is an I/O question. Keep liveness in-process: it must
+settle in under 10 ms, and a check that can hang cannot detect a hung process. Readiness may do
+I/O but must settle in under 100 ms. Every orchestrator answer is a promise as well, so a health
+endpoint must `await` it; a verdict read before the probes settle is not a verdict.
 
 ### 3.2 Metrics
 
@@ -148,7 +147,11 @@ import { MetricsRegistry } from "@agentix-e/db-node/metrics";
 
 const metrics = new MetricsRegistry();
 const writes = metrics.counter("db_writes_total", { db: "orders" });
-const latency = metrics.histogram("db_write_seconds", { db: "orders" }, [0.001, 0.005, 0.02, 0.1]);
+const latency = metrics.histogram(
+  "db_write_seconds",
+  { db: "orders" },
+  [0.001, 0.005, 0.02, 0.1],
+);
 
 writes.inc();
 latency.observe(0.004);
@@ -156,7 +159,7 @@ latency.observe(0.004);
 const snapshot = metrics.snapshot(); // what the Prometheus exporter publishes
 ```
 
-Metrics are created *by the registry*, not passed to it: `counter`, `gauge` and `histogram` take
+Metrics are created _by the registry_, not passed to it: `counter`, `gauge` and `histogram` take
 a name, an optional label set and — for histograms — bucket bounds, and return a handle. A second
 call with the same name and the same labels returns the same counter, so a component does not have
 to thread a handle through its own constructor to record a metric.
@@ -174,18 +177,26 @@ import {
 } from "@agentix-e/db-node/backup";
 
 const backups = new BackupManager(
-  new DirectoryBackupSource("/var/lib/db/data"),          // the engine: how a cut is taken
+  new DirectoryBackupSource("/var/lib/db/data"), // the engine: how a cut is taken
   new S3StorageBackend({ bucket: "db-backups", region: "eu-west-1" }),
-  new RetentionPolicyEvaluator({ maxFullSnapshots: 7, maxTotalBytes: 5e11, keepRecent: "P7D" }),
+  new RetentionPolicyEvaluator({
+    maxFullSnapshots: 7,
+    maxTotalBytes: 5e11,
+    keepRecent: "P7D",
+  }),
 );
 
 const result = await backups.createBackup({ type: "full" });
 if (!result.success || !result.snapshot) throw new Error(result.error);
 
 const metadata = await backups.getBackup(result.snapshot.snapshotId);
-const report = await new BackupVerifier().verifyStream(await openStream(metadata!));
+const report = await new BackupVerifier().verifyStream(
+  await openStream(metadata!),
+);
 if (!report.valid)
-  throw new Error(`backup ${metadata!.snapshotId} failed verification: ${report.error}`);
+  throw new Error(
+    `backup ${metadata!.snapshotId} failed verification: ${report.error}`,
+  );
 ```
 
 The manager takes its three collaborators **positionally** — where the bytes come from, where they go, and
@@ -206,7 +217,7 @@ hashed and uploaded, and `facts` carries what the engine reported about the cut 
 
 The listing itself comes from the bucket, not from the process. Each snapshot gets an immutable record
 at `backups/inventory/<id>.json`, written after the artefact and confirmed the same way, and every
-public method starts by reading that directory. That is what makes the manager in the *next* process —
+public method starts by reading that directory. That is what makes the manager in the _next_ process —
 the one that gets started because the previous one died — able to name and restore what the previous
 one took:
 
@@ -298,13 +309,14 @@ import { RetentionPolicyEvaluator } from "@agentix-e/db-node/backup";
 
 const retention = new RetentionPolicyEvaluator({
   maxFullSnapshots: 7,
-  keepRecent: "P7D",     // never remove anything younger than a week
-  minAge: "PT1H",        // and never remove a snapshot during its first hour
+  keepRecent: "P7D", // never remove anything younger than a week
+  minAge: "PT1H", // and never remove a snapshot during its first hour
   maxTotalBytes: 500_000_000_000,
 });
 
 const { toDelete, unreclaimedBytes } = retention.evaluateWithOutcome(inventory);
-for (const snapshot of toDelete) await backups.deleteBackup(snapshot.snapshotId);
+for (const snapshot of toDelete)
+  await backups.deleteBackup(snapshot.snapshotId);
 if (unreclaimedBytes > 0) {
   // The floors forbid getting under the ceiling. This is a fact about the
   // deployment, not a bug in the evaluator: raise the limit, shorten a floor,
@@ -388,8 +400,12 @@ import { dependentsOf, unrestorableReason } from "@agentix-e/db-node/backup";
 const dependents = dependentsOf(inventory, snapshotId);
 
 // Can this snapshot be replayed, and if not, which link is missing?
-const reason = unrestorableReason(new Map(inventory.map((s) => [s.snapshotId, s])), snapshot);
-if (reason !== null) logger.error("snapshot is unrestorable", { snapshotId, reason });
+const reason = unrestorableReason(
+  new Map(inventory.map((s) => [s.snapshotId, s])),
+  snapshot,
+);
+if (reason !== null)
+  logger.error("snapshot is unrestorable", { snapshotId, reason });
 ```
 
 The chain primitives are exported, so an adapter for a store that is not this manager can answer the
@@ -402,8 +418,12 @@ import { dependentsOf, unrestorableReason } from "@agentix-e/db-node/backup";
 const dependents = dependentsOf(inventory, snapshotId);
 
 // Can this snapshot be replayed, and if not, which link is missing?
-const reason = unrestorableReason(new Map(inventory.map((s) => [s.snapshotId, s])), snapshot);
-if (reason !== null) logger.error("snapshot is unrestorable", { snapshotId, reason });
+const reason = unrestorableReason(
+  new Map(inventory.map((s) => [s.snapshotId, s])),
+  snapshot,
+);
+if (reason !== null)
+  logger.error("snapshot is unrestorable", { snapshotId, reason });
 ```
 
 `evaluate()` is the interface method and returns the delete list alone; `evaluateWithOutcome()`
@@ -441,7 +461,7 @@ rotation.registerPolicy({
   enabled: true,
 });
 
-rotation.startScheduler();          // checks every five minutes
+rotation.startScheduler(); // checks every five minutes
 // ...
 await rotation.emergencyRotate("dek-90d", "key found in a log");
 ```
@@ -453,13 +473,13 @@ scheduler never keeps your process alive. `stopScheduler()` clears it.
 that are due, ordered by `priority` — `critical` first — because a tick that can rotate one
 key should rotate the one that leaked. `rotate()` then reports exactly what happened:
 
-| Field | Meaning |
-| --- | --- |
-| `fromVersion` / `toVersion` | The key versions either side of the rotation. A **failed** rotation reports `toVersion === fromVersion`: it creates no key, so it names none. |
-| `success` / `error` | Whether the KMS rotated the key. A re-encryption that fails afterwards does not un-rotate it. |
-| `reEncryption` | `not-requested` (the policy does not ask), `completed`, `deferred` (**the key rotated and the data did not**) or `failed` (the source was there and broke). |
-| `reEncryptedCount` | Blobs rewritten and verified to round-trip. |
-| `retiredVersion` | The version that fell out of the `maxKeyVersions` window, when the `KeyManager` still holds it. Keys are not deleted — decryption still needs them — so this is a report, not an action. |
+| Field                       | Meaning                                                                                                                                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fromVersion` / `toVersion` | The key versions either side of the rotation. A **failed** rotation reports `toVersion === fromVersion`: it creates no key, so it names none.                                            |
+| `success` / `error`         | Whether the KMS rotated the key. A re-encryption that fails afterwards does not un-rotate it.                                                                                            |
+| `reEncryption`              | `not-requested` (the policy does not ask), `completed`, `deferred` (**the key rotated and the data did not**) or `failed` (the source was there and broke).                              |
+| `reEncryptedCount`          | Blobs rewritten and verified to round-trip.                                                                                                                                              |
+| `retiredVersion`            | The version that fell out of the `maxKeyVersions` window, when the `KeyManager` still holds it. Keys are not deleted — decryption still needs them — so this is a report, not an action. |
 
 `deferred` is the state worth knowing about: it is a rotation that succeeded and left data
 on the old key. `reEncrypt(policyId, blobs)` drives it manually, and
@@ -494,14 +514,14 @@ next time a store opens the directory.
 
 **A page is not a fact.** `maxScanLines` (default 10 000) bounds what `query()` returns,
 because the budget exists to keep a grep-shaped read cheap. It does not bound what `get()` or
-`count()` *look up*:
+`count()` _look up_:
 
 ```ts
-await audit.query({ actor: "alice" });            // at most 100 (default limit), oldest first
+await audit.query({ actor: "alice" }); // at most 100 (default limit), oldest first
 await audit.query({ actor: "alice", limit: 500 }); // at most 500
-await audit.count({ actor: "alice" });            // every match, whatever the page size
+await audit.count({ actor: "alice" }); // every match, whatever the page size
 await audit.count({ actor: "alice", offset: 900 }); // still every match: paging is not selection
-await audit.get(entryId);                         // found, even if it is past the budget
+await audit.get(entryId); // found, even if it is past the budget
 ```
 
 A count that inherited the default page reported at most one hundred matches for any filter,
@@ -522,8 +542,8 @@ const audit = new FileAuditStore({
   segmentReader: (path, compressed) => readText(path, compressed),
 });
 
-audit.query({ actor: "alice" });   // reads one segment, not the whole trail
-audit.count({ actor: "alice" });   // reads the trail: a count is a fact, not a page
+audit.query({ actor: "alice" }); // reads one segment, not the whole trail
+audit.count({ actor: "alice" }); // reads the trail: a count is a fact, not a page
 ```
 
 A capped scan stops **reading** when the budget is spent, not merely stops collecting: a page that
@@ -536,7 +556,7 @@ happened, in this order:
 1. **append** — the line is in the file (still in the page cache, which a crash does not lose but a
    power cut does);
 2. **sync the file** — the data is on the medium;
-3. **sync the directory** — once per segment, after its first line, so that the *name* is on the
+3. **sync the directory** — once per segment, after its first line, so that the _name_ is on the
    medium too. A name is a directory entry; step 2 does not touch it, so without step 3 a power cut
    can leave the entries written and unreachable.
 
@@ -546,7 +566,12 @@ one component in the system that cannot be trusted about what happened. A caller
 rejection; it cannot retry a lie.
 
 ```ts
-const id = await audit.write({ operation: "DROP TABLE", actor: "alice", resource: "orders", result: "success" });
+const id = await audit.write({
+  operation: "DROP TABLE",
+  actor: "alice",
+  resource: "orders",
+  result: "success",
+});
 // When this resolves, the entry survives a power loss. When it rejects, it does not.
 ```
 
@@ -554,10 +579,10 @@ const id = await audit.write({ operation: "DROP TABLE", actor: "alice", resource
 need whole-file replacement, and paying for it on every line meant rewriting the segment to add a
 line to it. Measured over 2 000 lines of 524 bytes, writing to a real filesystem:
 
-| | Bytes written | Wall time |
-|---|---:|---:|
-| Read the segment, rewrite it via a scratch file, rename it into place | **1 000 MiB** (1 000× the payload) | 22.3 s |
-| Append the line | **1.0 MiB** (1.0× the payload) | 20.0 s |
+|                                                                       |                      Bytes written | Wall time |
+| --------------------------------------------------------------------- | ---------------------------------: | --------: |
+| Read the segment, rewrite it via a scratch file, rename it into place | **1 000 MiB** (1 000× the payload) |    22.3 s |
+| Append the line                                                       |     **1.0 MiB** (1.0× the payload) |    20.0 s |
 
 The wall time is the `fsync`: 2 000 bare `append`+`fsync` pairs with no store at all take 20.8 s on
 the same runner, so the store now adds nothing measurable above the durability it provides.
@@ -567,21 +592,21 @@ it, so writers that arrive together need only one of them. The append stays sync
 puts each line where its caller wrote it — and the sync moved to the end of the event-loop turn.
 Measured on the same runner, 500 entries each:
 
-| Callers | `fsync` calls | Throughput |
-|---|---:|---:|
-| one at a time | 500 | 101 entries/s |
-| 10 in flight, continuously | 50 | 981 entries/s |
-| a burst of 500 at once | 1 | 20 646 entries/s |
+| Callers                    | `fsync` calls |       Throughput |
+| -------------------------- | ------------: | ---------------: |
+| one at a time              |           500 |    101 entries/s |
+| 10 in flight, continuously |            50 |    981 entries/s |
+| a burst of 500 at once     |             1 | 20 646 entries/s |
 
 A caller who waits for one write before issuing the next pays exactly what it paid before, so the
 serial figure is unchanged — the gain belongs to concurrency, and a service that handles a hundred
 requests at once no longer pays a hundred round trips to the disk to record a hundred events. The
-acknowledgement still never runs ahead of the sync: a line appended *while* a flush is in progress
+acknowledgement still never runs ahead of the sync: a line appended _while_ a flush is in progress
 belongs to the next flush, not to the one that has already started.
 
 **A rejected write may still be in the trail.** The append happens before the sync, and a failed
 `fsync` cannot be undone by truncating — that is a second write with its own failure mode, and the
-segment may hold another process's bytes. So the guarantee is *at-least-once* across a failure, never
+segment may hold another process's bytes. So the guarantee is _at-least-once_ across a failure, never
 at-most-once: when `write()` rejects, retry with a fresh id rather than assuming the entry is absent,
 and reconcile duplicates downstream if that matters to your compliance statement.
 
@@ -592,30 +617,30 @@ renamed, so two writers lost each other's lines in proportion to how busy the tr
 were writing the same scratch path, so one of them could fail outright while the other renamed
 underneath it.
 
-Two processes appending to one *trail* is supported. A *segment* is a unit of rotation, so what happens
+Two processes appending to one _trail_ is supported. A _segment_ is a unit of rotation, so what happens
 to one that two live processes share is worth knowing, because it is what the file names mean:
 
-| Situation | What happens |
-|---|---|
-| Two processes start together on an empty directory | Each claims a different segment name (`O_CREAT \| O_EXCL`, retried by re-scanning), so neither can write into the other's file. |
-| A process starts while another is writing | It continues the newest open segment rather than starting a new one — that is what makes a restart a continuation instead of a gap. Two *live* processes can therefore share that segment until one of them rotates. |
-| One process rotates a segment the other is still appending to | The archive is **not published** while the segment is growing: the compression checks the segment's identity and its length before the rename, so an archive of a prefix never exists. The plain segment stays as the only name, and every line in it stays readable. |
-| One process archives a segment another has adopted | The archive is published, and the adopting process's line is not hidden by it: after every append — before the caller is acknowledged — a store compares its file with the archive of its own name and repairs the disagreement. Nothing is lost and nothing is counted twice. |
+| Situation                                                     | What happens                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Two processes start together on an empty directory            | Each claims a different segment name (`O_CREAT \| O_EXCL`, retried by re-scanning), so neither can write into the other's file.                                                                                                                                                |
+| A process starts while another is writing                     | It continues the newest open segment rather than starting a new one — that is what makes a restart a continuation instead of a gap. Two _live_ processes can therefore share that segment until one of them rotates.                                                           |
+| One process rotates a segment the other is still appending to | The archive is **not published** while the segment is growing: the compression checks the segment's identity and its length before the rename, so an archive of a prefix never exists. The plain segment stays as the only name, and every line in it stays readable.          |
+| One process archives a segment another has adopted            | The archive is published, and the adopting process's line is not hidden by it: after every append — before the caller is acknowledged — a store compares its file with the archive of its own name and repairs the disagreement. Nothing is lost and nothing is counted twice. |
 
 **A name and its archive are two views of one segment, and the store keeps them agreeing.** Every
 reader prefers an archive over the plain file of the same name — correctly, because between the
 rename and the unlink both hold the same entries — so the two views have to be reconciled by what
-they *hold*, not by who owns them. The comparison is on the bytes, because bytes are the only
+they _hold_, not by who owns them. The comparison is on the bytes, because bytes are the only
 evidence that survives a crash: a pid is meaningless on another host and racy on a shared mount, and
 a lease file would answer "who meant to own this name" when the question is "what does this name
 hold". Four answers, and each has one repair:
 
-| The two views | What the store does |
-|---|---|
-| The plain file starts with the archive and is longer | The archive is a prefix and adds nothing: it is removed, so the file stops being hidden. |
+| The two views                                                 | What the store does                                                                                                |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| The plain file starts with the archive and is longer          | The archive is a prefix and adds nothing: it is removed, so the file stops being hidden.                           |
 | The archive starts with the plain file, or they are identical | The plain file carries nothing of its own: it is removed (at rest) or abandoned for a new segment (while writing). |
-| Neither contains the other | Both carry unique entries: the plain file is renamed to a segment name of its own, so a reader sees both. |
-| The archive exists but cannot be read | It hides a segment while contributing nothing: it is removed. |
+| Neither contains the other                                    | Both carry unique entries: the plain file is renamed to a segment name of its own, so a reader sees both.          |
+| The archive exists but cannot be read                         | It hides a segment while contributing nothing: it is removed.                                                      |
 
 The repair runs in two places, and both are needed. Before a store adopts a name it sweeps the whole
 directory, because the process that could have repaired a crashed writer's segment is gone. And after
@@ -626,9 +651,8 @@ closing it entirely would need a lock, and the entry is never lost, only briefly
 
 So the rule to deploy by is no longer "one writer per trail". A fan-in of short-lived processes works,
 two long-lived services on one directory work, and a crashed writer's segment is repaired by the store
-that comes after it. What does *not* change is the cost: a shared directory is a shared disk, and two
+that comes after it. What does _not_ change is the cost: a shared directory is a shared disk, and two
 services rotating the same trail also prune the same files.
-
 
 **A crash leaves at most one unreadable line — and it cannot swallow the next one.** A process killed
 between the write and its newline leaves a fragment. Readers skip an unparsable line, so the fragment
@@ -646,8 +670,8 @@ const audit = new FileAuditStore({
   dataDir: "/var/lib/db/audit",
   fileSystem: {
     append: (path, data) => objectStore.append(path, data),
-    syncFile: (path) => objectStore.commit(path),        // must be durable on return
-    syncDirectory: () => {},                             // S3 has no directory entries
+    syncFile: (path) => objectStore.commit(path), // must be durable on return
+    syncDirectory: () => {}, // S3 has no directory entries
     needsSeparator: (path) => objectStore.endsWithNewline(path),
   },
 });
@@ -698,16 +722,16 @@ for the background compression of the last rotated segment.
 A key manager is judged by the questions it can answer when something has already gone wrong,
 so the rules below are contracts rather than conveniences:
 
-| Question | Answer |
-| --- | --- |
-| What does `keyLength` size? | The **data** key: 16, 24 or 32 bytes. The key-encryption key that wraps it is always 32 bytes, because the wrapping cipher is fixed. `keyLength: 16` used to size both, and every wrap then failed with `Invalid key length`. |
-| Can one version number mean two keys? | No. `loadKey()` of a version already held with the same material is a no-op; with different material it throws. A silent replacement made v1 name the restored key *and* the local one, and blobs written under the first became unreadable with no error at load time. |
-| Does `zeroize()` reset the numbering? | No. Versions continue from the highest ever issued, because the old keys are still in ciphertext headers, exports and backups. Reissuing v1 after a wipe is how two different keys end up sharing a name. |
-| Who owns the bytes `getKey()` returns? | The caller — they are a copy. Zeroizing what you were handed is hygiene; it must not zeroize the key the process is using. |
-| When is a version spent? | Only when a key exists. `generateKey()` wraps first and increments after, so a KEK that cannot be derived leaves the numbering untouched instead of skipping a number. |
-| What order does `exportWrappedKeys()` return? | Ascending version, whatever order the keys were loaded in, each one re-wrapped with a fresh nonce. Export is a replayable transfer format, not a dump. |
-| What does `initialize()` do to versions? | Nothing. `EnvelopeEncryptionProvider` mints its first version on the first `encrypt()`, so a backup can be imported into a fresh process *before* anything is written — which is the only order that works. |
-| What does `canDecryptVersion(v)` answer? | Whether the manager holds `v`. Not whether the cipher is initialized: `hasKeyVersion(v) || isEnabled()` answered "yes" for every number, including versions that never existed. |
+| Question                                      | Answer                                                                                                                                                                                                                                                                  |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What does `keyLength` size?                   | The **data** key: 16, 24 or 32 bytes. The key-encryption key that wraps it is always 32 bytes, because the wrapping cipher is fixed. `keyLength: 16` used to size both, and every wrap then failed with `Invalid key length`.                                           |
+| Can one version number mean two keys?         | No. `loadKey()` of a version already held with the same material is a no-op; with different material it throws. A silent replacement made v1 name the restored key _and_ the local one, and blobs written under the first became unreadable with no error at load time. |
+| Does `zeroize()` reset the numbering?         | No. Versions continue from the highest ever issued, because the old keys are still in ciphertext headers, exports and backups. Reissuing v1 after a wipe is how two different keys end up sharing a name.                                                               |
+| Who owns the bytes `getKey()` returns?        | The caller — they are a copy. Zeroizing what you were handed is hygiene; it must not zeroize the key the process is using.                                                                                                                                              |
+| When is a version spent?                      | Only when a key exists. `generateKey()` wraps first and increments after, so a KEK that cannot be derived leaves the numbering untouched instead of skipping a number.                                                                                                  |
+| What order does `exportWrappedKeys()` return? | Ascending version, whatever order the keys were loaded in, each one re-wrapped with a fresh nonce. Export is a replayable transfer format, not a dump.                                                                                                                  |
+| What does `initialize()` do to versions?      | Nothing. `EnvelopeEncryptionProvider` mints its first version on the first `encrypt()`, so a backup can be imported into a fresh process _before_ anything is written — which is the only order that works.                                                             |
+| What does `canDecryptVersion(v)` answer?      | Whether the manager holds `v`. Not whether the cipher is initialized: `hasKeyVersion(v)                                                                                                                                                                                 |     | isEnabled()` answered "yes" for every number, including versions that never existed. |
 
 Two configurations are refused at construction rather than at the first write, because both are
 programming errors and both used to surface as a `crypto` message: an empty `masterSecret` (PBKDF2
@@ -727,7 +751,10 @@ const encryption = new EnvelopeEncryptionProvider({
   keyManager: { masterSecret: secret },
   encryption: { algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" },
 });
-await encryption.initialize({ algorithm: "aes-256-gcm", keyDerivation: "pbkdf2" });
+await encryption.initialize({
+  algorithm: "aes-256-gcm",
+  keyDerivation: "pbkdf2",
+});
 
 for (const row of rows) await encryption.encrypt(row);
 
@@ -758,7 +785,11 @@ import { AuditLogManager } from "@agentix-e/db-node/security";
 
 const audit = new AuditLogManager({
   logFilePath: "/var/lib/db/audit.jsonl",
-  retention: { maxEvents: 100_000, maxAgeMs: 90 * 24 * 3600 * 1000, minRetain: 1_000 },
+  retention: {
+    maxEvents: 100_000,
+    maxAgeMs: 90 * 24 * 3600 * 1000,
+    minRetain: 1_000,
+  },
   autoStart: true, // flush every 10 s; the interval is unref'd
 });
 
@@ -792,11 +823,11 @@ const after = await audit.verifyIntegrity();
 // }
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `valid` | Every retained event hashes to its recorded hash and chains onto its predecessor. |
+| Field       | Meaning                                                                                                                                                                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `valid`     | Every retained event hashes to its recorded hash and chains onto its predecessor.                                                                                                                                                                      |
 | `truncated` | `null` until retention removes something; then how many events went, the sequence number and hash of the newest removed one, and when. The retained chain verifies **from that hash**, so the policy that deleted them is not reported as an attacker. |
-| `errors` | One message per finding, in chain order: `seq gap at index N`, `chain broken at seq N`, `hash mismatch at seq N`. A gap *inside* the retained window is tampering and stays reported as one. |
+| `errors`    | One message per finding, in chain order: `seq gap at index N`, `chain broken at seq N`, `hash mismatch at seq N`. A gap _inside_ the retained window is tampering and stays reported as one.                                                           |
 
 **Retention removes a prefix, never a hole.** `prune(olderThanMs)` walks from the oldest event
 and stops at the first one that is not older than the cutoff; the ceiling in `maxEvents`
@@ -804,11 +835,11 @@ removes from the front. Deleting an event in the middle would leave a gap no anc
 describe, so a clock that jumped backwards stops the sweep instead of punching through it.
 "Older than" is strict: an event whose timestamp equals the cutoff stays.
 
-| Option | Default | `0` means | Applies |
-| --- | --- | --- | --- |
-| `maxEvents` | `1_000_000` | no ceiling | on `flush()`, from the head |
-| `maxAgeMs` | 90 days | no age limit | on `flush()`, from the head |
-| `minRetain` | `1_000` | — | floor for both rules and for `prune()` |
+| Option      | Default     | `0` means    | Applies                                |
+| ----------- | ----------- | ------------ | -------------------------------------- |
+| `maxEvents` | `1_000_000` | no ceiling   | on `flush()`, from the head            |
+| `maxAgeMs`  | 90 days     | no age limit | on `flush()`, from the head            |
+| `minRetain` | `1_000`     | —            | floor for both rules and for `prune()` |
 
 **The file is evidence, the window is memory.** `flush()` appends to the JSONL trail and only
 then applies retention to the in-memory window. The file is never rewritten, because rewriting
@@ -841,10 +872,10 @@ const report = auditor.generateReport("PCI-DSS");
 - **`record()` refuses an event that describes two outcomes at once** — `success` with an
   `error`, failure without one, success with no completion time, or success that moved no
   version. Refusing consumes no sequence number, so the trail stays contiguous.
-- **`oldestActiveKeyCreatedAt`** is the completion of the earliest *successful* rotation, and
+- **`oldestActiveKeyCreatedAt`** is the completion of the earliest _successful_ rotation, and
   `null` when nothing succeeded. A failed rotation created no key, so it cannot date one.
 - **`importJSONL()` verifies before it adopts.** Each line is checked for sequence number,
-  `prevHash` linkage, self-contradiction and its own hash, and *nothing* is imported until
+  `prevHash` linkage, self-contradiction and its own hash, and _nothing_ is imported until
   every line passes — a half-imported chain is a chain that lies about what it contains. It
   also refuses to splice a second chain onto a live one: a chain has one genesis.
 - **`verify()` separates two kinds of wrong.** `chainBroken` means the hashes or the numbering
@@ -899,7 +930,10 @@ scheduler.registerWindow({
   requiresApproval: false,
 });
 
-const upcoming = scheduler.getUpcomingOccurrences(Date.now(), Date.now() + 7 * 86_400_000);
+const upcoming = scheduler.getUpcomingOccurrences(
+  Date.now(),
+  Date.now() + 7 * 86_400_000,
+);
 ```
 
 Two rules matter when you read `upcoming`:
@@ -924,11 +958,11 @@ A conflict names the two **occurrences** that would overlap, in `conflictingSide
 their instances and intervals; `conflictingWindowIds` and `description` (both intervals in
 ISO-8601) are there for the operator. `resolveConflict()` touches exactly those instances:
 
-| Strategy      | Effect                                                                       |
-| ------------- | ---------------------------------------------------------------------------- |
-| `defer_lower` | cancels the conflicting run of the lower-priority window                     |
-| `defer_newer` | cancels the later-starting conflicting run                                   |
-| `allow_both`  | changes nothing                                                              |
+| Strategy      | Effect                                                   |
+| ------------- | -------------------------------------------------------- |
+| `defer_lower` | cancels the conflicting run of the lower-priority window |
+| `defer_newer` | cancels the later-starting conflicting run               |
+| `allow_both`  | changes nothing                                          |
 
 Two runs of the **same** window can conflict: a window whose `maxDurationMin` exceeds its
 recurrence period starts its next run before the previous one finished, and that is the one
@@ -950,18 +984,18 @@ parseCron("*/15 0-6 * * 1-5").minutes; // Set { 0, 15, 30, 45 }
 parseCron("0 3 * *"); // throws: expected 5 fields
 ```
 
-| Form        | Meaning                                              | Malformed becomes                       |
-| ----------- | ---------------------------------------------------- | --------------------------------------- |
-| `*`         | every value in the field                             | —                                       |
-| `a`         | one value                                            | outside `min..max` → names nothing      |
-| `a-b`       | inclusive, clamped to the field's real range         | `b < a`, or a missing bound → nothing   |
-| `*/n`, `a/n`, `a-b/n` | the range walked by `n`, clamped per value | `n` ≤ 0 or not a number → nothing       |
-| `a,b,c`     | union of any of the above                            | —                                       |
+| Form                  | Meaning                                      | Malformed becomes                     |
+| --------------------- | -------------------------------------------- | ------------------------------------- |
+| `*`                   | every value in the field                     | —                                     |
+| `a`                   | one value                                    | outside `min..max` → names nothing    |
+| `a-b`                 | inclusive, clamped to the field's real range | `b < a`, or a missing bound → nothing |
+| `*/n`, `a/n`, `a-b/n` | the range walked by `n`, clamped per value   | `n` ≤ 0 or not a number → nothing     |
+| `a,b,c`               | union of any of the above                    | —                                     |
 
 A field that names nothing produces a window that never fires; it does not throw. That is
 deliberate: `"0 3 30 2 *"` is 30 February — the expression is well-formed and the date never
 exists — and a scheduler that raised on it would fail at registration for a reason only the
-calendar knows. A field *count* below five is the one error, because `"0 3 * *"` is not a
+calendar knows. A field _count_ below five is the one error, because `"0 3 * *"` is not a
 schedule. A sixth field is ignored rather than misread (dialects that have a year put it last).
 
 The stride stays anchored where the expression puts it: `0-5/2` in `daysOfMonth` walks 0, 2, 4
@@ -975,29 +1009,31 @@ and then drops 0, because day zero does not exist — it does not quietly start 
 #### The lifecycle of a run
 
 ```ts
-const [run] = scheduler.getUpcomingOccurrences(Date.now(), Date.now() + 3_600_000);
+const [run] = scheduler.getUpcomingOccurrences(
+  Date.now(),
+  Date.now() + 3_600_000,
+);
 scheduler.startWindow(run.instanceId); // scheduled|approved -> in_progress
 scheduler.completeWindow(run.instanceId); // -> completed, actualEnd stamped
 // or: scheduler.failWindow(run.instanceId, "lock timeout");
 ```
 
-| State           | Entered by                                  | Counted as active by `getStats()` |
-| --------------- | ------------------------------------------- | --------------------------------- |
-| `pending`       | projection of a window with `requiresApproval` | no (it is in `pendingApprovals`) |
-| `scheduled`     | projection of a window without approval      | yes                               |
-| `approved`      | `approveWindow(id, who)`                     | no                                |
-| `in_progress`   | `startWindow(id)`                            | yes                               |
-| `force_override`| `forceStart(windowId)`                        | yes                               |
-| `completed`     | `completeWindow(id)`                         | no                                |
-| `failed`        | `failWindow(id, reason)`                      | no                                |
-| `cancelled`     | `cancelWindow(id, reason)` or a resolution      | no                                |
+| State            | Entered by                                     | Counted as active by `getStats()` |
+| ---------------- | ---------------------------------------------- | --------------------------------- |
+| `pending`        | projection of a window with `requiresApproval` | no (it is in `pendingApprovals`)  |
+| `scheduled`      | projection of a window without approval        | yes                               |
+| `approved`       | `approveWindow(id, who)`                       | no                                |
+| `in_progress`    | `startWindow(id)`                              | yes                               |
+| `force_override` | `forceStart(windowId)`                         | yes                               |
+| `completed`      | `completeWindow(id)`                           | no                                |
+| `failed`         | `failWindow(id, reason)`                       | no                                |
+| `cancelled`      | `cancelWindow(id, reason)` or a resolution     | no                                |
 
 `startWindow` refuses a `pending` run: `requiresApproval` exists so that a person decides before
 the database is taken offline, and starting without that decision would make the flag advisory.
 `startWindow`, `completeWindow` and `failWindow` are on `IMaintenanceScheduler`, not just on the
 implementation, because the executor — the component that knows a run began or ended — is typed
 against the interface.
-
 
 Resolving a conflict at 03:00 does not touch the same window's run next month. `getStats()` reports
 `conflictsDetected` and `conflictsResolved`; both were hardcoded to `0` before 1.3.0, so a

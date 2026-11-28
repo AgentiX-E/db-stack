@@ -28,16 +28,13 @@ const adapter = new RaftAdapter({
   storagePath: '/data/raft-node-1.db',
 });
 
-await adapter.init(
-  (data) => console.log('Applied:', data),
-  {
-    node: { host: '127.0.0.1', port: 8081 },
-    peers: [
-      { id: 2, host: '127.0.0.1', port: 8082 },
-      { id: 3, host: '127.0.0.1', port: 8083 },
-    ],
-  },
-);
+await adapter.init((data) => console.log('Applied:', data), {
+  node: { host: '127.0.0.1', port: 8081 },
+  peers: [
+    { id: 2, host: '127.0.0.1', port: 8082 },
+    { id: 3, host: '127.0.0.1', port: 8083 },
+  ],
+});
 
 // Propose a value through consensus
 if (await adapter.isLeader()) {
@@ -57,19 +54,19 @@ scalable across shards. db-cluster provides the consensus and cluster orchestrat
 layer that sits beneath your storage engine, giving you production-grade Raft consensus
 without reinventing it.
 
-| Feature | db-cluster |
-|---------|------------|
-| **Consensus** | Raft with joint consensus (safe membership changes) |
-| **Durability** | SQLite-backed WAL with automatic log compaction |
-| **Sharding** | Multi-RaftGroup per node, online resharding, strategy-based placement |
-| **High Availability** | Automatic failover, fencing tokens, adaptive election timeouts |
-| **Linearizable Reads** | LeaseRead + ReadIndex dual-path for consistent reads |
-| **Snapshots** | InstallSnapshot RPC with chunked streaming |
-| **Leadership Transfer** | Graceful handoff with NOOP barrier and drain phase |
-| **Formal Verification** | TLA+ specs for joint consensus elections + log replication |
-| **Security** | mTLS transport, circuit-breaker protection, connection pooling |
-| **Observability** | OTEL distributed tracing, structured logging, Prometheus metrics |
-| **Testing** | Chaos engineering, Jepsen-style validation, LTS soak tests — the totals in [Testing](#testing) are the run's |
+| Feature                 | db-cluster                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Consensus**           | Raft with joint consensus (safe membership changes)                                                          |
+| **Durability**          | SQLite-backed WAL with automatic log compaction                                                              |
+| **Sharding**            | Multi-RaftGroup per node, online resharding, strategy-based placement                                        |
+| **High Availability**   | Automatic failover, fencing tokens, adaptive election timeouts                                               |
+| **Linearizable Reads**  | LeaseRead + ReadIndex dual-path for consistent reads                                                         |
+| **Snapshots**           | InstallSnapshot RPC with chunked streaming                                                                   |
+| **Leadership Transfer** | Graceful handoff with NOOP barrier and drain phase                                                           |
+| **Formal Verification** | TLA+ specs for joint consensus elections + log replication                                                   |
+| **Security**            | mTLS transport, circuit-breaker protection, connection pooling                                               |
+| **Observability**       | OTEL distributed tracing, structured logging, Prometheus metrics                                             |
+| **Testing**             | Chaos engineering, Jepsen-style validation, LTS soak tests — the totals in [Testing](#testing) are the run's |
 
 ### What db-cluster is NOT
 
@@ -126,17 +123,17 @@ without reinventing it.
 
 ### Module Map
 
-| Module | Path | Role |
-|--------|------|------|
-| **RaftAdapter** | `src/consensus/core/` | Raft consensus adapter wrapping @maboke123/raft-core |
-| **RaftGroupManager** | `src/consensus/core/` | Multi-RaftGroup lifecycle and message routing |
-| **JointConsensusEngine** | `src/consensus/joint-consensus/` | Two-phase membership change (C_old → C_joint → C_new) |
-| **Transport** | `src/consensus/transport/` | TCP/mTLS/Batched/Shared transport with circuit breaker |
-| **Storage** | `src/consensus/storage/` | SQLite-backed WAL with log compaction |
-| **HA** | `src/ha/` | Failover detection, coordination, fencing, consistency verification |
-| **Sharding** | `src/interfaces/shard/` | Shard strategy, reshard planning, online migration |
-| **Extensions** | `src/consensus/extensions/` | InstallSnapshot, LeaderTransfer, LeaseRead, ReadIndex |
-| **TLA+** | `tla/` | Formal specs for JointConsensus and LogReplication |
+| Module                   | Path                             | Role                                                                |
+| ------------------------ | -------------------------------- | ------------------------------------------------------------------- |
+| **RaftAdapter**          | `src/consensus/core/`            | Raft consensus adapter wrapping @maboke123/raft-core                |
+| **RaftGroupManager**     | `src/consensus/core/`            | Multi-RaftGroup lifecycle and message routing                       |
+| **JointConsensusEngine** | `src/consensus/joint-consensus/` | Two-phase membership change (C_old → C_joint → C_new)               |
+| **Transport**            | `src/consensus/transport/`       | TCP/mTLS/Batched/Shared transport with circuit breaker              |
+| **Storage**              | `src/consensus/storage/`         | SQLite-backed WAL with log compaction                               |
+| **HA**                   | `src/ha/`                        | Failover detection, coordination, fencing, consistency verification |
+| **Sharding**             | `src/interfaces/shard/`          | Shard strategy, reshard planning, online migration                  |
+| **Extensions**           | `src/consensus/extensions/`      | InstallSnapshot, LeaderTransfer, LeaseRead, ReadIndex               |
+| **TLA+**                 | `tla/`                           | Formal specs for JointConsensus and LogReplication                  |
 
 ---
 
@@ -147,22 +144,22 @@ without reinventing it.
 ```typescript
 class RaftAdapter {
   constructor(config: RaftConfig);
-  
+
   // Lifecycle
   init(applyHandler?, tcpConfig?, sharedTransport?): Promise<void>;
   stop(): void;
-  
+
   // Write path
   propose(data: string): Promise<{ index: string; term: string }>;
   proposeAndWait(data: string): Promise<void>;
-  
+
   // Read path
-  isLeader(): Promise<boolean>;      // role AND contact with a majority
+  isLeader(): Promise<boolean>; // role AND contact with a majority
   getLeader(): Promise<number | null>;
   getQuorumHealth(): QuorumHealth | null;
   getTerm(): Promise<number>;
   readBarrier(): Promise<void>;
-  
+
   // Status
   getStatus(): Promise<ClusterStatus>;
   getProgress(): Promise<Record<string, number>>;
@@ -170,7 +167,7 @@ class RaftAdapter {
   getConnectedPeers(): number[];
   getAppliedIndex(): Promise<number>;
   getCommitIndex(): Promise<number>;
-  
+
   // Leadership
   transferLeadership(targetNodeId: string): Promise<void>;
   setForceLeader(enabled: boolean): void;
@@ -181,11 +178,11 @@ class RaftAdapter {
 
   // Configuration honesty
   getIgnoredSettings(): Array<{ setting: string; reason: string }>;
-  
+
   // Snapshots — scheduling belongs to raft-core, which snapshots on the
   // configured threshold after an apply. These are the explicit surfaces.
-  requestSnapshot(): Promise<SnapshotMeta | null>;   // force one now; idempotent
-  getSnapshotMeta(): SnapshotMeta | null;            // the boundary raft holds
+  requestSnapshot(): Promise<SnapshotMeta | null>; // force one now; idempotent
+  getSnapshotMeta(): SnapshotMeta | null; // the boundary raft holds
   refreshSnapshotMeta(): Promise<SnapshotMeta | null>; // re-read from storage
 }
 ```
@@ -194,24 +191,24 @@ class RaftAdapter {
 
 ```typescript
 interface RaftConfig {
-  id: number;                  // Node ID
-  electionTick: number;        // Election timeout in ticks
-  heartbeatTick: number;       // Heartbeat interval in ticks
-  tickIntervalMs?: number;     // Tick duration (default: 100)
-  
+  id: number; // Node ID
+  electionTick: number; // Election timeout in ticks
+  heartbeatTick: number; // Heartbeat interval in ticks
+  tickIntervalMs?: number; // Tick duration (default: 100)
+
   // Storage
-  storagePath?: string;        // SQLite file path
-  storage?: SqliteStorage;     // Pre-built storage instance
+  storagePath?: string; // SQLite file path
+  storage?: SqliteStorage; // Pre-built storage instance
   useInMemoryStorage?: boolean; // Test-only
-  
+
   // Network
-  transport?: Transport;       // Custom transport
-  peers?: number[];            // Peer node IDs
-  
+  transport?: Transport; // Custom transport
+  peers?: number[]; // Peer node IDs
+
   // Advanced
-  snapshotInterval?: number;   // Entries between snapshots (default: 200)
-  checkQuorum?: boolean;       // Leadership follows contact with a majority (default: true)
-  preVote?: boolean;           // Describes raft-core; it pre-votes unconditionally
+  snapshotInterval?: number; // Entries between snapshots (default: 200)
+  checkQuorum?: boolean; // Leadership follows contact with a majority (default: true)
+  preVote?: boolean; // Describes raft-core; it pre-votes unconditionally
   // @deprecated no-op: chunked snapshot install is unconditional.
   enableInstallSnapshot?: boolean;
   environment?: 'development' | 'production';
@@ -227,17 +224,17 @@ still required to commit — but a client routing by `isLeader()` keeps sending 
 cannot serve it, and reads the result as a slow cluster.
 
 With `checkQuorum` on (the default), `isLeader()` answers from the role **and** from contact with a
-majority inside one election timeout. Contact means a completed round trip through the *real*
+majority inside one election timeout. Contact means a completed round trip through the _real_
 transport: a layer that answers a message it dropped does not count, which is why the observer sits
 innermost. The library's own role is left alone — the node stops claiming it can serve, which is the
 part a router reads.
 
-| Surface | Meaning on a node that has lost its majority |
-|---|---|
-| `isLeader()` | `false` within one election timeout |
-| `getLeader()` | `null` — a leader that cannot hear a majority does not know who leads |
-| `getQuorumHealth()` | `hasQuorum: false` plus the silent peers, the majority and the window |
-| `propose()` / `proposeAndWait()` | rejects with `QUORUM_FAILED` immediately, naming the silent peers |
+| Surface                          | Meaning on a node that has lost its majority                          |
+| -------------------------------- | --------------------------------------------------------------------- |
+| `isLeader()`                     | `false` within one election timeout                                   |
+| `getLeader()`                    | `null` — a leader that cannot hear a majority does not know who leads |
+| `getQuorumHealth()`              | `hasQuorum: false` plus the silent peers, the majority and the window |
+| `propose()` / `proposeAndWait()` | rejects with `QUORUM_FAILED` immediately, naming the silent peers     |
 
 ```typescript
 const health = adapter.getQuorumHealth();
@@ -268,8 +265,8 @@ library actually holds, which is what makes fault injection and connection drain
 import { PartitionTransport } from '@agentix-e/db-cluster/testing';
 
 const parted = new PartitionTransport(adapter.getTransport()!);
-adapter.setTransport(parted);   // raft-core now routes through it
-parted.isolate([2]);            // peer 2 is unreachable in both directions
+adapter.setTransport(parted); // raft-core now routes through it
+parted.isolate([2]); // peer 2 is unreachable in both directions
 parted.heal();
 ```
 
@@ -315,7 +312,7 @@ received it.
 
 Raft reaches its starting position one of two ways: it installs the persisted snapshot
 (through `installSnapshot`, so the engine moves with it), or it starts from an empty log. There
-is a third state, and it is silent — a node whose engine is *behind* the log. The entries
+is a third state, and it is silent — a node whose engine is _behind_ the log. The entries
 between the engine and the log are applied by Raft without reaching the application, and they
 are already compacted out of the log, so nothing in the node's own record says they are
 missing. It answers reads with a hole in them.
@@ -354,7 +351,7 @@ const coordinator = new HAFailoverCoordinator({
 
 ### Fencing tokens: a refusal the old primary cannot argue with
 
-A lease answers *"has this node heard from a leader?"*. That is a question the old
+A lease answers _"has this node heard from a leader?"_. That is a question the old
 primary answers about itself, and a partitioned primary that still hears one peer
 answers it wrongly. Nothing inside the cluster can settle the argument, because
 both sides reason from the same incomplete picture.
@@ -398,12 +395,12 @@ if (await group.fencingRequest(true)) {
 
 Rules a store should rely on:
 
-| Situation | Verdict | Why |
-| --- | --- | --- |
-| token equals the highest accepted | **admitted** | a retry is not a usurper; at-least-once delivery depends on it |
-| token below the highest accepted | **refused** (`stale-token`) | the resource has moved past this writer |
-| token above the highest accepted | **admitted**, highest advances | the right to write has moved on |
-| no token, `requireToken` on | **refused** (`missing-token`) | a writer that cannot prove it is current must not be assumed to be |
+| Situation                         | Verdict                        | Why                                                                |
+| --------------------------------- | ------------------------------ | ------------------------------------------------------------------ |
+| token equals the highest accepted | **admitted**                   | a retry is not a usurper; at-least-once delivery depends on it     |
+| token below the highest accepted  | **refused** (`stale-token`)    | the resource has moved past this writer                            |
+| token above the highest accepted  | **admitted**, highest advances | the right to write has moved on                                    |
+| no token, `requireToken` on       | **refused** (`missing-token`)  | a writer that cannot prove it is current must not be assumed to be |
 
 `FencingManager` combines this with its heartbeat lease in one call, so a write
 path consults one gate that answers both questions: `checkWriteAllowed(shardId,
@@ -484,14 +481,14 @@ Every important operation emits structured logs and optional OTEL spans:
 ## Testing
 
 ```bash
-pnpm test                  # 2 532 tests, 156 test files
+pnpm test                  # 2 533 tests, 157 test files
 pnpm coverage              # the same, with per-file coverage gates
 pnpm test:perf             # performance benchmarks on a real 3-node TLS cluster
 pnpm tla-check             # TLA+ model checking
 ```
 
-- **156 test files, 2 532 tests** — unit, integration, boundary, chaos, LTS — 99.48 % lines,
-  99.74 % functions, 98.37 % branches, with a per-file floor of 95 %
+- **157 test files, 2 533 tests** — unit, integration, boundary, chaos, LTS — 99.48 % lines,
+  99.74 % functions, 98.35 % branches, with a per-file floor of 95 %
 - **TLA+ formal verification** — JointConsensus elections + log replication
 - **Jepsen-style validation** — fuzzy register checker + end-state scanning
 - **LTS soak tests** — 5-minute adaptive stability cycles, 0 leader changes

@@ -7,8 +7,7 @@
  * @module @agentix-e/db-node/health/impl
  */
 
-import type { IHealthProbe } from '../interfaces/IHealthProbe.js';
-import type { ProbeResult } from '../../core/types.js';
+import type { IHealthProbe, ProbeAnswer } from '../interfaces/IHealthProbe.js';
 
 /**
  * Create an IHealthProbe from simple function callbacks.
@@ -17,8 +16,8 @@ import type { ProbeResult } from '../../core/types.js';
  * ```ts
  * const probe = componentProbe('disk', 'Disk Monitor', {
  *   liveness: () => ({ ok: true }),
- *   readiness: () => {
- *     const free = checkDiskFree();
+ *   readiness: async () => {
+ *     const free = await diskFreeMb();
  *     return { ok: free > 100, message: `Disk free: ${free}MB` };
  *   },
  *   startup: () => ({ ok: true }),
@@ -29,9 +28,9 @@ export function componentProbe(
   probeId: string,
   componentName: string,
   checks: {
-    liveness: () => ProbeResult;
-    readiness?: () => ProbeResult;
-    startup?: () => ProbeResult;
+    liveness: () => ProbeAnswer;
+    readiness?: () => ProbeAnswer;
+    startup?: () => ProbeAnswer;
   },
 ): IHealthProbe {
   const live = checks.liveness;

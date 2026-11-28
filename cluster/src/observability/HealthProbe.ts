@@ -30,16 +30,23 @@ export interface ListenerFailure {
   at: number;
 }
 
+/** Either shape a registered probe may answer with. */
+export type ProbeAnswer = ProbeResult | Promise<ProbeResult>;
+
 /**
  * HealthProbe registry — aggregates multiple IHealthProbe instances.
+ *
+ * A registered probe may answer directly or await a dependency. Readiness is
+ * the check that asks whether peers are reachable, so refusing a promise here
+ * would make the one question that needs I/O impossible to put to the registry.
  */
 export class HealthProbe {
-  private readonly _probes: Map<string, () => ProbeResult> = new Map();
+  private readonly _probes: Map<string, () => ProbeAnswer> = new Map();
   private _fatalErrors = 0;
   private _startupComplete = false;
   private readonly _listenerFailures: ListenerFailure[] = [];
 
-  register(name: string, probe: () => ProbeResult): void {
+  register(name: string, probe: () => ProbeAnswer): void {
     this._probes.set(name, probe);
   }
 
@@ -76,7 +83,7 @@ export class HealthProbe {
   }
 
   /** Readiness: can we serve requests? */
-  readiness(): ProbeResult {
+  async readiness(): Promise<ProbeResult> {
     const t0 = performance.now();
     if (!this._startupComplete) {
       return { ok: false, reason: 'startup not complete', latencyMs: performance.now() - t0 };
@@ -84,15 +91,17 @@ export class HealthProbe {
     const results: Record<string, ProbeResult> = {};
     let allOk = true;
     for (const [name, probe] of this._probes) {
-      const r = probe();
+      const r = await probe();
       results[name] = r;
       if (!r.ok) allOk = false;
     }
     const problems: string[] = [];
     if (!allOk) {
+      // Name the reason as well as the probe: a verdict that says only "peer"
+      // sends an operator to find out why, and the reason is already in hand.
       const failed = Object.entries(results)
         .filter(([, r]) => !r.ok)
-        .map(([n]) => n)
+        .map(([n, r]) => (r.reason === undefined ? n : `${n} (${r.reason})`))
         .join(', ');
       problems.push(`unhealthy probes: ${failed}`);
     }
@@ -120,10 +129,10 @@ export class HealthProbe {
   }
 
   /** Full health status JSON (for /health endpoint). */
-  fullStatus(): HealthStatus {
+  async fullStatus(): Promise<HealthStatus> {
     const probeResults: Record<string, ProbeResult> = {
       liveness: this.liveness(),
-      readiness: this.readiness(),
+      readiness: await this.readiness(),
       startup: this.startup(),
     };
     const allOk = Object.values(probeResults).every((r) => r.ok);

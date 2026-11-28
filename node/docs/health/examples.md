@@ -33,19 +33,19 @@ health.registerFunctional('cache', 'In-Memory Cache', {
   },
 });
 
-// K8s-compatible endpoints
-app.get('/healthz', (req, res) => {
-  const result = health.liveness();
+// K8s-compatible endpoints — every verdict is awaited before it is answered
+app.get('/healthz', async (req, res) => {
+  const result = await health.liveness();
   res.status(result.ok ? 200 : 503).json(result);
 });
 
-app.get('/readyz', (req, res) => {
-  const result = health.readiness();
+app.get('/readyz', async (req, res) => {
+  const result = await health.readiness();
   res.status(result.ok ? 200 : 503).json(result);
 });
 
-app.get('/health', (req, res) => {
-  res.json(health.getHealthStatus());
+app.get('/health', async (req, res) => {
+  res.json(await health.getHealthStatus());
 });
 ```
 

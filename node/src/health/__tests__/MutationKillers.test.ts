@@ -51,7 +51,7 @@ function degradedProbe(id: string, name: string): IHealthProbe {
 // ── ComponentProbe ──────────────────────────────────────────
 
 describe('H-M: ComponentProbe nullish coalescing chain', () => {
-  it('H1: probe with all checks uses explicit functions', () => {
+  it('H1: probe with all checks uses explicit functions', async () => {
     const p = componentProbe('id', 'name', {
       liveness: () => ({ ok: true }),
       readiness: () => ({ ok: false }),
@@ -59,35 +59,35 @@ describe('H-M: ComponentProbe nullish coalescing chain', () => {
     });
     expect(p.probeId).toBe('id');
     expect(p.componentName).toBe('name');
-    expect(p.liveness().ok).toBe(true);
-    expect(p.readiness().ok).toBe(false);
-    expect(p.startup().ok).toBe(true);
+    expect((await p.liveness()).ok).toBe(true);
+    expect((await p.readiness()).ok).toBe(false);
+    expect((await p.startup()).ok).toBe(true);
   });
 
-  it('H2: probe without readiness falls back to liveness', () => {
+  it('H2: probe without readiness falls back to liveness', async () => {
     const p = componentProbe('id', 'name', {
       liveness: () => ({ ok: true }),
       startup: () => ({ ok: true }),
     });
     // readiness falls back to liveness
-    expect(p.readiness().ok).toBe(true);
+    expect((await p.readiness()).ok).toBe(true);
   });
 
-  it('H3: probe without readiness and startup falls back to liveness', () => {
+  it('H3: probe without readiness and startup falls back to liveness', async () => {
     const p = componentProbe('id', 'name', {
       liveness: () => ({ ok: true }),
     });
-    expect(p.readiness().ok).toBe(true);
-    expect(p.startup().ok).toBe(true);
+    expect((await p.readiness()).ok).toBe(true);
+    expect((await p.startup()).ok).toBe(true);
   });
 
-  it('H4: probe with readiness but no startup falls back readiness→liveness', () => {
+  it('H4: probe with readiness but no startup falls back readiness→liveness', async () => {
     const p = componentProbe('id', 'name', {
       liveness: () => ({ ok: true }),
       readiness: () => ({ ok: false, message: 'not ready' }),
     });
     // startup falls back to readiness
-    expect(p.startup().ok).toBe(false);
+    expect((await p.startup()).ok).toBe(false);
   });
 });
 
@@ -105,49 +105,49 @@ describe('H-M: HealthOrchestrator edge cases', () => {
     // Wait 50ms so elapsedMs > 0, making /→* mutation detectable.
     // If mutated to *1000, uptimeSeconds would jump to ~5ms*1000=5000, not ~0.
     await new Promise((r) => setTimeout(r, 50));
-    const results = orch.getComponentHealth();
+    const results = await orch.getComponentHealth();
     expect(results).toHaveLength(1);
     expect(results[0]!.componentId).toBe('a');
     expect(results[0]!.uptimeSeconds).toBeGreaterThanOrEqual(0);
     expect(results[0]!.uptimeSeconds).toBeLessThan(5); // far less than 5000
   });
 
-  it('H6: getAggregateStatus with empty registry returns healthy', () => {
-    const s = orch.getAggregateStatus();
+  it('H6: getAggregateStatus with empty registry returns healthy', async () => {
+    const s = await orch.getAggregateStatus();
     expect(s.status).toBe('healthy');
     expect(s.count).toBe(0);
   });
 
-  it('H7: getAggregateStatus all healthy', () => {
+  it('H7: getAggregateStatus all healthy', async () => {
     orch.registerComponent(liveProbe('a', 'A'));
     orch.registerComponent(liveProbe('b', 'B'));
-    const s = orch.getAggregateStatus();
+    const s = await orch.getAggregateStatus();
     expect(s.status).toBe('healthy');
     expect(s.count).toBe(2);
   });
 
-  it('H8: getAggregateStatus allUnhealthy path (|| chain)', () => {
+  it('H8: getAggregateStatus allUnhealthy path (|| chain)', async () => {
     // L178: ||→&& mutant — testing the allUnhealthy every() check
     orch.registerComponent(failProbe('a', 'A'));
     orch.registerComponent(failProbe('b', 'B'));
-    const s = orch.getAggregateStatus();
+    const s = await orch.getAggregateStatus();
     expect(s.status).toBe('unhealthy');
     expect(s.count).toBe(2);
   });
 
-  it('H9: getAggregateStatus degraded (partial failure)', () => {
+  it('H9: getAggregateStatus degraded (partial failure)', async () => {
     orch.registerComponent(liveProbe('a', 'A'));
     orch.registerComponent(failProbe('b', 'B'));
-    const s = orch.getAggregateStatus();
+    const s = await orch.getAggregateStatus();
     expect(s.status).toBe('degraded');
   });
 
   // L178/L189: ||→&& mutant — allUnhealthy every() returns false when some are healthy
-  it('H9b: getAggregateStatus — one unhealthy but not all unhealthy', () => {
+  it('H9b: getAggregateStatus — one unhealthy but not all unhealthy', async () => {
     orch.registerComponent(liveProbe('a', 'A'));
     orch.registerComponent(degradedProbe('b', 'B'));
     orch.registerComponent(failProbe('c', 'C'));
-    const s = orch.getAggregateStatus();
+    const s = await orch.getAggregateStatus();
     // Component b has liveness ok → not allUnhealthy → status is degraded, not unhealthy
     expect(s.status).toBe('degraded');
   });
@@ -157,49 +157,49 @@ describe('H-M: HealthOrchestrator edge cases', () => {
     // Wait 100ms to ensure systemElapsedMs is well above 0.
     // If /→*, uptimeSeconds = ~100ms * 1000 = 100000, not ~0.
     await new Promise((r) => setTimeout(r, 100));
-    const status = orch.getHealthStatus();
+    const status = await orch.getHealthStatus();
     expect(status.uptimeSeconds).toBeGreaterThanOrEqual(0);
     expect(status.uptimeSeconds).toBeLessThan(10);
     expect(typeof status.uptimeSeconds).toBe('number');
     expect(Number.isFinite(status.uptimeSeconds)).toBe(true);
   });
 
-  it('H11: getHealthStatus allUnhealthy via total>0 && every()', () => {
+  it('H11: getHealthStatus allUnhealthy via total>0 && every()', async () => {
     // L190: ||→&& mutant in allUnhealthy every() check
     orch.registerComponent(failProbe('a', 'A'));
     orch.registerComponent(failProbe('b', 'B'));
-    const s = orch.getHealthStatus();
+    const s = await orch.getHealthStatus();
     expect(s.status).toBe('unhealthy');
   });
 
-  it('H12: getHealthStatus empty registry', () => {
-    const s = orch.getHealthStatus();
+  it('H12: getHealthStatus empty registry', async () => {
+    const s = await orch.getHealthStatus();
     expect(s.status).toBe('healthy');
     expect(s.components).toHaveLength(0);
     expect(s.lastError).toBe(null);
   });
 
-  it('H13: getSummary builds failing component count (L212 -→+)', () => {
+  it('H13: getSummary builds failing component count (L212 -→+)', async () => {
     // L212: const failing = total - healthy;
     orch.registerComponent(liveProbe('a', 'A'));
     orch.registerComponent(liveProbe('b', 'B'));
     orch.registerComponent(failProbe('c', 'C'));
-    const summary = orch.getSummary();
+    const summary = await orch.getSummary();
     expect(summary).toContain('degraded');
     expect(summary).toContain('2/3 healthy');
     expect(summary).toContain('Failing: 1');
   });
 
-  it('H14: getSummary all healthy', () => {
+  it('H14: getSummary all healthy', async () => {
     orch.registerComponent(liveProbe('a', 'A'));
     orch.registerComponent(liveProbe('b', 'B'));
-    const summary = orch.getSummary();
+    const summary = await orch.getSummary();
     expect(summary).toContain('healthy');
     expect(summary).toContain('2/2 healthy');
     expect(summary).not.toContain('Failing:');
   });
 
-  it('H15: _safeProbe catches errors and returns ok:false (L235 false→true)', () => {
+  it('H15: _safeProbe catches errors and returns ok:false (L235 false→true)', async () => {
     // L235: _safeProbe returns { ok: false } on exception
     // We trigger this by registering a probe that throws
     const throwingProbe: IHealthProbe = componentProbe('bomb', 'Bomb', {
@@ -208,53 +208,53 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       },
     });
     orch.registerComponent(throwingProbe);
-    const results = orch.getComponentHealth();
+    const results = await orch.getComponentHealth();
     expect(results).toHaveLength(1);
     // The error is swallowed and we get ok:false
     expect(results[0]!.liveness.ok).toBe(false);
   });
 
-  it('H16: isStartupComplete returns boolean after register', () => {
+  it('H16: isStartupComplete returns boolean after register', async () => {
     orch.registerComponent(liveProbe('a', 'A'));
     // Startup-complete flag is tracked internally; verify it exists as boolean
     const started = orch.isStartupComplete();
     expect(typeof started).toBe('boolean');
   });
 
-  it('H17: startup() with all probes passing — triggers _startupComplete = true', () => {
+  it('H17: startup() with all probes passing — triggers _startupComplete = true', async () => {
     // L138-142: errors.length === 0 branches set _startupComplete = true
     orch.registerComponent(liveProbe('a', 'A'));
     orch.registerComponent(liveProbe('b', 'B'));
-    const result = orch.startup();
+    const result = await orch.startup();
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
     // After successful startup, _startupComplete should be true
     expect(orch.isStartupComplete()).toBe(true);
   });
 
-  it('H18: startup() with failing probes — _startupComplete stays false', () => {
+  it('H18: startup() with failing probes — _startupComplete stays false', async () => {
     orch.registerComponent(failProbe('a', 'A'));
-    const result = orch.startup();
+    const result = await orch.startup();
     expect(result.ok).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
     expect(orch.isStartupComplete()).toBe(false);
   });
 
-  it('H19: startup() subsequently returns ok when already completed', () => {
+  it('H19: startup() subsequently returns ok when already completed', async () => {
     orch.registerComponent(liveProbe('a', 'A'));
-    orch.startup(); // first call marks complete
-    const result2 = orch.startup();
+    await orch.startup(); // first call marks complete
+    const result2 = await orch.startup();
     expect(result2.ok).toBe(true);
   });
 
   // L199: lastError !== null check — if !==→===, find() picks wrong component
-  it('H20: getHealthStatus lastError is null for healthy components', () => {
+  it('H20: getHealthStatus lastError is null for healthy components', async () => {
     orch.registerComponent(liveProbe('a', 'A'));
-    const s = orch.getHealthStatus();
+    const s = await orch.getHealthStatus();
     expect(s.lastError).toBe(null);
   });
 
-  it('H20b: lastError propagates from failed liveness check', () => {
+  it('H20b: lastError propagates from failed liveness check', async () => {
     // Errored liveness sets lastError — must propagate through find()
     const throwingProbe: IHealthProbe = componentProbe('err', 'Err', {
       liveness: () => {
@@ -263,15 +263,15 @@ describe('H-M: HealthOrchestrator edge cases', () => {
     });
     orch.registerComponent(throwingProbe);
     // Trigger liveness check to store the error
-    orch.liveness();
-    const s = orch.getHealthStatus();
+    await orch.liveness();
+    const s = await orch.getHealthStatus();
     // The error from the liveness check should be visible
     expect(s.lastError).not.toBe(null);
   });
 
   // ── L178, L189: ||→&& in allUnhealthy De Morgan check ──────
 
-  it('H21: getAggregateStatus — liveness-only failure is degraded, not unhealthy (||→&& killer)', () => {
+  it('H21: getAggregateStatus — liveness-only failure is degraded, not unhealthy (||→&& killer)', async () => {
     // Component with liveness=true but readiness=false
     // Original: !(lives || ready) = !(true)=false → allUnhealthy=false → degraded
     // L178 mutant (||→&&): !(lives && ready) = !(false)=true → allUnhealthy=true → unhealthy
@@ -283,11 +283,11 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       readiness: () => ({ ok: false, type: 'readiness', message: 'not ready' }),
       startup: () => ({ ok: true, type: 'startup' }),
     });
-    const status = orc2.getAggregateStatus();
+    const status = await orc2.getAggregateStatus();
     expect(status.status).toBe('degraded');
   });
 
-  it('H22: getHealthStatus — liveness-only failure is degraded (||→&& killer)', () => {
+  it('H22: getHealthStatus — liveness-only failure is degraded (||→&& killer)', async () => {
     const orc2 = new HealthOrchestrator();
     orc2.registerComponent({
       probeId: 'half',
@@ -296,11 +296,11 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       readiness: () => ({ ok: false, type: 'readiness', message: 'not ready' }),
       startup: () => ({ ok: true, type: 'startup' }),
     });
-    const s = orc2.getHealthStatus();
+    const s = await orc2.getHealthStatus();
     expect(s.status).toBe('degraded');
   });
 
-  it('H23: getAggregateStatus — readiness-only failure is degraded (double-safe)', () => {
+  it('H23: getAggregateStatus — readiness-only failure is degraded (double-safe)', async () => {
     const orc2 = new HealthOrchestrator();
     orc2.registerComponent({
       probeId: 'half2',
@@ -309,11 +309,11 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       readiness: () => ({ ok: true, type: 'readiness' }),
       startup: () => ({ ok: true, type: 'startup' }),
     });
-    const status = orc2.getAggregateStatus();
+    const status = await orc2.getAggregateStatus();
     expect(status.status).toBe('degraded');
   });
 
-  it('H24: getAggregateStatus — multiple components with one fully unhealthy, others healthy → degraded', () => {
+  it('H24: getAggregateStatus — multiple components with one fully unhealthy, others healthy → degraded', async () => {
     const orc2 = new HealthOrchestrator();
     // Component 1: fully unhealthy (liveness+readiness both fail)
     orc2.registerComponent({
@@ -331,11 +331,11 @@ describe('H-M: HealthOrchestrator edge cases', () => {
       readiness: () => ({ ok: true, type: 'readiness' }),
       startup: () => ({ ok: true, type: 'startup' }),
     });
-    const status = orc2.getAggregateStatus();
+    const status = await orc2.getAggregateStatus();
     expect(status.status).toBe('degraded');
   });
 
-  it('H25: registerComponent defaults critical to true (L47 true→false killer)', () => {
+  it('H25: registerComponent defaults critical to true (L47 true→false killer)', async () => {
     const orc = new HealthOrchestrator();
     // Register without specifying critical — defaults to true via ?? true
     orc.registerComponent({
@@ -347,7 +347,7 @@ describe('H-M: HealthOrchestrator edge cases', () => {
     });
     // If critical defaults to false (mutated), the failing component
     // would NOT make the overall status "unhealthy"
-    const s = orc.getHealthStatus();
+    const s = await orc.getHealthStatus();
     // With only one component and it's failing, status must be unhealthy
     // (critical=true is the gate)
     expect(s.status).toBe('unhealthy');

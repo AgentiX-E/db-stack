@@ -17,11 +17,11 @@ import {
 } from './ListenerFailureReporter';
 
 describe('ListenerFailureReporter (C-04)', () => {
-  it('the default reporter is inert and cannot throw', () => {
+  it('the default reporter is inert and cannot throw', async () => {
     expect(() => ignoreListenerFailure({ source: 'x', error: new Error('boom'), at: 1 })).not.toThrow();
   });
 
-  it('a health reporter forwards the source, error and timestamp to the probe', () => {
+  it('a health reporter forwards the source, error and timestamp to the probe', async () => {
     const probe = new HealthProbe();
     probe.markStartupComplete();
     const report = createHealthFailureReporter(probe);
@@ -38,11 +38,11 @@ describe('ListenerFailureReporter (C-04)', () => {
       source: 'WatchApi.handler',
       at: 42,
     });
-    expect(probe.readiness().ok).toBe(false);
-    expect(probe.readiness().reason).toContain('WatchApi.handler');
+    expect((await probe.readiness()).ok).toBe(false);
+    expect((await probe.readiness()).reason).toContain('WatchApi.handler');
   });
 
-  it('a failure with no error is still recorded', () => {
+  it('a failure with no error is still recorded', async () => {
     const probe = new HealthProbe();
     const report = createHealthFailureReporter(probe);
     report({ source: 'EventBus.async', error: undefined, at: 7 });

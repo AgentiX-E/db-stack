@@ -32,7 +32,7 @@ describe.each(ENGINE_CASES)('$name E2E: HealthProbe', ({ factory }) => {
 
   it('should report liveness as ok', async () => {
     const probe = await factory.createHealthProbe();
-    const result = probe.liveness();
+    const result = await probe.liveness();
     expect(result.ok).toBe(true);
   });
 
@@ -63,9 +63,9 @@ describe.each(ENGINE_CASES)('$name E2E: HealthProbe', ({ factory }) => {
 
   it('should handle multiple liveness calls idempotently', async () => {
     const probe = await factory.createHealthProbe();
-    const r1 = probe.liveness();
-    const r2 = probe.liveness();
-    const r3 = probe.liveness();
+    const r1 = await probe.liveness();
+    const r2 = await probe.liveness();
+    const r3 = await probe.liveness();
     expect(r1.ok).toBe(true);
     expect(r2.ok).toBe(true);
     expect(r3.ok).toBe(true);
@@ -73,7 +73,7 @@ describe.each(ENGINE_CASES)('$name E2E: HealthProbe', ({ factory }) => {
 
   it('should handle concurrent readiness calls', async () => {
     const probe = await factory.createHealthProbe();
-    const results = await Promise.all([probe.readiness(), probe.readiness(), probe.readiness()]);
+    const results = await Promise.all([await probe.readiness(), await probe.readiness(), await probe.readiness()]);
     for (const r of results) {
       expect(r.ok).toBe(true);
     }
@@ -81,7 +81,7 @@ describe.each(ENGINE_CASES)('$name E2E: HealthProbe', ({ factory }) => {
 
   it('should not throw on liveness when engine is healthy', async () => {
     const probe = await factory.createHealthProbe();
-    expect(() => probe.liveness()).not.toThrow();
+    expect((await probe.liveness()).ok).toBe(true);
   });
 
   it('should provide details in startup result when available', async () => {
@@ -92,15 +92,15 @@ describe.each(ENGINE_CASES)('$name E2E: HealthProbe', ({ factory }) => {
 
   it('liveness result should have {ok:boolean} shape', async () => {
     const probe = await factory.createHealthProbe();
-    const result = probe.liveness();
+    const result = await probe.liveness();
     expect(Object.keys(result)).toContain('ok');
     expect(typeof result.ok).toBe('boolean');
   });
 
   it('liveness should return deterministic results', async () => {
     const probe = await factory.createHealthProbe();
-    const r1 = probe.liveness();
-    const r2 = probe.liveness();
+    const r1 = await probe.liveness();
+    const r2 = await probe.liveness();
     expect(r1.ok).toBe(r2.ok);
   });
 
@@ -113,62 +113,62 @@ describe.each(ENGINE_CASES)('$name E2E: HealthProbe', ({ factory }) => {
 
   it('should have ProbeResult shape', async () => {
     const probe = await factory.createHealthProbe();
-    const lr = probe.liveness();
+    const lr = await probe.liveness();
     expect(typeof lr.ok).toBe('boolean');
     expect(lr).toHaveProperty('ok');
   });
 });
 
 describe.each(ENGINE_CASES)('$name E2E: HealthOrchestrator', ({ factory }) => {
-  it('should create health orchestrator', () => {
+  it('should create health orchestrator', async () => {
     const orch = factory.createHealthOrchestrator();
     expect(orch).toBeDefined();
   });
 
-  it('should register functional probes', () => {
+  it('should register functional probes', async () => {
     const orch = factory.createHealthOrchestrator();
     expect(typeof orch.registerFunctional).toBe('function');
   });
 
-  it('should evaluate liveness across registered probes', () => {
+  it('should evaluate liveness across registered probes', async () => {
     const orch = factory.createHealthOrchestrator();
     orch.registerFunctional('test-probe', 'Test', {
       liveness: () => ({ ok: true }),
       readiness: () => ({ ok: true }),
     });
-    const status = orch.liveness();
+    const status = await orch.liveness();
     expect(status).toBeDefined();
     expect(status.ok).toBe(true);
   });
 
-  it('should return component health array', () => {
+  it('should return component health array', async () => {
     const orch = factory.createHealthOrchestrator();
     orch.registerFunctional('test-probe', 'Test', {
       liveness: () => ({ ok: true }),
       readiness: () => ({ ok: true }),
     });
-    const compHealth = orch.getComponentHealth();
+    const compHealth = await orch.getComponentHealth();
     expect(Array.isArray(compHealth)).toBe(true);
   });
 
-  it('should produce a summary string', () => {
+  it('should produce a summary string', async () => {
     const orch = factory.createHealthOrchestrator();
     orch.registerFunctional('test-probe', 'Test', {
       liveness: () => ({ ok: true }),
       readiness: () => ({ ok: true }),
     });
-    const summary = orch.getSummary();
+    const summary = await orch.getSummary();
     expect(typeof summary).toBe('string');
     expect(summary.length).toBeGreaterThan(0);
   });
 
-  it('should return aggregate status', () => {
+  it('should return aggregate status', async () => {
     const orch = factory.createHealthOrchestrator();
     orch.registerFunctional('test-probe', 'Test', {
       liveness: () => ({ ok: true }),
       readiness: () => ({ ok: true }),
     });
-    const status = orch.getAggregateStatus();
+    const status = await orch.getAggregateStatus();
     expect(status).toHaveProperty('status');
     expect(status).toHaveProperty('count');
   });

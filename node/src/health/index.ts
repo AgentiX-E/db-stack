@@ -1,4 +1,4 @@
-export type { IHealthProbe } from './interfaces/IHealthProbe.js';
+export type { IHealthProbe, ProbeAnswer } from './interfaces/IHealthProbe.js';
 export type { IComponentRegistrar } from './interfaces/IComponentRegistrar.js';
 export type { IHealthOrchestrator } from './interfaces/IHealthOrchestrator.js';
 export type {
