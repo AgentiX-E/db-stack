@@ -1,6 +1,6 @@
 # @agentix-e/db-node
 
-**Everything a single database node needs — 20 modules, 3 245 test cases in 161 files, every
+**Everything a single database node needs — 20 modules, 3 257 test cases in 164 files, every
 coverage dimension at or above 95 %.**
 
 Twenty modules that operate on **one node**, in one package. A probe probes its own
@@ -29,7 +29,7 @@ node.health.HealthOrchestrator;
 | [`auth`](./src/auth/)                     | Authentication interfaces. Interfaces only — `security` implements them.                                    | 32    |
 | [`autoscaler`](./src/autoscaler/)         | Scaling decisions from multi-dimensional metrics.                                                           | 167   |
 | [`autotuner`](./src/autotuner/)           | Tuning recommendations for engine parameters.                                                               | 27    |
-| [`backup`](./src/backup/)                 | Real capture, digests, bucket confirmation, a durable inventory, chains, PITR.                              | 333   |
+| [`backup`](./src/backup/)                 | Real capture, digests, bucket confirmation, a durable inventory, chains, PITR.                              | 345   |
 | [`chaosengine`](./src/chaosengine/)       | Fault definitions and the scenario runner.                                                                  | 128   |
 | [`circuitbreaker`](./src/circuitbreaker/) | Breaker state per call site.                                                                                | 15    |
 | [`configwatcher`](./src/configwatcher/)   | Configuration watching and change notification.                                                             | 128   |
@@ -45,8 +45,8 @@ node.health.HealthOrchestrator;
 | [`security`](./src/security/)             | TLS, RBAC and encryption at rest — the implementation of `auth`.                                            | 629   |
 | [`slacollector`](./src/slacollector/)     | SLA event collection.                                                                                       | 13    |
 
-**Total: `pnpm coverage` reports 161 files and 3 245 tests, 0 failures** (`test:unit`: 142 files /
-2 913; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
+**Total: `pnpm coverage` reports 164 files and 3 257 tests, 0 failures** (`test:unit`: 145 files /
+2 925; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
 column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
 any of these numbers disagrees with it — a number in prose has no compiler, so this gate is that
 compiler.
@@ -55,7 +55,7 @@ compiler.
 
 | Measure                                              | Result                                                                                                                                                |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Coverage — lines / statements / functions / branches | 99.70 % / 99.70 % / 99.87 % / 98.79 %, every file gated at 95 %                                                                                       |
+| Coverage — lines / statements / functions / branches | 99.65 % / 99.65 % / 99.87 % / 98.74 %, every file gated at 95 %                                                                                       |
 | Mutation — sixteen files in four modules, gate at 86 | each mutant read against the tests the report attributes to it; the score and the survivor arguments are in [`docs/maturity.md`](../docs/maturity.md) |
 | Published surface                                    | 22 entry points, 375 exports, 69 documents, and `pnpm check:docs-api` fails if a documented symbol is not exported                                    |
 
@@ -97,7 +97,7 @@ the one to read first: it states what the module decides and what it deliberatel
 does not.
 
 ```bash
-npm test              # 161 files, 3 245 tests
+npm test              # 164 files, 3 257 tests
 npm run coverage      # writes coverage/test-report.json, the file check:test-counts reads
 ```
 

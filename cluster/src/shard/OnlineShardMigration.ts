@@ -75,6 +75,8 @@ interface MigrationState {
    * comparison would call that "behind" and refuse a migration that was complete.
    */
   quiesced: boolean;
+  /** When the last source scan ended, for the coordinator's spacing budget. */
+  lastScanAt?: number;
   error?: string;
   /**
    * The run, so the control methods can wait for it and read the phase it settled
@@ -220,7 +222,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     for (;;) {
       this.checkpoint(state);
       if (state.stopRequested || watermark >= state.snapshotVersion) return watermark;
-      const batch = await this.source.scanEntries(state.config.shardId, watermark, state.config.batchSize);
+      const batch = await this.scan(state, watermark);
       if (batch.length === 0) return watermark;
       await this.applyBatch(state, batch);
       watermark = batch[batch.length - 1]!.version;
@@ -244,7 +246,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     for (;;) {
       this.checkpoint(state);
       if (state.stopRequested) return;
-      const batch = await this.source.scanEntries(state.config.shardId, state.caughtUpVersion, state.config.batchSize);
+      const batch = await this.scan(state, state.caughtUpVersion);
       if (batch.length === 0) return;
       await this.applyBatch(state, batch);
       state.caughtUpVersion = batch[batch.length - 1]!.version;
@@ -264,7 +266,7 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     const deadline = Date.now() + finalSyncTimeoutMs;
     for (;;) {
       this.checkpoint(state);
-      const batch = await this.source.scanEntries(shardId, state.caughtUpVersion, state.config.batchSize);
+      const batch = await this.scan(state, state.caughtUpVersion);
       if (batch.length === 0) {
         state.quiesced = true;
         break;
@@ -310,6 +312,25 @@ export class OnlineShardMigration implements IOnlineShardMigration {
     state.phase = 'completed';
     this.writeSuspended.delete(state.migrationId);
     this.notify(state);
+  }
+
+  /**
+   * One source scan, spaced from the previous one when the caller set a budget.
+   *
+   * The delay lives here rather than in the source: every pass — initial,
+   * catch-up and cutover — goes through it, so a plan cannot opt out by taking
+   * another branch. The source interface stays engine-agnostic; an engine that
+   * has its own rate limit can still enforce one behind the port.
+   */
+  private async scan(state: MigrationState, afterVersion: number): Promise<ShardScanEntry[]> {
+    const budget = state.config.maxLatencySpikeMs;
+    if (budget !== undefined && budget > 0 && state.lastScanAt !== undefined) {
+      const remaining = budget - (Date.now() - state.lastScanAt);
+      if (remaining > 0) await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+    }
+    const batch = await this.source.scanEntries(state.config.shardId, afterVersion, state.config.batchSize);
+    state.lastScanAt = Date.now();
+    return batch;
   }
 
   /** Read, then write, one batch. A key deleted between the two is reconciled, not copied. */

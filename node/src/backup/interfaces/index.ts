@@ -336,6 +336,18 @@ export interface IBackupSource {
    * yesterday.
    */
   logHorizon?(): Promise<number | null>;
+
+  /**
+   * Rehearse a replay from an artefact without replacing the engine's state.
+   *
+   * The manager hands a verified, downloaded artefact; the source reads it and
+   * reports how far back its log can actually replay from that point. This is
+   * the check that catches an over-reported `logHorizon()`: the declared number
+   * is what the engine says, and the rehearsal is what it did. Optional, because
+   * an engine with no drill cannot be asked, and a manager that has no answer
+   * says so rather than trusting the declaration and calling it verified.
+   */
+  replayDrill?(artifactPath: string): Promise<{ actualHorizonMs: number }>;
 }
 
 /**

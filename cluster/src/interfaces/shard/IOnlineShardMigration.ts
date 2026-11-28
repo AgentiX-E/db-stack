@@ -8,6 +8,16 @@ export interface IMigrationConfig {
   finalSyncTimeoutMs: number;
   /** Whether to pause writes during final cutover */
   pauseWritesOnCutover: boolean;
+  /**
+   * Minimum spacing between consecutive source scans, in milliseconds.
+   *
+   * This is the budget a reshard plan calls `maxLatencySpikeMs`: it limits the
+   * strain a copy puts on the source rather than how long the whole copy may
+   * take. Omitted or zero means no inserted delay, so existing callers keep
+   * their timing. The coordinator measures from the end of one scan to the
+   * start of the next; a scan that itself takes longer is not sped up.
+   */
+  maxLatencySpikeMs?: number;
 }
 
 /**

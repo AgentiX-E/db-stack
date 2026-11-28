@@ -29,16 +29,22 @@
  *
  * A split re-keys entries (shard 7 becomes 71 and 72, and `user:5` belongs to one
  * of them), and a merge copies a shard into a target that already holds entries.
- * Neither has a source count to conserve against, so neither can be reported as
- * complete by the same evidence. Rather than run a copy that cannot be checked,
- * `executePlan` refuses both and says why — a refusal an operator can act on
- * beats a percentage that measures nothing.
+ * Neither has a source count to conserve against by the move's byte-for-byte
+ * rule. With an {@link IReshardShapeExecutor} supplied, the planner gives each
+ * shape the rule it can actually prove: a summed target count for a split, a
+ * baseline-plus-new-keys delta for a merge. Without one it refuses both and says
+ * why — a refusal an operator can act on beats a percentage that measures nothing.
  *
  * @module @agentix-e/db-cluster/shard
  */
 
 import type { IMigrationStatus, IOnlineShardMigration } from '../interfaces/shard/IOnlineShardMigration';
 import type { IMigrationProgress, IReshardPlanner, ReshardPlan } from '../interfaces/shard/IReshardPlanner';
+import type {
+  IReshardShapeExecutor,
+  ReshardShapeOutcome,
+  ReshardShapeRequest,
+} from '../interfaces/shard/IReshardShapeExecutor';
 import type { MigrationProgressEvent } from '../interfaces/shard/IOnlineShardMigration';
 
 /** The coordinator's phases that mean "this plan is over, one way or another". */
@@ -66,16 +72,21 @@ export class ReshardPlanner implements IReshardPlanner {
   /** migrationId → planId, the direction the coordinator's events arrive in. */
   private planOf = new Map<string, string>();
   private unsubscribe: (() => void) | null = null;
+  /** planId → the shape executor's measured conservation proof. */
+  private shapeOutcomes = new Map<string, ReshardShapeOutcome>();
   private readonly _report: (failure: { source: string; error?: unknown; at?: number }) => void;
 
   /**
    * @param migration the coordinator that performs the copy; without one there is
    * nothing to execute and `executePlan` says so instead of advancing a timer
    * @param onListenerFailure sink for a swallowed progress callback (C-04)
+   * @param shape the executor for split and merge; without one the planner
+   * refuses those shapes rather than reporting an unchecked copy
    */
   constructor(
     private readonly migration?: IOnlineShardMigration,
     onListenerFailure?: (failure: { source: string; error?: unknown; at?: number }) => void,
+    private readonly shape?: IReshardShapeExecutor,
   ) {
     this._report = onListenerFailure ?? (() => {});
     if (!migration) return;
@@ -147,6 +158,44 @@ export class ReshardPlanner implements IReshardPlanner {
     // Everything that can be refused is refused before a migration is
     // registered: a plan that cannot be carried out should cost a millisecond,
     // not a started copy that has to be unwound.
+    if (plan.type === 'split' || plan.type === 'merge') {
+      if (this.shape === undefined) this.refuseShape(plan);
+      const shapePlan = plan;
+      const request = this.shapeRequest(shapePlan);
+      const acceptedAt = Date.now();
+      this.activePlans.add(plan.planId);
+      this.plans.set(plan.planId, plan);
+      const preparing: IMigrationProgress = {
+        planId: plan.planId,
+        status: 'preparing',
+        progressPercent: 0,
+        currentBatch: 0,
+        totalBatches: 0,
+        bytesMigrated: 0,
+        totalBytes: plan.estimatedSizeBytes,
+        startedAt: acceptedAt,
+        estimatedCompletionAt: 0,
+        errors: [],
+      };
+      this.progressMap.set(plan.planId, preparing);
+      this.emitProgress(preparing);
+      const result = await this.shape.execute(request);
+      this.shapeOutcomes.set(plan.planId, result);
+      const settled: IMigrationProgress = {
+        ...preparing,
+        status: result.consistent ? 'completed' : 'failed',
+        progressPercent: result.consistent ? 100 : 0,
+        currentBatch: 1,
+        totalBatches: 1,
+        bytesMigrated: result.bytesCopied,
+        totalBytes: result.bytesCopied,
+        errors: result.consistent ? [] : [`conservation mismatch: ${result.mismatches} entry(ies)`],
+      };
+      this.progressMap.set(plan.planId, settled);
+      this.activePlans.delete(plan.planId);
+      this.emitProgress(settled);
+      return plan.planId;
+    }
     const config = this.configFor(plan);
 
     this.activePlans.add(plan.planId);
@@ -199,26 +248,12 @@ export class ReshardPlanner implements IReshardPlanner {
     batchSize: number;
     finalSyncTimeoutMs: number;
     pauseWritesOnCutover: boolean;
+    maxLatencySpikeMs: number;
   } {
     if (!this.migration) {
       throw new Error(
         `plan ${plan.planId} cannot execute: the planner was constructed without a migration coordinator, ` +
           'and a plan is a description until something copies the shard',
-      );
-    }
-    if (plan.type === 'split') {
-      throw new Error(
-        `split plans are not executable: shard ${plan.sourceShardIds[0]} becomes ` +
-          `${plan.targetShardIds.join(' and ')} at key "${plan.splitKey ?? ''}", and a byte-for-byte copy cannot ` +
-          'decide which side of a boundary an entry belongs to — a partial copy has no source count to ' +
-          'conserve against, so it could neither be verified nor reported as complete',
-      );
-    }
-    if (plan.type === 'merge') {
-      throw new Error(
-        `merge plans are not executable: ${plan.sourceShardIds.join(' and ')} would be copied into ` +
-          `${plan.targetShardIds[0]}, which already holds entries, and the coordinator completes by comparing ` +
-          "the target's count with the source's — a comparison that holds for a move and not for a union",
       );
     }
     if (plan.sourceNode === undefined || plan.targetNode === undefined) {
@@ -240,6 +275,46 @@ export class ReshardPlanner implements IReshardPlanner {
       // coordinator's equivalent is suspending them for the cutover, which is
       // what makes the last pass finite.
       pauseWritesOnCutover: plan.dualWriteRequired,
+      // The plan's latency budget is now an instruction to the coordinator's
+      // scan path, not a field nobody reads.
+      maxLatencySpikeMs: plan.maxLatencySpikeMs,
+    };
+  }
+
+  /** The reason a shape cannot be executed without an executor, kept in one place. */
+  private refuseShape(plan: ReshardPlan): never {
+    if (plan.type === 'split') {
+      throw new Error(
+        `split plans are not executable: shard ${plan.sourceShardIds[0]} becomes ` +
+          `${plan.targetShardIds.join(' and ')} at key "${plan.splitKey ?? ''}", and a byte-for-byte copy cannot ` +
+          'decide which side of a boundary an entry belongs to — a partial copy has no source count to ' +
+          'conserve against, so it could neither be verified nor reported as complete',
+      );
+    }
+    throw new Error(
+      `merge plans are not executable: ${plan.sourceShardIds.join(' and ')} would be copied into ` +
+        `${plan.targetShardIds[0]}, which already holds entries, and the coordinator completes by comparing ` +
+        "the target's count with the source's — a comparison that holds for a move and not for a union",
+    );
+  }
+
+  /** The shape request a plan describes, with the placement the caller supplied. */
+  private shapeRequest(plan: ReshardPlan): ReshardShapeRequest {
+    if (plan.sourceNode === undefined || plan.targetNode === undefined) {
+      throw new Error(
+        `plan ${plan.planId} does not say where shard ${plan.sourceShardIds[0]} lives: ` +
+          'pass both nodes to createMovePlan(shardId, targetNodeId, sourceNodeId)',
+      );
+    }
+    return {
+      planId: plan.planId,
+      type: plan.type as 'split' | 'merge',
+      sourceShardIds: plan.sourceShardIds,
+      targetShardIds: plan.targetShardIds,
+      ...(plan.splitKey === undefined ? {} : { splitKey: plan.splitKey }),
+      sourceNode: plan.sourceNode,
+      targetNode: plan.targetNode,
+      batchSize: plan.batchSize,
     };
   }
 
@@ -346,6 +421,8 @@ export class ReshardPlanner implements IReshardPlanner {
    * it had invented.
    */
   async verifyConsistency(planId: string): Promise<{ consistent: boolean; mismatches: number }> {
+    const shape = this.shapeOutcomes.get(planId);
+    if (shape !== undefined) return { consistent: shape.consistent, mismatches: shape.mismatches };
     const progress = this.progressMap.get(planId);
     if (!progress) {
       return { consistent: false, mismatches: 1 };
@@ -415,6 +492,7 @@ export class ReshardPlanner implements IReshardPlanner {
     this.activePlans.clear();
     this.migrations.clear();
     this.planOf.clear();
+    this.shapeOutcomes.clear();
     this.progressCallbacks = [];
     planSeq = 0;
   }

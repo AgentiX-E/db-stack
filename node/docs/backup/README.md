@@ -133,15 +133,15 @@ const report = await backups.reconcile();
 // { orphaned: [...], inFlight: [...], missing: [...], reclaimed: 0 }
 ```
 
-| Field | What it holds | What to do |
-|---|---|---|
-| `orphaned` | Objects under the prefix that no record names, older than the grace window | reclaim them, or leave them to a bucket lifecycle rule |
-| `inFlight` | The same, younger than the grace window | nothing — this is a backup being taken |
-| `missing` | Records whose artefact the bucket does not hold | look at them: a listing that names a snapshot nobody can restore |
-| `reclaimed` | How many objects were deleted — `0` unless `reclaim: true` | reconcile with what the bucket now holds |
+| Field       | What it holds                                                              | What to do                                                       |
+| ----------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `orphaned`  | Objects under the prefix that no record names, older than the grace window | reclaim them, or leave them to a bucket lifecycle rule           |
+| `inFlight`  | The same, younger than the grace window                                    | nothing — this is a backup being taken                           |
+| `missing`   | Records whose artefact the bucket does not hold                            | look at them: a listing that names a snapshot nobody can restore |
+| `reclaimed` | How many objects were deleted — `0` unless `reclaim: true`                 | reconcile with what the bucket now holds                         |
 
 The split between `orphaned` and `inFlight` is the whole safety argument. `createBackup()` uploads the
-artefact and *then* writes its record, so for the length of one confirmation there is an object that
+artefact and _then_ writes its record, so for the length of one confirmation there is an object that
 nothing names — and it is the backup the caller is waiting for. Age is the only thing that separates the
 two states: `RECONCILE_GRACE_MS` (ten minutes) is longer than any confirmation and far shorter than a
 retention cycle. `{ graceMs }` overrides it, and an object whose `lastModified` cannot be parsed is
@@ -155,14 +155,14 @@ The report is about **this** manager's prefix and nothing else: a bucket shared 
 
 **Nothing is deleted unless `reclaim: true` is passed.** That default is the point: a listing can be
 stale — a bucket behind a cache, a replica that has not caught up — and a stale listing makes a record
-look absent. An object that merely *looks* unnamed is one delete away from being a backup nobody has.
+look absent. An object that merely _looks_ unnamed is one delete away from being a backup nobody has.
 With `reclaim: true`, only `orphaned` is touched, one key at a time; a delete that fails leaves the
 object for the next run, and `reclaimed` counts what is actually gone rather than what was named.
 
 **A record names its artefact two ways, and both are honoured.** The `location` it carries is what a
 restore downloads, so an object under the prefix whose name is not one this build writes — a bucket
 migrated from an earlier version, artefacts copied under another suffix — is protected by the record
-that points at it. The id in the record's *key* is the second way, and it needs no parsing at all:
+that points at it. The id in the record's _key_ is the second way, and it needs no parsing at all:
 that is what protects the artefact of a record this process could not read, because a damaged record is
 a snapshot an operator has to be able to look at rather than a licence to delete bytes. `artifactIdOf`
 reads an id out of a name of the shape `backups/full/<id>.artifact`; an object whose name is not one
@@ -248,7 +248,7 @@ cut is taken and how it is put back:
 | Member                 | Meaning                                                                                |
 | ---------------------- | -------------------------------------------------------------------------------------- |
 | `name`                 | Stable identifier for logs, metrics and error messages                                 |
-| `whole`                | `true` when every artefact this source captures is a complete copy of the engine        |
+| `whole`                | `true` when every artefact this source captures is a complete copy of the engine       |
 | `capture(destination)` | Write a **consistent** cut to `destination`; report `bytes`, `files`, optional `facts` |
 | `restore(source)`      | **Replace** the engine's state with the verified artefact                              |
 | `restoreChain(chain)`  | **Rebuild** the engine's state from every artefact in `chain`, oldest first            |
@@ -336,6 +336,34 @@ Four rules apply in order: keep the newest `maxFullSnapshots` **sets**, remove n
 anything younger than `keepRecent`, remove only sets whose every member is at least `minAge` old,
 then remove whole sets, oldest base first, until the total fits under `maxTotalBytes`.
 `parseDurationToMs` reads ISO-8601 durations (`P7D`, `PT1H`) and falls back to plain hours.
+
+### `createRetentionForSchedule`
+
+A retention policy and the schedule that takes the snapshots are two objects, and
+neither can keep a promise alone. The composition root reads the schedule's
+period and passes it to the evaluator, so an interval longer than the window is
+refused before a retention pass can delete the last restore:
+
+```ts
+import { createRetentionForSchedule } from '@agentix-e/db-node/backup';
+
+const evaluator = createRetentionForSchedule(
+  { maxFullSnapshots: 24, maxTotalBytes: 500_000_000_000, keepRecent: 'P1D' },
+  { enabled: true, intervalMs: 3_600_000, retentionCount: 24 },
+);
+```
+
+A disabled schedule is refused by name; `null` means there is no schedule to
+check and `getWindows()` says so.
+
+### `verifyLogHorizon`
+
+A declared log horizon is a claim; a rehearsal is evidence. `BackupManager.verifyLogHorizon()`
+downloads and verifies the oldest completed artefact, hands it to the source's optional
+`replayDrill()` callback, and compares the measured reach with `logHorizon()`. It returns
+`{ checked, declaredMs, actualMs, consistent, reason? }`; a source without a drill or a bucket
+without a snapshot is reported as **not checked**, never as verified. The caller's schedule
+decides when to run it — the manager does not invent a second clock.
 
 ### `BackupVerifier`
 
@@ -433,15 +461,15 @@ capture is a whole tree, so the newest artefact is a complete state — and for 
 deltas it is a fragment written over a data directory, reported as a success. That is the one failure
 mode worse than a refusal, because it looks like a recovery.
 
-`resolveChain` answers both questions in one walk — *may this be replayed*, and *with what* — so the
+`resolveChain` answers both questions in one walk — _may this be replayed_, and _with what_ — so the
 check and the replay cannot disagree about which set of artefacts is being discussed. Then the source
 decides the shape:
 
-| Source                 | What a chain of three becomes                                       |
-| ---------------------- | ------------------------------------------------------------------- |
-| `whole: true`          | one artefact downloaded, verified and restored                      |
-| `restoreChain` defined | all three downloaded, verified and handed over oldest first          |
-| neither                | `success: false`, naming the count and the source                   |
+| Source                 | What a chain of three becomes                               |
+| ---------------------- | ----------------------------------------------------------- |
+| `whole: true`          | one artefact downloaded, verified and restored              |
+| `restoreChain` defined | all three downloaded, verified and handed over oldest first |
+| neither                | `success: false`, naming the count and the source           |
 
 `artefacts` in the result says how many were downloaded and verified, so a caller can see whether it
 had one file to apply or three.
@@ -472,7 +500,7 @@ who wanted 12:30 and got 12:27 has to be able to see that in the answer.
 
 **"Newest" is not "first in the listing".** Two incrementals taken inside one millisecond share a
 `createdAt`, and two snapshots that recorded the same `lsn` are exactly as close; a plain sort decides
-those by the order the bucket happened to return, which puts the *older* candidate first — so a target
+those by the order the bucket happened to return, which puts the _older_ candidate first — so a target
 would resolve to the base of a chain whose head is also at that instant, and be reported as the
 recovery point. Ties are broken by **depth** (how many artefacts it takes to replay the snapshot), and
 then by id so the answer is total and does not depend on the listing at all.

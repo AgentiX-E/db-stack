@@ -173,6 +173,13 @@ export type { ClockCompensatorConfig } from './ha/ClockCompensator';
 export { ShardManager } from './shard/ShardManager';
 export type { ShardAssignedCallback, ShardRemovedCallback } from './shard/ShardManager';
 export { ReshardPlanner } from './shard/ReshardPlanner';
+export { ReshardShapeExecutor } from './shard/ReshardShapeExecutor';
+export type { ReshardShapeOptions } from './shard/ReshardShapeExecutor';
+export type {
+  IReshardShapeExecutor,
+  ReshardShapeOutcome,
+  ReshardShapeRequest,
+} from './interfaces/shard/IReshardShapeExecutor';
 export { OnlineShardMigration } from './shard/OnlineShardMigration';
 export { HashShardStrategy, RangeShardStrategy, ConsistentHashStrategy } from './shard/ShardStrategy';
 export type { RangeShardBoundary } from './shard/ShardStrategy';

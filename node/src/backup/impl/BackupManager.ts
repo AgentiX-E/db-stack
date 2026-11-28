@@ -83,6 +83,20 @@ export interface BackupManagerOptions {
   clock?: () => Date;
 }
 
+/** What a rehearsal of the log horizon found, or why it could not run. */
+export interface LogHorizonVerdict {
+  /** Whether the engine was actually asked to rehearse a replay. */
+  checked: boolean;
+  /** The horizon the engine declared, when it declares one. */
+  declaredMs: number | null;
+  /** The horizon the rehearsal measured, when it ran. */
+  actualMs: number | null;
+  /** Whether the measured reach honours the declared window. */
+  consistent: boolean;
+  /** Why no comparison could be made, or what disagreed. */
+  reason?: string;
+}
+
 /** Number of the next snapshot this process will create. */
 let sequence = 0;
 
@@ -869,6 +883,22 @@ export class BackupManager implements IBackupManager {
       if (Number.isNaN(boundary)) {
         return { success: false, error: `targetTime ${target.targetTime} is not a date`, durationMs: 0 };
       }
+      // The horizon is the one fact the middleware cannot invent. When the
+      // engine keeps a log, a target before `now - horizon` cannot be reached
+      // from any retained snapshot, and a snapshot older than that boundary
+      // restores to itself and no further. Both are refused here, before the
+      // engine is asked to replay something it cannot.
+      const horizon = await this.logHorizon();
+      const oldest = horizon === null ? null : this.clock().getTime() - horizon;
+      if (oldest !== null && boundary < oldest) {
+        return {
+          success: false,
+          error:
+            `targetTime ${target.targetTime} is older than the engine's log horizon ${horizon} ms: ` +
+            'no retained snapshot can replay forward to it',
+          durationMs: 0,
+        };
+      }
       const candidates = completed.filter((s) => new Date(s.createdAt).getTime() <= boundary);
       const chosen = this.newest(
         candidates,
@@ -876,6 +906,15 @@ export class BackupManager implements IBackupManager {
       );
       if (chosen === undefined) {
         return { success: false, error: `no snapshot at or before ${target.targetTime}`, durationMs: 0 };
+      }
+      if (oldest !== null && new Date(chosen.createdAt).getTime() < oldest) {
+        return {
+          success: false,
+          error:
+            `snapshot ${chosen.snapshotId} is older than the log horizon ${horizon} ms: ` +
+            `its replay cannot reach ${target.targetTime}`,
+          durationMs: 0,
+        };
       }
       return this.restoreFromSnapshot(chosen.snapshotId, options);
     }
@@ -933,6 +972,72 @@ export class BackupManager implements IBackupManager {
   }
 
   /**
+   * Rehearse the oldest retained backup and compare the measured log horizon
+   * with the declared one.
+   *
+   * Nothing is restored into the live engine. The oldest completed artefact is
+   * downloaded and verified exactly as a restore would verify it, then handed
+   * to the source's optional drill. A source without a drill, or a bucket with
+   * no completed snapshot, produces an explicit "not checked" verdict — the
+   * declaration alone is never promoted to a measurement.
+   */
+  async verifyLogHorizon(): Promise<LogHorizonVerdict> {
+    if (this.source.replayDrill === undefined) {
+      return {
+        checked: false,
+        declaredMs: null,
+        actualMs: null,
+        consistent: false,
+        reason: 'the source does not offer a replay drill, so the declared horizon was not checked',
+      };
+    }
+    await this.sync();
+    const completed = Array.from(this.snapshots.values())
+      .filter((snapshot) => snapshot.state === 'completed')
+      .sort((a, b) => {
+        const byAge = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        return byAge !== 0 ? byAge : a.snapshotId.localeCompare(b.snapshotId);
+      });
+    const oldest = completed[0];
+    if (oldest === undefined) {
+      return {
+        checked: false,
+        declaredMs: null,
+        actualMs: null,
+        consistent: false,
+        reason: 'no completed snapshot to rehearse',
+      };
+    }
+    const path = join(this.workDir, `${oldest.snapshotId}.horizon.artifact`);
+    try {
+      await mkdir(this.workDir, { recursive: true });
+      await this.storage.download(oldest.location, path);
+      const wrong = await this.verifyArtefact(oldest, path);
+      if (wrong !== null) {
+        return { checked: false, declaredMs: null, actualMs: null, consistent: false, reason: wrong };
+      }
+      const drilled = await this.source.replayDrill.call(this.source, path);
+      const declared = await this.logHorizon();
+      const consistent = declared !== null && drilled.actualHorizonMs >= declared;
+      return {
+        checked: true,
+        declaredMs: declared,
+        actualMs: drilled.actualHorizonMs,
+        consistent,
+        ...(consistent
+          ? {}
+          : {
+              reason: `the rehearsal reached ${drilled.actualHorizonMs} ms of the declared ${String(declared)} ms`,
+            }),
+      };
+    } catch (error) {
+      return { checked: false, declaredMs: null, actualMs: null, consistent: false, reason: reason(error) };
+    } finally {
+      await removeQuietly(path);
+    }
+  }
+
+  /**
    * The retention windows this deployment implies, or `null` when the policy cannot
    * state them.
    *
@@ -948,7 +1053,7 @@ export class BackupManager implements IBackupManager {
   async retentionWindows(): Promise<RetentionWindows | null> {
     const declared = windowsOf(this.retention);
     if (declared === null) return null;
-    const horizon = this.source.logHorizon === undefined ? null : await this.source.logHorizon();
+    const horizon = await this.logHorizon();
     return deriveRetentionWindows({
       keepRecentMs: declared.keepRecentMs,
       ...(declared.snapshotIntervalMs === undefined ? {} : { snapshotIntervalMs: declared.snapshotIntervalMs }),
@@ -973,6 +1078,11 @@ export class BackupManager implements IBackupManager {
     const inventory = Array.from(this.snapshots.values());
     const named = this.retention.evaluate(inventory).map((snapshot) => snapshot.snapshotId);
     return this.discard(expandDeletions(inventory, named));
+  }
+
+  /** The engine's log horizon, read when it is needed rather than cached at boot. */
+  private async logHorizon(): Promise<number | null> {
+    return this.source.logHorizon === undefined ? null : await this.source.logHorizon();
   }
 }
 

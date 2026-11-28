@@ -1058,7 +1058,11 @@ every number a caller reads here was measured by it.
 
 ```typescript
 class ReshardPlanner {
-  constructor(migration?: IOnlineShardMigration);
+  constructor(
+    migration?: IOnlineShardMigration,
+    onListenerFailure?: ListenerFailureReporter,
+    shape?: IReshardShapeExecutor,
+  );
   createSplitPlan(sourceShardId: number, splitKey: string): Promise<ReshardPlan>;
   createMergePlan(sourceShardIds: [number, number]): Promise<ReshardPlan>;
   createMovePlan(shardId: number, targetNodeId: string, sourceNodeId?: string): Promise<ReshardPlan>;
@@ -1083,10 +1087,37 @@ the two extents are the same.
 
 A **split** re-keys entries (shard 7 becomes 71 and 72, and `user:5` belongs to one
 of them) and a **merge** copies a shard into a target that already holds entries.
-Neither has a source count to conserve against, so `executePlan` refuses them —
-before a migration is registered — with a message naming the shard, the boundary or
-the union involved. A refusal an operator can act on beats a percentage that
-measures nothing.
+Neither has a source count to conserve against by the move's rule. With an
+`IReshardShapeExecutor` supplied, `executePlan` proves each shape with the right
+rule; without one it refuses them — before a migration is registered — with a
+message naming the shard, the boundary or the union involved. A refusal an
+operator can act on beats a percentage that measures nothing.
+
+### `ReshardShapeExecutor`
+
+The shape executor proves what the move coordinator cannot. It copies through the
+same engine-agnostic source and sink ports and then asks the target what it holds:
+
+- a **split** sums both target shards and compares the total with the source;
+- a **merge** counts keys that were not on the target before and compares
+  `baseline + new` with the target's final count.
+
+```typescript
+class ReshardShapeExecutor implements IReshardShapeExecutor {
+  constructor(source: IShardMigrationSource, sink: IShardMigrationSink, options: ReshardShapeOptions);
+  execute(request: ReshardShapeRequest): Promise<ReshardShapeOutcome>;
+}
+
+interface ReshardShapeOptions {
+  route: (key: string, splitKey: string, targets: readonly number[]) => number;
+  hasEntry?: (targetNode: string, shardId: number, key: string) => Promise<boolean>;
+}
+```
+
+`route` is the key-to-shard rule an engine already owns; `hasEntry` is what makes
+a union distinguishable from a copy. Neither callback names a database, and a
+merge without `hasEntry` is refused. The outcome carries `sourceEntries`,
+`targetEntries`, `consistent` and `mismatches` rather than a bare boolean.
 
 `IMigrationProgress` is the coordinator's status in the plan's vocabulary:
 `dual-writing` is the initial sync of a plan that asked for dual writes, `migrating`
