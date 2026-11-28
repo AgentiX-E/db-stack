@@ -288,7 +288,25 @@ describe('Federation control plane over mTLS (two real datacenters)', () => {
     // Every key the joining datacenter never had, in both views of it — the
     // cluster's committed state and the federation layer's replica map. A repair
     // that lands in one and not the other is state a restart forgets.
-    const west = await tx.status('west');
+    //
+    // A completed transfer reports before its last applied chunk is visible to a
+    // status read: the replica map is updated in-process while the committed
+    // state is read through the cluster, so a snapshot taken on the completed
+    // frame's heel can hold `localValues` but not yet `state` under load. Wait for
+    // both views to show the keys rather than reading one snapshot at the moment
+    // `completed` appeared. A key that never lands still fails here by timeout,
+    // so the wait waits for the claim, not away from it.
+    const west = await waitUntil(
+      async () => {
+        const status = await tx.status('west');
+        return keys.every((key) => status.localValues[key] === `v-${key}` && status.state[key] === `v-${key}`)
+          ? status
+          : undefined;
+      },
+      120_000,
+      'every transferred key to be visible in both west views',
+      100,
+    );
     for (const key of keys) {
       expect(west.localValues[key]).toBe(`v-${key}`);
       expect(west.state[key]).toBe(`v-${key}`);
