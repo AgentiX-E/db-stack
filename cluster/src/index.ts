@@ -114,6 +114,8 @@ export { ConnectionPool, PeerConnection } from './consensus/transport/Connection
 export type { PeerInfo, PeerTlsVerifyOptions, ConnectionPoolConfig } from './consensus/transport/ConnectionPool';
 export { MessageCompressor } from './consensus/helpers/MessageCompressor';
 export { crc32 } from './consensus/helpers/crc32';
+export { createMonotonicClock } from './consensus/helpers/MonotonicClock';
+export type { MonotonicClock, MonotonicClockOptions } from './consensus/helpers/MonotonicClock';
 
 // ── Storage ───────────────────────────────────────────────
 export { SqliteStorage } from './consensus/storage/SqliteStorage';

@@ -378,7 +378,7 @@ ReadIndex round.
 
 ```typescript
 class LeaseReadManager {
-  constructor(leaseMs?: number);
+  constructor(leaseMs?: number, options?: MonotonicClockOptions);
   onQuorumHeartbeatAck(now?: number): void;
   isLeaseValid(): boolean;
   getLeaseRemaining(): number;
@@ -386,6 +386,13 @@ class LeaseReadManager {
   reset(): void;
 }
 ```
+
+Lease expiry is a duration, so a wall-clock step backwards must not revive an
+expired lease. Both `LeaseReadManager` and `FencingManager` read time through an
+injected `MonotonicClock`: an epoch-anchored clock whose reading never decreases.
+`MonotonicClockOptions` carries the optional `clock`; `createMonotonicClock`
+wraps any epoch source (the host clock by default) with the clamp. The seam is
+engine-agnostic and testable without sleeping.
 
 ### `ReadIndexManager`
 
@@ -420,7 +427,7 @@ engine that cannot carry a token yet keeps the behaviour it had.
 
 ```typescript
 class FencingManager {
-  constructor(config?: Partial<FencingConfig>);
+  constructor(config?: Partial<FencingConfig>, options?: MonotonicClockOptions);
   start(): void;
   stop(): void;
   getState(): FenceState;

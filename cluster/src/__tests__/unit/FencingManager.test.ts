@@ -371,4 +371,32 @@ describe('FencingManager - edge cases', () => {
     // expired; the key assertion is that the pre-fenced shard did not change.
     expect(fm.getShardState(0)).toBe('fenced');
   });
+
+  // IT-109: a wall-clock step backwards must not suspend fencing. With the
+  // default clock this would make elapsed negative forever, so a partitioned
+  // leader would keep serving writes — split-brain. The clock is injected here
+  // so the regression is deterministic and needs no real sleep.
+  it('IT-109: a clock that steps backwards still fences an expired lease', () => {
+    let t = 10_000;
+    const clock = { now: () => t };
+    fm = new FencingManager({ leaderLeaseMs: 1_000, checkIntervalMs: 500 }, { clock });
+    fm.receiveHeartbeat(0, 1, '1'); // heartbeat at t=10_000
+    const callback = vi.fn();
+    fm.onFenceTriggered(callback);
+    fm.start();
+
+    // The host clock jumps back before the check runs; a raw Date.now() would
+    // now read below lastHeartbeatTs and never exceed the lease.
+    t = 9_000;
+    vi.advanceTimersByTime(500);
+    expect(fm.getShardState(0)).toBe('unfenced');
+
+    // Real time advances again and crosses the lease. The monotonic clock must
+    // have kept the watermark at 10_000, so 12_000 is 2_000ms of silence.
+    t = 12_000;
+    vi.advanceTimersByTime(500);
+    expect(fm.getShardState(0)).toBe('fenced');
+    expect(callback).toHaveBeenCalled();
+    expect(callback.mock.calls[0]![0]).toContain('missed leader heartbeat');
+  });
 });

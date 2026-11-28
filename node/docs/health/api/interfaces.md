@@ -49,6 +49,7 @@ const DEFAULT_PROBE_TIMEOUT_MS: number; // 100, the readiness budget
 interface HealthOrchestratorOptions {
   probeTimeoutMs?: number; // default: DEFAULT_PROBE_TIMEOUT_MS
   timer?: ProbeTimer;
+  clock?: MonotonicClock;
 }
 
 interface ProbeTimer {
@@ -75,3 +76,9 @@ primitive used internally, exposed for adapters that need to bound their own
 awaited answers; on expiry it rejects with a `ProbeTimeoutError` naming the
 budget, and a losing answer's late rejection is consumed rather than surfacing
 as an unhandled rejection.
+
+Uptime is a duration and must never go negative after an NTP or VM clock step.
+The `clock` option is a `MonotonicClock` — an epoch-anchored, non-decreasing
+clock. `createMonotonicClock` wraps any epoch source with the clamp; the host
+clock is the default, and a deployment may inject its own. Both are exported
+from the `core` subpath.

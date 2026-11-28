@@ -8,6 +8,9 @@ export {
   token,
 } from './provider.js';
 
+export { createMonotonicClock } from './MonotonicClock.js';
+export type { MonotonicClock, MonotonicClockOptions } from './MonotonicClock.js';
+
 export type {
   AlertRule,
   AlertSeverity,

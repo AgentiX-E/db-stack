@@ -183,4 +183,41 @@ describe('LeaseReadManager', () => {
     const pct = (withinLease / iterations) * 100;
     expect(pct).toBeGreaterThanOrEqual(94); // allow 1% margin for boundary
   });
+
+  //
+  // IT-109: a wall-clock step backwards must not make a stale lease look valid.
+  //
+  it('IT-109: a backwards clock step does not revive an expired lease', () => {
+    let t = 10_000;
+    const clock = { now: () => t };
+    manager = new LeaseReadManager(500, { clock });
+    manager.onQuorumHeartbeatAck(t); // ack at t=10_000
+
+    t = 10_400; // inside the lease
+    expect(manager.isLeaseValid()).toBe(true);
+    expect(manager.getLeaseRemaining()).toBe(100);
+
+    t = 10_600; // past the lease → expired
+    expect(manager.isLeaseValid()).toBe(false);
+
+    // NTP steps the wall clock back below the ack. A raw Date.now() subtraction
+    // would go negative and report the lease valid again — a stale linearizable
+    // read from a leader that no longer holds quorum.
+    t = 9_000;
+    expect(manager.isLeaseValid()).toBe(false);
+    expect(manager.getLeaseRemaining()).toBe(0);
+  });
+
+  it('IT-109: onQuorumHeartbeatAck fallback uses the monotonic clock', () => {
+    let t = 20_000;
+    const clock = { now: () => t };
+    manager = new LeaseReadManager(500, { clock });
+    manager.onQuorumHeartbeatAck(); // no explicit now → clock.now()
+    t = 20_300;
+    expect(manager.isLeaseValid()).toBe(true);
+    t = 19_000; // step back
+    expect(manager.isLeaseValid()).toBe(true); // clamp holds the watermark
+    t = 20_600;
+    expect(manager.isLeaseValid()).toBe(false);
+  });
 });

@@ -17,16 +17,19 @@ import type { FunctionalChecks } from '../interfaces/IComponentRegistrar.js';
 import type { ComponentHealth, ComponentRegistrationOptions, HealthStatus, ProbeResult } from '../../core/types.js';
 import { componentProbe } from './ComponentProbe.js';
 import { settleWithin, type ProbeTimer } from './ProbeTimeout.js';
+import { createMonotonicClock, type MonotonicClock } from '../../core/MonotonicClock.js';
 
 /** The readiness budget the probe contract advertises (under 100 ms). */
 export const DEFAULT_PROBE_TIMEOUT_MS = 100;
 
-/** Engine-agnostic options for the orchestrator's deadline. */
+/** Engine-agnostic options for the orchestrator's deadline and uptime. */
 export interface HealthOrchestratorOptions {
   /** Maximum time an answer may take before it is a named failure. */
   probeTimeoutMs?: number;
   /** Optional clock; defaults to the host timers. */
   timer?: ProbeTimer;
+  /** Optional epoch clock for uptime; a backwards step cannot make it negative. */
+  clock?: MonotonicClock;
 }
 
 interface ProbeEntry {
@@ -41,14 +44,18 @@ interface ProbeEntry {
  */
 export class HealthOrchestrator implements IHealthOrchestrator {
   private _probes = new Map<string, ProbeEntry>();
-  private _startTime = Date.now();
+  private _startTime: number;
   private _startupComplete = false;
   private readonly _probeTimeoutMs: number;
   private readonly _timer: ProbeTimer | undefined;
+  /** Monotonic epoch clock: uptime is a duration and must never go negative. */
+  private readonly _clock: MonotonicClock;
 
   constructor(options: HealthOrchestratorOptions = {}) {
     this._probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
     this._timer = options.timer;
+    this._clock = createMonotonicClock(() => (options.clock ?? { now: Date.now }).now());
+    this._startTime = this._clock.now();
   }
 
   // ── Component Registration ─────────────────────────────────
@@ -56,7 +63,7 @@ export class HealthOrchestrator implements IHealthOrchestrator {
   registerComponent(probe: IHealthProbe, options?: ComponentRegistrationOptions): void {
     this._probes.set(probe.probeId, {
       probe,
-      registeredAt: Date.now(),
+      registeredAt: this._clock.now(),
       critical: options?.critical ?? true,
       lastError: null,
     });
@@ -163,7 +170,7 @@ export class HealthOrchestrator implements IHealthOrchestrator {
     for (const [, entry] of this._probes) {
       const livenessResult = await this._safeProbe(() => entry.probe.liveness());
       const readinessResult = await this._safeProbe(() => entry.probe.readiness());
-      const elapsedMs = Date.now() - entry.registeredAt;
+      const elapsedMs = this._clock.now() - entry.registeredAt;
       const componentUptimeS = Math.trunc(elapsedMs / 1000);
       results.push({
         componentId: entry.probe.probeId,
@@ -204,7 +211,7 @@ export class HealthOrchestrator implements IHealthOrchestrator {
 
     const errored = components.find((c) => c.lastError !== null);
     const lastError = errored ? errored.lastError : null;
-    const systemElapsedMs = Date.now() - this._startTime;
+    const systemElapsedMs = this._clock.now() - this._startTime;
     const systemUptimeS = Math.trunc(systemElapsedMs / 1000);
 
     return {

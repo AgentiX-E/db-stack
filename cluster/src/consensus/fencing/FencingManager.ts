@@ -21,6 +21,7 @@
 
 import pino from 'pino';
 import { getErrorMessage } from '../helpers/errorUtils';
+import { createMonotonicClock, type MonotonicClock, type MonotonicClockOptions } from '../helpers/MonotonicClock';
 import { resolveLogLevel } from '../../observability/logLevel';
 import {
   FencingTokenGuard,
@@ -112,10 +113,15 @@ export class FencingManager {
    * the old primary cannot talk out of its answer.
    */
   private readonly _tokens: FencingTokenGuard;
+  /** Monotonic epoch clock: a backwards wall-clock step cannot un-expire a lease. */
+  private readonly _clock: MonotonicClock;
 
-  constructor(config?: Partial<FencingConfig>) {
+  constructor(config?: Partial<FencingConfig>, options: MonotonicClockOptions = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this._tokens = new FencingTokenGuard({ requireToken: this.config.requireToken ?? false });
+    // Wrap even an injected source: a caller may hand us a raw wall clock, and
+    // the safety of every lease decision must not depend on their discipline.
+    this._clock = createMonotonicClock(() => (options.clock ?? { now: Date.now }).now());
   }
 
   // ── Core lifecycle ─────────────────────────────────────────────
@@ -135,7 +141,7 @@ export class FencingManager {
       return;
     }
 
-    this._startedAt = Date.now();
+    this._startedAt = this._clock.now();
 
     this.checkTimer = setInterval(() => {
       this.checkAllLeases();
@@ -202,7 +208,7 @@ export class FencingManager {
    * @param leaderId - The leader's node ID
    */
   receiveHeartbeat(shardId: number, term: number, leaderId: string): void {
-    const now = Date.now();
+    const now = this._clock.now();
     const existing = this.shards.get(shardId);
 
     if (existing) {
@@ -275,7 +281,7 @@ export class FencingManager {
       if (shard && shard.state === 'fenced') {
         return {
           allowed: false,
-          reason: `Node is fenced for shard ${sid}: no leader heartbeat for ${Date.now() - shard.lastHeartbeatTs}ms`,
+          reason: `Node is fenced for shard ${sid}: no leader heartbeat for ${this._clock.now() - shard.lastHeartbeatTs}ms`,
         };
       }
 
@@ -361,7 +367,7 @@ export class FencingManager {
    * Get the full fencing status across all shards.
    */
   getStatus(): FencingStatus {
-    const now = Date.now();
+    const now = this._clock.now();
     const shardStatuses: FencingShardStatus[] = [];
 
     for (const [, shard] of this.shards) {
@@ -424,7 +430,7 @@ export class FencingManager {
    * transit to 'fenced' state and fire callbacks.
    */
   private checkAllLeases(): void {
-    const now = Date.now();
+    const now = this._clock.now();
 
     for (const [, shard] of this.shards) {
       if (shard.state === 'fenced') continue; // Already fenced

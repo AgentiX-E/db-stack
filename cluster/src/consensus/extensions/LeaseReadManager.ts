@@ -23,6 +23,8 @@
  *   // Otherwise fall back to ReadIndex protocol
  */
 
+import { createMonotonicClock, type MonotonicClock, type MonotonicClockOptions } from '../helpers/MonotonicClock';
+
 /** Default leader lease duration in milliseconds */
 const DEFAULT_LEASE_MS = 500;
 
@@ -32,23 +34,27 @@ export class LeaseReadManager {
 
   /** Lease duration in milliseconds */
   private leaseMs: number;
+  /** Monotonic epoch clock: a backwards wall-clock step cannot revive a lease. */
+  private readonly _clock: MonotonicClock;
 
   /**
    * @param leaseMs - Leader lease duration in ms. Default 500.
    *                  If 0 is passed, lease is disabled (always expired).
+   * @param options - Optional clock seam; defaults to the host clock.
    */
-  constructor(leaseMs?: number) {
+  constructor(leaseMs?: number, options: MonotonicClockOptions = {}) {
     this.leaseMs = leaseMs ?? DEFAULT_LEASE_MS;
+    this._clock = createMonotonicClock(() => (options.clock ?? { now: Date.now }).now());
   }
 
   /**
    * Called when the leader receives heartbeat responses from a quorum.
    * Updates the last quorum time, extending the lease.
    *
-   * @param now - Current time in ms (defaults to Date.now())
+   * @param now - Current time in ms (defaults to the monotonic clock's reading)
    */
   onQuorumHeartbeatAck(now?: number): void {
-    this.lastQuorumTime = now ?? Date.now();
+    this.lastQuorumTime = now ?? this._clock.now();
   }
 
   /**
@@ -61,7 +67,7 @@ export class LeaseReadManager {
    */
   isLeaseValid(): boolean {
     if (this.leaseMs <= 0) return false;
-    return Date.now() - this.lastQuorumTime < this.leaseMs;
+    return this._clock.now() - this.lastQuorumTime < this.leaseMs;
   }
 
   /**
@@ -71,7 +77,7 @@ export class LeaseReadManager {
    */
   getLeaseRemaining(): number {
     if (this.leaseMs <= 0) return 0;
-    const elapsed = Date.now() - this.lastQuorumTime;
+    const elapsed = this._clock.now() - this.lastQuorumTime;
     const remaining = this.leaseMs - elapsed;
     return Math.max(0, remaining);
   }

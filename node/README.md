@@ -1,6 +1,6 @@
 # @agentix-e/db-node
 
-**Everything a single database node needs — 20 modules, 3 271 test cases in 165 files, every
+**Everything a single database node needs — 20 modules, 3 278 test cases in 167 files, every
 coverage dimension at or above 95 %.**
 
 Twenty modules that operate on **one node**, in one package. A probe probes its own
@@ -24,7 +24,7 @@ node.health.HealthOrchestrator;
 
 | Module                                    | What it is                                                                                                  | Cases |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----- |
-| [`core`](./src/core/)                     | The shared base: 40+ types and the provider registry.                                                       | 550   |
+| [`core`](./src/core/)                     | The shared base: 40+ types, the provider registry and a monotonic clock.                                    | 555   |
 | [`audit`](./src/audit/)                   | Append-only audit log: crash-safe segments, a hash chain per writer, rotation, export, query, verification. | 309   |
 | [`auth`](./src/auth/)                     | Authentication interfaces. Interfaces only — `security` implements them.                                    | 32    |
 | [`autoscaler`](./src/autoscaler/)         | Scaling decisions from multi-dimensional metrics.                                                           | 167   |
@@ -33,7 +33,7 @@ node.health.HealthOrchestrator;
 | [`chaosengine`](./src/chaosengine/)       | Fault definitions and the scenario runner.                                                                  | 128   |
 | [`circuitbreaker`](./src/circuitbreaker/) | Breaker state per call site.                                                                                | 15    |
 | [`configwatcher`](./src/configwatcher/)   | Configuration watching and change notification.                                                             | 128   |
-| [`health`](./src/health/)                 | Liveness, readiness and startup probes, awaited, with a bounded deadline.                                   | 101   |
+| [`health`](./src/health/)                 | Liveness, readiness and startup probes, awaited, with a bounded deadline.                                   | 103   |
 | [`logger`](./src/logger/)                 | The `ILogger` port and an in-memory implementation.                                                         | 55    |
 | [`maintenance`](./src/maintenance/)       | VACUUM / ANALYZE / REINDEX scheduling.                                                                      | 387   |
 | [`memoryguard`](./src/memoryguard/)       | Heap-pressure guard.                                                                                        | 13    |
@@ -45,8 +45,8 @@ node.health.HealthOrchestrator;
 | [`security`](./src/security/)             | TLS, RBAC and encryption at rest — the implementation of `auth`.                                            | 629   |
 | [`slacollector`](./src/slacollector/)     | SLA event collection.                                                                                       | 13    |
 
-**Total: `pnpm coverage` reports 165 files and 3 271 tests, 0 failures** (`test:unit`: 146 files /
-2 939; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
+**Total: `pnpm coverage` reports 167 files and 3 278 tests, 0 failures** (`test:unit`: 148 files /
+2 946; `test:integration`: 19 files / 332). Each row above is that module's contribution, so the
 column adds up to the total. `pnpm check:test-counts` reads the runner's JSON report and fails when
 any of these numbers disagrees with it — a number in prose has no compiler, so this gate is that
 compiler.
@@ -97,7 +97,7 @@ the one to read first: it states what the module decides and what it deliberatel
 does not.
 
 ```bash
-npm test              # 165 files, 3 271 tests
+npm test              # 167 files, 3 278 tests
 npm run coverage      # writes coverage/test-report.json, the file check:test-counts reads
 ```
 
