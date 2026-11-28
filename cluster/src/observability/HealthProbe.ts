@@ -33,18 +33,72 @@ export interface ListenerFailure {
 /** Either shape a registered probe may answer with. */
 export type ProbeAnswer = ProbeResult | Promise<ProbeResult>;
 
+/** Minimal clock a deployment can inject for the readiness deadline. */
+export interface ProbeTimer {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
+
+/** The readiness budget the node probe contract advertises (under 100 ms). */
+export const DEFAULT_PROBE_TIMEOUT_MS = 100;
+
+/** Engine-agnostic deadline options for the registry. */
+export interface HealthProbeOptions {
+  /** Maximum time a registered probe may take before it is named as timed out. */
+  probeTimeoutMs?: number;
+  /** Optional clock; defaults to the host timers. */
+  timer?: ProbeTimer;
+}
+
+/**
+ * Race a registered probe against a deadline, returning a named failed result
+ * on expiry rather than leaving readiness pending for ever. The clock is a
+ * callback so the registry stays engine-agnostic and the deadline is testable
+ * without sleeping.
+ */
+async function withDeadline(
+  probe: () => ProbeAnswer,
+  timeoutMs: number,
+  timer: ProbeTimer | undefined,
+): Promise<ProbeResult> {
+  const hostTimer: ProbeTimer = timer ?? {
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  };
+  let handle: unknown;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    handle = hostTimer.setTimeout(() => reject(new Error(`probe timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([Promise.resolve().then(probe), deadline]);
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err), latencyMs: 0 };
+  } finally {
+    hostTimer.clearTimeout(handle);
+  }
+}
+
 /**
  * HealthProbe registry — aggregates multiple IHealthProbe instances.
  *
  * A registered probe may answer directly or await a dependency. Readiness is
  * the check that asks whether peers are reachable, so refusing a promise here
  * would make the one question that needs I/O impossible to put to the registry.
+ * Every answer is bounded by a deadline: a peer that never replies degrades
+ * readiness by name instead of holding the /health endpoint open for ever.
  */
 export class HealthProbe {
   private readonly _probes: Map<string, () => ProbeAnswer> = new Map();
   private _fatalErrors = 0;
   private _startupComplete = false;
   private readonly _listenerFailures: ListenerFailure[] = [];
+  private readonly _probeTimeoutMs: number;
+  private readonly _timer: ProbeTimer | undefined;
+
+  constructor(options: HealthProbeOptions = {}) {
+    this._probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+    this._timer = options.timer;
+  }
 
   register(name: string, probe: () => ProbeAnswer): void {
     this._probes.set(name, probe);
@@ -91,7 +145,7 @@ export class HealthProbe {
     const results: Record<string, ProbeResult> = {};
     let allOk = true;
     for (const [name, probe] of this._probes) {
-      const r = await probe();
+      const r = await withDeadline(probe, this._probeTimeoutMs, this._timer);
       results[name] = r;
       if (!r.ok) allOk = false;
     }

@@ -18,12 +18,17 @@
  */
 
 import { HealthProbe } from './HealthProbe';
+import type { ProbeTimer } from './HealthProbe';
 import type { ListenerFailureReporter } from './ListenerFailureReporter';
 
 /** Options for {@link createClusterHealth}. */
 export interface ClusterHealthOptions {
   /** Time source for a failure that arrives without its own timestamp. */
   now?: () => number;
+  /** Maximum time a registered readiness probe may take before it is named. */
+  probeTimeoutMs?: number;
+  /** Optional clock for the readiness deadline; defaults to the host timers. */
+  timer?: ProbeTimer;
 }
 
 /** What the composition root hands back. */
@@ -38,7 +43,7 @@ export interface ClusterHealth {
  * with its own time source gets consistent verdicts across all components.
  */
 export function createClusterHealth(options: ClusterHealthOptions = {}): ClusterHealth {
-  const health = new HealthProbe();
+  const health = new HealthProbe({ probeTimeoutMs: options.probeTimeoutMs, timer: options.timer });
   const now = options.now ?? Date.now;
   const reporter: ListenerFailureReporter = (failure) => {
     health.recordListenerFailure(failure.source, failure.error, failure.at ?? now());

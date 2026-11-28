@@ -16,6 +16,18 @@ import type { IHealthProbe, ProbeAnswer } from '../interfaces/IHealthProbe.js';
 import type { FunctionalChecks } from '../interfaces/IComponentRegistrar.js';
 import type { ComponentHealth, ComponentRegistrationOptions, HealthStatus, ProbeResult } from '../../core/types.js';
 import { componentProbe } from './ComponentProbe.js';
+import { settleWithin, type ProbeTimer } from './ProbeTimeout.js';
+
+/** The readiness budget the probe contract advertises (under 100 ms). */
+export const DEFAULT_PROBE_TIMEOUT_MS = 100;
+
+/** Engine-agnostic options for the orchestrator's deadline. */
+export interface HealthOrchestratorOptions {
+  /** Maximum time an answer may take before it is a named failure. */
+  probeTimeoutMs?: number;
+  /** Optional clock; defaults to the host timers. */
+  timer?: ProbeTimer;
+}
 
 interface ProbeEntry {
   probe: IHealthProbe;
@@ -31,6 +43,13 @@ export class HealthOrchestrator implements IHealthOrchestrator {
   private _probes = new Map<string, ProbeEntry>();
   private _startTime = Date.now();
   private _startupComplete = false;
+  private readonly _probeTimeoutMs: number;
+  private readonly _timer: ProbeTimer | undefined;
+
+  constructor(options: HealthOrchestratorOptions = {}) {
+    this._probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+    this._timer = options.timer;
+  }
 
   // ── Component Registration ─────────────────────────────────
 
@@ -246,7 +265,7 @@ export class HealthOrchestrator implements IHealthOrchestrator {
    * as unhealthy — the same silent verdict this method exists to stop.
    */
   private async _answer(fn: () => ProbeAnswer): Promise<ProbeResult> {
-    const result = await fn();
+    const result = await settleWithin(fn, this._probeTimeoutMs, this._timer);
     if (result === null || typeof result !== 'object' || typeof (result as ProbeResult).ok !== 'boolean') {
       throw new Error(
         'the probe returned a value that is not a ProbeResult: an answer must be an object with a boolean ok',

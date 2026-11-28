@@ -8,4 +8,7 @@ export type {
 } from './interfaces/IComponentRegistrar.js';
 
 export { componentProbe } from './impl/ComponentProbe.js';
-export { HealthOrchestrator } from './impl/HealthOrchestrator.js';
+export { HealthOrchestrator, DEFAULT_PROBE_TIMEOUT_MS } from './impl/HealthOrchestrator.js';
+export type { HealthOrchestratorOptions } from './impl/HealthOrchestrator.js';
+export { settleWithin, ProbeTimeoutError, systemTimer } from './impl/ProbeTimeout.js';
+export type { ProbeTimer } from './impl/ProbeTimeout.js';

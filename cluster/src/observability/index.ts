@@ -4,7 +4,7 @@
 
 export { LoggingAdapter, createLogger, traceContext } from './LoggingAdapter';
 export { RaftMetricsCollector } from './RaftMetricsCollector';
-export { HealthProbe } from './HealthProbe';
+export { HealthProbe, DEFAULT_PROBE_TIMEOUT_MS } from './HealthProbe';
 export type { RaftMetricsSnapshot } from './RaftMetricsCollector';
-export type { ProbeResult, HealthStatus } from './HealthProbe';
+export type { ProbeResult, HealthStatus, ProbeAnswer, ProbeTimer, HealthProbeOptions } from './HealthProbe';
 export type { ILogger, LogEntry, LogLevel } from './interfaces';

@@ -1425,6 +1425,7 @@ receive traffic), `startup()` (has it finished initialising).
 
 ```typescript
 class HealthProbe {
+  constructor(options?: HealthProbeOptions);
   register(name: string, probe: () => ProbeAnswer): void;
   markStartupComplete(): void;
   recordFatalError(): void;
@@ -1435,6 +1436,18 @@ class HealthProbe {
   startup(): ProbeResult;
   fullStatus(): Promise<HealthStatus>;
 }
+
+const DEFAULT_PROBE_TIMEOUT_MS: number; // 100, the readiness budget
+
+interface HealthProbeOptions {
+  probeTimeoutMs?: number; // default: DEFAULT_PROBE_TIMEOUT_MS
+  timer?: ProbeTimer;
+}
+
+interface ProbeTimer {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
 ```
 
 `ProbeAnswer` is `ProbeResult | Promise<ProbeResult>`. A registered readiness
@@ -1442,6 +1455,15 @@ probe may therefore reach a peer; the orchestrator awaits it and names both the
 probe and its reason in the verdict. Liveness and startup stay synchronous — a
 check that can hang cannot detect a hung process. Both `readiness()` and
 `fullStatus()` are awaited by callers.
+
+Every awaited answer is bounded by `probeTimeoutMs` (default
+`DEFAULT_PROBE_TIMEOUT_MS` = 100 ms). A probe that never settles — a peer with
+no deadline, a lock never released — becomes a named `timed out` failure rather
+than leaving the health endpoint pending for ever. `ProbeTimer` is the
+engine-agnostic clock seam: a deployment with a virtual or monotonic clock can
+inject its own `setTimeout`/`clearTimeout`, and a test can fire the deadline
+without sleeping. `createClusterHealth` accepts the same options and forwards
+them to its `HealthProbe`.
 
 A swallowed listener failure is **not** a fatal error: it degrades `readiness()`
 (the node should not take new traffic until its health signals are trustworthy)

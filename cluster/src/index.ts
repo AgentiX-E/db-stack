@@ -193,8 +193,15 @@ export { PITRManager } from './pitr/PITRManager';
 export type { PITRCheckpoint, PITRRestoreResult, WALEntry } from './pitr/PITRManager';
 
 // ── Observability ─────────────────────────────────────────
-export { HealthProbe } from './observability/HealthProbe';
-export type { HealthStatus, ProbeResult, ProbeAnswer, ListenerFailure } from './observability/HealthProbe';
+export { HealthProbe, DEFAULT_PROBE_TIMEOUT_MS } from './observability/HealthProbe';
+export type {
+  HealthStatus,
+  ProbeResult,
+  ProbeAnswer,
+  ProbeTimer,
+  HealthProbeOptions,
+  ListenerFailure,
+} from './observability/HealthProbe';
 export { createHealthFailureReporter, ignoreListenerFailure } from './observability/ListenerFailureReporter';
 export type { ListenerFailureEvent, ListenerFailureReporter } from './observability/ListenerFailureReporter';
 export { createClusterHealth } from './observability/ClusterHealth';
