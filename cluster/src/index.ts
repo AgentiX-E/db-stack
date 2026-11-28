@@ -131,6 +131,32 @@ export {
   SqliteConfigStorage,
 } from './consensus/storage/SqliteNodeStorage';
 
+// ── Logical primary name ──────────────────────────────────
+// A stable address resolved through the cluster's own membership, so failover
+// is a protocol event rather than a DNS change. Engine-agnostic: only the
+// elected leader id and a live member set are read, through injected callbacks.
+export { LogicalPrimaryResolver, resolveLogicalPrimary } from './consensus/routing/LogicalPrimaryResolver';
+export type {
+  LogicalPrimaryDeps,
+  PrimaryMember,
+  PrimaryResolution,
+  PrimaryResolutionCore,
+  PrimaryResolutionInput,
+  PrimaryResolutionReason,
+} from './consensus/routing/LogicalPrimaryResolver';
+
+// ── Idempotent writes ─────────────────────────────────────
+// A retry of the same msgId returns the first attempt's result instead of
+// becoming a second write. The dedup window is injected (P3-83's dedupMs), and
+// the write callback is engine-agnostic.
+export { IdempotencyTable, IdempotentWriteCoordinator } from './consensus/idempotency/Idempotency';
+export type {
+  IdempotencyRecord,
+  IdempotencyTableOptions,
+  IdempotentOutcome,
+  IdempotentWriteCoordinatorOptions,
+} from './consensus/idempotency/Idempotency';
+
 // ── High availability ─────────────────────────────────────
 export { HAFailoverDetector } from './ha/HAFailoverDetector';
 export type { FailoverEvent, FailoverEventType } from './ha/HAFailoverDetector';

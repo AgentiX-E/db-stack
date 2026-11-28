@@ -409,6 +409,44 @@ Rules a store should rely on:
 path consults one gate that answers both questions: `checkWriteAllowed(shardId,
 token)`.
 
+### Logical primary name
+
+A client addresses a stable logical name instead of a physical node id, so a
+failover is a protocol event rather than a DNS change. `LogicalPrimaryResolver`
+resolves the name through the cluster's own membership — the elected leader id
+and the live member set, read through callbacks you supply — and returns the
+current member id together with a monotonic `epoch` that advances when the name
+moves to a new leader. A client that caches the resolution compares epochs to
+detect failover. The resolver is engine-agnostic: it imports no Raft or storage
+type.
+
+```ts
+const resolver = new LogicalPrimaryResolver('primary', {
+  leader: () => adapter.getLeader(),
+  members: async () => (await topology.members()).map((m) => ({ id: m.id, role: m.role })),
+});
+const resolution = await resolver.resolve();
+// resolution.memberId — node that currently answers the name
+// resolution.epoch   — generation; changes only on failover
+```
+
+### Idempotent writes
+
+A retry of the same `msgId` returns the first attempt's result instead of
+becoming a second write. `IdempotentWriteCoordinator` wraps your write callback
+with an `IdempotencyTable` whose dedup window you inject (use the `dedupMs` your
+federation layer derives). Completed ids replay their stored result; concurrent
+callers of one id share a single execution; a failed execution is not
+remembered, so a later retry may try again.
+
+```ts
+const table = new IdempotencyTable<number>({ windowMs: dedupMs });
+const writes = new IdempotentWriteCoordinator<number>({ table });
+const outcome = await writes.execute(msgId, () => persist(entry), position);
+// outcome.replayed — true when this was a retry of a completed msgId
+// outcome.result   — the first attempt's result in both cases
+```
+
 ### Shard Management
 
 ```typescript
@@ -446,13 +484,13 @@ Every important operation emits structured logs and optional OTEL spans:
 ## Testing
 
 ```bash
-pnpm test                  # 2 473 tests, 152 test files
+pnpm test                  # 2 512 tests, 154 test files
 pnpm coverage              # the same, with per-file coverage gates
 pnpm test:perf             # performance benchmarks on a real 3-node TLS cluster
 pnpm tla-check             # TLA+ model checking
 ```
 
-- **152 test files, 2 473 tests** — unit, integration, boundary, chaos, LTS — 99.47 % lines,
+- **154 test files, 2 512 tests** — unit, integration, boundary, chaos, LTS — 99.47 % lines,
   99.72 % functions, 98.34 % branches, with a per-file floor of 95 %
 - **TLA+ formal verification** — JointConsensus elections + log replication
 - **Jepsen-style validation** — fuzzy register checker + end-state scanning

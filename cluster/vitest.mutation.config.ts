@@ -64,6 +64,10 @@ export default defineConfig({
       // notices the token half being dropped from `checkWriteAllowed()`.
       'src/__tests__/unit/FencingToken.test.ts',
       'src/__tests__/unit/FencingManager.token.test.ts',
+      // IT-102: the two P3-86 cluster decision files are judged by these two
+      // suites, colocated with the code they exercise as the federation suites are.
+      'src/consensus/routing/LogicalPrimaryResolver.test.ts',
+      'src/consensus/idempotency/Idempotency.test.ts',
     ],
     exclude: [],
     pool: 'forks',

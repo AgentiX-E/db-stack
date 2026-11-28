@@ -33,6 +33,7 @@ import type {
   FreshnessProvider,
   ConsistencyVerdict,
   ConsistencyRejectReason,
+  RoutingDecision,
 } from './types.js';
 
 // ── Router Implementation ────────────────────────────────────
@@ -101,6 +102,38 @@ export class FederatedQueryRouter implements IFederatedQueryRouter {
 
   getLastConsistencyVerdict(): ConsistencyVerdict | undefined {
     return this._lastConsistencyVerdict;
+  }
+
+  /**
+   * Inspect the decision the router would make for a read: consistency level,
+   * chosen replica, and the age/LSN of the data that replica would return.
+   *
+   * Inspection-only. It derives the choice from the consistency verdict's
+   * eligible set rather than from `planQuery`, so it never advances the
+   * round-robin counter, mutates node health, or records failover history —
+   * an operator can call it as often as needed without changing a route. When
+   * the gate is inactive (`eventual` / no provider), the first registered node
+   * is the representative replica, matching the candidate order execution uses.
+   */
+  explainDecision(query: FederatedQuery): RoutingDecision {
+    const verdict = this.getConsistencyVerdict(query);
+    const selected = verdict.eligibleNodeIds[0] ?? null;
+    const signal = selected !== null ? this._freshnessProvider?.(selected) : undefined;
+    const satisfied = verdict.satisfied && selected !== null;
+    // A gate that is inactive with no registered nodes reports no reason of its
+    // own; name it here so a caller always gets a refusal reason with no replica.
+    const reason = verdict.reason ?? (satisfied ? undefined : 'no-eligible-node');
+
+    return {
+      queryId: query.id,
+      level: query.consistency,
+      selectedReplica: selected,
+      replicaAgeMs: signal?.lagMs ?? null,
+      appliedLsn: signal?.appliedLsn ?? null,
+      strategy: this.policy.strategy,
+      satisfied,
+      ...(reason !== undefined ? { reason } : {}),
+    };
   }
 
   /**

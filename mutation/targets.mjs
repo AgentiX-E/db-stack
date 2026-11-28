@@ -108,6 +108,11 @@ export const TARGETS = {
       // old primary after a restart. Coverage sees all three executed; only a
       // mutant shows whether a test would have objected.
       "cluster/src/consensus/fencing/FencingToken.ts",
+      // IT-102: the three decision files of P3-86. A reversed epoch comparison,
+      // a replay that executes again, or a decision that reports the wrong
+      // replica must be caught by a mutant, not only by a coverage line.
+      "cluster/src/consensus/routing/LogicalPrimaryResolver.ts",
+      "cluster/src/consensus/idempotency/Idempotency.ts",
     ],
     testConfig: "cluster/vitest.mutation.config.ts",
     // Raised with the assemblers rather than lowered around them. Every file in

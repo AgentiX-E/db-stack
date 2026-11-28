@@ -116,6 +116,34 @@ export interface ConsistencyVerdict {
   detail?: string;
 }
 
+/**
+ * The decision the router made for one query, returned by {@link IFederatedQueryRouter.explainDecision}.
+ *
+ * Names the requested consistency level, the replica that would serve the read,
+ * the age of the data that replica would return (`lagMs`), and the applied LSN
+ * it reached. A caller can answer "which side did the router pick, at what
+ * level, and how stale is it" without re-deriving the freshness comparison.
+ * No replica and no age means the query could not be served at that level.
+ */
+export interface RoutingDecision {
+  /** The query this decision was made for. */
+  readonly queryId: string;
+  /** The requested consistency level. */
+  readonly level: ConsistencyLevel;
+  /** The replica that would serve the read, or null when unsatisfiable. */
+  readonly selectedReplica: string | null;
+  /** Age in ms of the oldest owed entry on that replica, or null when unknown. */
+  readonly replicaAgeMs: number | null;
+  /** Highest applied LSN on that replica, or null when unknown. */
+  readonly appliedLsn: number | null;
+  /** The routing strategy that would be used. */
+  readonly strategy: RoutingStrategy;
+  /** Whether the query can be served at the requested level. */
+  readonly satisfied: boolean;
+  /** Named reason when unsatisfied. */
+  readonly reason?: ConsistencyRejectReason;
+}
+
 /** A federated query with routing metadata. */
 export interface FederatedQuery {
   /** Unique query ID. */
@@ -302,6 +330,13 @@ export interface IFederatedQueryRouter {
 
   /** The verdict computed by the most recent planQuery/executeQuery, if any. */
   getLastConsistencyVerdict(): ConsistencyVerdict | undefined;
+
+  /**
+   * Inspect which replica a read would be routed to, at what level, and how
+   * fresh that replica is. Pure with respect to routing counters and node
+   * health, so an operator may ask it repeatedly without changing a route.
+   */
+  explainDecision(query: FederatedQuery): RoutingDecision;
 
   /** Build a query plan for the given query. */
   planQuery(query: FederatedQuery): QueryPlan;

@@ -504,6 +504,77 @@ attaches it to every write. The fence also refuses to mint when the group's own
 term is behind a term it has already observed, and falling back to read-only drops
 the token — a fenced node presents nothing rather than a superseded position.
 
+### `LogicalPrimaryResolver`
+
+A stable logical name that follows the elected leader, so a failover is a
+protocol event rather than a DNS change. The resolver reads the leader id and
+the live member set through injected callbacks (`leader()`, `members()`, and an
+optional `term()`), so it is engine-agnostic and knows nothing about Raft or
+storage. Each `resolve()` reads the callbacks afresh.
+
+```ts
+interface PrimaryMember { id: string; role: 'leader' | 'follower' | 'candidate' | 'learner' }
+
+interface LogicalPrimaryDeps {
+  leader(): Promise<number | string | null>;
+  members(): Promise<readonly PrimaryMember[]>;
+  term?(): Promise<number | undefined>;
+}
+
+class LogicalPrimaryResolver {
+  constructor(name: string, deps: LogicalPrimaryDeps);
+  resolve(): Promise<PrimaryResolution>;
+  epoch(): number;         // 0 before the first successful resolution
+  lastMemberId(): string | null;
+}
+
+function resolveLogicalPrimary(
+  name: string,
+  input: { leaderId: number | string | null; members: readonly PrimaryMember[]; leaderTerm?: number },
+): PrimaryResolutionCore;
+```
+
+`PrimaryResolution` carries `memberId`, `resolved`, a named `reason`
+(`leader-is-member`, `no-leader`, `no-members`, `leader-not-a-member`), and a
+monotonic `epoch` that advances only when the resolved member actually changes.
+`changed` is true only on the resolution that moved. The elected leader id is
+authoritative: a stale role label on a member row does not block resolution, but
+a leader id absent from the member set is refused by name. A numeric leader id
+matches both a bare `2` and a `node-2` member id. `resolveLogicalPrimary` is the
+stateless form for callers that already hold a membership snapshot.
+
+### `IdempotencyTable` and `IdempotentWriteCoordinator`
+
+A retry of the same `msgId` returns the first attempt's result instead of
+becoming a second write. The dedup window is injected as `windowMs` (the value
+P3-83 derives as `dedupMs`), so this package imports neither federation nor any
+engine; the write itself is a caller-supplied callback.
+
+```ts
+class IdempotencyTable<Result> {
+  constructor(options: { windowMs: number; now?: () => number; maxEntries?: number });
+  get(msgId: string): IdempotencyRecord<Result> | undefined;
+  has(msgId: string): boolean;
+  put(msgId: string, result: Result, position: number): IdempotencyRecord<Result>;
+  delete(msgId: string): boolean;
+  sweep(): number;
+  readonly size: number;
+  stats(): { size: number; evicted: number; capacity: number; windowMs: number };
+}
+
+class IdempotentWriteCoordinator<Result> {
+  constructor(options: { table: IdempotencyTable<Result> });
+  execute(msgId: string, write: () => Promise<Result>, position: number): Promise<IdempotentOutcome<Result>>;
+  inFlight(): number;
+}
+```
+
+`IdempotentOutcome` reports `result`, `replayed`, `attempts` and `position`.
+A completed id replays without executing again; concurrent callers of one id
+share a single execution; a failed execution is not remembered, so a later
+retry may try once more. Entries expire at `recordedAt + windowMs` (`0` never
+remembers, `Infinity` never forgets) and are evicted FIFO at `maxEntries`.
+
 ### `SessionManager`
 
 Consensus sessions with a TTL, sliding expiry and an expiry callback — the
