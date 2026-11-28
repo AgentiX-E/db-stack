@@ -132,6 +132,36 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "./${{ matrix.package }}" run test:unit
 
+  # ── Audit acceptance, one runner job per named criterion ──────────
+  #
+  # `design/OPERATIONS-DESIGN.md` names A1-A11 and the audit suite extends the
+  # same series to A15. A single aggregate suite can pass while one criterion
+  # has quietly zero cases, so each criterion is selected by its own name and
+  # the JSON report must show exactly one passing test. Zero selected cases is
+  # a red job, not a green one.
+  audit-acceptance:
+    name: Audit acceptance (${{ matrix.criterion }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        criterion:
+          [A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run ${{ matrix.criterion }}
+        run: |
+          pnpm --filter @agentix-e/db-node exec vitest run src/audit/__tests__/InMemoryAudit.test.ts \
+            -t "${{ matrix.criterion }}:" --reporter=json --outputFile=/tmp/audit-${{ matrix.criterion }}.json
+          node -e "const r=require('/tmp/audit-${{ matrix.criterion }}.json'); if(r.numPassedTests!==1){console.error('expected exactly one passing case for ${{ matrix.criterion }}, got '+r.numPassedTests); process.exit(1)}"
+
   # ── Engine conformance (the published storage-engine contract) ────
   #
   # The suite lives inside the cluster test tree, so it also runs in `coverage`.
@@ -591,6 +621,7 @@ jobs:
         typecheck,
         quality,
         unit,
+        audit-acceptance,
         engine-conformance,
         integration,
         coverage,
@@ -614,6 +645,7 @@ jobs:
           echo "| typecheck | ${{ needs.typecheck.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| quality | ${{ needs.quality.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| unit | ${{ needs.unit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| audit-acceptance | ${{ needs.audit-acceptance.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| engine-conformance | ${{ needs.engine-conformance.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| integration | ${{ needs.integration.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| coverage | ${{ needs.coverage.result }} |" >> $GITHUB_STEP_SUMMARY
