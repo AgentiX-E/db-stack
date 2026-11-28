@@ -517,6 +517,37 @@ class CDCEngine implements ICDCEngine {
 }
 ```
 
+### `createCDCPipeline` / `isSimulatedCapability` / `SimulatedEngineError`
+
+The composition root a product uses to assemble an `ExactlyOnceCDCPipeline`.
+`ExactlyOnceCDCPipeline` itself still accepts a default simulator — unit tests
+drive its outbox and dedup logic with the `appendChange` hook — but starting a
+product with that default used to report success while reading from nothing.
+`createCDCPipeline` is the boundary: it refuses a simulated source at
+construction, names the component and the engine in the error, and accepts any
+real `ICDCEngine` untouched. The test is capability-based, not `instanceof`:
+anything carrying the `appendChange` hook counts as a simulator regardless of
+its class, so the guard binds to no concrete implementation.
+
+```typescript
+interface CreateCDCPipelineConfig extends ExactlyOnceCDCPipelineConfig {
+  /** Required when the engine is omitted or carries `appendChange`. */
+  allowSimulated?: boolean;
+}
+
+function createCDCPipeline(config: CreateCDCPipelineConfig): ExactlyOnceCDCPipeline;
+function isSimulatedCapability(engine: unknown): boolean;
+class SimulatedEngineError extends Error {
+  readonly component: 'ExactlyOnceCDCPipeline';
+  readonly engineName: string;
+}
+```
+
+A receive-only node — which produces no changes and only dedups inbound ones —
+passes `allowSimulated: true` deliberately. A producer passes a real engine
+(for example `WalTailCDCEngine`). The refusal happens synchronously, before
+`start()` installs a pump over a stream nothing writes.
+
 ### `CDCManager`
 
 One change-capture engine per remote DC, feeding a single buffered stream, with

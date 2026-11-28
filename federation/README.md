@@ -16,12 +16,22 @@ npm install @agentix-e/db-federation
 ```
 
 ```typescript
-import { ExactlyOnceCDCPipeline } from '@agentix-e/db-federation';
+import {
+  createCDCPipeline,
+  FileChangeLogReader,
+  WalTailCDCEngine,
+} from '@agentix-e/db-federation';
 
-// Create a CDC pipeline that guarantees exactly-once delivery
-const pipeline = new ExactlyOnceCDCPipeline({
+// A producer must name a real change source. The composition root refuses a
+// simulated engine here, so a configuration that forgot its WAL reader fails
+// with the component's name instead of silently replicating nothing.
+const reader = await FileChangeLogReader.open({ dir: '/data/change-log' });
+const engine = new WalTailCDCEngine({ reader, nodeId: 'dc-east-1' });
+
+const pipeline = createCDCPipeline({
   nodeId: 'dc-east-1',
   cdcConfig: { nodeId: 'dc-east-1' }, // HLC is created from the node id
+  engine,
   outboxConfig: {
     dataDir: '/data/cdc-outbox',
     mapSize: 1024 * 1024 * 1024, // LMDB map size, in bytes
@@ -38,6 +48,18 @@ pipeline.watchTable('users');
 
 // All changes to 'orders' and 'users' are now replicated
 // to dc-west-1 with exactly-once semantics
+```
+
+A receive-only node produces no changes — it only deduplicates inbound ones —
+so it may pass `allowSimulated: true` and omit the engine:
+
+```typescript
+const receiver = createCDCPipeline({
+  nodeId: 'dc-west-1',
+  cdcConfig: { nodeId: 'dc-west-1' },
+  outboxConfig: { dataDir: '/data/cdc-inbox' },
+  allowSimulated: true, // receive-only: no local change source is needed
+});
 ```
 
 ---
@@ -101,6 +123,7 @@ solves three problems that a single consensus group cannot:
 | Module | Path | Description |
 |--------|------|-------------|
 | **ExactlyOnceCDCPipeline** | `src/replication/` | Primary CDC pipeline with exactly-once guarantees |
+| **createCDCPipeline** | `src/composition/` | Composition root — refuses a simulated source unless `allowSimulated` is set |
 | **CDCEngine** | `src/replication/` | Change data capture engine — table watching, polling |
 | **CDCManager** | `src/core/` | One change-capture engine per remote DC, with lag backpressure |
 | **CDCPublicationRegistry** | `src/replication/` | Publication and subscription catalogue (records destinations, delivers nothing) |
@@ -132,10 +155,10 @@ solves three problems that a single consensus group cannot:
 ## Testing
 
 ```bash
-npm test    # 1 638 tests, 102 test files
+npm test    # 1 648 tests, 103 test files
 ```
 
-- **102 test files, 1 638 tests** — unit, integration, batch, performance, chaos
+- **103 test files, 1 648 tests** — unit, integration, batch, performance, chaos
 - **CDC exactly-once chaos tests** — crash & restart resilience
 - **Cross-repo end-to-end** — db-node + db-cluster + db-federation integration
 - **Stage isolation chaos** — fault injection & latency validation

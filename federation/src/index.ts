@@ -160,6 +160,12 @@ export type {
   CDCPipelineEventType,
   CDCPipelineEventHandler,
 } from './replication/ExactlyOnceCDCPipeline';
+// Composition root: the honest entry point a product uses to assemble a
+// pipeline. It refuses a simulated change source by name unless the caller
+// explicitly admits it is receive-only, which is the guard the permissive
+// class-under-test cannot apply to itself.
+export { createCDCPipeline, isSimulatedCapability, SimulatedEngineError } from './composition/createCDCPipeline';
+export type { CreateCDCPipelineConfig } from './composition/createCDCPipeline';
 // The confirmation a receiving node sends back. Exported because the *other*
 // side of the wire has to be able to send one: a peer implemented against this
 // package would otherwise have to re-derive the frame type and its body.

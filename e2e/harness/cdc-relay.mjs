@@ -31,6 +31,7 @@ import {
   CDCSubscriptionPump,
   CDCPublicationRegistry,
   ExactlyOnceCDCPipeline,
+  createCDCPipeline,
   FileChangeLogReader,
   HttpCDCSink,
   TcpSecureTransport,
@@ -121,7 +122,10 @@ async function startReceiver() {
   // send one. The pipeline's own outbox stays empty — a receiver produces
   // nothing — so its pump has nothing to ship.
   transport = new TcpSecureTransport(transportConfig());
-  pipeline = new ExactlyOnceCDCPipeline({
+  // The receiving side produces no changes: it only dedups inbound ones, so
+  // the built-in simulator is an honest source here. Say so at the composition
+  // root rather than letting a future producer inherit the default unnoticed.
+  pipeline = createCDCPipeline({
     nodeId: cfg.nodeId,
     cdcConfig: { nodeId: cfg.nodeId },
     outboxConfig: { dataDir: join(cfg.dir, 'outbox') },
@@ -129,6 +133,7 @@ async function startReceiver() {
     dedupTtlMs: 900_000,
     transport,
     pumpIntervalMs: 1_000,
+    allowSimulated: true,
   });
   await pipeline.start();
 
@@ -185,7 +190,7 @@ async function startSender() {
   stage('transport-start');
   await transport.start();
 
-  pipeline = new ExactlyOnceCDCPipeline({
+  pipeline = createCDCPipeline({
     nodeId: cfg.nodeId,
     cdcConfig: { nodeId: cfg.nodeId },
     engine,

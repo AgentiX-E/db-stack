@@ -52,6 +52,8 @@ export default defineConfig({
       'src/core/SnapshotBootstrap.test.ts',
       'src/core/DCSplitBrainDetector.branches.test.ts',
       'src/core/FederationManager.protocols.test.ts',
+      // Judges the IT-103 composition-root guard.
+      'src/composition/createCDCPipeline.test.ts',
     ],
     exclude: [],
     // Derived from this suite's own measurement (2026-11-18): 90 cases in four

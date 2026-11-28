@@ -12,7 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -62,6 +62,38 @@ function withMessage(text, body) {
   }
 }
 
+/**
+ * A real git repository with two tracked files, in a directory of its own.
+ *
+ * The diff has to come from *this* tree, not from the checkout that happens to
+ * hold the tool. Real `git init`/`add`/`commit` keep the fixture honest: a fake
+ * `ls-tree` would only test the injection, not the directory the readers use.
+ */
+async function withFixtureRepo(body) {
+  const dir = mkdtempSync(join(tmpdir(), "push-commit-fixture-"));
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  writeFileSync(join(dir, "alpha.txt"), "alpha fixture\n", "utf8");
+  writeFileSync(join(dir, "beta.txt"), "beta fixture\n", "utf8");
+  git("init", "-q", "-b", "main");
+  git("add", "alpha.txt", "beta.txt");
+  git(
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.test",
+    "commit",
+    "-q",
+    "-m",
+    "fixture",
+  );
+  try {
+    return await body(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 test("arguments name a repository, a branch and a message file", () => {
   withMessage("docs(it-100): the push, in the tree\n\n", (path) => {
     const input = parseArguments(["db-stack-docs", "main", path]);
@@ -86,6 +118,48 @@ test("an empty message is refused before any request is made", () => {
       /the message file is empty — a commit needs a message/,
     );
   });
+});
+
+test("a repository directory may be named by a flag or by the environment", () => {
+  withMessage("m\n", (path) => {
+    const flagged = parseArguments(
+      ["db-stack-docs", "main", path, "--repo-dir", "/tmp/other-repo"],
+      undefined,
+      {},
+    );
+    assert.equal(flagged.repoDir, "/tmp/other-repo");
+    assert.equal(flagged.repo, "db-stack-docs");
+    assert.equal(flagged.branch, "main");
+    assert.equal(flagged.message, "m");
+
+    const fromEnv = parseArguments(["db-stack-docs", "main", path], undefined, {
+      DB_PUSH_REPO_DIR: "/tmp/env-repo",
+    });
+    assert.equal(fromEnv.repoDir, "/tmp/env-repo");
+  });
+});
+
+test("a repository directory flag needs a value that is not another flag", () => {
+  withMessage("m\n", (path) => {
+    assert.throws(
+      () => parseArguments(["r", "b", path, "--repo-dir"], undefined, {}),
+      /--repo-dir needs a directory/,
+    );
+    assert.throws(
+      () =>
+        parseArguments(
+          ["r", "b", path, "--repo-dir", "--other"],
+          undefined,
+          {},
+        ),
+      /--repo-dir needs a directory/,
+    );
+  });
+});
+
+test("an injected message reader is used instead of the file system", () => {
+  const input = parseArguments(["r", "b", "unused"], () => "injected\n\n");
+  assert.equal(input.message, "injected");
 });
 
 test("a tree read is parsed by path, mode and blob id", () => {
@@ -432,6 +506,77 @@ test("a failed fetch after the push is a warning, not a failed push", async () =
     h.said.join("\n"),
     /warning: fetch after push failed: no tracking ref/,
   );
+});
+
+test("the tree comes from the injected repository, not the tool's own checkout", async () => {
+  await withFixtureRepo(async (dir) => {
+    const h = harness({
+      remote: { "remote-only.txt": { mode: "100644", sha: "old" } },
+    });
+    const result = await push(
+      { repo: "db-stack-docs", branch: "main", message: "fixture push" },
+      {
+        call: h.call,
+        approve: () => true,
+        say: (line) => h.said.push(line),
+        repoDir: dir,
+      },
+    );
+
+    assert.equal(result.added, 2, "only the two fixture files are added");
+    assert.equal(result.removed, 1);
+    const treeBody = h.calls.find((c) => c.path.endsWith("/git/trees")).payload;
+    assert.deepEqual(treeBody.tree.map((entry) => entry.path).sort(), [
+      "alpha.txt",
+      "beta.txt",
+      "remote-only.txt",
+    ]);
+    const blobs = h.calls.filter((c) => c.path.endsWith("/git/blobs"));
+    assert.deepEqual(
+      blobs
+        .map((c) => Buffer.from(c.payload.content, "base64").toString())
+        .sort(),
+      ["alpha fixture\n", "beta fixture\n"],
+    );
+  });
+});
+
+test("the command line can point a push at a second repository", async () => {
+  await withFixtureRepo(async (dir) => {
+    await withMessage("docs: second repo\n", async (path) => {
+      const h = harness({
+        remote: { "remote-only.txt": { mode: "100644", sha: "old" } },
+      });
+      const code = await main(
+        ["db-stack-docs", "main", path, "--repo-dir", dir],
+        {
+          call: h.call,
+          approve: () => true,
+          say: (line) => h.said.push(line),
+        },
+      );
+      assert.equal(code, 0);
+      assert.match(h.said.join("\n"), /added 2\s+modified 0\s+removed 1/);
+    });
+  });
+});
+
+test("the repository directory can come from the environment on the command line", async () => {
+  await withFixtureRepo(async (dir) => {
+    await withMessage("docs: second repo\n", async (path) => {
+      const h = harness({
+        remote: { "remote-only.txt": { mode: "100644", sha: "old" } },
+      });
+      const code = await main(["db-stack-docs", "main", path], {
+        call: h.call,
+        approve: () => true,
+        say: (line) => h.said.push(line),
+        env: { DB_PUSH_REPO_DIR: dir },
+      });
+      assert.equal(code, 0);
+      assert.match(h.said.join("\n"), /added 2\s+modified 0\s+removed 1/);
+    });
+  });
 });
 
 test("the entry check knows when it is not the program", () => {

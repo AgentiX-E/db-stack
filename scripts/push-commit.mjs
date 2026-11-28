@@ -15,8 +15,13 @@
  * remote history is never rewritten. A fetch afterwards lets the next push start
  * from the mirrored commit rather than from a tree that differs only by sha.
  *
- * Usage: node scripts/push-commit.mjs <repo> <branch> <message-file>
- * Env:   GITHUB_PAT
+ * Usage: node scripts/push-commit.mjs <repo> <branch> <message-file> [--repo-dir <path>]
+ * Env:   GITHUB_PAT, DB_PUSH_REPO_DIR
+ *
+ * The repository whose tree is mirrored is the one holding this tool by default,
+ * but `--repo-dir` / `DB_PUSH_REPO_DIR` point a push at a second checkout. Without
+ * that, mirroring a different repository would diff this tool's own tree against
+ * the remote and upload the wrong files.
  */
 
 import { execFileSync } from "node:child_process";
@@ -37,16 +42,28 @@ export const OWNER = "AgentiX-E";
  * written by a heredoc must not add blank lines to the commit, and the message
  * that reaches the API is the one `git log` will show.
  */
-export function parseArguments(argv, read = readFileSync) {
-  const [repo, branch, file] = argv;
+export function parseArguments(argv, read = readFileSync, env = process.env) {
+  const args = [...argv];
+  const flag = args.indexOf("--repo-dir");
+  let repoDir = env.DB_PUSH_REPO_DIR;
+  if (flag !== -1) {
+    repoDir = args[flag + 1];
+    if (!repoDir || repoDir.startsWith("--")) {
+      throw new Error("--repo-dir needs a directory");
+    }
+    args.splice(flag, 2);
+  }
+  const [repo, branch, file] = args;
   if (!repo || !branch || !file) {
-    throw new Error("usage: push-commit.mjs <repo> <branch> <message-file>");
+    throw new Error(
+      "usage: push-commit.mjs <repo> <branch> <message-file> [--repo-dir <path>]",
+    );
   }
   const message = String(read(file, "utf8")).replace(/\n+$/, "");
   if (message.length === 0) {
     throw new Error("the message file is empty — a commit needs a message");
   }
-  return { repo, branch, file, message };
+  return { repo, branch, file, message, repoDir };
 }
 
 /**
@@ -169,13 +186,32 @@ export function makeTransport(deps = {}) {
   };
 }
 
+/** One git invocation against the repository whose tree is being mirrored. */
+function readGit(root, args, encoding) {
+  return encoding
+    ? execFileSync("git", args, { cwd: root, encoding })
+    : execFileSync("git", args, { cwd: root });
+}
+
 /** git, as text and as bytes, from the repository root. The two edges a test owns. */
 export function gitText(...args) {
-  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
+  return readGit(ROOT, args, "utf8");
 }
 
 export function gitBytes(...args) {
-  return execFileSync("git", args, { cwd: ROOT });
+  return readGit(ROOT, args);
+}
+
+/**
+ * Readers bound to one repository. Every tree read goes through them: `ls-tree`
+ * lists it, `cat-file` loads its blobs, `log` dates its commit and `fetch` updates
+ * it after the push. A second repository never falls back to this tool's tree.
+ */
+function gitReaders(root) {
+  return {
+    text: (...args) => readGit(root, args, "utf8"),
+    bytes: (...args) => readGit(root, args),
+  };
 }
 
 /**
@@ -193,8 +229,12 @@ export function approveByReceipt() {
 export async function push(input, deps = {}) {
   const approve = deps.approve ?? approveByReceipt;
   const call = deps.call ?? makeTransport({ token: deps.token });
-  const readText = deps.gitText ?? gitText;
-  const readBytes = deps.gitBytes ?? gitBytes;
+  // An injected directory wins; the CLI's parsed one comes next; without either,
+  // this tool stays in the repository that holds it.
+  const root = deps.repoDir || input.repoDir || ROOT;
+  const readers = gitReaders(root);
+  const readText = deps.gitText ?? readers.text;
+  const readBytes = deps.gitBytes ?? readers.bytes;
   const say = deps.say ?? toStdout;
 
   if (!approve()) return { ok: false, reason: "receipt" };
@@ -318,7 +358,7 @@ export function reportFailure(error, err = toStderr) {
  */
 export async function main(argv = process.argv.slice(2), deps = {}) {
   try {
-    const input = parseArguments(argv, deps.read);
+    const input = parseArguments(argv, deps.read, deps.env);
     const result = await push(input, deps);
     return exitCodeFor(result);
   } catch (error) {

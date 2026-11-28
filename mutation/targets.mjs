@@ -150,6 +150,10 @@ export const TARGETS = {
       "federation/src/core/heartbeatFrame.ts",
       "federation/src/core/SnapshotBootstrap.ts",
       "federation/src/core/DCSplitBrainDetector.ts",
+      // IT-103: the composition-root guard. A capability check widened to let a
+      // simulator through, or a refusal that names the wrong engine, is a silent
+      // deployment that replicates nothing — exactly the bug P3-84 closes.
+      "federation/src/composition/createCDCPipeline.ts",
     ],
     testConfig: "federation/vitest.mutation.config.ts",
     concurrency: 2,
